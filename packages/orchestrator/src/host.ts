@@ -9,7 +9,7 @@ import type {
   Cursor,
   Storage,
 } from "@earendil-works/pi-durable";
-import type { ModelChoice } from "@pi-durable-k8s/session-core";
+import type { McpServerConfig, ModelChoice } from "@pi-durable-k8s/session-core";
 import type { Extension } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
@@ -19,6 +19,7 @@ import type { Script } from "./model.js";
 import { httpTransportFactory, McpTools } from "./mcp.js";
 import type { McpTimings, McpTransportFactory } from "./mcp.js";
 import { buildGatewayFetch, buildModels } from "./providers.js";
+import type { McpFetch } from "@earendil-works/pi-mcp";
 import { claimNameFor, Sandboxes, WORKSPACE } from "./sandboxes.js";
 import type { SandboxHooks, SessionKeyOf } from "./sandboxes.js";
 import type { SubmissionState } from "./watcher.js";
@@ -66,10 +67,37 @@ export function toEvent(message: Message): SessionEvent {
   return event;
 }
 
-/** Test seams of the remote MCP client; production passes nothing. */
+/** Where the host reads the MCP catalog from: the `McpCatalogCache` (enabled and disabled servers). */
+export interface McpCatalogSource {
+  get(): readonly McpServerConfig[];
+  subscribe(listener: (servers: readonly McpServerConfig[]) => void): () => void;
+}
+
 export interface HostOptions {
+  /** The MCP catalog; without one no MCP server is installed and nothing about the offered tools changes. */
+  catalog?: McpCatalogSource;
+  /** Test seams of the remote MCP client; production passes nothing. */
   mcpTransport?: McpTransportFactory;
   mcpTimings?: McpTimings;
+}
+
+/**
+ * The gateway `fetch`, built at the first MCP request: the catalog can gain a server while the orchestrator runs, and
+ * a deployment without a token (no remote model provider) must still start. Without a token an MCP call fails, so the
+ * server's tools stay `tool_unavailable` and the discovery log says why.
+ */
+function lazyGatewayFetch(config: OrchestratorConfig): McpFetch {
+  let gateway: Promise<McpFetch> | undefined;
+  return async (input, init) => {
+    const token = config.onecli.token;
+    if (token === undefined) {
+      throw new Error(
+        "ONECLI_AGENT_TOKEN is required for MCP servers: calls go through the gateway",
+      );
+    }
+    gateway ??= buildGatewayFetch(config, token);
+    return (await gateway)(input, init);
+  };
 }
 
 /** The Pi Durable host: one Harness over the Postgres storage, one conversation per session. */
@@ -78,26 +106,34 @@ export class Host {
   readonly #sandboxes: Sandboxes;
   readonly #storage: Storage;
   readonly #mcp: McpTools;
-  /** Extensions a new conversation selects on top of the host default; empty with the MCP flag off. */
-  readonly #added: Extension[];
+  readonly #toolSearch: Extension;
+  readonly #unsubscribe: () => void;
 
   private constructor(
     harness: Harness,
     sandboxes: Sandboxes,
     storage: Storage,
     mcp: McpTools,
-    added: Extension[],
+    toolSearch: Extension,
+    unsubscribe: () => void,
   ) {
     this.#harness = harness;
     this.#sandboxes = sandboxes;
     this.#storage = storage;
     this.#mcp = mcp;
-    this.#added = added;
+    this.#toolSearch = toolSearch;
+    this.#unsubscribe = unsubscribe;
   }
 
-  /** `agent` of a new conversation: with MCP on, it adds `tool_search` and the MCP extensions (see `open`). */
+  /**
+   * `agent` of a new conversation: when the catalog has an enabled server now, it adds `tool_search` and the servers'
+   * extensions (see `open`). The names are stored, so the conversation keeps them; a server added later reaches only
+   * conversations created after it, and one removed leaves a stored name that selects nothing (its tools settle
+   * `tool_unavailable`).
+   */
   #extensionsAdded(): { extensions: { add: Extension[] } } | Record<string, never> {
-    return this.#added.length === 0 ? {} : { extensions: { add: this.#added } };
+    const servers = this.#mcp.extensions;
+    return servers.length === 0 ? {} : { extensions: { add: [this.#toolSearch, ...servers] } };
   }
 
   /**
@@ -117,30 +153,19 @@ export class Host {
     const registry = createRegistry();
     const coding = createCodingTools();
     registry.install(coding);
-    // Remote MCP (docs/decisions/0007-native-remote-mcp.md). Off: nothing below runs and nothing changes.
-    // On: Pi Durable selects EVERY installed extension for a conversation whose `pi.agent` stores none
-    // (selectExtensions in pi-durable harness/agent.js), so installing these would hand MCP to every existing
-    // conversation at the next start. The host default is therefore pinned to `coding`, and only conversations
+    // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
+    // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in pi-durable
+    // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
+    // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
     // created from now on add `tool_search` and the MCP extensions. #41 replaces that `add` with a per-session profile.
-    const mcpTransport =
-      options.mcpTransport ??
-      (config.mcpServers.length > 0 && config.onecli.token !== undefined
-        ? httpTransportFactory(await buildGatewayFetch(config, config.onecli.token))
-        : undefined);
-    const mcp = new McpTools(
-      config.mcpServers,
-      registry,
-      mcpTransport ??
-        (() => {
-          throw new Error("no MCP transport");
-        }),
-      options.mcpTimings,
-    );
-    const added: Extension[] = [];
-    if (config.mcpServers.length > 0) {
-      const toolSearch = createToolSearchExtension();
-      registry.install(toolSearch);
-      added.push(toolSearch, ...mcp.extensions);
+    const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
+    const mcp = new McpTools(registry, mcpTransport, options.mcpTimings);
+    const toolSearch = createToolSearchExtension();
+    registry.install(toolSearch);
+    let unsubscribe = () => {};
+    if (options.catalog !== undefined) {
+      mcp.apply(options.catalog.get());
+      unsubscribe = options.catalog.subscribe((servers) => mcp.apply(servers));
     }
     const sandboxes = new Sandboxes(config, sessionKeyOf, hooks);
     // Before resume(): a continuing run must not run its next command in a Pod that still holds the leftovers of
@@ -152,7 +177,7 @@ export class Host {
       {
         models,
         registry,
-        ...(added.length === 0 ? {} : { settings: { extensions: [coding] } }),
+        settings: { extensions: [coding] },
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {
@@ -169,7 +194,7 @@ export class Host {
     // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
     // its tools unavailable until a retry succeeds.
     mcp.start();
-    return new Host(harness, sandboxes, storage, mcp, added);
+    return new Host(harness, sandboxes, storage, mcp, toolSearch, unsubscribe);
   }
 
   /** Creates the conversation and its sandbox claim, then submits the script as the first input. */
@@ -380,6 +405,7 @@ export class Host {
 
   /** Waits for in-flight work to settle and closes storage; bridges stop, claims stay. */
   async close(): Promise<void> {
+    this.#unsubscribe();
     await this.#mcp.close();
     await this.#harness.close(context);
     await this.#sandboxes.closeAll();

@@ -10,65 +10,18 @@ import {
 import type { CallToolResult, McpFetch, McpTransport, Tool } from "@earendil-works/pi-mcp";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { Extension, Registry, ToolRegistration } from "@earendil-works/pi-durable";
+import { mcpServersEqual } from "@pi-durable-k8s/session-core";
+import type { McpServerConfig } from "@pi-durable-k8s/session-core";
 import { errorMessage, log } from "./log.js";
 
 /**
  * Native remote MCP tools (docs/decisions/0007-native-remote-mcp.md). The orchestrator is the MCP client: its HTTP
- * requests go through the OneCLI gateway like the model calls, and nothing runs in or reaches into the sandbox.
+ * requests go through the OneCLI gateway like the model calls, and nothing runs in or reaches into the sandbox. The
+ * servers come from the catalog in Postgres and change at runtime (docs/decisions/0009-mcp-catalog-in-postgres.md).
  */
 
-export interface McpServerSpec {
-  /** Names the extension `mcp-<name>` and the tools `mcp__<name>__<tool>`. */
-  name: string;
-  /** https only: the gateway is the only way out of the cluster. */
-  url: string;
-}
-
-const SERVER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
-
-/**
- * `PI_MCP_SERVERS`: a JSON array of `{ name, url }`. Unset or empty means the feature is off. Anything malformed
- * throws, so a typo in the manifest fails at start and is never read as "off".
- */
-export function parseMcpServers(raw: string | undefined): McpServerSpec[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("PI_MCP_SERVERS must be a JSON array of {name, url}");
-  }
-  if (!Array.isArray(parsed)) throw new Error("PI_MCP_SERVERS must be a JSON array of {name, url}");
-  const specs: McpServerSpec[] = [];
-  const spaces = new Set<string>();
-  for (const entry of parsed as unknown[]) {
-    if (typeof entry !== "object" || entry === null) {
-      throw new Error("PI_MCP_SERVERS entries must be objects with name and url");
-    }
-    const { name, url } = entry as Record<string, unknown>;
-    if (typeof name !== "string" || !SERVER_NAME.test(name)) {
-      throw new Error(`PI_MCP_SERVERS: server name must match ${SERVER_NAME.source}`);
-    }
-    // Names that differ only in `-` and `_` share a tool namespace (pi-mcp mcpNamespace).
-    const space = name.replaceAll("-", "_");
-    if (spaces.has(space)) throw new Error(`PI_MCP_SERVERS: duplicate server name ${name}`);
-    spaces.add(space);
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(typeof url === "string" ? url : "");
-    } catch {
-      throw new Error(`PI_MCP_SERVERS: server ${name} needs a valid url`);
-    }
-    if (parsedUrl.protocol !== "https:") {
-      throw new Error(`PI_MCP_SERVERS: server ${name} url must be https`);
-    }
-    if (parsedUrl.username !== "" || parsedUrl.password !== "") {
-      throw new Error(`PI_MCP_SERVERS: server ${name} url must not carry credentials`);
-    }
-    specs.push({ name, url: parsedUrl.toString() });
-  }
-  return specs;
-}
+/** One enabled row of the catalog (`inbox.mcp_servers`, docs/decisions/0009-mcp-catalog-in-postgres.md). */
+export type McpServerSpec = McpServerConfig;
 
 export interface McpTimings {
   /** One `connect` plus `listTools` attempt. */
@@ -76,22 +29,31 @@ export interface McpTimings {
   /** Backoff between failed discovery attempts: starts at `retryMinMs`, doubles up to `retryMaxMs`. */
   retryMinMs: number;
   retryMaxMs: number;
-  /** One `callTool`, including the connect it may need. */
-  callTimeoutMs: number;
 }
 
 export const DEFAULT_MCP_TIMINGS: McpTimings = {
   discoveryTimeoutMs: 15_000,
   retryMinMs: 2_000,
   retryMaxMs: 60_000,
-  callTimeoutMs: 60_000,
 };
 
 /** Largest JSON-RPC message a transport accepts. pi-mcp defaults to 16 MiB; one call would hold that in memory. */
 export const MCP_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 
-/** What the model is given of one result, on top of `limitMcpContent` (20 KB of text, middle cut). */
-const OUTPUT_LIMITS = { maxBytes: 24 * 1024, maxLines: 2000, retain: "head" } as const;
+/** What the model is given of one result, on top of `limitMcpContent` (20 KB of text, middle cut): the row's `maxOutputBytes`. */
+const outputLimits = (maxBytes: number) => ({ maxBytes, maxLines: 2000, retain: "head" }) as const;
+
+/** JSON with sorted keys, so two schemas that differ only in key order compare equal. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 export type McpTransportFactory = (spec: McpServerSpec) => McpTransport;
 
@@ -133,9 +95,18 @@ async function bounded<T>(work: Promise<T>, ms: number, what: string, onTimeout:
  */
 export class McpServer {
   readonly extensionName: string;
+  readonly spec: McpServerSpec;
   /** The extension as installed now: empty until discovery succeeded. */
   extension: Extension;
   readonly #spec: McpServerSpec;
+  /** Input schema of every tool of the last discovery, canonical JSON by tool name. */
+  readonly #schemas = new Map<string, string>();
+  /** The schemas of the server this one replaces: a change between the two versions is logged. */
+  readonly #previousSchemas: ReadonlyMap<string, string>;
+  /** `callTool`s that started and have not settled: a retired server is closed only after they finish. */
+  #inFlight = 0;
+  #retired = false;
+  #drained: (() => void) | undefined;
   readonly #transport: McpTransportFactory;
   readonly #timings: McpTimings;
   readonly #registry: Registry;
@@ -150,8 +121,11 @@ export class McpServer {
     registry: Registry,
     transport: McpTransportFactory,
     timings: McpTimings,
+    previousSchemas: ReadonlyMap<string, string> = new Map(),
   ) {
+    this.spec = spec;
     this.#spec = spec;
+    this.#previousSchemas = previousSchemas;
     this.#registry = registry;
     this.#transport = transport;
     this.#timings = timings;
@@ -165,7 +139,27 @@ export class McpServer {
     this.#discovery ??= this.#discover();
   }
 
-  /** Stops discovery and closes the connection. */
+  /** The input schemas this server last listed, for the server that replaces it. */
+  get schemas(): ReadonlyMap<string, string> {
+    return this.#schemas;
+  }
+
+  /**
+   * The server left the catalog (or is replaced): discovery stops now, calls that already started finish, and then the
+   * connection is closed. A call that starts afterwards (from a conversation that still held the tool) fails at once.
+   */
+  async retire(): Promise<void> {
+    this.#retired = true;
+    this.#stop.abort();
+    if (this.#inFlight > 0) {
+      await new Promise<void>((resolve) => {
+        this.#drained = resolve;
+      });
+    }
+    await this.close();
+  }
+
+  /** Stops discovery and closes the connection, ending calls that are still running (shutdown). */
   async close(): Promise<void> {
     this.#stop.abort();
     await this.#discovery;
@@ -180,7 +174,7 @@ export class McpServer {
     const client = new McpClient({
       name: "pi-durable-k8s",
       version: "0.0.0",
-      requestTimeoutMs: this.#timings.callTimeoutMs,
+      requestTimeoutMs: this.#spec.timeoutMs,
     });
     // A dropped connection or an expired session makes the next use connect again.
     client.onClose(() => {
@@ -255,6 +249,7 @@ export class McpServer {
       try {
         const tools = await this.#listTools();
         if (this.#stopped()) return;
+        this.#noteSchemas(tools);
         this.extension = this.#buildExtension(tools);
         this.#registry.install(this.extension);
         log("mcp-tools-ready", { server: this.#spec.name, tools: tools.length });
@@ -271,26 +266,45 @@ export class McpServer {
     }
   }
 
+  /** Records the schemas and logs each tool whose input schema differs from the version this server replaces. */
+  #noteSchemas(tools: readonly Tool[]): void {
+    this.#schemas.clear();
+    for (const tool of tools) this.#schemas.set(tool.name, canonicalJson(tool.inputSchema));
+    for (const [name, schema] of this.#schemas) {
+      const before = this.#previousSchemas.get(name);
+      if (before !== undefined && before !== schema) {
+        log("mcp-schema-changed", { server: this.#spec.name, tool: name });
+      }
+    }
+  }
+
   /** One `callTool`; after a session expiry it connects again and tries once more (the server refused it unrun). */
   async call(
     name: string,
     args: Record<string, unknown>,
     signal: AbortSignal | undefined,
   ): Promise<CallToolResult> {
-    for (let attempt = 0; ; attempt += 1) {
-      const client = await this.#connected();
-      try {
-        return await client.callTool(name, args, {
-          ...(signal === undefined ? {} : { signal }),
-          timeoutMs: this.#timings.callTimeoutMs,
-        });
-      } catch (error) {
-        if (error instanceof McpSessionExpiredError && attempt === 0) {
-          await this.#drop(client);
-          continue;
+    if (this.#retired) throw new Error(`MCP server ${this.#spec.name} is no longer available`);
+    this.#inFlight += 1;
+    try {
+      for (let attempt = 0; ; attempt += 1) {
+        const client = await this.#connected();
+        try {
+          return await client.callTool(name, args, {
+            ...(signal === undefined ? {} : { signal }),
+            timeoutMs: this.#spec.timeoutMs,
+          });
+        } catch (error) {
+          if (error instanceof McpSessionExpiredError && attempt === 0) {
+            await this.#drop(client);
+            continue;
+          }
+          throw error;
         }
-        throw error;
       }
+    } finally {
+      this.#inFlight -= 1;
+      if (this.#inFlight === 0) this.#drained?.();
     }
   }
 
@@ -309,7 +323,7 @@ export class McpServer {
         replay: "unsafe",
         // Offered only after the model found it with `tool_search`: a server can have dozens of tools.
         deferred: true,
-        outputLimits: OUTPUT_LIMITS,
+        outputLimits: outputLimits(this.#spec.maxOutputBytes),
         execute: async (args, _api, context) => {
           const result = await this.call(
             tool.name,
@@ -326,17 +340,33 @@ export class McpServer {
   }
 }
 
-/** The configured servers. Empty `specs` means the feature is off: nothing is installed. */
+/**
+ * The catalog's enabled servers as installed extensions. `apply` makes the installed set match a catalog: a new server
+ * is installed (empty until its tools are listed), a removed or disabled one is uninstalled so its tools settle
+ * `tool_unavailable`, and a changed one is replaced by a new server with a new client. The server that goes away
+ * finishes the calls it has and is then closed.
+ */
 export class McpTools {
-  readonly servers: readonly McpServer[];
+  readonly #servers = new Map<string, McpServer>();
+  readonly #registry: Registry;
+  readonly #transport: McpTransportFactory;
+  readonly #timings: McpTimings;
+  readonly #retiring = new Map<McpServer, Promise<void>>();
+  #running = false;
+  #closed = false;
 
   constructor(
-    specs: readonly McpServerSpec[],
     registry: Registry,
     transport: McpTransportFactory,
     timings: McpTimings = DEFAULT_MCP_TIMINGS,
   ) {
-    this.servers = specs.map((spec) => new McpServer(spec, registry, transport, timings));
+    this.#registry = registry;
+    this.#transport = transport;
+    this.#timings = timings;
+  }
+
+  get servers(): readonly McpServer[] {
+    return [...this.#servers.values()];
   }
 
   /** The extensions as installed now, to pass to `configure({ extensions: { add } })`: only the names are stored. */
@@ -344,11 +374,56 @@ export class McpTools {
     return this.servers.map((server) => server.extension);
   }
 
+  /** Makes the installed servers the enabled ones of `catalog`. Cheap when nothing changed. */
+  apply(catalog: readonly McpServerConfig[]): void {
+    if (this.#closed) return;
+    const wanted = new Map(catalog.filter((spec) => spec.enabled).map((spec) => [spec.name, spec]));
+    for (const [name, server] of [...this.#servers]) {
+      if (wanted.has(name)) continue;
+      this.#servers.delete(name);
+      this.#registry.uninstall(server.extension);
+      this.#retire(server);
+      log("mcp-server-removed", { server: name });
+    }
+    for (const spec of wanted.values()) {
+      const current = this.#servers.get(spec.name);
+      if (current !== undefined && mcpServersEqual(current.spec, spec)) continue;
+      // A new server installs its empty extension over the old one's by name, so a replaced server has no gap in the
+      // registry; its tools are listed again, which is where a changed input schema shows up.
+      const server = new McpServer(
+        spec,
+        this.#registry,
+        this.#transport,
+        this.#timings,
+        current?.schemas,
+      );
+      this.#servers.set(spec.name, server);
+      if (current !== undefined) this.#retire(current);
+      log(current === undefined ? "mcp-server-added" : "mcp-server-replaced", {
+        server: spec.name,
+      });
+      if (this.#running) server.start();
+    }
+  }
+
+  #retire(server: McpServer): void {
+    const retiring = server.retire().finally(() => this.#retiring.delete(server));
+    this.#retiring.set(server, retiring);
+  }
+
+  /** Starts discovery of every server, and of every server added later. */
   start(): void {
-    for (const server of this.servers) server.start();
+    this.#running = true;
+    for (const server of this.#servers.values()) server.start();
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.servers.map((server) => server.close()));
+    this.#closed = true;
+    // Shutdown does not wait for calls that are still running: closing a client ends them.
+    await Promise.all([
+      ...this.servers.map((server) => server.close()),
+      ...[...this.#retiring.keys()].map((server) => server.close()),
+    ]);
+    await Promise.all(this.#retiring.values());
   }
 }

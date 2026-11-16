@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
@@ -6,18 +6,27 @@ import { createRegistry, MemoryStorage } from "@earendil-works/pi-durable";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
 import type { Storage, ToolRegistration } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
-import { McpTools, parseMcpServers } from "../src/mcp.ts";
-import type { McpServerSpec, McpTimings } from "../src/mcp.ts";
+import { McpTools } from "../src/mcp.ts";
+import type { McpServerSpec, McpTimings, McpTransportFactory } from "../src/mcp.ts";
 import { FakeMcp } from "./fake-mcp.ts";
 
-const SPEC: McpServerSpec = { name: "demo", url: "https://mcp.example.com/mcp" };
+const SPEC: McpServerSpec = {
+  name: "demo",
+  url: "https://mcp.example.com/mcp",
+  transport: "streamable-http",
+  enabled: true,
+  readOnly: true,
+  timeoutMs: 300,
+  maxOutputBytes: 24_576,
+  onecliSecret: null,
+};
 const TIMINGS: McpTimings = {
   discoveryTimeoutMs: 200,
   retryMinMs: 10,
   retryMaxMs: 40,
-  callTimeoutMs: 300,
 };
 const ECHO = {
   name: "echo",
@@ -33,60 +42,17 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
   throw new Error(`timed out waiting for ${what}`);
 }
 
-describe("PI_MCP_SERVERS", () => {
-  it("is off when unset or empty", () => {
-    expect(parseMcpServers(undefined)).toEqual([]);
-    expect(parseMcpServers("")).toEqual([]);
-    expect(parseMcpServers("[]")).toEqual([]);
-  });
-
-  it("parses name and https url", () => {
-    expect(parseMcpServers(JSON.stringify([SPEC]))).toEqual([SPEC]);
-  });
-
-  it.each([
-    ["not json", "{"],
-    ["not an array", "{}"],
-    ["http url", JSON.stringify([{ name: "a", url: "http://mcp.example.com/mcp" }])],
-    ["no url", JSON.stringify([{ name: "a" }])],
-    ["url with credentials", JSON.stringify([{ name: "a", url: "https://u:p@mcp.example.com/" }])],
-    ["uppercase name", JSON.stringify([{ name: "Deep", url: SPEC.url }])],
-    ["name with underscore", JSON.stringify([{ name: "a_b", url: SPEC.url }])],
-    ["name over 32 characters", JSON.stringify([{ name: "a".repeat(33), url: SPEC.url }])],
-    [
-      "names sharing a namespace",
-      JSON.stringify([
-        { name: "a-b", url: SPEC.url },
-        { name: "a-b", url: SPEC.url },
-      ]),
-    ],
-  ])("rejects %s, so a typo never silently turns the feature off", (_label, raw) => {
-    expect(() => parseMcpServers(raw)).toThrow(/PI_MCP_SERVERS/);
-  });
-
-  it("needs the gateway token: MCP calls never leave the cluster any other way", () => {
-    const env = {
-      PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
-      PI_API_TOKENS: "alice:0123456789abcdef0123",
-      PI_MCP_SERVERS: JSON.stringify([SPEC]),
-    };
-    expect(() => loadConfig(env)).toThrow(/ONECLI_AGENT_TOKEN is required for PI_MCP_SERVERS/);
-    expect(
-      loadConfig({ ...env, ONECLI_AGENT_TOKEN: "aoc_0123456789abcdef0123456789abcdef" }).mcpServers,
-    ).toEqual([SPEC]);
-  });
-});
-
 describe("McpTools", () => {
   const started: McpTools[] = [];
   afterEach(async () => {
     for (const tools of started.splice(0)) await tools.close();
   });
 
-  function open(fake: FakeMcp, timings: McpTimings = TIMINGS) {
+  function open(fake: FakeMcp, spec: Partial<McpServerSpec> = {}, timings: McpTimings = TIMINGS) {
     const registry = createRegistry();
-    const tools = new McpTools([SPEC], registry, fake.transport, timings);
+    const tools = new McpTools(registry, fake.transport, timings);
     started.push(tools);
+    tools.apply([{ ...SPEC, ...spec }]);
     tools.start();
     return { registry, tools };
   }
@@ -121,7 +87,7 @@ describe("McpTools", () => {
       replay: "unsafe",
       parameters: ECHO.inputSchema,
     });
-    expect(echo?.outputLimits?.maxBytes).toBeGreaterThan(0);
+    expect(echo?.outputLimits?.maxBytes).toBe(24_576);
     // A schema without `type` or `properties` is normalised: providers reject it otherwise.
     expect(bare?.parameters).toEqual({ type: "object", properties: {} });
     expect(bare?.name).toBe("mcp__demo__no_schema");
@@ -171,7 +137,7 @@ describe("McpTools", () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];
     fake.onCall = () => new Promise(() => undefined);
-    const { tools } = open(fake, { ...TIMINGS, callTimeoutMs: 60 });
+    const { tools } = open(fake, { timeoutMs: 60 });
     await expect(run(await ready(tools), {})).rejects.toThrow(/timed out/i);
   });
 
@@ -179,7 +145,7 @@ describe("McpTools", () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];
     fake.onCall = () => new Promise(() => undefined);
-    const { tools } = open(fake, { ...TIMINGS, callTimeoutMs: 10_000 });
+    const { tools } = open(fake, { timeoutMs: 10_000 });
     const tool = await ready(tools);
     const controller = new AbortController();
     const running = run(tool, {}, controller.signal);
@@ -259,11 +225,217 @@ describe("McpTools", () => {
     ).toEqual(["mcp__demo__echo"]);
   });
 
-  it("does nothing without servers", () => {
+  it("does nothing for an empty catalog or one with only disabled servers", () => {
     const registry = createRegistry();
-    const tools = new McpTools([], registry, new FakeMcp().transport);
+    const tools = new McpTools(registry, new FakeMcp().transport, TIMINGS);
     tools.start();
+    tools.apply([]);
+    tools.apply([{ ...SPEC, enabled: false }]);
     expect(registry.snapshot().installed()).toEqual([]);
+  });
+});
+
+/** A catalog the test edits: what `McpCatalogCache` is to the host (current catalog plus change notifications). */
+class FakeCatalog {
+  servers: McpServerSpec[] = [];
+  readonly #listeners = new Set<(servers: readonly McpServerSpec[]) => void>();
+  get(): readonly McpServerSpec[] {
+    return this.servers;
+  }
+  subscribe(listener: (servers: readonly McpServerSpec[]) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+  set(servers: McpServerSpec[]): void {
+    this.servers = servers;
+    for (const listener of this.#listeners) listener(servers);
+  }
+}
+
+function logged(
+  write: MockInstance<typeof process.stdout.write>,
+  event: string,
+): Record<string, unknown>[] {
+  return write.mock.calls
+    .map(([line]) => {
+      try {
+        return JSON.parse(String(line)) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    })
+    .filter((entry) => entry.event === event);
+}
+
+describe("McpTools follows the catalog", () => {
+  const started: McpTools[] = [];
+  let write: MockInstance<typeof process.stdout.write>;
+  beforeEach(() => {
+    write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  });
+  afterEach(async () => {
+    for (const tools of started.splice(0)) await tools.close();
+    vi.restoreAllMocks();
+  });
+
+  function open(transport: McpTransportFactory) {
+    const registry = createRegistry();
+    const tools = new McpTools(registry, transport, TIMINGS);
+    started.push(tools);
+    tools.start();
+    return { registry, tools };
+  }
+  const installed = (registry: ReturnType<typeof createRegistry>) =>
+    registry
+      .snapshot()
+      .installed()
+      .map((e) => e.name);
+  const toolNames = (tools: McpTools) =>
+    tools.servers.flatMap((s) => s.extension.tools?.map((t) => t.name) ?? []);
+
+  it("installs a server added at runtime, and uninstalls it when it is removed or disabled", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const { registry, tools } = open(fake.transport);
+    expect(installed(registry)).toEqual([]);
+    tools.apply([SPEC]);
+    expect(installed(registry)).toEqual(["mcp-demo"]);
+    await until(() => toolNames(tools).length > 0, "discovery");
+    expect(
+      registry
+        .snapshot()
+        .tools()
+        .map((t) => t.tool.name),
+    ).toEqual(["mcp__demo__echo"]);
+
+    tools.apply([{ ...SPEC, enabled: false }]);
+    expect(installed(registry)).toEqual([]);
+    await until(() => fake.open.size === 0, "the client to close");
+
+    tools.apply([SPEC]);
+    expect(installed(registry)).toEqual(["mcp-demo"]);
+    await until(() => toolNames(tools).length > 0, "discovery again");
+    tools.apply([]);
+    expect(installed(registry)).toEqual([]);
+  });
+
+  it("keeps a server whose row did not change: same client, no new connection", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const { tools } = open(fake.transport);
+    tools.apply([SPEC]);
+    await until(() => toolNames(tools).length > 0, "discovery");
+    const [before] = tools.servers;
+    const connects = fake.connects;
+    const other: McpServerSpec = { ...SPEC, name: "other" };
+    tools.apply([SPEC, other]);
+    expect(tools.servers[0]).toBe(before);
+    expect(fake.connects).toBe(connects + 1); // only the new server connected
+  });
+
+  it("replaces a server whose url changed with a new client, and closes the old one", async () => {
+    const one = new FakeMcp();
+    const two = new FakeMcp();
+    one.tools = [ECHO];
+    two.tools = [ECHO];
+    const { tools } = open((spec) => (spec.url.includes("one") ? one : two).transport());
+    tools.apply([{ ...SPEC, url: "https://one.example.com/mcp" }]);
+    await until(() => toolNames(tools).length > 0, "discovery");
+    expect(one.open.size).toBe(1);
+    tools.apply([{ ...SPEC, url: "https://two.example.com/mcp" }]);
+    await until(() => two.open.size === 1 && one.open.size === 0, "the switch");
+    await until(() => toolNames(tools).length > 0, "discovery on the new url");
+    expect(tools.servers).toHaveLength(1);
+    expect(tools.servers[0]?.spec.url).toBe("https://two.example.com/mcp");
+  });
+
+  it("lets a call that already runs finish while its server is removed, then closes the client", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    let finish: (() => void) | undefined;
+    fake.onCall = () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ content: [{ type: "text", text: "late answer" }] });
+      });
+    const { registry, tools } = open(fake.transport);
+    tools.apply([SPEC]);
+    await until(() => toolNames(tools).length > 0, "discovery");
+    const tool = tools.servers[0]?.extension.tools?.[0];
+    if (tool === undefined) throw new Error("no tool");
+    const running = tool.execute({}, {} as never, context);
+    await until(() => fake.calls.length === 1, "the call to arrive");
+
+    tools.apply([]);
+    expect(installed(registry)).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The call is still on the wire: the client stays open until it settles.
+    expect(fake.open.size).toBe(1);
+    // A call that starts after the removal (a conversation that still held the tool) fails at once.
+    await expect(tool.execute({}, {} as never, context)).rejects.toThrow(/no longer available/);
+    expect(fake.calls).toHaveLength(1);
+
+    finish?.();
+    expect(await running).toMatchObject({ output: [{ type: "text", text: "late answer" }] });
+    await until(() => fake.open.size === 0, "the client to close after the call");
+  });
+
+  it("logs mcp-schema-changed when a tool's input schema differs from the version it replaces, and only then", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [
+      ECHO,
+      {
+        name: "same",
+        inputSchema: { type: "object", properties: { a: { type: "string" }, b: {} } },
+      },
+    ];
+    const { tools } = open(fake.transport);
+    tools.apply([SPEC]);
+    await until(() => toolNames(tools).length === 2, "discovery");
+    expect(logged(write, "mcp-schema-changed")).toEqual([]);
+
+    // `same` only reorders its keys; `echo` gains a property.
+    fake.tools = [
+      {
+        ...ECHO,
+        inputSchema: {
+          type: "object",
+          properties: { text: { type: "string" }, n: { type: "number" } },
+        },
+      },
+      {
+        name: "same",
+        inputSchema: { properties: { b: {}, a: { type: "string" } }, type: "object" },
+      },
+    ];
+    tools.apply([{ ...SPEC, timeoutMs: 400 }]);
+    await until(() => logged(write, "mcp-tools-ready").length === 2, "the second discovery");
+    expect(logged(write, "mcp-schema-changed")).toMatchObject([{ server: "demo", tool: "echo" }]);
+  });
+
+  it("removing a server that never connected stops its retries", async () => {
+    const fake = new FakeMcp();
+    fake.down = true;
+    const { tools } = open(fake.transport);
+    tools.apply([SPEC]);
+    await until(() => fake.connects >= 2, "retries");
+    tools.apply([]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const connects = fake.connects;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(fake.connects).toBe(connects);
+  });
+
+  it("applies catalogs before start without connecting, and connects at start", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const registry = createRegistry();
+    const tools = new McpTools(registry, fake.transport, TIMINGS);
+    started.push(tools);
+    tools.apply([SPEC]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fake.connects).toBe(0);
+    tools.start();
+    await until(() => toolNames(tools).length > 0, "discovery");
   });
 });
 
@@ -279,49 +451,41 @@ describe("Host with MCP", () => {
     vi.restoreAllMocks();
   });
 
-  async function configWith(servers: McpServerSpec[]) {
-    const dir = await mkdtemp(join(tmpdir(), "pi-mcp-"));
-    dirs.push(dir);
-    const caFile = join(dir, "ca.pem");
-    await writeFile(caFile, "not-used");
-    return {
-      dir,
-      config: loadConfig({
-        PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
-        PI_API_TOKENS: "alice:0123456789abcdef0123",
-        ...(servers.length === 0
-          ? {}
-          : {
-              PI_MCP_SERVERS: JSON.stringify(servers),
-              ONECLI_AGENT_TOKEN: "aoc_0123456789abcdef0123456789abcdef",
-              PI_ONECLI_CA_FILE: caFile,
-            }),
-      }),
-    };
+  /** No MCP in the environment: the catalog is the only source of servers. */
+  function config() {
+    return loadConfig({
+      PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
+      PI_API_TOKENS: "alice:0123456789abcdef0123",
+    });
   }
 
   async function openHost(
-    config: Awaited<ReturnType<typeof configWith>>["config"],
     fake: FakeMcp,
+    catalog: FakeCatalog | undefined,
     storage: Storage = new MemoryStorage(),
     execInFlight = vi.fn(() => Promise.resolve()),
   ): Promise<Host> {
     const host = await Host.open(
       storage,
-      config,
+      config(),
       (error) => {
         throw error;
       },
       () => Promise.resolve("session"),
       { execInFlight },
       [],
-      { mcpTransport: fake.transport, mcpTimings: TIMINGS },
+      {
+        ...(catalog === undefined ? {} : { catalog }),
+        mcpTransport: fake.transport,
+        mcpTimings: TIMINGS,
+      },
     );
     hosts.push(host);
     return host;
   }
 
   const MODEL = { provider: "scripted", model: "scripted-1" } as const;
+  const CODING = ["read", "write", "edit", "bash"];
 
   async function runScript(host: Host, id: number, steps: object[], requestId: string) {
     await host.submitInput(id, {
@@ -333,27 +497,26 @@ describe("Host with MCP", () => {
     return (await host.status(id))?.results ?? [];
   }
 
-  it("flag off: no tool_search, no MCP extension, the offered tools are exactly the coding tools", async () => {
-    const { config } = await configWith([]);
+  it("an empty catalog (or none): no tool_search, no MCP extension, the offered tools are exactly the coding tools", async () => {
     const fake = new FakeMcp();
-    const host = await openHost(config, fake);
-    const id = await host.createConversation(MODEL);
-    expect(await host.toolsOf(id)).toEqual({
-      offered: ["read", "write", "edit", "bash"],
-      deferred: [],
-    });
+    for (const catalog of [undefined, new FakeCatalog()]) {
+      const host = await openHost(fake, catalog);
+      const id = await host.createConversation(MODEL);
+      expect(await host.toolsOf(id)).toEqual({ offered: CODING, deferred: [] });
+    }
     expect(fake.connects).toBe(0);
   });
 
-  it("flag on: a server that is down does not block open; the call settles tool_unavailable; recovery installs the tools", async () => {
-    const { config } = await configWith([SPEC]);
+  it("a server that is down does not block open; the call settles tool_unavailable; recovery installs the tools", async () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];
     fake.onCall = (_n, args) =>
       Promise.resolve({ content: [{ type: "text", text: `echo ${String(args.text)}` }] });
     fake.down = true;
+    const catalog = new FakeCatalog();
+    catalog.servers = [SPEC];
     const execInFlight = vi.fn(() => Promise.resolve());
-    const host = await openHost(config, fake, new MemoryStorage(), execInFlight);
+    const host = await openHost(fake, catalog, new MemoryStorage(), execInFlight);
     const id = await host.createConversation(MODEL);
     const before = await host.toolsOf(id);
     expect(before.offered).toContain("tool_search");
@@ -389,28 +552,95 @@ describe("Host with MCP", () => {
     expect(execInFlight).not.toHaveBeenCalled();
   });
 
-  it("flag on: a conversation created before the flag does not gain MCP; a new one does", async () => {
+  it("a server added at runtime reaches only conversations created after it; none restarts", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const catalog = new FakeCatalog();
+    const host = await openHost(fake, catalog);
+    const before = await host.createConversation(MODEL);
+    catalog.set([SPEC]);
+    const after = await host.createConversation(MODEL);
+    await until(async () => (await host.toolsOf(after)).deferred.length > 0, "tools");
+    expect((await host.toolsOf(after)).offered).toContain("tool_search");
+    expect(await host.toolsOf(before)).toEqual({ offered: CODING, deferred: [] });
+  });
+
+  it("disabling or removing a server makes the next call settle tool_unavailable in a conversation that had it, without a restart", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    fake.onCall = () => Promise.resolve({ content: [{ type: "text", text: "pong" }] });
+    const catalog = new FakeCatalog();
+    catalog.servers = [SPEC];
+    const host = await openHost(fake, catalog);
+    const id = await host.createConversation(MODEL);
+    await until(async () => (await host.toolsOf(id)).deferred.includes("mcp__demo__echo"), "tools");
+    const step = (requestId: string) =>
+      runScript(
+        host,
+        id,
+        [
+          { tool: "tool_search", args: { query: "echo" } },
+          { tool: "mcp__demo__echo", args: {} },
+        ],
+        requestId,
+      );
+    expect((await step("on")).at(-1)).toEqual({ isError: false, text: "pong" });
+
+    catalog.set([{ ...SPEC, enabled: false }]);
+    const off = (await step("off")).at(-1);
+    expect(off?.isError).toBe(true);
+    expect(off?.text).toMatch(/not available/);
+    expect(fake.calls).toHaveLength(1);
+
+    // Back on: the stored extension name selects the new installation of the same name.
+    catalog.set([SPEC]);
+    await until(async () => {
+      const { offered, deferred } = await host.toolsOf(id);
+      return [...offered, ...deferred].includes("mcp__demo__echo");
+    }, "tools");
+    expect((await step("again")).at(-1)).toEqual({ isError: false, text: "pong" });
+  });
+
+  it("a conversation created before any MCP server existed never gains MCP, across a restart with servers", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-mcp-store-"));
     dirs.push(dir);
     const off = await openHost(
-      (await configWith([])).config,
       new FakeMcp(),
+      new FakeCatalog(),
       await openNodeJsonlStorage(dir, context),
     );
     const old = await off.createConversation(MODEL);
     await off.close();
     const fake = new FakeMcp();
     fake.tools = [ECHO];
-    const on = await openHost(
-      (await configWith([SPEC])).config,
-      fake,
-      await openNodeJsonlStorage(dir, context),
-    );
+    const catalog = new FakeCatalog();
+    catalog.servers = [SPEC];
+    const on = await openHost(fake, catalog, await openNodeJsonlStorage(dir, context));
     await until(
       async () => (await on.toolsOf(await on.createConversation(MODEL))).deferred.length > 0,
       "tools",
     );
     expect((await on.toolsOf(old)).offered).not.toContain("tool_search");
     expect((await on.toolsOf(old)).deferred).toEqual([]);
+  });
+
+  it("starts without the gateway token when the catalog names a server: its tools stay unavailable", async () => {
+    // No mcpTransport seam: the real gateway transport fails every request without ONECLI_AGENT_TOKEN.
+    const catalog = new FakeCatalog();
+    catalog.servers = [SPEC];
+    const host = await Host.open(
+      new MemoryStorage(),
+      config(),
+      (error) => {
+        throw error;
+      },
+      () => Promise.resolve("session"),
+      {},
+      [],
+      { catalog, mcpTimings: TIMINGS },
+    );
+    hosts.push(host);
+    const id = await host.createConversation(MODEL);
+    expect((await host.toolsOf(id)).deferred).toEqual([]);
   });
 });

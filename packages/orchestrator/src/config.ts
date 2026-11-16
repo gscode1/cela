@@ -1,8 +1,6 @@
 import { loadModelPolicy } from "@pi-durable-k8s/session-core";
 import type { ModelPolicy } from "@pi-durable-k8s/session-core";
 import { GITHUB_APP_DIR } from "./github-app.js";
-import { parseMcpServers } from "./mcp.js";
-import type { McpServerSpec } from "./mcp.js";
 import { parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
 
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
@@ -50,12 +48,7 @@ export interface OrchestratorConfig {
     /** Most actions per run. */
     maxActions: number;
   };
-  /**
-   * Remote MCP servers (`PI_MCP_SERVERS`); empty means the feature is off and nothing about the tools changes. Their
-   * calls go through the same gateway as the model calls, so it needs `onecli.token`.
-   */
-  mcpServers: McpServerSpec[];
-  /** Where model calls go. `token` is set only when some allowed provider needs the gateway. */
+  /** Where model and MCP calls go. `token` is set when the environment has one; remote model providers need it. */
   onecli: {
     gateway: string;
     caFile: string;
@@ -141,12 +134,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
   if (remote !== undefined && !token) {
     throw new Error(`ONECLI_AGENT_TOKEN is required for model provider ${remote.provider}`);
   }
-  const mcpServers = parseMcpServers(env.PI_MCP_SERVERS);
-  if (mcpServers.length > 0 && !token) {
-    throw new Error(
-      "ONECLI_AGENT_TOKEN is required for PI_MCP_SERVERS: MCP calls go through the gateway",
-    );
-  }
   return {
     databaseUrl,
     schema: env.PI_DURABLE_SCHEMA ?? "public",
@@ -165,7 +152,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
       graceMs: seconds(env, "PI_SWEEP_GRACE_SECONDS", 600),
       maxActions,
     },
-    mcpServers,
     onecli: {
       gateway: env.PI_ONECLI_GATEWAY ?? "http://onecli.onecli:10255",
       caFile: env.PI_ONECLI_CA_FILE ?? "/etc/onecli/ca.pem",

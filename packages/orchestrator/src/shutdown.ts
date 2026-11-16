@@ -4,6 +4,7 @@ import { log } from "./log.js";
 export interface Running {
   inbox?: { stop(): Promise<void> };
   settings?: { stop(): Promise<void> };
+  mcpCatalog?: { stop(): Promise<void> };
   service?: { stop(): void };
   sweeper?: { stop(): void };
   /** The Harness host, once opened. */
@@ -34,6 +35,7 @@ export function createShutdown(deps: ShutdownDeps): (signal: string) => void {
       running.sweeper?.stop();
       await running.inbox?.stop();
       await running.settings?.stop();
+      await running.mcpCatalog?.stop();
       const host = running.host ?? (await running.opening?.catch(() => undefined));
       await host?.close();
       server.closeAllConnections();

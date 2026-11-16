@@ -152,7 +152,9 @@ describe("the catalog in the database", () => {
     if (bad !== undefined) bad.url = "http://plain.example.com/";
     const catalog = await readMcpServers(pool);
     expect(catalog.servers.map((s) => s.server.name)).toEqual(["good"]);
-    expect(catalog.invalid).toEqual([{ name: "bad", message: expect.stringContaining("https") }]);
+    expect(catalog.invalid).toEqual([
+      { name: "bad", message: expect.stringContaining("https") as string },
+    ]);
     // A PUT repairs it: the stored row cannot be laid under the body, so the body must be complete.
     expect(await putMcpServer(pool, "bad", { enabled: false }, "alice")).toMatch(/url is required/);
     expect(await putMcpServer(pool, "bad", BASE, "alice")).toMatchObject({ created: false });
