@@ -90,18 +90,29 @@ cleanup() {
     [[ -n $id ]] || continue
     api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true
   done <"$sessions_file"
-  # The delete is asynchronous (the orchestrator removes the sandbox first): wait until every session is `deleted`
-  # (bounded), then drop our rows. Dropping them earlier would orphan a claim the delete had not reached yet.
-  local list deadline left=1
+  # The delete is asynchronous (the orchestrator removes the sandbox first): wait (bounded) until every session is
+  # `deleted`, then drop the rows of the sessions that got there. Dropping a row earlier would orphan a claim the
+  # delete had not reached yet, so the others are reported and kept. A failed query is not "nothing left": it is
+  # retried until the deadline.
+  local list deadline pending status
   list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, -)
   deadline=$(($(now) + 180))
-  while [[ -n $list && $left -ne 0 && $(now) -lt $deadline ]]; do
-    left=$(sql "select count(*) from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null | tr -d ' ' || echo 1)
-    [[ $left == 0 ]] || sleep 3
+  while [[ -n $list && $(now) -lt $deadline ]]; do
+    if pending=$(sql "select id from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null) && [[ -z $pending ]]; then
+      break
+    fi
+    sleep 3
   done
   while read -r id; do
     [[ -n $id ]] || continue
-    sql "delete from inbox.events where session_id='$id'; delete from inbox.sessions where id='$id'" >/dev/null 2>&1 || true
+    if ! status=$(sql "select status from inbox.sessions where id='$id'" 2>/dev/null | tr -d ' '; exit "${PIPESTATUS[0]}"); then
+      note "cleanup: could not read the status of session $id; keeping its rows"
+    elif [[ -z $status || $status == deleted ]]; then
+      sql "delete from inbox.events where session_id='$id'; delete from inbox.sessions where id='$id'" >/dev/null 2>&1 ||
+        note "cleanup: could not delete the rows of session $id"
+    else
+      note "cleanup: session $id is still '$status' after the wait; keeping its rows (its claim may remain)"
+    fi
   done <"$sessions_file"
   rm -rf "$work"
 }

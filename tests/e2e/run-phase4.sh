@@ -53,7 +53,7 @@ undeleted_sessions() { # prints the ids of recorded sessions whose status is not
   pg -c "select id from inbox.sessions where status <> 'deleted' and id in ($list)"
 }
 cleanup() {
-  local pid owner id conv claim deadline
+  local pid owner id conv claim deadline pending
   for pid in ${bg_pids[@]+"${bg_pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
   k scale deployment pi-orchestrator --replicas=1 >/dev/null 2>&1 || true
   deadline=$(($(now) + 120))
@@ -63,10 +63,14 @@ cleanup() {
     api "$owner" DELETE "/sessions/$id" >/dev/null 2>&1 || true
   done <"$sessions_file"
   deadline=$(($(now) + 240))
-  while [[ -n $(undeleted_sessions 2>/dev/null) && $(now) -lt $deadline ]]; do sleep 3; done
+  # A failed query is not "nothing left": retry it until the deadline, and treat it as "not deleted" below.
+  while [[ $(now) -lt $deadline ]]; do
+    if pending=$(undeleted_sessions 2>/dev/null) && [[ -z $pending ]]; then break; fi
+    sleep 3
+  done
   while read -r owner id; do
     [[ -n "$id" ]] || continue
-    if [[ -n $(undeleted_sessions 2>/dev/null | grep -x "$id" || true) ]]; then
+    if ! pending=$(undeleted_sessions 2>/dev/null) || grep -qx "$id" <<<"$pending"; then
       conv=$(pg -c "select conversation_id from inbox.sessions where id='$id'" 2>/dev/null || true)
       if [[ -n "$conv" ]]; then
         claim=pi-conv-$conv
