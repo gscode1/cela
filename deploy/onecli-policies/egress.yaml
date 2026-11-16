@@ -64,6 +64,8 @@ spec:
         - matchName: registry.npmjs.org
         - matchName: pypi.org
         - matchName: files.pythonhosted.org
+        # Remote MCP servers called by the orchestrator (docs/decisions/0007-native-remote-mcp.md).
+        - matchName: mcp.deepwiki.com
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }

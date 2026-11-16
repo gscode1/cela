@@ -23,4 +23,7 @@ Prerequisites and order (details in `docs/network-policy.md`):
 3. Put the OneCLI pod in policy audit mode first, read `hubble observe --verdict AUDIT`, then enforce. OneCLI may
    call hosts not on the list (UNVERIFIED); add them to `egress.yaml` and to the host rules (`docs/onecli-host-rules.md`).
 
+Adding a host (for example an MCP server, `mcp.deepwiki.com`): change `egress.yaml` in the Argo repo first, then this
+copy, then `deploy/onecli-host-rules.sh` (the three lists stay identical).
+
 Rollback: delete the two policies in the Argo repo (a CiliumNetworkPolicy deletion restores allow-all for the pod).

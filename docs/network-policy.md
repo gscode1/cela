@@ -41,7 +41,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | ingest, e2e driver | orchestrator | 8081 | only these two may call it | S orchestrator-allow-ingress |
 | orchestrator | Postgres (-rw) | 5432 | durable state, advisory lock | S orchestrator-allow-egress |
 | orchestrator | sandbox pods | 8080, 9090 | sandboxd REST and gRPC | S orchestrator-allow-egress |
-| orchestrator | OneCLI | 10255, 10256 | model calls through the gateway; agent and secret management | S orchestrator-allow-egress |
+| orchestrator | OneCLI | 10255, 10256 | model calls and remote MCP calls through the gateway; agent and secret management | S orchestrator-allow-egress |
 | orchestrator, e2e driver, Postgres | kube-apiserver | 443, 6443 | claims, pods, PVCs; suites; CNPG instance manager | C orchestrator/e2e-driver/postgres-egress-kube-apiserver |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
