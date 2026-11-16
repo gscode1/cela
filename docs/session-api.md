@@ -137,7 +137,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   sets `status: "failed"` and `failure` to a fixed message such as "model credentials were rejected (401/403): the
   OneCLI agent token or its grant for this provider is missing or revoked". From then on `POST .../events` returns
   `409 session is failed`, queued events end `failed`, and nothing more is sent to the provider. The transcript and
-  stream stay readable, and `DELETE` works. Other model errors (rate limits, network) do not fail the session.
+  stream stay readable, and `DELETE` works. The status commits before the conversation is aborted, so the abort is idempotent and repeated: by a retried failure, by any input that finds the session `failed`, and at orchestrator start for sessions failed in the last 24 h. Other model errors (rate limits, network) do not fail the session.
 
 ## Sessions and sandboxes
 
