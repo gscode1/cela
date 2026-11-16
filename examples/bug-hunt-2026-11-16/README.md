@@ -117,6 +117,33 @@ Notes on the results:
   session stuck in `deleting` with its sandbox, PVC and OneCLI agent alive, and the orphan sweep treats `deleting` as
   live.
 
+## Fixes
+
+All 12 confirmed findings were fixed the same day. Each fix was written by an implementation agent with a unit test
+that fails without it, then run on the lab cluster (phase 4: 15 e2e tests, phase 4c: repo sessions) before merging.
+
+| PR                                                       | Fixes                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#21](https://github.com/gscode1/pi-durable-k8s/pull/21) | Deletes retry with backoff until done, and a repeated `DELETE` re-queues a failed one (the high one). The server's delete key can no longer be taken by a client id. Event admission is one conditional insert. No session-row update inside the batch transaction. A failed session's abort is retried. |
+| [#15](https://github.com/gscode1/pi-durable-k8s/pull/15) | Repo clones go through the tracked sandbox env. A failed pod recycle is retried before the next call, never skipped. A closed connection gives up its start-gate turn. SSE backpressure removes its listeners.                                                                                           |
+| [#17](https://github.com/gscode1/pi-durable-k8s/pull/17) | `push-code.sh` always scales back and swaps code only after a good extract. Secret scripts pass values through private files, not argv. Host-rules update creates allow rules before touching the block rule and restores it on failure. Test cleanup only drops rows of deleted sessions.               |
+
+Checked live after #21: a message using the id `delete:<session>` followed by `DELETE` reached `deleted` in 3 s. A
+message and a delete sent back to back finished in 3 s with no statement timeout. An event posted after the delete got
+`410`.
+
+The 6 plausible findings are not fixed: their triggers need hand-made resources, a parent process that stalls for a
+long time, or more than 24 h of unsettled runs.
+
+Found along the way, not by the hunt:
+
+- [#4](https://github.com/gscode1/pi-durable-k8s/pull/4): the ingest crash loop described above.
+- [#6](https://github.com/gscode1/pi-durable-k8s/pull/6): the public-release cleanup had broken the e2e entry point for
+  an empty `KUBE_CONTEXT`.
+- [#22](https://github.com/gscode1/pi-durable-k8s/pull/22): two flaky unit tests, 5 failures in 36 full-suite runs
+  before, 0 in 24 after. One was a test deleting a directory while a Host still wrote to it. The other was a real
+  nondeterministic error message.
+
 ## Resources
 
 From [raw/resources.log](raw/resources.log), sampled every 20 s:
