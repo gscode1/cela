@@ -96,9 +96,10 @@ export function chooseModel(
     model,
     ...(policy.reasoning === undefined ? {} : { reasoning: policy.reasoning }),
   };
-  const key = modelKey(requested);
-  if (!policy.allowed.some((choice) => modelKey(choice) === key)) {
-    return `model ${key.slice(0, 200)} is not allowed`;
+  // Compare the pair, not the joined key: `a/b` + `c` and `a` + `b/c` join to the same string but are
+  // different pairs (a provider id never contains a slash, a model id may).
+  if (!policy.allowed.some((choice) => choice.provider === provider && choice.model === model)) {
+    return `model ${modelKey(requested).slice(0, 200)} is not allowed`;
   }
   return requested;
 }
