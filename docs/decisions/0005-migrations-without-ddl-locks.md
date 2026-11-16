@@ -26,7 +26,8 @@ On 2026-11-16 ingest pods crash-looped while repo sessions were starting:
   DDL again. Old ingest/orchestrator images keep running their old unconditional DDL until they are replaced.
 - Ingest listens first and migrates in the background. `/healthz` (liveness) answers from process start; `/readyz`
   and the API answer `503` until migrations succeeded, then keep their meaning ("the database answers"). The
-  orchestrator already listened before migrating and has no liveness probe, so it is unchanged.
+  orchestrator already listened before migrating, so its code is unchanged. It gets the same liveness probe on
+  `/healthz` (period 10 s, timeout 3 s, six failures), which answers without touching Postgres.
 
 ## The long drain transaction (assessed, not changed)
 

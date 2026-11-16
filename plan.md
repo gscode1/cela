@@ -149,7 +149,7 @@ Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQD
 - **Inputs:** validate `{repo, branch}` (`owner/name` and ref regex, https only, argv with `--`). Clone into a temp dir, then rename.
 - **Ops:**
   - Retention and caps on tool output. No backups for `pi-pg` on c2 (dev only); set up backups when the DB moves to the production cluster.
-  - A digest-pinned orchestrator image with a liveness probe.
+  - A digest-pinned orchestrator image (the liveness probe is in `deploy/orchestrator.yaml`).
   - Sandbox sizing per session, with ephemeral-storage limits.
   - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
 - **Capacity:** one Node bridge per session (about 12 s start, serialized) limits recovery time and memory. Move to an in-process broker before real use.
