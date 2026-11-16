@@ -44,6 +44,10 @@ run_id=${RUN_ID:-$(openssl rand -hex 3)}
 ns=pi-e2e-$run_id
 # The prefix is the whole safety net: nothing below may ever run against pi-durable-poc or any other namespace.
 [[ $ns =~ ^pi-e2e-[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || { echo "bad RUN_ID '$run_id': the namespace must be pi-e2e-<lowercase letters, digits, dashes>" >&2; exit 64; }
+# This run's OneCLI name prefix. The OneCLI workspace is shared with pi-durable-poc and every other run, and each
+# orchestrator's orphan sweep revokes the agents it does not know, so every stack needs its own (ADR 0013). The run
+# id is lowercase letters, digits and dashes, so the prefix passes the orchestrator's validation.
+onecli_prefix=pi-e2e-$run_id-
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 log() { printf '\n## %s\n' "$*"; }
@@ -142,6 +146,15 @@ relpath() { python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(s
 mkdir -p "$work/stack" "$work/cilium"
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$here/deploy" "$work/stack")" >"$work/stack/kustomization.yaml"
+# The orchestrator's OneCLI name prefix, next to the namespace: only this overlay knows the run id.
+cat >>"$work/stack/kustomization.yaml" <<EOF
+patches:
+  - target: { kind: Deployment, name: pi-orchestrator }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_ONECLI_NAME_PREFIX, value: "$onecli_prefix" }
+EOF
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$root/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
 
@@ -245,7 +258,7 @@ run_phase() { # phase1|phase3|phase4
   job=e2e-driver-$name-$(date +%s)
   keep_job=0
   log "$name: Job $job"
-  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" "$here/job.yaml.tpl" | k create -f - >/dev/null
+  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" -e "s|__ONECLI_NAME_PREFIX__|$onecli_prefix|" "$here/job.yaml.tpl" | k create -f - >/dev/null
 
   # Live view only. Best effort: if this stream dies the run is unaffected; the final logs fill the gap.
   (

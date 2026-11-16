@@ -23,6 +23,9 @@ set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
+# The OneCLI name prefix of this run's orchestrator (PI_ONECLI_NAME_PREFIX, set by run.sh in the Job and in the overlay).
+# The OneCLI workspace is shared with other stacks, so the suite finds only its own stack's agents and secrets by it.
+onecli_prefix=${PI_ONECLI_NAME_PREFIX:?PI_ONECLI_NAME_PREFIX is the OneCLI name prefix of the run; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 sessions_file=$work/sessions
@@ -164,8 +167,8 @@ t_no_repo() {
   # answer_has, not stream_has: the final answer text is also in the user's own message.
   assert_eq "the session answers" found "$(answer_has alice "$id" plain-done 90)"
   assert_eq "no repo columns, no OneCLI ids, no ready marker" "||" "$(sql "select coalesce(repo,'')||'|'||coalesce(onecli_agent_id,'')||'|'||coalesce(workspace_ready_at::text,'') from inbox.sessions where id='$id'")"
-  assert_eq "no OneCLI agent exists for it" 0 "$(onecli_count /v1/agents --arg n "pi-session-$id" '[.. | objects | select(.identifier? == $n)] | length')"
-  assert_eq "no OneCLI secret exists for it" 0 "$(onecli_count /v1/secrets --arg n "pi-session-$id" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
+  assert_eq "no OneCLI agent exists for it" 0 "$(onecli_count /v1/agents --arg n "${onecli_prefix}$id" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "no OneCLI secret exists for it" 0 "$(onecli_count /v1/secrets --arg n "${onecli_prefix}$id" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
   out=$(api alice POST /sessions '{"repo":"https://github.com/a/b"}')
   assert_jq "a URL is refused" "$out" '.status==400'
   out=$(api alice POST /sessions '{"repo":"a/b","branch":"--upload-pack=x"}')
@@ -208,8 +211,8 @@ t_clone_push() {
   }
   grants=$(onecli GET "/v1/agents/$agent_id/grants")
   note "grants shape (ids only): $(jq -c '[.. | objects | keys] | add | unique' <<<"$grants" 2>/dev/null || echo unreadable)"
-  names=$(onecli GET /v1/secrets | jq -r --arg n "pi-session-$sid" '[.. | objects | select((.name? // "") | startswith($n)) | .name] | sort | join(",")')
-  assert_eq "exactly this session's two GitHub secrets exist" "pi-session-$sid-api,pi-session-$sid-git" "$names"
+  names=$(onecli GET /v1/secrets | jq -r --arg n "${onecli_prefix}$sid" '[.. | objects | select((.name? // "") | startswith($n)) | .name] | sort | join(",")')
+  assert_eq "exactly this session's two GitHub secrets exist" "${onecli_prefix}$sid-api,${onecli_prefix}$sid-git" "$names"
   # Narrow grants: the count of every id in the answer is 2 (the two secrets) and no connection appears.
   assert_eq "the agent holds exactly two grants and no connection" 2 "$(jq '[.. | objects | select(has("id") or has("secretId") or has("connectionId"))] | length' <<<"$grants")"
   assert_jq "no LLM secret is granted" "$grants" '([.. | strings | select(test("Codex|OpenRouter|openai|anthropic";"i"))] | length) == 0'
@@ -235,7 +238,7 @@ t_restart_skip() {
   assert_eq "the sentinel written before the restart is still there" found "$(stream_has alice "$repo_session" SENTINEL_OK 20)"
   assert_eq "the clone was found and skipped" 1 "$(orch_log | grep -c "\"event\":\"workspace-present\".*$repo_session")"
   assert_eq "no second clone after the restart" 0 "$(orch_log | grep -c "\"event\":\"workspace-cloned\".*$repo_session" || true)"
-  assert_eq "still exactly one OneCLI agent for the session" 1 "$(onecli_count /v1/agents --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "still exactly one OneCLI agent for the session" 1 "$(onecli_count /v1/agents --arg n "${onecli_prefix}$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
 }
 
 t_scope() {
@@ -256,8 +259,8 @@ t_delete() {
   agent_id=$(sql "select onecli_agent_id from inbox.sessions where id='$repo_session'")
   assert_jq "DELETE is accepted" "$(api alice DELETE "/sessions/$repo_session")" '.status==202'
   wait_status alice "$repo_session" deleted 120 >/dev/null || exit 1
-  assert_eq "the OneCLI agent is gone" 0 "$(onecli_count /v1/agents --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
-  assert_eq "its secrets are gone" 0 "$(onecli_count /v1/secrets --arg n "pi-session-$repo_session" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
+  assert_eq "the OneCLI agent is gone" 0 "$(onecli_count /v1/agents --arg n "${onecli_prefix}$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "its secrets are gone" 0 "$(onecli_count /v1/secrets --arg n "${onecli_prefix}$repo_session" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
   assert_eq "the old agent id no longer has grants" 0 "$(onecli GET "/v1/agents/$agent_id/grants" | jq '[.. | objects | select(has("id"))] | length' 2>/dev/null || echo 0)"
   assert_eq "the tombstone was written first and completed" t "$(sql "select (completed_at is not null) from inbox.tombstones where session_id='$repo_session'" | tr -d ' ')"
   assert_eq "the claim is gone" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$repo_session" -o name | wc -l | tr -d ' ')"
