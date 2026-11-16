@@ -66,3 +66,22 @@ describe("Host.workspaceEnv", () => {
     expect(kube.recyclePod).toHaveBeenCalledWith("pi-durable-poc", "pi-conv-7");
   });
 });
+
+describe("Host.startSession", () => {
+  it("deletes the claim it created when the session cannot be started", async () => {
+    sandboxEnv.connectSandboxEnv.mockImplementation(() => {
+      throw new Error("bridge failed");
+    });
+    kube.deleteClaimAndPvc.mockResolvedValue(undefined);
+    host = await Host.open(
+      new MemoryStorage(),
+      config,
+      () => undefined,
+      () => Promise.resolve("control-key"),
+    );
+    await expect(host.startSession({ steps: [] })).rejects.toThrow("bridge failed");
+    expect(kube.ensureLabeledClaim).toHaveBeenCalledTimes(1);
+    expect(kube.deleteClaimAndPvc).toHaveBeenCalledTimes(1);
+    expect(kube.deleteClaimAndPvc.mock.calls[0]?.[2]).toBe("control-key");
+  });
+});

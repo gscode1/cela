@@ -125,11 +125,20 @@ export class Host {
       context,
     );
     const id = Number(conversation.id);
-    await this.#sandboxes.ensure(id);
-    await conversation.submit(
-      { type: "input", content: JSON.stringify(script), requestId: `start-${String(id)}` },
-      context,
-    );
+    try {
+      await this.#sandboxes.ensure(id);
+      await conversation.submit(
+        { type: "input", content: JSON.stringify(script), requestId: `start-${String(id)}` },
+        context,
+      );
+    } catch (error) {
+      // The caller never learns `id` from a failure, and the sweep leaves `control-<n>` claims alone, so nobody else
+      // would delete a claim that was already created.
+      await this.#sandboxes.destroy(id).catch((cleanup: unknown) => {
+        log("control-cleanup-failed", { id, message: errorMessage(cleanup) });
+      });
+      throw error;
+    }
     log("session-started", { id, claim: claimNameFor(id) });
     return { id, claim: claimNameFor(id) };
   }
