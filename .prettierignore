@@ -9,3 +9,10 @@ CLAUDE.md
 docs
 deploy
 images
+
+# Verbatim agent output and logs from example runs
+examples/*/reports/
+examples/*/verified/
+examples/*/raw/
+examples/*/false-start/
+examples/*/briefs/
