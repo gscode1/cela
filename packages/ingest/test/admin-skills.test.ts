@@ -242,6 +242,33 @@ describe("profiles with skills and sessions", () => {
     expect(gotPlain.skills).toBeUndefined();
   });
 
+  it("GET /sessions/{id} shows repoSkills only when the snapshot turned it on and the session has a repo", async () => {
+    const { base } = await start();
+    const put = await call(base, "alice", "PUT", "/admin/profiles/repo-docs", {
+      definition: { repoSkills: true },
+    });
+    expect(put.status).toBe(201);
+    const withRepo = await json(
+      await call(base, "bob", "POST", "/sessions", { profile: "repo-docs", repo: "acme/widgets" }),
+    );
+    const got = await json(
+      await call(base, "bob", "GET", `/sessions/${String(withRepo.sessionId)}`),
+    );
+    expect(got.repoSkills).toBe(true);
+    const noRepo = await json(
+      await call(base, "bob", "POST", "/sessions", { profile: "repo-docs" }),
+    );
+    const gotPlain = await json(
+      await call(base, "bob", "GET", `/sessions/${String(noRepo.sessionId)}`),
+    );
+    expect(gotPlain.repoSkills).toBeUndefined();
+    const noRead = await call(base, "alice", "PUT", "/admin/profiles/bad", {
+      definition: { tools: ["bash"], repoSkills: true },
+    });
+    expect(noRead.status).toBe(400);
+    expect((await json(noRead)).error).toContain("repoSkills needs the read tool");
+  });
+
   it("refuses a profile naming a skill version that does not exist, or one that needs read without it", async () => {
     const { base } = await start();
     await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF);

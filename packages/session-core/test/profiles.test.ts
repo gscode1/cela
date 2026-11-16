@@ -118,6 +118,40 @@ describe("validateProfileDefinition", () => {
   });
 });
 
+describe("repoSkills", () => {
+  it("is a boolean, absent means off, and it keeps its place in the key order", () => {
+    expect(validateProfileDefinition({ repoSkills: true, instructions: "x" })).toEqual({
+      instructions: "x",
+      repoSkills: true,
+    });
+    expect(validateProfileDefinition({})).toEqual({});
+    expect(validateProfileDefinition({ repoSkills: "yes" })).toMatch(
+      /repoSkills must be true or false/,
+    );
+  });
+
+  it("is refused when tools or modelTools leave out read, like skills", () => {
+    expect(validateProfileDefinition({ tools: ["bash"], repoSkills: true })).toMatch(
+      /repoSkills needs the read tool, but tools does not include it/,
+    );
+    expect(
+      validateProfileDefinition({
+        tools: ["read", "bash"],
+        modelTools: ["bash"],
+        repoSkills: true,
+      }),
+    ).toMatch(/modelTools does not include it/);
+    expect(validateProfileDefinition({ tools: ["bash"], repoSkills: false })).toEqual({
+      tools: ["bash"],
+      repoSkills: false,
+    });
+    expect(validateProfileDefinition({ tools: ["read"], repoSkills: true })).toEqual({
+      tools: ["read"],
+      repoSkills: true,
+    });
+  });
+});
+
 describe("checkProfileNames", () => {
   it("checks tools and modelTools against the installed tools and MCP servers against the catalog", () => {
     expect(checkProfileNames({ tools: ["read"], mcpServers: ["demo"] }, KNOWN)).toBeUndefined();
