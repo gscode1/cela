@@ -40,6 +40,13 @@ export interface SandboxHooks {
    * next one recycles that sandbox's Pod (see `Sandboxes.recycleAtStart`).
    */
   execInFlight?: (conversationId: number, inFlight: boolean) => Promise<void>;
+  /**
+   * Runs on every new env, after the bridge connects and before the env serves its first operation (the open is
+   * single-flight, so concurrent first tool calls wait for it): where a session's skills are written into the
+   * workspace (docs/decisions/0011-skills-in-postgres.md). If it throws, the env is closed and the open fails, so the
+   * call fails and the next one tries again; a session never runs on a half-prepared sandbox.
+   */
+  prepareEnv?: (conversationId: number, env: ExecutionEnv) => Promise<void>;
 }
 
 /** Per open env: calls in flight, when one last ended, and whether the in-flight record is set. */
@@ -492,7 +499,7 @@ export class Sandboxes {
     // Credentials for a repo session's commands only; plain sessions get nothing here. The token travels through the
     // pi-env protocol to the daemon, never through the bridge process environment (bridgeCommand starts the bridge with a trimmed environment and its own claim's token).
     const shellEnv = await this.#hooks.shellEnv?.(conversationId);
-    return connectSandboxEnv({
+    const opened = connectSandboxEnv({
       claimName,
       namespace,
       cwd: WORKSPACE,
@@ -500,6 +507,14 @@ export class Sandboxes {
       bridgeCommand: bridgeCommand(process.env, token),
       ...(shellEnv === undefined ? {} : { shellEnv }),
     });
+    try {
+      await this.#hooks.prepareEnv?.(conversationId, opened.env);
+    } catch (error) {
+      opened.close();
+      log("env-prepare-failed", { claim: claimName, message: errorMessage(error) });
+      throw error;
+    }
+    return opened;
   }
 
   /**

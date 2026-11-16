@@ -24,6 +24,7 @@ import { InboxLoop } from "./inbox.js";
 import { listClaims, listPvcs } from "./kube.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
+import { materializeSkills, SkillLibrary } from "./skills.js";
 import { createShutdown } from "./shutdown.js";
 import type { Running } from "./shutdown.js";
 import { openStorageWhenFree } from "./storage.js";
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
     caFile: config.onecli.caFile,
     fetch: callApi,
   });
+  const skills = new SkillLibrary(pool);
   const hooks: SandboxHooks = {
     shellEnv: async (conversationId) => {
       const { rows } = await pool.query<{ id: string }>(
@@ -115,6 +117,10 @@ async function main(): Promise<void> {
     beforeUse: (conversationId) => repos.beforeUse(conversationId),
     envStale: (conversationId) => repos.envStale(conversationId),
     execInFlight: (conversationId, inFlight) => setExecInFlight(pool, conversationId, inFlight),
+    // Postgres is the source of truth for a session's skills; the workspace holds a copy, written at every attach.
+    prepareEnv: async (conversationId, env) => {
+      await materializeSkills(env, await skills.bundlesFor(conversationId));
+    },
   };
   // Sandboxes that had a command running when the previous process died: Host.open recycles their Pods before Pi
   // Durable resumes (docs/decisions/0003-recycle-pod-on-interrupt.md).
@@ -149,6 +155,7 @@ async function main(): Promise<void> {
     defaultModel: config.models.default,
     turnBudget: () => settings.turnBudget(),
     repos,
+    skills,
   });
   running.service = service;
   // Not fatal: a failed scan only means a run that died unseen is noticed at its next input.

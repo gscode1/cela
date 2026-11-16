@@ -495,6 +495,13 @@ export class FakeSettingsDb {
       });
       return done();
     }
+    if (text.startsWith("select profile_snapshot from inbox.sessions where conversation_id")) {
+      return done(
+        [...this.sessions.values()]
+          .filter((row) => row.conversation_id === params[0])
+          .map((row) => ({ profile_snapshot: row.profile_snapshot })),
+      );
+    }
     if (text.startsWith("select * from inbox.sessions")) {
       const row = this.sessions.get(String(params[0]));
       return done(row === undefined ? [] : [{ ...row }]);
