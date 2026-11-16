@@ -67,6 +67,52 @@ describe("chooseModel", () => {
   });
 });
 
+describe("per-request reasoning", () => {
+  const policy = {
+    default: { provider: "scripted", model: "scripted-1", reasoning: "low" as const },
+    allowed: [{ provider: "scripted", model: "scripted-1" }],
+    reasoning: "low" as const,
+    maxReasoning: "high" as const,
+  };
+
+  it("takes the requested level on the default model and on a named one", () => {
+    expect(chooseModel(policy, { reasoning: "high" })).toEqual({
+      provider: "scripted",
+      model: "scripted-1",
+      reasoning: "high",
+    });
+    expect(
+      chooseModel(policy, { provider: "scripted", model: "scripted-1", reasoning: "off" }),
+    ).toEqual({ provider: "scripted", model: "scripted-1", reasoning: "off" });
+  });
+
+  it("falls back to the settings default when the body names none", () => {
+    expect(chooseModel(policy, {})).toEqual(policy.default);
+    expect(chooseModel({ default: policy.default, allowed: policy.allowed }, {})).toEqual({
+      provider: "scripted",
+      model: "scripted-1",
+    });
+  });
+
+  it("refuses an unknown or non-string level", () => {
+    for (const reasoning of ["ultra", "", 3, null, "HIGH"]) {
+      expect(chooseModel(policy, { reasoning }), String(reasoning)).toMatch(
+        /reasoning must be one of/,
+      );
+    }
+  });
+
+  it("refuses a level above the cap and takes one at it; no cap allows max", () => {
+    expect(chooseModel(policy, { reasoning: "xhigh" })).toMatch(/above the allowed maximum high/);
+    expect(chooseModel(policy, { reasoning: "high" })).toMatchObject({ reasoning: "high" });
+    expect(
+      chooseModel({ default: policy.default, allowed: policy.allowed }, { reasoning: "max" }),
+    ).toMatchObject({
+      reasoning: "max",
+    });
+  });
+});
+
 describe("reasoning effort", () => {
   it("comes from PI_MODEL_REASONING and goes to every chosen model", () => {
     const policy = loadModelPolicy({
@@ -96,6 +142,6 @@ describe("reasoning effort", () => {
   });
 
   it("rejects an unknown level at start", () => {
-    expect(() => loadModelPolicy({ PI_MODEL_REASONING: "max" })).toThrow(/PI_MODEL_REASONING/);
+    expect(() => loadModelPolicy({ PI_MODEL_REASONING: "ultra" })).toThrow(/PI_MODEL_REASONING/);
   });
 });

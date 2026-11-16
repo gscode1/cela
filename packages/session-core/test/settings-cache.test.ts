@@ -7,6 +7,7 @@ const fallback: Settings = {
   defaultModel: "env/model",
   allowlist: ["env/model"],
   reasoning: null,
+  maxReasoning: null,
   turnBudget: 11,
 };
 

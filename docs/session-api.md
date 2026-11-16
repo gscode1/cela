@@ -28,12 +28,12 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 
 | Call | Success | Notes |
 |---|---|---|
-| `POST /sessions` body `{ provider?, model?, repo?, branch? }` | `201 { sessionId, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default model. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
+| `POST /sessions` body `{ provider?, model?, reasoning?, repo?, branch? }` | `201 { sessionId, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default model. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `reasoning` (optional) is the effort of the session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; anything else is `400 { "error": "reasoning must be one of ..." }`, and a level above the operator cap `maxReasoning` is `400 { "error": "reasoning <level> is above the allowed maximum <cap>" }` (see Models). Omitted, the session gets the settings default (none stored when there is none). `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
 | `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
 | `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model. |
-| `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
-| `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
+| `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
+| `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, maxReasoning?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it, `maxReasoning: null` removes the cap, and `reasoning` above `maxReasoning` is `400`. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
 | `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
 | `DELETE /sessions/{id}` | `202 { sessionId, status }` | Idempotent. See Deletion. |
 | `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when migrations succeeded and the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
@@ -127,7 +127,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 ## Models and failure
 
 - **Selection.** The default model, the allowlist (`provider/model` pairs; the model id may contain slashes; the
-  default is always allowed), the default reasoning effort (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or none)
+  default is always allowed), the default reasoning effort (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or none), an optional cap on the effort a request may ask for (`maxReasoning`, same levels, or none; `009_reasoning_cap.sql`)
   and the turn budget are stored in Postgres (`inbox.settings`, one row; `inbox.settings_history` is the append-only
   log of changes with who, when, old and new; migration `006_settings.sql`, `docs/decisions/0008-settings-in-postgres.md`).
   Ingest and the orchestrator read them through a `SettingsCache` that loads at start, refreshes on `LISTEN pi_settings`
@@ -143,6 +143,12 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 - **Storage.** The chosen model is stored with the session (`inbox.sessions.model_provider`, `model_id`, `model_reasoning`; migrations
   `002_models.sql`, `003_reasoning.sql`), so changing the default later does not change existing sessions. The orchestrator creates the Pi
   conversation with it; Pi Durable keeps it in the conversation across restarts (`docs/model-credentials.md`).
+- **Per-session reasoning.** `POST /sessions` may carry `reasoning`; the levels are pi-ai 1.5.2's `off` plus its thinking
+  levels, ordered `off < minimal < low < medium < high < xhigh < max`. The request wins over the settings default, and
+  `maxReasoning` caps it (a default above the cap cannot be stored). Ingest does **not** check that the chosen model
+  supports reasoning: it has no model catalog (pi-ai lives in the orchestrator, and ingest must not depend across that
+  layer). For a model without reasoning the provider layer ignores or clamps the level (`docs/model-credentials.md`), so
+  the stored value is the request, not a guarantee of effect. Revisit if an operator needs that refused at the API.
 - **`failed` is terminal.** A model error that reads as rejected credentials (401, 403 or 407 from the provider or
   the OneCLI gateway), or a session that used up its turn budget (the `turnBudget` setting, model turns in total, read before every input),
   sets `status: "failed"` and `failure` to a fixed message such as "model credentials were rejected (401/403): the
@@ -244,7 +250,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `006_settings.sql`), applied
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `009_reasoning_cap.sql`), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first

@@ -15,6 +15,7 @@ const base: Settings = {
   defaultModel: "scripted/scripted-1",
   allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
   reasoning: null,
+  maxReasoning: null,
   turnBudget: 100,
 };
 
@@ -32,6 +33,7 @@ describe("settingsFromEnv", () => {
       defaultModel: "openai-codex/gpt-6.1-terra",
       allowlist: ["openai-codex/gpt-6.1-terra", "openai-codex/gpt-6.1-sol", "scripted/scripted-1"],
       reasoning: "medium",
+      maxReasoning: null,
       turnBudget: 7,
     });
   });
@@ -57,8 +59,42 @@ describe("validateSettings", () => {
       defaultModel: "a/b/c",
       allowlist: ["a/b/c", "x/y"],
       reasoning: "high",
+      maxReasoning: null,
       turnBudget: 5,
     });
+  });
+
+  it("treats a missing maxReasoning as no cap, so older rows and clients still validate", () => {
+    const legacy: Record<string, unknown> = { ...base };
+    delete legacy.maxReasoning;
+    expect(validateSettings(legacy)).toEqual({ ...base, maxReasoning: null });
+  });
+
+  it("accepts max as a reasoning level and a cap at or above the default", () => {
+    expect(validateSettings({ ...base, reasoning: "max" })).toMatchObject({ reasoning: "max" });
+    expect(validateSettings({ ...base, reasoning: "low", maxReasoning: "low" })).toMatchObject({
+      reasoning: "low",
+      maxReasoning: "low",
+    });
+    expect(validateSettings({ ...base, maxReasoning: "off" })).toMatchObject({
+      maxReasoning: "off",
+    });
+  });
+
+  it("refuses a default reasoning above the cap, also when a partial update causes it", () => {
+    expect(validateSettings({ ...base, reasoning: "high", maxReasoning: "low" })).toMatch(
+      /reasoning high is above maxReasoning low/,
+    );
+    const current = { ...base, reasoning: "high" as const, maxReasoning: "xhigh" as const };
+    expect(validateSettings({ maxReasoning: "low" }, current)).toMatch(/above maxReasoning/);
+    expect(validateSettings({ maxReasoning: "low", reasoning: "low" }, current)).toMatchObject({
+      reasoning: "low",
+      maxReasoning: "low",
+    });
+  });
+
+  it("refuses an unknown cap", () => {
+    expect(validateSettings({ ...base, maxReasoning: "ultra" })).toMatch(/maxReasoning must be/);
   });
 
   it("lays a partial update over the current values; null clears reasoning", () => {
@@ -80,7 +116,7 @@ describe("validateSettings", () => {
     [{ allowlist: "a/b" }, "allowlist must be an array"],
     [{ allowlist: ["a/b", 3] }, "allowlist must be an array"],
     [{ allowlist: ["bad"] }, 'model "bad" is not provider/model'],
-    [{ reasoning: "max" }, "reasoning must be null or one of"],
+    [{ reasoning: "ultra" }, "reasoning must be null or one of"],
     [{ turnBudget: 0 }, "turnBudget must be an integer"],
     [{ turnBudget: 1.5 }, "turnBudget must be an integer"],
     [{ turnBudget: "5" }, "turnBudget must be an integer"],
@@ -132,6 +168,8 @@ describe("policyOf", () => {
     expect(policy.allowed.map((m) => m.model)).toEqual(["scripted-1", "scripted-2"]);
     expect(policy.reasoning).toBe("low");
     expect(policyOf(base).reasoning).toBeUndefined();
+    expect(policyOf(base).maxReasoning).toBeUndefined();
+    expect(policyOf({ ...base, maxReasoning: "high" }).maxReasoning).toBe("high");
   });
 });
 
@@ -181,6 +219,17 @@ describe("updateSettings", () => {
     expect(notified).toBe(1);
     const history = await listSettingsHistory(db.asPool(), 10);
     expect(history.map((h) => h.changedBy)).toEqual(["alice", "seed"]);
+  });
+
+  it("stores the cap and refuses one below the stored default", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), { ...base, reasoning: "medium" });
+    expect(await updateSettings(db.asPool(), { maxReasoning: "low" }, "alice")).toMatch(
+      /above maxReasoning/,
+    );
+    await updateSettings(db.asPool(), { maxReasoning: "high" }, "alice");
+    expect((await readSettings(db.asPool()))?.settings.maxReasoning).toBe("high");
+    expect(db.history).toHaveLength(2);
   });
 
   it("returns the message and writes nothing for an invalid update", async () => {

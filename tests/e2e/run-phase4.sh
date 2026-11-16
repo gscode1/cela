@@ -274,6 +274,11 @@ t_create_send_stream() {
   assert_jq "POST /sessions answers 201 with a sessionId" "$out" '.status==201 and (.body.sessionId|test("^[0-9a-f-]{36}$"))'
   assert_jq "GET /sessions/{id} reports an active session with a last activity time" "$(api alice GET "/sessions/$id")" \
     '.status==200 and .body.status=="active" and (.body.lastActivityAt|length>0) and .body.events.pending==0'
+  out=$(api alice POST /sessions '{"reasoning":"high"}')
+  printf 'alice %s\n' "$(jq -r '.body.sessionId' <<<"$out")" >>"$sessions_file"
+  assert_jq "POST /sessions with reasoning high echoes it" "$out" '.status==201 and .body.reasoning=="high"'
+  assert_jq "GET /sessions/{id} reports the requested reasoning" "$(api alice GET "/sessions/$(jq -r '.body.sessionId' <<<"$out")")" '.status==200 and .body.model.reasoning=="high"'
+  assert_jq "an unknown reasoning level is refused with 400" "$(api alice POST /sessions '{"reasoning":"ultra"}')" '.status==400 and (.body.error|test("reasoning"))'
   assert_jq "ingest /healthz answers 200" "$(api none GET /healthz)" '.status==200'
   assert_jq "ingest /readyz answers 200" "$(api none GET /readyz)" '.status==200'
   assert "orchestrator /healthz and /readyz answer 200" orch_probe

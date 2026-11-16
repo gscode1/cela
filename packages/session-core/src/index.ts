@@ -11,6 +11,8 @@ export {
   modelKey,
   parseAllowlist,
   parseModelKey,
+  exceedsReasoning,
+  parseThinkingLevel,
   THINKING_LEVELS,
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
