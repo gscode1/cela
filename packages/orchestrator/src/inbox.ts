@@ -8,6 +8,17 @@ const POLL_MS = 1_000;
 const BATCH = 20;
 const MAX_PARALLEL_SESSIONS = 8;
 const MAX_ATTEMPTS = 5;
+const DELETE_RETRY_BASE_MS = 1_000;
+const DELETE_RETRY_MAX_MS = 60_000;
+
+/**
+ * Wait before the next try of a failing `delete` row: 1 s, 2 s, 4 s ... capped at 60 s. A delete is not given up after
+ * MAX_ATTEMPTS like other events (docs/decisions/0006-deletes-retry-until-done.md): five tries a second apart end
+ * inside one short Kubernetes or OneCLI outage, and a failed delete leaks the sandbox, PVC and OneCLI agent.
+ */
+export function deleteRetryDelayMs(attempt: number): number {
+  return Math.min(DELETE_RETRY_MAX_MS, DELETE_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1));
+}
 
 export type ApplyEvent = (event: InboxEvent, session: SessionRow) => Promise<void>;
 
@@ -29,6 +40,8 @@ export class InboxLoop {
   readonly #pool: pg.Pool;
   readonly #apply: ApplyEvent;
   readonly #inFlight = new Set<string>();
+  /** Sessions whose failing delete waits out its backoff (epoch ms). In memory: a restart simply retries at once. */
+  readonly #notBefore = new Map<string, number>();
   #listener: pg.PoolClient | undefined;
   #timer: NodeJS.Timeout | undefined;
   #ticking = false;
@@ -99,6 +112,7 @@ export class InboxLoop {
       );
       for (const { session_id: sessionId } of rows) {
         if (this.#inFlight.has(sessionId) || this.#inFlight.size >= MAX_PARALLEL_SESSIONS) continue;
+        if ((this.#notBefore.get(sessionId) ?? 0) > Date.now()) continue;
         this.#inFlight.add(sessionId);
         void this.#drain(sessionId)
           .then((progressed) => {
@@ -120,6 +134,7 @@ export class InboxLoop {
     while (!this.#stopped) {
       const client = await this.#pool.connect();
       let finished = true;
+      let submitted = 0;
       try {
         await client.query("begin");
         const { rows } = await client.query<EventDbRow>(
@@ -142,6 +157,7 @@ export class InboxLoop {
             break;
           }
           progressed = true;
+          if (outcome === "submitted") submitted += 1;
         }
         await client.query("commit");
       } catch (error) {
@@ -150,12 +166,31 @@ export class InboxLoop {
       } finally {
         client.release();
       }
+      // Once per batch and after the commit. Inside the transaction this update would hold the session row's lock
+      // until the commit, and a later row of the batch (delete, a failSession) updates the same row on another
+      // connection: it would wait for a lock that only this transaction's end releases, until statement_timeout.
+      if (submitted > 0) await this.#touchSession(sessionId);
       if (!finished) return progressed;
     }
     return progressed;
   }
 
-  async #applyRow(client: pg.PoolClient, event: InboxEvent): Promise<"done" | "retry-later"> {
+  async #touchSession(sessionId: string): Promise<void> {
+    try {
+      await this.#pool.query(
+        "update inbox.sessions set last_activity_at = clock_timestamp() where id = $1",
+        [sessionId],
+      );
+    } catch (error) {
+      // Only the idle clock; the rows are already committed.
+      log("inbox-touch-failed", { session: sessionId, message: errorMessage(error) });
+    }
+  }
+
+  async #applyRow(
+    client: pg.PoolClient,
+    event: InboxEvent,
+  ): Promise<"submitted" | "gave-up" | "retry-later"> {
     const attempt = event.attempts + 1;
     try {
       const session = await getSession(client, event.sessionId);
@@ -167,15 +202,16 @@ export class InboxLoop {
           where id = $1`,
         [event.id, attempt],
       );
-      await client.query(
-        "update inbox.sessions set last_activity_at = clock_timestamp() where id = $1",
-        [event.sessionId],
-      );
+      this.#notBefore.delete(event.sessionId);
       log("event-submitted", { eventId: event.id, session: event.sessionId, kind: event.kind });
-      return "done";
+      return "submitted";
     } catch (error) {
       const message = errorMessage(error).slice(0, 500);
-      const permanent = error instanceof PermanentError || attempt >= MAX_ATTEMPTS;
+      const permanent =
+        error instanceof PermanentError || (attempt >= MAX_ATTEMPTS && event.kind !== "delete");
+      if (!permanent && event.kind === "delete") {
+        this.#notBefore.set(event.sessionId, Date.now() + deleteRetryDelayMs(attempt));
+      }
       await client.query(
         "update inbox.events set status = $2, attempts = $3, error = $4 where id = $1",
         [event.id, permanent ? "failed" : "pending", attempt, message],
@@ -187,7 +223,7 @@ export class InboxLoop {
         permanent,
         message,
       });
-      return permanent ? "done" : "retry-later";
+      return permanent ? "gave-up" : "retry-later";
     }
   }
 }

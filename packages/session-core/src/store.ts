@@ -178,7 +178,9 @@ export type EnqueueResult =
   /** The same (source, source_event_id) was already stored: nothing new was written. */
   | { outcome: "duplicate"; eventId: string }
   /** The (source, source_event_id) belongs to another session. */
-  | { outcome: "conflict" };
+  | { outcome: "conflict" }
+  /** `requireActive` was set and the session is not active (any more): nothing was written. */
+  | { outcome: "inactive"; status: SessionStatus };
 
 /**
  * Writes one event and returns. The unique index on (source, source_event_id) makes a repeated post a no-op that
@@ -193,10 +195,20 @@ export async function enqueueEvent(
     kind: EventKind;
     payload: InboxEvent["payload"];
   },
+  options: { requireActive?: boolean } = {},
 ): Promise<EnqueueResult> {
+  // With requireActive the status test and the insert are one statement: a caller that read the session earlier
+  // (ingest does, before it reads the request body) cannot get an event accepted for a session that was deleted
+  // meanwhile. `for share` makes the insert wait for a concurrent status change to commit and then see it, and
+  // makes a concurrent DELETE wait for this insert, so an accepted event always precedes the delete row.
+  const columns = "(session_id, source, source_event_id, kind, payload)";
   const inserted = await pool.query<{ id: string }>(
-    `insert into inbox.events (session_id, source, source_event_id, kind, payload)
-     values ($1, $2, $3, $4, $5)
+    `insert into inbox.events ${columns}
+     ${
+       options.requireActive === true
+         ? `select s.id, $2, $3, $4, $5::jsonb from inbox.sessions s where s.id = $1 and s.status = 'active' for share of s`
+         : `values ($1, $2, $3, $4, $5)`
+     }
      on conflict (source, source_event_id) do nothing
      returning id`,
     [event.sessionId, event.source, event.sourceEventId, event.kind, JSON.stringify(event.payload)],
@@ -214,10 +226,40 @@ export async function enqueueEvent(
     [event.source, event.sourceEventId],
   );
   const existing = rows[0];
+  if (existing === undefined && options.requireActive === true) {
+    const current = await pool.query<{ status: SessionStatus }>(
+      "select status from inbox.sessions where id = $1",
+      [event.sessionId],
+    );
+    return { outcome: "inactive", status: current.rows[0]?.status ?? "deleted" };
+  }
   if (existing === undefined || existing.session_id !== event.sessionId) {
     return { outcome: "conflict" };
   }
   return { outcome: "duplicate", eventId: existing.id };
+}
+
+/**
+ * The dedup key of a session's delete row. Client events use `source = api:<owner>` with a client-chosen id, so the
+ * server's own row lives in a source no client can write: a client id such as `delete:<id>` can then never
+ * occupy the key and make DELETE a no-op. (Delete rows written before this carry `api:<owner>` / `delete:<id>`;
+ * they stay as they are and a new DELETE simply adds one under this key.)
+ */
+export function deleteEventKey(sessionId: string): { source: string; sourceEventId: string } {
+  return { source: "system:delete", sourceEventId: sessionId };
+}
+
+/**
+ * Puts a `failed` delete row back to `pending`. A repeated DELETE calls it: the row is deduplicated, so without this
+ * a delete that failed (rows from before deletes were retried without limit, or a permanent error since fixed) could
+ * never run again.
+ */
+export async function requeueFailedDelete(pool: pg.Pool, sessionId: string): Promise<void> {
+  await pool.query(
+    `update inbox.events set status = 'pending', attempts = 0, error = null
+      where session_id = $1 and kind = 'delete' and status = 'failed'`,
+    [sessionId],
+  );
 }
 
 /** Marks an active session as being deleted, so no further events are accepted. Idempotent. */

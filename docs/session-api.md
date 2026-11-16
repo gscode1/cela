@@ -58,7 +58,7 @@ belongs to another owner**: the two look the same, so the API does not reveal th
 
 Guarantees:
 
-- **Deduplication.** `UNIQUE (source, source_event_id)`. `source` is `api:<owner>`. A repeated post returns the
+- **Deduplication.** `UNIQUE (source, source_event_id)`. `source` is `api:<owner>` for client events; the server's own delete row uses `system:delete` with the session id as `source_event_id`, so no client id can collide with it. A repeated post returns the
   first event's id with `duplicate: true` and writes nothing. Without a `sourceEventId` every post is its own event.
   The same id for another session is `409`.
 - **No double durability, no re-run.** Pi Durable owns run recovery. The orchestrator never resubmits a row that is
@@ -137,7 +137,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   sets `status: "failed"` and `failure` to a fixed message such as "model credentials were rejected (401/403): the
   OneCLI agent token or its grant for this provider is missing or revoked". From then on `POST .../events` returns
   `409 session is failed`, queued events end `failed`, and nothing more is sent to the provider. The transcript and
-  stream stay readable, and `DELETE` works. Other model errors (rate limits, network) do not fail the session.
+  stream stay readable, and `DELETE` works. The status commits before the conversation is aborted, so the abort is idempotent and repeated: by a retried failure, by any input that finds the session `failed`, and at orchestrator start for sessions failed in the last 24 h. Other model errors (rate limits, network) do not fail the session.
 
 ## Sessions and sandboxes
 
@@ -176,7 +176,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 
 ## Deletion
 
-`DELETE /sessions/{id}` answers `202` and queues a `delete` row. From that moment new events get `409`; events
+`DELETE /sessions/{id}` answers `202` and queues a `delete` row. From that moment new events get `409` (`410` once deleted). Admission is one conditional insert (`session is active`), so an event whose body was still being read when the session was deleted is refused too, and the session is marked `deleting` before the delete row is written, so every accepted event sorts before it; events
 accepted earlier are still processed first, in order. Then the orchestrator:
 
 1. aborts the conversation (withdraws queued input, stops the running turn),
@@ -198,6 +198,13 @@ That job is not implemented here. Until it runs, deleted sessions' transcripts r
 
 A deletion cut off by a crash is safe to repeat: the `delete` row is still pending, and the Kubernetes deletes ignore
 "not found".
+
+**A delete is retried until it succeeds** (`docs/decisions/0006-deletes-retry-until-done.md`). Other events end `failed`
+after 5 attempts; a `delete` row has no attempt cap, because a failed delete leaves the session `deleting` with its
+sandbox, PVC and OneCLI agent alive, and the orphan sweep never touches a `deleting` session. A failing delete is
+retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per session; a restart retries at once). Only a
+`PermanentError` (the session row is gone or already `deleted`) ends the row `failed`. A repeated `DELETE` also puts a
+`failed` delete row back to `pending`, so a client can always retry a delete that was given up on.
 
 ### Orphan sweep
 

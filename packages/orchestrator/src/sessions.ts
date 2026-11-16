@@ -113,6 +113,28 @@ export class SessionService {
       });
     }
     if (rows.length > 0) log("run-watches-recovered", { count: rows.length });
+    await this.#recoverFailedAborts();
+  }
+
+  /**
+   * A session is marked `failed` before its conversation is aborted, so a crash or a storage error in between leaves a
+   * failed session whose queued inputs still run, and nothing watches a failed session. Abort the recently failed
+   * ones again: `abort` is idempotent and a no-op on an idle conversation.
+   */
+  async #recoverFailedAborts(): Promise<void> {
+    const { rows } = await this.#pool.query<{ id: string; conversation_id: string }>(
+      `select id, conversation_id from inbox.sessions
+        where status = 'failed' and conversation_id is not null
+          and last_activity_at > clock_timestamp() - interval '24 hours'
+        order by last_activity_at desc limit 1000`,
+    );
+    for (const row of rows) {
+      try {
+        await this.#host.abort(Number(row.conversation_id));
+      } catch (error) {
+        log("failed-session-abort-failed", { session: row.id, message: errorMessage(error) });
+      }
+    }
   }
 
   /**
@@ -131,9 +153,14 @@ export class SessionService {
     failure: string,
   ): Promise<void> {
     const changed = await failSession(this.#pool, sessionId, failure);
-    if (!changed) return;
-    log("session-failed", { session: sessionId, failure });
-    // Withdraw whatever queued behind the failed run, so nothing more is sent to the provider.
+    if (changed) {
+      log("session-failed", { session: sessionId, failure });
+    } else if ((await getSession(this.#pool, sessionId))?.status !== "failed") {
+      return;
+    }
+    // Withdraw whatever queued behind the failed run, so nothing more is sent to the provider. Also when the session
+    // was failed already: the status commits before the abort, so a caller whose abort died (or whose process did)
+    // retries here and must not find "nothing changed" and stop. A deleting or deleted session is not ours to abort.
     if (conversationId !== null) await this.#host.abort(conversationId);
   }
 
@@ -174,7 +201,12 @@ export class SessionService {
       case "steer": {
         const text = event.payload.text;
         if (typeof text !== "string" || text === "") throw new PermanentError("event has no text");
-        if (session.status === "failed") throw new PermanentError("session has failed");
+        if (session.status === "failed") {
+          // Retries an abort that failed when the session was failed (see #failSession); throws, and so retries the
+          // row, if the abort fails again.
+          if (session.conversationId !== null) await this.#host.abort(session.conversationId);
+          throw new PermanentError("session has failed");
+        }
         const conversationId = await this.ensureConversation(session);
         await this.#withinBudget(session, conversationId);
         // Before the first turn: OneCLI agent, token and clone. A session without a repo skips all of it.

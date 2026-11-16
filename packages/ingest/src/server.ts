@@ -7,11 +7,13 @@ import {
   chooseModel,
   chooseRepo,
   createSession,
+  deleteEventKey,
   enqueueEvent,
   errorMessage,
   getSession,
   readJsonObject,
   requestDelete,
+  requeueFailedDelete,
   sendJson,
   summarize,
   UUID,
@@ -112,7 +114,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
     return;
   }
   if (parts.length === 2 && method === "DELETE") {
-    await queueDelete(deps.pool, session, principal, res);
+    await queueDelete(deps.pool, session, res);
     return;
   }
   if (parts.length === 3 && parts[2] === "events" && method === "POST") {
@@ -210,13 +212,24 @@ async function postEvent(
     });
     return;
   }
-  const result = await enqueueEvent(pool, {
-    sessionId: session.id,
-    source: `api:${principal.owner}`,
-    sourceEventId: parsed.sourceEventId,
-    kind: parsed.kind,
-    payload: parsed.payload,
-  });
+  const result = await enqueueEvent(
+    pool,
+    {
+      sessionId: session.id,
+      source: `api:${principal.owner}`,
+      sourceEventId: parsed.sourceEventId,
+      kind: parsed.kind,
+      payload: parsed.payload,
+    },
+    { requireActive: true },
+  );
+  if (result.outcome === "inactive") {
+    // The session was deleted or failed after the check above (the body is read in between).
+    sendJson(res, result.status === "deleted" ? 410 : 409, {
+      error: `session is ${result.status}`,
+    });
+    return;
+  }
   if (result.outcome === "conflict") {
     sendJson(res, 409, { error: "sourceEventId was already used for another session" });
     return;
@@ -225,26 +238,23 @@ async function postEvent(
   sendJson(res, 202, { eventId: result.eventId, duplicate: result.outcome === "duplicate" });
 }
 
-async function queueDelete(
-  pool: pg.Pool,
-  session: SessionRow,
-  principal: Principal,
-  res: ServerResponse,
-): Promise<void> {
+async function queueDelete(pool: pg.Pool, session: SessionRow, res: ServerResponse): Promise<void> {
   if (session.status === "deleted") {
     sendJson(res, 202, { sessionId: session.id, status: "deleted" });
     return;
   }
-  // The delete is an inbox row like any other, so it runs after the events accepted before it.
+  // Status first: events are admitted only while the session is active, so once this commits nothing new can be
+  // accepted, and the delete row below sorts after every event that was. The delete is an inbox row like any other.
+  await requestDelete(pool, session.id);
   const result = await enqueueEvent(pool, {
     sessionId: session.id,
-    source: `api:${principal.owner}`,
-    sourceEventId: `delete:${session.id}`,
+    ...deleteEventKey(session.id),
     kind: "delete",
     payload: {},
   });
-  await requestDelete(pool, session.id);
-  const eventId = result.outcome === "conflict" ? undefined : result.eventId;
+  // A repeated DELETE is the client's retry: a delete row that ended `failed` runs again.
+  await requeueFailedDelete(pool, session.id);
+  const eventId = "eventId" in result ? result.eventId : undefined;
   sendJson(res, 202, { sessionId: session.id, status: "deleting", eventId });
 }
 
