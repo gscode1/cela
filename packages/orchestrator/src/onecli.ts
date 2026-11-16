@@ -157,7 +157,8 @@ function inCidr(host: string, cidr: string): boolean {
 }
 
 /**
- * A `fetch` for model calls only. Requests go through the OneCLI gateway with the orchestrator's agent token
+ * A `fetch` for the orchestrator's own outbound calls: the model calls and the remote MCP calls (src/mcp.ts,
+ * docs/decisions/0007-native-remote-mcp.md). Requests go through the OneCLI gateway with the orchestrator's agent token
  * (`Proxy-Authorization`, basic with any username) and trust the gateway CA for the certificates it issues.
  * The dispatcher belongs to this function: nothing sets a process-wide proxy or changes the global dispatcher,
  * so the Kubernetes client, Postgres and the bridges are never proxied. Hosts in `noProxy` skip the gateway.

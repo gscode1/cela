@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
-import type { Models } from "@earendil-works/pi-ai";
+import type { FetchFunction, Models } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { modelKey } from "@pi-durable-k8s/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { scriptedProvider } from "./model.js";
+import type { Redacted } from "./onecli.js";
 import {
   createGatewayFetch,
   placeholderAuthContext,
@@ -50,16 +51,21 @@ export async function buildModels(
   // allowlist must still resolve (docs/model-credentials.md). Without a token nothing can reach a provider anyway.
   for (const provider of builtinProviders()) models.setProvider(provider);
   assertInstalled(models, config);
-  const ca = await readCa(config.onecli.caFile);
-  return withFetch(
-    models,
-    createGatewayFetch({
-      gateway: config.onecli.gateway,
-      token,
-      ca,
-      noProxy: config.onecli.noProxy,
-    }),
-  );
+  return withFetch(models, await buildGatewayFetch(config, token, readCa));
+}
+
+/** The orchestrator's one `fetch` through the OneCLI gateway: model calls and remote MCP calls share it. */
+export async function buildGatewayFetch(
+  config: OrchestratorConfig,
+  token: Redacted,
+  readCa: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+): Promise<FetchFunction> {
+  return createGatewayFetch({
+    gateway: config.onecli.gateway,
+    token,
+    ca: await readCa(config.onecli.caFile),
+    noProxy: config.onecli.noProxy,
+  });
 }
 
 function assertInstalled(models: Models, config: OrchestratorConfig): void {
