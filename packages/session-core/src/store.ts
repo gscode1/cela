@@ -220,6 +220,16 @@ export async function enqueueEvent(
   return { outcome: "duplicate", eventId: existing.id };
 }
 
+/**
+ * The dedup key of a session's delete row. Client events use `source = api:<owner>` with a client-chosen id, so the
+ * server's own row lives in a source no client can write: a client id such as `delete:<id>` can then never
+ * occupy the key and make DELETE a no-op. (Delete rows written before this carry `api:<owner>` / `delete:<id>`;
+ * they stay as they are and a new DELETE simply adds one under this key.)
+ */
+export function deleteEventKey(sessionId: string): { source: string; sourceEventId: string } {
+  return { source: "system:delete", sourceEventId: sessionId };
+}
+
 /** Marks an active session as being deleted, so no further events are accepted. Idempotent. */
 export async function requestDelete(pool: pg.Pool, sessionId: string): Promise<void> {
   await pool.query(

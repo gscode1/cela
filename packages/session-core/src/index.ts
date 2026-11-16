@@ -20,6 +20,7 @@ export {
   completeTombstone,
   conversationsWithExecInFlight,
   createSession,
+  deleteEventKey,
   enqueueEvent,
   failSession,
   getSession,

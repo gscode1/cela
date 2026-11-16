@@ -7,6 +7,7 @@ import {
   chooseModel,
   chooseRepo,
   createSession,
+  deleteEventKey,
   enqueueEvent,
   errorMessage,
   getSession,
@@ -112,7 +113,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
     return;
   }
   if (parts.length === 2 && method === "DELETE") {
-    await queueDelete(deps.pool, session, principal, res);
+    await queueDelete(deps.pool, session, res);
     return;
   }
   if (parts.length === 3 && parts[2] === "events" && method === "POST") {
@@ -225,12 +226,7 @@ async function postEvent(
   sendJson(res, 202, { eventId: result.eventId, duplicate: result.outcome === "duplicate" });
 }
 
-async function queueDelete(
-  pool: pg.Pool,
-  session: SessionRow,
-  principal: Principal,
-  res: ServerResponse,
-): Promise<void> {
+async function queueDelete(pool: pg.Pool, session: SessionRow, res: ServerResponse): Promise<void> {
   if (session.status === "deleted") {
     sendJson(res, 202, { sessionId: session.id, status: "deleted" });
     return;
@@ -238,8 +234,7 @@ async function queueDelete(
   // The delete is an inbox row like any other, so it runs after the events accepted before it.
   const result = await enqueueEvent(pool, {
     sessionId: session.id,
-    source: `api:${principal.owner}`,
-    sourceEventId: `delete:${session.id}`,
+    ...deleteEventKey(session.id),
     kind: "delete",
     payload: {},
   });
