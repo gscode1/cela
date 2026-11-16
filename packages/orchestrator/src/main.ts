@@ -101,6 +101,7 @@ async function main(): Promise<void> {
       return session === undefined ? undefined : repos.shellEnv(session, conversationId);
     },
     beforeUse: (conversationId) => repos.beforeUse(conversationId),
+    envStale: (conversationId) => repos.envStale(conversationId),
     execInFlight: (conversationId, inFlight) => setExecInFlight(pool, conversationId, inFlight),
   };
   // Sandboxes that had a command running when the previous process died: Host.open recycles their Pods before Pi

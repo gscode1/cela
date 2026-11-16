@@ -14,6 +14,9 @@ import type { WorkspaceEnv } from "./workspace.js";
 /** A repo session that cannot be served and never will be without an operator: not configured, repo not installed. */
 export class RepoUnavailableError extends Error {}
 
+/** The grant check proved the agent holds more than the session's own secrets (as opposed to failing to check). */
+class AgentNotNarrowError extends Error {}
+
 /** Re-mint when the token has less than this left: a command can run for a long while after the check. */
 const REMINT_BEFORE_MS = 10 * 60 * 1000;
 
@@ -69,6 +72,8 @@ export class RepoAccess {
   readonly #byConversation = new Map<number, SessionRow>();
   readonly #inFlight = new Map<string, Promise<Access>>();
   readonly #prepared = new Set<string>();
+  /** The proxy token each conversation's env was opened with, to notice when the agent is replaced under it. */
+  readonly #envToken = new Map<number, string>();
 
   constructor(deps: RepoAccessDeps) {
     this.#deps = deps;
@@ -86,7 +91,20 @@ export class RepoAccess {
     if (session.repo === null) return undefined;
     this.#byConversation.set(conversationId, session);
     const access = await this.ensureAccess(session);
+    this.#envToken.set(conversationId, access.proxyToken.reveal());
     return buildShellEnv({ gateway: this.#deps.gateway, token: access.proxyToken });
+  }
+
+  /**
+   * True when the open env of this conversation was built with a proxy token that is no longer the session's: the
+   * agent was replaced (revoked after a failed grant check, or deleted out of band), so the env's `shellEnv` points at
+   * a dead token. The caller closes the env; the next open reads the current token through `shellEnv`.
+   */
+  envStale(conversationId: number): boolean {
+    const session = this.#byConversation.get(conversationId);
+    const handed = this.#envToken.get(conversationId);
+    const access = session === undefined ? undefined : this.#access.get(session.id);
+    return handed !== undefined && access !== undefined && access.proxyToken.reveal() !== handed;
   }
 
   /** Called before each tool call of an open env: renews a GitHub token that is about to expire. No-op otherwise. */
@@ -156,6 +174,11 @@ export class RepoAccess {
     try {
       await this.#narrow(agent.id, secretIds);
     } catch (error) {
+      // This agent was proven narrow by an earlier attempt (its id was stored after that) and is not new, so a failure
+      // that is not "still wide" (a listGrants or network error) says nothing about its grants. Replacing it would
+      // kill the proxy token the open env was built with; keep it and let the next call retry.
+      const proven = !created && session.onecli?.agentId === agent.id;
+      if (proven && !(error instanceof AgentNotNarrowError)) throw error;
       // An agent that might hold more than this session's secrets must not outlive the failed attempt.
       await this.#revoke(session.id, agent.id, secretIds).catch(() => undefined);
       this.#access.delete(session.id);
@@ -211,7 +234,7 @@ export class RepoAccess {
     const ok =
       left.length === mine.size && left.every((g) => g.kind === "secret" && mine.has(g.id));
     if (!ok) {
-      throw new Error(
+      throw new AgentNotNarrowError(
         `OneCLI agent still holds ${String(left.length)} grants after narrowing; expected only the session's GitHub secrets`,
       );
     }
@@ -301,7 +324,10 @@ export class RepoAccess {
     this.#access.delete(sessionId);
     this.#prepared.delete(sessionId);
     for (const [conversationId, session] of this.#byConversation) {
-      if (session.id === sessionId) this.#byConversation.delete(conversationId);
+      if (session.id === sessionId) {
+        this.#byConversation.delete(conversationId);
+        this.#envToken.delete(conversationId);
+      }
     }
   }
 }

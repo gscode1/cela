@@ -198,6 +198,46 @@ describe("token renewal", () => {
     expect(onecli.agents.size).toBe(1);
   });
 
+  /** A restarted orchestrator whose session row already stores the agent: it was proven narrow before. */
+  async function openWithStoredAgent(): Promise<RepoAccess> {
+    await access().shellEnv(session(), 7);
+    const agentId = [...onecli.agents.keys()][0] ?? "";
+    const repos = access();
+    await repos.shellEnv(session({ onecli: { agentId, secretIds: [] } }), 7);
+    return repos;
+  }
+
+  it("keeps the agent, and so the open env's token, when a renewal's grant check fails transiently", async () => {
+    const repos = await openWithStoredAgent();
+    const [agentId] = [...onecli.agents.keys()];
+    clock += 55 * 60 * 1000;
+    onecli.failGrantReads = true;
+    await expect(repos.beforeUse(7)).rejects.toThrow();
+    expect([...onecli.agents.keys()]).toEqual([agentId]);
+    onecli.failGrantReads = false;
+    await repos.beforeUse(7);
+    expect([...onecli.agents.keys()]).toEqual([agentId]);
+    expect(repos.envStale(7)).toBe(false);
+  });
+
+  it("reports the open env stale when the agent had to be replaced, so it can be reopened with the new token", async () => {
+    const repos = await openWithStoredAgent();
+    expect(repos.envStale(7)).toBe(false);
+    const [before] = [...onecli.agents.keys()];
+    clock += 55 * 60 * 1000;
+    // Someone widened the agent and removing the grant does not work: it is proven still wide and must go.
+    onecli.grants.get(before ?? "")?.secrets.add("llm-codex-0000000000000000");
+    onecli.ignoreRevokes = true;
+    await expect(repos.beforeUse(7)).rejects.toThrow(/still holds/);
+    onecli.ignoreRevokes = false;
+    await repos.beforeUse(7); // a new agent, a new token
+    expect([...onecli.agents.keys()]).not.toContain(before);
+    expect(repos.envStale(7)).toBe(true);
+    // Opening an env reads the current token again, which clears it.
+    await repos.shellEnv(session(), 7);
+    expect(repos.envStale(7)).toBe(false);
+  });
+
   it("does nothing for a conversation that is not a repo session", async () => {
     const repos = access();
     await repos.beforeUse(99);
