@@ -150,3 +150,19 @@ describe("the env's prepare hook (skills are written before the first operation)
     sandboxes.stop();
   });
 });
+
+describe("isOpen (repo skills rescan only while the sandbox is open)", () => {
+  it("is false until a call opens the env, true after, false again once it is closed, and asking opens nothing", async () => {
+    const sandboxes = make(() => Promise.resolve());
+    expect(sandboxes.isOpen(5)).toBe(false);
+    sandboxes.lazyEnv(5);
+    expect(sandboxes.isOpen(5)).toBe(false);
+    expect(sandboxEnv.connectSandboxEnv).not.toHaveBeenCalled();
+    await call(sandboxes, "readFile");
+    expect(sandboxes.isOpen(5)).toBe(true);
+    expect(sandboxes.isOpen(6)).toBe(false);
+    await sandboxes.closeAll();
+    expect(sandboxes.isOpen(5)).toBe(false);
+    sandboxes.stop();
+  });
+});

@@ -21,7 +21,15 @@ const CLONE_TIMEOUT_S = 600;
 /** The part of `ExecutionEnv` the workspace needs; narrower so tests can run it on a local env. */
 export type WorkspaceEnv = Pick<
   ExecutionEnv,
-  "exec" | "exists" | "createDir" | "remove" | "renameFile" | "writeFile" | "readTextFile"
+  | "exec"
+  | "exists"
+  | "createDir"
+  | "remove"
+  | "renameFile"
+  | "writeFile"
+  | "readTextFile"
+  | "listDir"
+  | "openBinaryReader"
 >;
 
 /** The workspace was ready once, but its marker or repository is gone (PVC replaced, files removed). Not re-cloned. */

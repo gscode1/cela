@@ -39,6 +39,7 @@ const KEYS = [
   "turnBudget",
   "mcpServers",
   "skills",
+  "repoSkills",
 ] as const;
 
 /**
@@ -67,6 +68,11 @@ export interface ProfileDefinition {
    * not just a number. A session's catalog lists them and its sandbox gets their files; absent: none.
    */
   skills?: SkillRef[];
+  /**
+   * Add the skills found in the session's cloned repo (`.pi/skills`, `.agents/skills`) to its catalog
+   * (docs/decisions/0014-repo-skills.md). Absent: off. Ignored for a session without a repo. Needs `read`.
+   */
+  repoSkills?: boolean;
 }
 
 export interface ProfileRef {
@@ -181,6 +187,18 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
       }
       definition.skills = skills;
     }
+  }
+  if (body.repoSkills !== undefined) {
+    if (typeof body.repoSkills !== "boolean") return "repoSkills must be true or false";
+    if (body.repoSkills) {
+      // Like skills: the model loads a repo skill by reading its SKILL.md.
+      for (const field of ["tools", "modelTools"] as const) {
+        if (definition[field] !== undefined && !definition[field].includes("read")) {
+          return `repoSkills needs the read tool, but ${field} does not include it`;
+        }
+      }
+    }
+    definition.repoSkills = body.repoSkills;
   }
   return ordered(definition);
 }

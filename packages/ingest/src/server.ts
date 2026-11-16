@@ -151,6 +151,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       model: modelOf(session, deps.settings.policy()),
       profile: session.profile === null ? LEGACY_PROFILE : profileRef(session.profile),
       ...skillsOf(session),
+      ...repoSkillsOf(session),
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
       createdAt: session.createdAt.toISOString(),
@@ -298,6 +299,15 @@ function skillsOf(session: SessionRow): { skills?: unknown[] } {
   const definition = validateProfileDefinition(session.profile.snapshot);
   if (typeof definition === "string" || definition.skills === undefined) return {};
   return { skills: definition.skills };
+}
+
+/** `repoSkills: true` when the session's snapshot turned repo skills on and it has a repo (they are ignored without one). */
+function repoSkillsOf(session: SessionRow): { repoSkills?: true } {
+  if (session.profile === null || session.repo === null) return {};
+  const definition = validateProfileDefinition(session.profile.snapshot);
+  return typeof definition !== "string" && definition.repoSkills === true
+    ? { repoSkills: true }
+    : {};
 }
 
 function skillVersionJson(meta: SkillVersionMeta) {

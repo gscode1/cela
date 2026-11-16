@@ -127,6 +127,14 @@ export class Sandboxes {
     for (const timer of this.#timers) timer.unref();
   }
 
+  /**
+   * True while the conversation's env (bridge) is open or opening in this process. A suspended, recycled or evicted
+   * sandbox has none, and asking is free: it never opens or resumes anything.
+   */
+  isOpen(conversationId: number): boolean {
+    return this.#envs.has(conversationId);
+  }
+
   /** Stops the timers. Bridges and sandboxes stay as they are. */
   stop(): void {
     for (const timer of this.#timers) clearInterval(timer);

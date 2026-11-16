@@ -46,8 +46,15 @@ export class SkillLibrary {
    * the bodies stay in Postgres until a sandbox needs them.
    */
   async catalogFor(definition: ProfileDefinition): Promise<string | undefined> {
+    const entries = await this.entriesFor(definition);
+    return entries.length === 0 ? undefined : buildSkillCatalog(entries);
+  }
+
+  /** The catalog entries of the snapshot's pinned skills (those that allow model invocation), checked against their digests. */
+  async entriesFor(
+    definition: ProfileDefinition,
+  ): Promise<{ name: string; description: string; location: string }[]> {
     const refs = (definition.skills ?? []).map(pinned);
-    if (refs.length === 0) return undefined;
     const entries: { name: string; description: string; location: string }[] = [];
     for (const ref of refs) {
       const meta = await readSkillVersion(this.#pool, ref.name, ref.version);
@@ -67,7 +74,7 @@ export class SkillLibrary {
         });
       }
     }
-    return entries.length === 0 ? undefined : buildSkillCatalog(entries);
+    return entries;
   }
 
   /** The verified bundles of a conversation's session (none for a session without skills or one the inbox does not know). */
