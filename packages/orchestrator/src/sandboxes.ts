@@ -19,6 +19,7 @@ import {
 } from "./kube.js";
 import { bridgeCommand } from "./bridge-launcher.js";
 import { conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
+import { bridgeRssByClaim } from "./bridge-rss.js";
 import { errorMessage, log } from "./log.js";
 import { TurnTimings } from "./timing.js";
 
@@ -127,6 +128,11 @@ export class Sandboxes {
     if (config.sandbox.idleSuspendMs > 0) {
       this.#timers.push(setInterval(() => void this.#suspendIdle(), 30_000));
     }
+    if (config.sandbox.bridgeRssIntervalMs > 0) {
+      this.#timers.push(
+        setInterval(() => void this.#logBridgeRss(), config.sandbox.bridgeRssIntervalMs),
+      );
+    }
     for (const timer of this.#timers) timer.unref();
   }
 
@@ -136,6 +142,28 @@ export class Sandboxes {
    */
   isOpen(conversationId: number): boolean {
     return this.#envs.has(conversationId);
+  }
+
+  /** One `bridge-rss` line per open bridge, keyed by session. Best effort: unavailable numbers are skipped. */
+  async #logBridgeRss(): Promise<void> {
+    try {
+      if (this.#envs.size === 0) return;
+      const rss = await bridgeRssByClaim();
+      for (const conversationId of this.#envs.keys()) {
+        const claim = claimNameFor(conversationId);
+        const bytes = rss.get(claim);
+        if (bytes === undefined) continue;
+        log("bridge-rss", {
+          session: await this.#sessionKeyOf(conversationId),
+          conversation: conversationId,
+          claim,
+          rssBytes: bytes,
+          open: this.#envs.size,
+        });
+      }
+    } catch {
+      // A metric must never disturb a session.
+    }
   }
 
   /** Stops the timers. Bridges and sandboxes stay as they are. */

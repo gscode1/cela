@@ -40,6 +40,8 @@ export interface OrchestratorConfig {
      * orchestrator under its memory limit; see docs/decisions/0004-idle-suspend.md.
      */
     maxOpenBridges: number;
+    /** How often the RSS of each open bridge is logged (`bridge-rss`, docs/metrics.md). 0 = never. */
+    bridgeRssIntervalMs: number;
   };
   /** Periodic removal of resources whose session is deleted or unknown; see docs/decisions/0002-orphan-sweep.md. */
   sweep: {
@@ -167,7 +169,12 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
     testFaults: env.PI_ORCH_TEST_FAULTS === "1",
     models,
     turnBudget,
-    sandbox: { idleEvictMs, idleSuspendMs, maxOpenBridges },
+    sandbox: {
+      idleEvictMs,
+      idleSuspendMs,
+      maxOpenBridges,
+      bridgeRssIntervalMs: seconds(env, "PI_BRIDGE_RSS_INTERVAL_SECONDS", 60),
+    },
     sweep: {
       intervalMs: seconds(env, "PI_SWEEP_INTERVAL_SECONDS", 300),
       graceMs: seconds(env, "PI_SWEEP_GRACE_SECONDS", 600),

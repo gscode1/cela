@@ -308,6 +308,14 @@ describe("bridge cap", () => {
       }
     ).exec("true", undefined, { abortSignal });
 
+  it("logs bridge RSS every minute by default, and never when the interval is 0", () => {
+    expect(config().sandbox.bridgeRssIntervalMs).toBe(60_000);
+    expect(config({ PI_BRIDGE_RSS_INTERVAL_SECONDS: "0" }).sandbox.bridgeRssIntervalMs).toBe(0);
+    expect(() => config({ PI_BRIDGE_RSS_INTERVAL_SECONDS: "-1" })).toThrow(
+      /PI_BRIDGE_RSS_INTERVAL_SECONDS/,
+    );
+  });
+
   it("defaults to 12 and refuses a value below 1", () => {
     expect(config().sandbox.maxOpenBridges).toBe(12);
     expect(config({ PI_MAX_OPEN_BRIDGES: "3" }).sandbox.maxOpenBridges).toBe(3);
