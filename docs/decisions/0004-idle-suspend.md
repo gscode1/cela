@@ -81,3 +81,9 @@ start) caps envs that are open or opening.
 - Separate from the start gate in `packages/sandbox-env/src/start-gate.ts`, which only serialises the CPU-heavy
   cold starts of bridges that are already allowed to open.
 - A call that waits longer than the model or tool timeout above it fails there; the queue is not durable.
+
+## Addendum: measuring resume (issue #58)
+
+The 15 s above is Pod Ready only. The orchestrator now logs `turn-timing` per turn (claim, Pod Ready, bridge ready, first
+exec) and `bridge-rss` per open bridge; how to read them, the measurement procedure and the readinessProbe-period
+experiment are in [docs/metrics.md](../metrics.md). Results go there once measured.

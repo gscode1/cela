@@ -19,7 +19,9 @@ import {
 } from "./kube.js";
 import { bridgeCommand } from "./bridge-launcher.js";
 import { conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
+import { bridgeRssByClaim } from "./bridge-rss.js";
 import { errorMessage, log } from "./log.js";
+import { TurnTimings } from "./timing.js";
 
 export const WORKSPACE = "/workspace";
 
@@ -82,6 +84,10 @@ export function claimNameFor(conversationId: number): string {
 export class Sandboxes {
   readonly #config: OrchestratorConfig;
   readonly #envs = new Map<number, Promise<SandboxEnv>>();
+  /** Phase timings of the current turn of each conversation (docs/metrics.md); also tags its log lines. */
+  readonly timings = new TurnTimings(log);
+  /** Conversations whose bridge reported ready and has not been (re)spawned or dropped since. */
+  readonly #bridgeUp = new Set<number>();
 
   /** Per open env. Drives idle eviction. */
   readonly #usage = new Map<number, Usage>();
@@ -124,6 +130,11 @@ export class Sandboxes {
     if (config.sandbox.idleSuspendMs > 0) {
       this.#timers.push(setInterval(() => void this.#suspendIdle(), 30_000));
     }
+    if (config.sandbox.bridgeRssIntervalMs > 0) {
+      this.#timers.push(
+        setInterval(() => void this.#logBridgeRss(), config.sandbox.bridgeRssIntervalMs),
+      );
+    }
     for (const timer of this.#timers) timer.unref();
   }
 
@@ -133,6 +144,28 @@ export class Sandboxes {
    */
   isOpen(conversationId: number): boolean {
     return this.#envs.has(conversationId);
+  }
+
+  /** One `bridge-rss` line per open bridge, keyed by session. Best effort: unavailable numbers are skipped. */
+  async #logBridgeRss(): Promise<void> {
+    try {
+      if (this.#envs.size === 0) return;
+      const rss = await bridgeRssByClaim();
+      for (const conversationId of this.#envs.keys()) {
+        const claim = claimNameFor(conversationId);
+        const bytes = rss.get(claim);
+        if (bytes === undefined) continue;
+        log("bridge-rss", {
+          session: await this.#sessionKeyOf(conversationId),
+          conversation: conversationId,
+          claim,
+          rssBytes: bytes,
+          open: this.#envs.size,
+        });
+      }
+    } catch {
+      // A metric must never disturb a session.
+    }
   }
 
   /** Stops the timers. Bridges and sandboxes stay as they are. */
@@ -155,6 +188,7 @@ export class Sandboxes {
     this.#usage.delete(conversationId);
     // Not `#dropEnv`: callers that serve the queue are mid-loop, and serving from here would re-enter them.
     this.#envs.delete(conversationId);
+    this.#bridgeUp.delete(conversationId);
     const counts = {
       claim: claimNameFor(conversationId),
       open: this.#envs.size,
@@ -195,6 +229,7 @@ export class Sandboxes {
   /** Removes an env from the map, which frees its slot, and hands freed slots to waiting calls. */
   #dropEnv(conversationId: number): void {
     this.#envs.delete(conversationId);
+    this.#bridgeUp.delete(conversationId);
     this.#serveQueue();
   }
 
@@ -233,6 +268,8 @@ export class Sandboxes {
           };
           this.#usage.set(conversationId, usage);
           usage.inUse++;
+          // Before anything the call may wait for (a recycle, credential renewal, a bridge slot at the cap).
+          this.timings.mark(conversationId, "tool-requested");
           let outcome: { threw: true } | { threw: false; result: unknown } | undefined;
           try {
             // A recycle or suspend of this sandbox finishes first; the env opened below is then for the new Pod.
@@ -242,6 +279,7 @@ export class Sandboxes {
             // user), so a running command is never cut off; otherwise a later call does it.
             if (usage.inUse === 1 && this.#hooks.envStale?.(conversationId) === true) {
               log("env-reopen", {
+                ...this.timings.fields(conversationId),
                 claim: claimNameFor(conversationId),
                 reason: "credentials-replaced",
               });
@@ -257,6 +295,12 @@ export class Sandboxes {
               usage.recorded = true;
             }
             try {
+              if (property === "exec") {
+                this.timings.mark(conversationId, "first-exec-start");
+                // A bridge that is up sends the request at once; otherwise bridge-ready marks it (TurnTimings).
+                if (this.#bridgeUp.has(conversationId))
+                  this.timings.mark(conversationId, "first-exec-sent");
+              }
               const result = await real[property]?.(...args);
               outcome = { threw: false, result };
               return result;
@@ -305,6 +349,7 @@ export class Sandboxes {
       void this.#hooks.execInFlight?.(conversationId, false).catch((error: unknown) => {
         usage.recorded = true; // still recorded: the next settle clears it
         log("exec-record-failed", {
+          ...this.timings.fields(conversationId),
           claim: claimNameFor(conversationId),
           message: errorMessage(error),
         });
@@ -446,6 +491,7 @@ export class Sandboxes {
       signal?.addEventListener("abort", onAbort, { once: true });
     });
     log("bridge-cap-wait", {
+      ...this.timings.fields(conversationId),
       claim: claimNameFor(conversationId),
       open: this.#envs.size,
       max: maxOpenBridges,
@@ -479,19 +525,23 @@ export class Sandboxes {
     const master = process.env[ENV.masterKey];
     if (master === undefined || master === "") throw new Error(`${ENV.masterKey} is not set`);
     const token = deriveSandboxToken(master, claimName);
+    this.timings.mark(conversationId, "claim-requested");
     try {
       // Create the claim with the session label, or accept an existing one only if the label matches. The SDK
       // then adopts it by name.
-      await ensureLabeledClaim(
+      const created = await ensureLabeledClaim(
         namespace,
         claimName,
         warmPool,
         await this.#sessionKeyOf(conversationId),
         [{ name: SANDBOXD_TOKEN_SHA256_ENV, value: sandboxTokenSha256(token) }],
       );
+      if (created) this.timings.setState(conversationId, "cold");
       // A suspended sandbox is never Ready, so the wait below would only time out: resume it first.
-      if (await resumeIfSuspended(namespace, claimName))
-        log("sandbox-resumed", { claim: claimName });
+      if (await resumeIfSuspended(namespace, claimName)) {
+        this.timings.setState(conversationId, "resumed");
+        log("sandbox-resumed", { ...this.timings.fields(conversationId), claim: claimName });
+      }
       await ensureClaim({
         claimName,
         namespace,
@@ -500,10 +550,15 @@ export class Sandboxes {
         authToken: token,
       });
     } catch (error) {
-      log("claim-failed", { claim: claimName, message: errorMessage(error) });
+      log("claim-failed", {
+        ...this.timings.fields(conversationId),
+        claim: claimName,
+        message: errorMessage(error),
+      });
       throw error;
     }
-    log("claim-ready", { claim: claimName });
+    this.timings.mark(conversationId, "claim-ready");
+    log("claim-ready", { ...this.timings.fields(conversationId), claim: claimName });
     // Credentials for a repo session's commands only; plain sessions get nothing here. The token travels through the
     // pi-env protocol to the daemon, never through the bridge process environment (bridgeCommand starts the bridge with a trimmed environment and its own claim's token).
     const shellEnv = await this.#hooks.shellEnv?.(conversationId);
@@ -514,12 +569,21 @@ export class Sandboxes {
       id: `pi-env:${claimName}`,
       bridgeCommand: bridgeCommand(process.env, token),
       ...(shellEnv === undefined ? {} : { shellEnv }),
+      onPhase: (phase) => {
+        if (phase === "bridge-ready") this.#bridgeUp.add(conversationId);
+        else this.#bridgeUp.delete(conversationId);
+        this.timings.mark(conversationId, phase);
+      },
     });
     try {
       await this.#hooks.prepareEnv?.(conversationId, opened.env);
     } catch (error) {
       opened.close();
-      log("env-prepare-failed", { claim: claimName, message: errorMessage(error) });
+      log("env-prepare-failed", {
+        ...this.timings.fields(conversationId),
+        claim: claimName,
+        message: errorMessage(error),
+      });
       throw error;
     }
     return opened;
@@ -549,6 +613,7 @@ export class Sandboxes {
     this.#interrupted.delete(conversationId);
     this.#failed.delete(conversationId);
     this.#lastUsed.delete(conversationId);
+    this.timings.clear(conversationId);
     const opened = this.#envs.get(conversationId);
     this.#usage.delete(conversationId);
     this.#dropEnv(conversationId);

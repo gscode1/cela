@@ -162,6 +162,7 @@ async function main(): Promise<void> {
     turnBudget: () => settings.turnBudget(),
     repos,
     skills,
+    timings: host.timings,
   });
   running.service = service;
   // Not fatal: a failed scan only means a run that died unseen is noticed at its next input.

@@ -59,6 +59,8 @@ function labelOf(claim: unknown): string | undefined {
  * it. The env is baked into the Pod at creation, so an existing claim is accepted only if it carries the same
  * value: one created before per-sandbox tokens (or under another master) would otherwise fail every call with a
  * bare 401, and a name collision with a hash from another master must not be adopted.
+ *
+ * Resolves true when this call created the claim (a cold start), false when it already existed.
  */
 export async function ensureLabeledClaim(
   namespace: string,
@@ -66,7 +68,7 @@ export async function ensureLabeledClaim(
   warmPool: string,
   sessionKey: string,
   env: readonly ClaimEnvVar[],
-): Promise<void> {
+): Promise<boolean> {
   const kc = new KubeConfig();
   kc.loadFromDefault();
   const custom = kc.makeApiClient(CustomObjectsApi);
@@ -89,7 +91,7 @@ export async function ensureLabeledClaim(
         );
       }
     }
-    return;
+    return false;
   }
   try {
     await custom.createNamespacedCustomObject({
@@ -107,8 +109,9 @@ export async function ensureLabeledClaim(
   } catch (error) {
     // Lost a race with another creator: fall back to the label check.
     if (statusOf(error) !== 409) throw error;
-    await ensureLabeledClaim(namespace, claimName, warmPool, sessionKey, env);
+    return ensureLabeledClaim(namespace, claimName, warmPool, sessionKey, env);
   }
+  return true;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

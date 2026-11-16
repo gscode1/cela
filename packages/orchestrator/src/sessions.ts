@@ -29,6 +29,7 @@ import {
   scanRepoSkills,
 } from "./repo-context.js";
 import type { RepoAccess } from "./repo-access.js";
+import type { TurnTimings } from "./timing.js";
 import { WorkspaceLostError } from "./workspace.js";
 import { SkillIntegrityError } from "./skills.js";
 import type { SkillLibrary } from "./skills.js";
@@ -93,6 +94,8 @@ export interface SessionServiceOptions {
   repos?: RepoAccess;
   /** Where a new conversation's skill catalog comes from. Without it a profile that names skills is refused. */
   skills?: Pick<SkillLibrary, "catalogFor" | "entriesFor">;
+  /** Starts the timing clock of each input (docs/metrics.md). Without it nothing is timed. */
+  timings?: TurnTimings;
 }
 
 /**
@@ -336,11 +339,17 @@ export class SessionService {
           this.#options.testFaults && event.payload.testFault === "exit-after-submit";
         const alreadyAdmitted =
           faultArmed && (await this.#host.hasSubmission(conversationId, requestId));
+        this.#options.timings?.begin({
+          session: session.id,
+          conversation: conversationId,
+          turn: requestId,
+        });
         await this.#host.submitInput(conversationId, {
           text,
           requestId,
           steer: event.kind === "steer",
         });
+        this.#options.timings?.mark(conversationId, "input-submitted");
         this.#watcher.add({ sessionId: session.id, conversationId, requestId });
         if (faultArmed && !alreadyAdmitted) {
           // After the durable hand-over, before the row says so: exactly the window test 4 needs.
@@ -354,6 +363,7 @@ export class SessionService {
         return;
       }
       case "cancel": {
+        if (session.conversationId !== null) this.#options.timings?.clear(session.conversationId);
         if (session.conversationId !== null) await this.#host.abort(session.conversationId);
         return;
       }
