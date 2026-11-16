@@ -1,0 +1,55 @@
+# pi-ingest (the session API front, port 8080, label app.kubernetes.io/name=pi-ingest).
+#
+# Ingress choice: clients reach ingest through the Envoy Gateway data plane (namespace envoy-gateway-system, pods
+# app.kubernetes.io/name=envoy, the Gateway `main`), because every HTTPRoute on c2 terminates there. No HTTPRoute for
+# ingest exists yet; when one is added it needs no policy change. The e2e driver is also allowed (it normally
+# execs into an ingest pod instead, which needs no network). `kubectl port-forward` and kubelet probes arrive from the
+# node (host), which Cilium always admits; this policy does not cover them. If clients come from elsewhere
+# (LAN, another namespace), add a `from` entry here instead of widening another policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-allow-clients-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+              app.kubernetes.io/component: proxy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: e2e-driver
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# Egress: Postgres (the -rw service, 5432) and the orchestrator (8081, to proxy the stream). DNS is allow-dns-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-allow-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pi-pg
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+      ports:
+        - { protocol: TCP, port: 8081 }

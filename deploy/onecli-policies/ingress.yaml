@@ -1,0 +1,47 @@
+# Who may reach the OneCLI pod (namespace onecli, label app=onecli; three containers in one pod: web :10254,
+# gateway :10255, api :10256). Writing an ingress rule for the pod makes everything not listed here denied.
+#
+# Current clients, listed read-only on c2 on 2026-11-15 (every pod, Deployment, CronJob and Job in the cluster searched
+# for onecli.onecli, onecli:10, onecli.example.com): only pi-orchestrator. The other user is the Envoy Gateway data plane,
+# through HTTPRoute onecli.example.com (/ -> web 10254, /v1 /auth /scim -> api 10256, /gw -> gateway 10255).
+#   :10255 gateway  pi-durable-poc orchestrator and sandboxes, plus Envoy (the /gw route)
+#   :10256 api      pi-durable-poc orchestrator, plus Envoy (the dashboard and the admin script reach /v1 through it)
+#   :10254 web      Envoy only (dashboard)
+# Kubelet probes and `kubectl port-forward` come from the local node (host); Cilium admits that by default.
+# If /v1 and /gw must not be reachable from the LAN at all, drop ports 10255 and 10256 from the Envoy rule and use
+# port-forward for admin work; the dashboard then also needs it, because its browser calls go to /v1.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: onecli-ingress
+  namespace: onecli
+spec:
+  endpointSelector:
+    matchLabels:
+      app: onecli
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: pi-durable-poc
+            app.kubernetes.io/name: pi-orchestrator
+      toPorts:
+        - ports:
+            - { port: "10255", protocol: TCP }
+            - { port: "10256", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: pi-durable-poc
+            app.kubernetes.io/name: pi-sandbox
+      toPorts:
+        - ports:
+            - { port: "10255", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: envoy-gateway-system
+            app.kubernetes.io/name: envoy
+            app.kubernetes.io/component: proxy
+      toPorts:
+        - ports:
+            - { port: "10254", protocol: TCP }
+            - { port: "10255", protocol: TCP }
+            - { port: "10256", protocol: TCP }

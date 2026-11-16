@@ -1,0 +1,18 @@
+# DNS for every pod in the namespace, to kube-dns only (CoreDNS pods k8s-app=kube-dns in kube-system). This is the
+# Cilium form of allow-dns-egress in deploy/networkpolicy.yaml; the two add up, they do not conflict. No `rules.dns`
+# here: pods in this namespace need no FQDN policy (the onecli pod does, see deploy/onecli-policies/).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: dns-egress-kube-dns-only
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }

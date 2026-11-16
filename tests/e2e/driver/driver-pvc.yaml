@@ -1,0 +1,12 @@
+# Holds the driver scripts and the Phase 1 bundle (tests/e2e/run.sh loads it). Only one pod mounts it at a time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: e2e-driver
+  namespace: pi-durable-poc
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn-static
+  resources:
+    requests:
+      storage: 1Gi

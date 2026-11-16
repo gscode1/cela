@@ -1,0 +1,69 @@
+# Where the OneCLI pod may connect. Writing an egress rule makes everything not listed here denied, so the
+# cluster, the LAN and the node network are closed by default; the only exceptions are below.
+#
+#   DNS     kube-dns, with a DNS proxy rule: toFQDNs only works for names Cilium saw resolved through it.
+#   DB      the onecli database on the shared CNPG cluster (DATABASE_URL points at pg-db-cluster-rw.postgres-clusters:5432).
+#   FQDNs   the host allowlist, :443 only. Keep it in step with the OneCLI host rules (docs/onecli-host-rules.md):
+#           the gateway rules say what a token may ask for, this says where the pod can physically go.
+# The egressDeny block is defence in depth: a public name that resolves to a private address (DNS rebinding) must
+# not be reachable even if it is on the list. The gateway already refuses private targets (v2.20.0); this does not
+# depend on it. Deny wins over allow, so the cluster CIDRs must not swallow the Postgres pod: CIDR rules do not match
+# pod endpoints by default, but that is UNVERIFIED on c2 until Cilium runs. Check with `hubble observe` first.
+#
+# UNVERIFIED: whether web, api or gateway call anything else (update checks, telemetry, ONECLI_EXTERNAL_URL
+# https://onecli.example.com from inside the pod). Roll out with policy audit mode on the pod, read Hubble for
+# would-be drops, then enforce.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: onecli-egress
+  namespace: onecli
+spec:
+  endpointSelector:
+    matchLabels:
+      app: onecli
+  egressDeny:
+    - toCIDRSet:
+        - cidr: 10.0.0.0/8
+        - cidr: 172.16.0.0/12
+        - cidr: 192.168.0.0/16
+        - cidr: 100.64.0.0/10
+        - cidr: 169.254.0.0/16
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: postgres-clusters
+            cnpg.io/cluster: pg-db-cluster
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+    - toFQDNs:
+        # Model providers (ChatGPT/Codex subscription, OpenAI API, OpenRouter).
+        - matchName: chatgpt.com
+        - matchPattern: "*.chatgpt.com"
+        - matchName: auth.openai.com
+        - matchName: api.openai.com
+        - matchName: openrouter.ai
+        # GitHub (Phase 4c clone and push).
+        - matchName: github.com
+        - matchName: api.github.com
+        - matchName: codeload.github.com
+        - matchName: objects.githubusercontent.com
+        # Package registries.
+        - matchName: registry.npmjs.org
+        - matchName: pypi.org
+        - matchName: files.pythonhosted.org
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

@@ -1,0 +1,11 @@
+# Holds the bundled orchestrator code so a pod restart keeps it. Filled by deploy/push-code.sh.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestrator-code
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn-static
+  resources:
+    requests:
+      storage: 1Gi

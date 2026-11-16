@@ -1,0 +1,29 @@
+# Phase 4c: the orchestrator mints a GitHub App installation token by calling api.github.com directly (not through
+# the OneCLI gateway: the App key must not leave the orchestrator). This is the only public host it may reach.
+# toFQDNs needs Cilium to see the DNS answers, so the DNS rule below carries `rules.dns` for api.github.com only;
+# it adds to dns-egress-kube-dns-only (policies add up).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orchestrator-egress-github-api
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchName: api.github.com
+    - toFQDNs:
+        - matchName: api.github.com
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

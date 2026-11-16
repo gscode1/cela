@@ -1,0 +1,55 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: pi-env-template
+spec:
+  # Each SandboxClaim carries its own SANDBOXD_AUTH_TOKEN_SHA256 (the hash of HMAC(master, claimName), set by the
+  # orchestrator). Allowed lets a claim ADD that variable; the template must not define it, because Allowed
+  # rejects an override. Fail closed: a Pod made from a claim without it gets the literal
+  # `$(SANDBOXD_AUTH_TOKEN_SHA256)` text as its hash, which no token matches.
+  # See docs/decisions/0001-per-sandbox-sandboxd-token.md.
+  envVarsInjectionPolicy: Allowed
+  service: true
+  networkPolicyManagement: Unmanaged  # we own the policies in networkpolicy.yaml
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-static
+        resources:
+          requests:
+            storage: 1Gi
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-sandbox
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: sandboxd
+          image: docker.io/gsimage/pi-sandbox:1.5.2-r2-5bccb47@sha256:95c444f7ef6fc3f7b62f61d2e454a133b2a727ae41664508416c7ba9ae338060
+          args:
+            - --auth-token-sha256=$(SANDBOXD_AUTH_TOKEN_SHA256)
+          ports:
+            - containerPort: 8080
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: { path: /v1/health, port: 8080 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace

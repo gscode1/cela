@@ -1,0 +1,61 @@
+# The e2e driver Job's identity: exactly what tests/e2e/run-phase{1,3,4}.sh do, in pi-durable-poc only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: e2e-driver
+  namespace: pi-durable-poc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: e2e-driver
+  namespace: pi-durable-poc
+rules:
+  # Orchestrator, ingest, sandbox and runner pods: look, wait, delete (kill tests), create the Phase 1 runner.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # pi-orchestrator-b (create/delete), rollout status, scale to 0 and back (Phase 4).
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, update, patch]
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxclaims]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, delete]
+  # deploy/gen-api-secret.sh (create if missing) and the sandboxd-auth presence check.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create]
+  # `kubectl wait` for the CNPG cluster. Pod exec into pi-pg-1 (pg_terminate_backend) is the pods/exec rule above.
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: e2e-driver
+  namespace: pi-durable-poc
+subjects:
+  - kind: ServiceAccount
+    name: e2e-driver
+    namespace: pi-durable-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: e2e-driver

@@ -1,0 +1,31 @@
+{
+  "name": "@pi-durable-k8s/orchestrator",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Pi Durable host: Postgres storage, inbox consumer, SSE streams, one sandbox per conversation, scripted model.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@kubernetes/client-node": "2.0.0",
+    "@netzlabor/pi-durable-postgres": "file:../../vendor/netzlabor-pi-durable-postgres-0.2.0.tgz",
+    "@pi-durable-k8s/sandbox-env": "workspace:*",
+    "@pi-durable-k8s/session-core": "workspace:*",
+    "undici": "8.12.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,60 @@
+# pi-orchestrator (label app.kubernetes.io/name=pi-orchestrator, control port 8081). The e2e-runner pod and the
+# pi-orchestrator-b pod of the double-owner test carry the same label and so get the same policy, on purpose.
+#
+# Ingress: ingest (stream proxy) and the e2e driver only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-ingest
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: e2e-driver
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+# Egress: Postgres -rw, sandboxd on sandbox pods, OneCLI gateway :10255 and management API :10256. DNS is
+# allow-dns-egress. The Kubernetes API cannot be expressed here (ClusterIP DNAT to node addresses): it is in
+# deploy/cilium/kube-apiserver.yaml with the `kube-apiserver` entity. Without that the orchestrator cannot manage claims.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-allow-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pi-pg
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-sandbox
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 9090 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: onecli
+          podSelector:
+            matchLabels:
+              app: onecli
+      ports:
+        - { protocol: TCP, port: 10255 }
+        - { protocol: TCP, port: 10256 }

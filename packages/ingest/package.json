@@ -1,0 +1,24 @@
+{
+  "name": "@pi-durable-k8s/ingest",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Stateless HTTP front of the session API: authenticates, writes events to the Postgres inbox, proxies the event stream to the orchestrator.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pi-durable-k8s/session-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,25 @@
+# Model selection, one source for both processes: ingest validates POST /sessions against the allowlist, the
+# orchestrator installs those providers and applies the turn budget. Change it, then restart both Deployments
+# (env is read at start).
+#
+# Default: OpenAI Codex (ChatGPT subscription) through OneCLI. gpt-6.1-terra is the session default; gpt-6.1-sol is for
+# sessions that need the larger model, chosen per session with POST /sessions {provider, model}. Both run with reasoning
+# effort `medium`. The scripted models stay allowed: the e2e suites use them, and tests/e2e/deploy patches the default
+# back to scripted so the suites need no credentials.
+# Real providers need Secret `pi-onecli` (deploy/onecli-externalsecret.yaml) and ConfigMap `onecli-ca`
+# (deploy/fetch-onecli-ca.sh); see docs/model-credentials.md. The orchestrator refuses to start without the token
+# when the allowlist names a real provider. List provider/model pairs; the model id may contain slashes
+# (openrouter/openai/gpt-4.1-nano).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-model-config
+data:
+  PI_MODEL_PROVIDER: openai-codex
+  PI_MODEL_ID: gpt-6.1-terra
+  # Reasoning effort (Pi thinkingLevel: off, minimal, low, medium, high, xhigh), stored with each new session.
+  PI_MODEL_REASONING: medium
+  # The default is always allowed in addition.
+  PI_MODEL_ALLOWLIST: openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol,scripted/scripted-1,scripted/scripted-2
+  # Model turns (assistant responses) one session may use in total; the first spend limit.
+  PI_SESSION_TURN_BUDGET: "100"

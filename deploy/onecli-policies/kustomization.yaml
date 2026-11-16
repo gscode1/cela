@@ -1,0 +1,6 @@
+# For the user's Argo repo (argo-c2), not applied from here. See README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ingress.yaml
+  - egress.yaml

@@ -1,0 +1,99 @@
+# One replica, Recreate: the Postgres adapter allows a single owner per schema.
+# Code comes from the orchestrator-code PVC (deploy/push-code.sh), so no image is pushed.
+# The DB URI comes from the CNPG-generated secret pi-pg-app and is never printed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-orchestrator
+  labels:
+    app.kubernetes.io/name: pi-orchestrator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+      app.kubernetes.io/instance: pi-orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-orchestrator
+        app.kubernetes.io/instance: pi-orchestrator
+    spec:
+      serviceAccountName: pi-orchestrator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: orchestrator
+          image: node:22-bookworm-slim
+          workingDir: /code/app
+          command: [node, dist/main.js]
+          # PI_MODEL_PROVIDER, PI_MODEL_ID, PI_MODEL_ALLOWLIST, PI_SESSION_TURN_BUDGET.
+          envFrom:
+            - configMapRef: { name: pi-model-config }
+          env:
+            - { name: HOME, value: /tmp }
+            - { name: PI_ORCH_NAMESPACE, value: pi-durable-poc }
+            - { name: PI_ORCH_WARMPOOL, value: pi-env-pool }
+            - { name: PI_ORCH_PORT, value: "8081" }
+            - { name: PI_DURABLE_SCHEMA, value: durable }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: PI_DURABLE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: pi-pg-app, key: uri } }
+            # Master key of the per-sandbox sandboxd tokens: HMAC(master, claim). Never reaches a bridge or a sandbox.
+            - name: PI_SANDBOX_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: sandboxd-auth, key: master } }
+            # Same bearer tokens as ingest (create with deploy/gen-api-secret.sh): the stream endpoint
+            # authenticates the caller again and checks the session owner.
+            - name: PI_API_TOKENS
+              valueFrom: { secretKeyRef: { name: api-auth, key: tokens } }
+            # Model calls go through the OneCLI gateway with this agent token (an ExternalSecret from secret-store,
+            # deploy/onecli-externalsecret.yaml). Optional so the scripted model runs without it. It is read from the
+            # environment once and never logged; bridge-launcher strips it from every bridge child.
+            - name: ONECLI_AGENT_TOKEN
+              valueFrom: { secretKeyRef: { name: pi-onecli, key: agent-token, optional: true } }
+            # Phase 4c: management API key for per-session OneCLI agents (repo sessions only; optional).
+            - name: ONECLI_API_KEY
+              valueFrom: { secretKeyRef: { name: pi-onecli-admin, key: api-key, optional: true } }
+            - { name: PI_ONECLI_API, value: "http://onecli.onecli:10256" }
+            - { name: PI_ONECLI_GATEWAY, value: "http://onecli.onecli:10255" }
+            - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
+            # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway. NO_PROXY
+            # is the belt and braces list (cluster, Kubernetes API, Postgres) the orchestrator also applies itself.
+            - { name: NO_PROXY, value: "localhost,127.0.0.1,.svc,.cluster.local,kubernetes.default,pi-pg-rw,10.0.0.0/8" }
+            # Test-only, both off unless set. CONTROL mounts the authenticated Phase 3 scripted-session surface
+            # under /control. TEST_FAULTS honours payload.testFault on inbox rows, which only SQL can write
+            # (ingest never does), so the Phase 4 suite can kill the orchestrator between submit and mark.
+          ports:
+            - { name: control, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: control }
+            periodSeconds: 3
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: code, mountPath: /code, readOnly: true }
+            - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
+            - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
+      volumes:
+        # GitHub App key for minting per-repo tokens (ExternalSecret pi-github-app); optional like the CA.
+        - name: github-app
+          secret: { secretName: pi-github-app, optional: true }
+        # Filled by deploy/fetch-onecli-ca.sh; optional so the scripted model starts without it.
+        - name: onecli-ca
+          configMap: { name: onecli-ca, optional: true }
+        - name: code
+          persistentVolumeClaim:
+            claimName: orchestrator-code

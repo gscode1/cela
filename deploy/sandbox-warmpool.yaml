@@ -1,0 +1,8 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: pi-env-pool
+spec:
+  replicas: 0
+  sandboxTemplateRef:
+    name: pi-env-template

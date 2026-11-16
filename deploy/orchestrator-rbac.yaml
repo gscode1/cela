@@ -1,0 +1,43 @@
+# Least privilege for the orchestrator, namespace-scoped. It creates and attaches SandboxClaims through
+# the SDK and reads the Sandbox / Pod / Service the SDK resolves. Deleting a claim and its workspace PVC is
+# done by session deletion and by the orphan sweep (docs/decisions/0002-orphan-sweep.md), through the same function.
+# Sandbox lifecycle (docs/decisions/0003 and 0004): `patch` on sandboxes suspends and resumes a sandbox
+# (spec.operatingMode); `delete` on pods replaces the Pod after an interrupted command; `list` on PVCs lets the
+# sweep find workspace PVCs whose claim is gone.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pi-orchestrator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pi-orchestrator
+rules:
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxclaims]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pi-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: pi-orchestrator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pi-orchestrator

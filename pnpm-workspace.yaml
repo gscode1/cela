@@ -1,0 +1,13 @@
+packages:
+  - packages/*
+  - packages/vendor/*
+# Their install scripts only check versions or print notices; not needed.
+allowBuilds:
+  protobufjs: false
+  "@google/genai": false
+
+# The e2e bundle is installed here and run in an arm64 Linux pod, so keep those native bindings too.
+supportedArchitectures:
+  os: [current, linux]
+  cpu: [current, arm64]
+  libc: [current, glibc]

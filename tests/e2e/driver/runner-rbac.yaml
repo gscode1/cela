@@ -1,0 +1,36 @@
+# Throwaway identity for the e2e runner pod. Namespace-scoped, nothing cluster-wide.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: e2e-runner
+  namespace: pi-durable-poc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: e2e-runner
+  namespace: pi-durable-poc
+rules:
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxclaims]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods, services]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: e2e-runner
+  namespace: pi-durable-poc
+subjects:
+  - kind: ServiceAccount
+    name: e2e-runner
+    namespace: pi-durable-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: e2e-runner

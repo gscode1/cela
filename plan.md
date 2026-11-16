@@ -1,0 +1,311 @@
+# pi-durable-k8s: Self-Hosted Durable Pi Agents on Kubernetes
+
+Status: draft, 2026-11-15
+Scope: proof of concept. Production hardening is out of scope and listed at the end.
+
+## 1. Goal
+
+Run Pi Durable agents on my own Kubernetes cluster so that:
+
+- agent state lives in PostgreSQL (CloudNativePG) and survives orchestrator restarts,
+- tools run in a per-session gVisor sandbox with a persistent workspace PVC,
+- sessions are reachable through a small remote API,
+- missing pieces are contributed upstream instead of forked.
+
+## 2. Decisions taken
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Durability layer | Native Pi Durable, no durable-harness | Single replica is enough; avoids the reference-grade Postgres World and the 120 s takeover trap |
+| Storage | `@netzlabor/pi-durable-postgres`, ported to current Pi Durable | Exists, passes upstream conformance on 1.0.3; needs the 1.5 batched-commit contract |
+| Orchestrator topology | 1 replica, `strategy: Recreate` | Adapter allows one owner per schema (advisory lock) |
+| Execution | `pi-env` daemon inside the sandbox, bridged over Agent Sandbox `commands.start()` | Conformance-tested `RemoteExecutionEnv`; avoids hand-writing FileSystem + Shell |
+| Execution fallback | `pi-env` over SSH | Documented path if the stdio bridge fails |
+| Sandbox | kubernetes-sigs/agent-sandbox, `runtimeClassName: gvisor`, `volumeClaimTemplates` | Lifecycle, PVC and reattach already exist |
+| SDK connectivity | `in-cluster-service` | Port-forward mode does not work on gVisor |
+| Interrupted commands | Report as interrupted; agent inspects workspace | Reattachment deferred until proven necessary |
+| `@parcha/pi-transport` | Not used | Retired by its maintainers |
+| Self-hosted Claude Managed Agents | Not used | Limited to Claude models; this project stays on Pi and model-agnostic |
+| Isolation runtime | gVisor | Confirmed working in the target environment |
+
+## 3. Architecture
+
+```mermaid
+flowchart TD
+    A["Client"] --> B["Session API (thin)"]
+    B --> C["Pi Durable orchestrator<br/>1 replica, Recreate"]
+    C <--> D["CloudNativePG<br/>-rw service, no tx pooling"]
+    C --> E["RemoteExecutionEnv (pi-env client)"]
+    E --> F["Agent Sandbox TS SDK<br/>commands.start() stdio"]
+    F --> G["Sandbox Pod (gVisor)<br/>pi-env daemon"]
+    G --> H["Workspace PVC"]
+```
+
+Session mapping: one Pi conversation ID = one named SandboxClaim = one PVC.
+
+## 4. Phases
+
+### Phase 1: De-risk spikes (2–3 days)
+
+1. **Stdio bridge.** Bake the `pi-env` daemon into a sandbox image. Start it with `commands.start()` and connect `RemoteExecutionEnv` through a custom `Connection`.
+   - Exit: Pi Durable's env conformance suite passes against the sandbox.
+   - If it fails: fall back to SSH and note what `commands.start()` lacks.
+2. **Sandbox basics.** SandboxTemplate with gVisor, `spec.service: true`, PVC, dropped capabilities, no service-account token. Verify `getSandbox()` reattach after orchestrator restart and Pod recreation with the PVC intact.
+
+**Phase 1 result (2026-11-15): done.** `tests/e2e/run-phase1.sh` is green on c2.
+- The env conformance suite passes 29/29 through the bridge.
+- Reattach works after an orchestrator restart and after Pod recreation, with the PVC intact.
+- No in-cluster-service DNS staleness was seen for a fresh connection.
+
+Findings that change this plan:
+- pi-env's `Connection` only spawns a local argv, so the bridge is a local executable (`pi-sandbox-bridge`) that relays its stdio over `commands.start()`.
+- A SandboxClaim must reference a SandboxWarmPool. A pool with `replicas: 0` works as a plain template alias.
+- The SDK's `Sandbox.close()` deletes the claim. Use `closeLocal()` everywhere except on session deletion.
+- c2 runs flannel, so NetworkPolicy is not enforced. Until a policy-capable CNI is in place, only the sandboxd auth token protects the sandbox.
+- Stdio throughput is about 1.7 MiB/s in each direction. That is fine for tool calls, but large file transfers would need work.
+- Still open: whether a long-lived connection survives Pod recreation, and whether SIGKILL reaps pi-env's child process groups (both Phase 3).
+
+### Phase 2: Postgres storage (about 1 week)
+
+1. Port the adapter to current Pi Durable: `Storage.commit(batches, receive, context)`, tightened `mintId`, watch changes.
+2. Run the upstream storage conformance suite on PostgreSQL 17 via CloudNativePG.
+3. Open a PR upstream to the adapter repo.
+
+- Exit: conformance green on the pinned Pi Durable version.
+- Constraint: connect to the `-rw` service or a session-mode pooler only.
+
+**Phase 2 result (2026-11-15): port done, upstream PR pending.**
+- The port is in the local clone `../pi-durable-postgres`, branch `port-pi-durable-1.5`, tag `v0.2.0-pi-durable-1.5.2`. It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
+- The upstream storage conformance suite passes 32/32 on PostgreSQL 17, plus 32 adapter tests: lock, fail-closed on `pg_terminate_backend`, batched refusals, and the v2 migration. The contract diff is in that repo's `docs/port-1.5.md`.
+- Schema migration v2 adds the `sleeping` status, and older adapter builds cannot open a migrated database.
+- Watch/changes needs no storage work: conversation views and `observeCommits` live in Session/Harness.
+- Still open: testing on real CNPG and a session pooler (Phase 3), TCP keepalive and statement timeouts against silent drops, and the GitHub fork and PR once gh works.
+- Chord 1.5.2 ships type errors under `exactOptionalPropertyTypes`. Report this upstream.
+
+### Phase 3: Integration and failure tests (2–3 days)
+
+Wire orchestrator, storage and sandbox together, then run:
+
+| Test | Pass condition |
+|---|---|
+| Restart | Kill the orchestrator mid-task; the session resumes from Postgres without input |
+| Double owner | Second orchestrator blocks on the lock; first fails closed when its DB connection drops |
+| Long command | Kill the orchestrator during a 5-minute command; the tool returns interrupted, the process is dead in the sandbox, nothing reruns on its own |
+| Sandbox loss | Delete the Pod; a new Pod mounts the same PVC and the next tool call works |
+| Concurrency | Two sessions run in parallel with separate sandboxes and no cross-access |
+| Isolation | Sandbox cannot reach the orchestrator, Postgres or other sandboxes (NetworkPolicy) |
+
+**Phase 3 result (2026-11-15): done.** `tests/e2e/run-phase3.sh` ran twice in a row on c2: restart, double owner, long command, sandbox loss and concurrency pass; isolation is KNOWN-FAIL (flannel does not enforce NetworkPolicy; an in-sandbox probe reached the orchestrator, Postgres and another sandbox's sandboxd). The orchestrator is `packages/orchestrator` (scripted Pi faux model, no LLM); the adapter is consumed as a packed tarball under `vendor/`.
+- Open questions answered. (1) SIGKILL of the remote stream: the command's process group and same-group descendants were reaped about 20 s after the orchestrator pod was killed, but a background child that called `setsid` survived. Interrupted commands can therefore leak escaped children until the sandbox is recycled (done: [ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)). (2) A long-lived `Connection` survives Pod recreation: the bridge dies with the stream, pi-env's `Connection` respawns it on the next call, and a call issued while the Pod was still being replaced also completed. No reconnect code was needed.
+- The adapter refuses a second owner immediately instead of blocking, so the orchestrator waits in a retry loop (2 s) until it gets the lock. After `pg_terminate_backend` the first owner exits with code 1 at its next write (`fail-closed`), and `durable_metadata.next_seq` stayed frozen while the lock was held by the test.
+- A tool that was running when the orchestrator died reads as `interrupted` after restart and is not replayed (`bash` is not replay-safe).
+- Fix found by the concurrency test: each bridge is a Node process that needs about 12 s of wall time to cold-start on the orchestrator's 250m CPU limit. With several at once pi-env gave up with "connection timed out" (30 s of silence). `sandbox-env` now starts bridges one at a time (`StartGate`). A shared in-process broker would remove the per-session Node start; that is a later optimisation.
+
+### Phase 4: Session API (several days)
+
+- Endpoints: create session, submit message, steer, stream events, reconnect, delete.
+- Build streaming on Pi Durable's conversation views (the older `watchEvents` was removed in 1.5).
+- Authentication: OIDC or a static token for the PoC; per-session ownership check.
+- Cleanup: delete the SandboxClaim and PVC on session deletion. The `shutdownAfterSeconds` backstop was dropped: an
+  absolute deadline deletes the PVC. Idle sandboxes are suspended instead ([ADR 0004](docs/decisions/0004-idle-suspend.md)),
+  and a periodic sweep removes what deletion missed ([ADR 0002](docs/decisions/0002-orphan-sweep.md)).
+
+### Security baseline for real use (from the plan review, 2026-11-15)
+
+Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQDN egress rules. Design and write every policy now. Enforcement and the isolation test turn real with the migration, and that migration gates real credentials (4b/4c).
+
+- **Policies:**
+  - Ingress allow-lists for the orchestrator (from ingest only), Postgres (from orchestrator and ingest), and sandboxd (from the orchestrator).
+  - Sandbox egress: OneCLI gateway, DNS, and direct public internet. Private, LAN and metadata ranges are excluded. This was decided 2026-11-15 so every session can install packages; revisit gateway+allowlist later.
+  - In the `onecli` namespace, admit only the orchestrator and sandboxes.
+- **OneCLI management API has no auth (found 2026-11-15):**
+  - On c2, `onecli:10254/v1/agents` returns agents including their `accessToken`, and `/v1/secrets` returns metadata, with no authentication.
+  - It answers in-cluster and via `onecli.example.com`, which resolves to a LAN IP.
+  - Enable OneCLI auth (or auth at the ingress) before any real credential goes through it. The user will enable it later.
+- **Gateway egress:** an explicit host allowlist (model APIs, github.com, package registries). Deny cluster CIDRs and `*.svc` through CONNECT. Use a CiliumNetworkPolicy `toFQDNs` rule where it helps.
+- **Per-sandbox sandboxd token (done, [ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)):** token = HMAC-SHA256(master, claim); only its sha256 is injected per claim (SandboxClaim `spec.env`, template policy `Allowed`), replacing the shared secret. Master in Secret `sandboxd-auth` key `master`, orchestrator only; bridges get their own claim's token. Claims from before this need a one-time recreate.
+- **Token handling:**
+  - Treat session proxy tokens as readable by the agent.
+  - Rely on grant scope, a short TTL and binding to the pod source IP.
+  - Re-mint the token on each `ensure()`.
+  - Recycle the Pod on interrupt, because `setsid` children escape. Done for every session, not only repo sessions
+    ([ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)).
+- **Least privilege for OneCLI:** a project-scoped OneCLI key or a separate provisioner, never an admin key in the orchestrator. Strip secrets from bridge env.
+- **Identity:**
+  - Session IDs are UUIDs.
+  - Claims carry the session label and are adopted only on a label match.
+  - Each session stores an owner subject.
+- **Lifecycle (done 2026-11-16, issue #9):**
+  - No absolute `shutdownAfterSeconds` deletion of PVCs. An idle sandbox is **suspended** (`Sandbox.spec.operatingMode:
+    Suspended`: Pod deleted, Sandbox, claim and PVC kept) after 30 minutes and resumed by the next tool call
+    ([ADR 0004](docs/decisions/0004-idle-suspend.md)).
+  - Write a workspace marker so a missing workspace is reported, not silently recreated.
+  - Deletion writes a tombstone first, revokes the OneCLI agent first, and a periodic sweep reconciles claims, PVCs and
+    agents against sessions ([ADR 0002](docs/decisions/0002-orphan-sweep.md)). The sweep removes only what belongs to a
+    deleted or unknown session; an active session with a dead claim stays an operator decision.
+  - An interrupted command (cancel, steer, timeout, orchestrator killed mid-command) gets its sandbox Pod replaced, never
+    the claim or PVC ([ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)).
+- **Spend:** a per-session turn and token budget, a concurrency cap, and a terminal `failed` state on 401/403 so a crash loop can't retry paid calls.
+- **Inputs:** validate `{repo, branch}` (`owner/name` and ref regex, https only, argv with `--`). Clone into a temp dir, then rename.
+- **Ops:**
+  - Retention and caps on tool output. No backups for `pi-pg` on c2 (dev only); set up backups when the DB moves to the production cluster.
+  - A digest-pinned orchestrator image with a liveness probe.
+  - Sandbox sizing per session, with ephemeral-storage limits.
+  - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
+- **Capacity:** one Node bridge per session (about 12 s start, serialized) limits recovery time and memory. Move to an in-process broker before real use.
+
+**Enforcement result (2026-11-16):**
+- Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all pi-durable-poc endpoints enforce in both directions.
+- The isolation test PASSES for real: orchestrator, Postgres, other sandboxes, the kube API and the OneCLI API/web are BLOCKED from a sandbox. The OneCLI gateway and public internet are reachable.
+- Phases 1, 3, 4 and 4b, including a real Codex run, are green under enforcement.
+- Open:
+  - Hubble is disabled.
+- 2026-11-16: sandbox image `1.5.2-r2-5bccb47` pinned by digest; phase 4c run live on `<owner>/<repo-a>` and
+  `<owner>/<repo-b>`: 5/5 PASS (clone, push and branch delete through OneCLI; push to the other repo refused).
+- 2026-11-16: OneCLI policies merged into argo-c2 (#53, applied by Argo, endpoint enforcing both directions; no audit
+  run first, on the user's call). Afterwards: dashboard 200 via Envoy, phase 4b with the real Codex model, phase 4c and
+  isolation all PASS; `cilium-dbg monitor --type drop` on the OneCLI endpoint saw 0 drops over the runs.
+  Not covered: an interactive dashboard login.
+
+### Phase 4b: Credentials through OneCLI, and model selection
+
+Decision: every credential goes through OneCLI. That covers model providers and GitHub. OneCLI already runs on c2 in namespace `onecli`, with the gateway on :10255. Neither the orchestrator nor the sandboxes hold real secrets; they only hold OneCLI proxy tokens.
+
+0. **OneCLI spike results** (`docs/research/onecli-spike.md`, deployed v1.45.0):
+   - Works: subscription OAuth (`authMode: oauth`, auto-refresh), header injection, git with `-c http.proxyAuthMethod=basic`, Node `fetch` and pi-ai through the proxy (`NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `NO_PROXY`).
+   - Blocking:
+     - The gateway is an open relay: any host, and in-cluster targets even without a token.
+     - A request with no token is not rejected.
+     - No native per-repo scope. The workaround is a per-session secret with `pathPattern:/owner/repo*`.
+     - No token TTL or source binding; tokens can only be rotated or deleted.
+     - The management API has no auth.
+   - **Upgraded to v2.20.0 (2026-11-15, via Argo, pinned by digest; `docs/research/onecli-v2-recheck.md`):**
+     - Fixed: a request with no token gets 407. Private, cluster and metadata targets are always refused. The management API needs auth (API key `oc_…`).
+     - Still open:
+       - Public hosts are relayed unless there are explicit `allow …` then `block *` rules; add them.
+         Done 2026-11-16 (`deploy/onecli-host-rules.sh --apply`; probes in `docs/onecli-host-rules.md`).
+       - No repo scoping without an enterprise license; GitHub connections inject an account-wide token, and path rules can be bypassed. So use our own repo-scoped GitHub App installation token per session, never a OneCLI GitHub connection.
+       - No token TTL or source binding. Mitigate with a short session lifetime, rotate on `ensure()`, and delete on session end.
+       - Sign-up is open and email/Google are the only login options.
+     - The API is now `onecli.onecli:10256`; the proxy is unchanged on `:10255`. Keep `http.proxyAuthMethod=basic` for git (not re-tested on v2).
+1. **Spike first.** Answer each of these, and stop on a no:
+   - Does OneCLI inject the ChatGPT/Codex subscription (OAuth) for model calls, or only API keys?
+   - Does `git clone` and `git push` to github.com over HTTPS get credentials injected?
+   - Can a grant be scoped to one repo?
+   - How do we deliver a per-session proxy token to that session's commands only, and can the gateway bind it to the pod's source IP?
+   - What does the gateway forward (any host, or an allowlist), and can it deny in-cluster targets?
+   - Does pi-ai work through the proxy with dummy credentials (`NODE_USE_ENV_PROXY` or a dispatcher; `NO_PROXY` for the cluster)?
+2. **Orchestrator.**
+   - The orchestrator is a OneCLI agent with grants for model providers only.
+   - pi-ai model calls go through `HTTPS_PROXY` plus the OneCLI CA.
+   - Only `ONECLI_API_KEY` (for managing agents and grants) lives in a Secret, delivered with ExternalSecret.
+3. **Model choice.**
+   - The default `PI_MODEL_PROVIDER` / `PI_MODEL_ID` comes from a ConfigMap. `scripted` keeps the fake model for e2e.
+   - `POST /sessions` takes an optional `{ provider, model }`, checked against an allowlist.
+   - Verify whether Pi Durable 1.5.2 persists the model per conversation.
+4. **Fallback.** If the spike shows OneCLI can't do subscription OAuth, use our own credential store as described in `docs/model-credentials.md`.
+
+**Result (2026-11-15):** OpenAI Codex subscription works through OneCLI v2.20: `gpt-6.1-terra` (default, reasoning `medium`) and `gpt-6.1-sol` answered after a sandbox tool call, no provider key in the orchestrator; revoking the grant fails the session cleanly and restoring it works (`docs/model-credentials.md`).
+
+Tests:
+- A model call works with no provider key in the orchestrator env.
+- Two sessions use different models.
+- A disallowed model is rejected with 400.
+- Revoking the OneCLI grant fails the session with a clear error.
+
+### Phase 4c: Optional repository workspace (via OneCLI)
+
+- `POST /sessions` takes an optional `{ repo, branch }`. Without it, `/workspace` stays empty and no OneCLI agent is created.
+- With a repo:
+  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Add branch protection too.
+  - It passes the proxy token, `HTTPS_PROXY` and the CA to that session's commands.
+  - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
+- Session delete also deletes its OneCLI agent.
+- The sandbox image adds git and CA certificates.
+- Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS).
+- Tests:
+  - A session without a repo works unchanged.
+  - The clone happens once and survives a restart.
+  - A private repo can be cloned and pushed to.
+  - No GitHub token is readable in the sandbox.
+  - The token for repo A cannot reach repo B, and is rejected from another pod's IP.
+
+### Phase 5: Upstream (ongoing)
+
+1. Postgres adapter port (Phase 2).
+2. Example or docs for "Pi Durable orchestrator outside, tools inside" in agent-sandbox, next to the existing Pi-in-sandbox example.
+3. Later, only if tests show the need: detached, reattachable processes in sandboxd.
+
+## 5. Security baseline for the PoC
+
+- NetworkPolicy: only the orchestrator may reach sandboxd; default-deny egress from sandboxes with an explicit allowlist.
+- `sandboxd.authToken` set per sandbox (HMAC of a master key per claim, [ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)). Traffic is plaintext in-cluster, so the NetworkPolicy is the control.
+- Model credentials stay in the orchestrator; never mounted into sandboxes.
+- Sandboxes run non-root with all capabilities dropped.
+
+## 6. Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Pi Durable breaking releases every few weeks | Repeated porting; no rollback across state migrations | Pin exact versions; upgrade deliberately; back up before each upgrade |
+| Agent Sandbox TS SDK is private and unversioned | API drift | Vendor at a pinned commit; isolate behind one module |
+| Stdio bridge unproven | Phase 1 slips | SSH fallback |
+| Single replica | Downtime during restart | Accepted for the PoC; revisit durable-harness or leader election later |
+| Non-idempotent external tools | Duplicate side effects after a crash | Mark tools `replay` correctly; add execution IDs for external APIs |
+| gVisor I/O overhead on PVCs | Slow builds | Measure in Phase 3; consider Kata if unacceptable |
+
+## 7. Out of scope for the PoC
+
+- Multi-replica orchestration and HA.
+- Process reattachment.
+- Warm pools (PVC-backed sandboxes start cold).
+- Encryption in transit to sandboxd, audit logging, retention, backup policy.
+- Web console.
+
+## 8. Effort
+
+About 2–3 weeks part-time to a working PoC. This is an estimate, not a measurement; Phase 1 will show whether it holds.
+
+## 9. Open questions
+
+- Is `commands.start()` stdio binary-clean and unbuffered enough for pi-env's framed protocol?
+- Does the adapter maintainer want the 1.5 port, or is a fork needed?
+- Which Pi Durable version to pin: 1.5.x now, or wait for the churn to slow?
+- Is `in-cluster-service` DNS staleness after Pod recreation a problem in practice?
+
+## 10. Repository layout
+
+Split by where the code ends up, not by phase.
+
+| Repo | Contents | When |
+|---|---|---|
+| Fork of `pi-durable-postgres` | Port to current Pi Durable; goes back as a PR | Phase 2 |
+| Main repo `pi-durable-k8s` (own) | Orchestrator, pi-env bridge, session API, sandbox image, manifests, tests | Phase 1 onward |
+| Fork of `agent-sandbox` | Example or sandboxd change | Phase 5, only when contributing |
+
+The main repo consumes the adapter fork as a pinned dependency (git tag or pre-release package).
+
+Main repo layout:
+
+```
+packages/
+  sandbox-env/      # pi-env bridge over commands.start()
+  orchestrator/     # Pi Durable host + session API
+  vendor/           # Agent Sandbox TS SDK, built from a pinned commit
+deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployment
+images/sandbox/     # image with the pi-env daemon
+tests/e2e/          # restart, double-owner, long-command, sandbox-loss; run.sh <phase1|phase3|phase4|all> runs them as an in-cluster Job
+```
+
+Extract `sandbox-env` into its own package once it passes the env conformance suite; it is the piece most useful to others.
+
+## References
+
+- Pi Durable: https://github.com/earendil-works/pi/tree/main/packages/durable
+- pi-env: https://www.npmjs.com/package/@earendil-works/pi-env
+- pi-durable-postgres: https://github.com/j-koester/pi-durable-postgres
+- Agent Sandbox TypeScript client: https://agent-sandbox.sigs.k8s.io/docs/typescript-client/
+- Agent Sandbox releases: https://github.com/kubernetes-sigs/agent-sandbox/releases
+- Self-hosted Claude Managed Agents (rejected option, reference architecture): https://platform.claude.com/docs/en/managed-agents/self-hosted
+- durable-harness self-hosting (rejected option): https://vercel.com/docs/agent-harnesses/self-hosting
+

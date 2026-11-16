@@ -1,0 +1,40 @@
+# Test overlay: the base plus the orchestrator's test-only switches.
+# Applied by tests/e2e/run-phase3.sh and run-phase4.sh during setup.
+#   kubectl apply -k tests/e2e/deploy
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../deploy
+patches:
+  # The suites run on the scripted model: no OneCLI, no spend. Re-apply `kubectl apply -k deploy` to get Codex back.
+  - target: { kind: ConfigMap, name: pi-model-config }
+    patch: |-
+      - op: replace
+        path: /data/PI_MODEL_PROVIDER
+        value: scripted
+      - op: replace
+        path: /data/PI_MODEL_ID
+        value: scripted-1
+  - target: { kind: Deployment, name: pi-orchestrator }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_ORCH_CONTROL, value: "1" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_ORCH_TEST_FAULTS, value: "1" }
+      # Short sweep and suspend settings, so the lifecycle tests of phase4 take minutes, not hours. Bridges are evicted
+      # after 30 s idle (each is a Node process inside the orchestrator's 1 Gi) and sandboxes are suspended after 120 s,
+      # an age the other tests never idle for.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_SANDBOX_IDLE_EVICT_SECONDS, value: "30" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_SWEEP_INTERVAL_SECONDS, value: "15" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_SWEEP_GRACE_SECONDS, value: "45" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PI_SANDBOX_IDLE_SUSPEND_SECONDS, value: "120" }

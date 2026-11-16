@@ -1,0 +1,13 @@
+# HTTP surface of the orchestrator, ClusterIP, inside the namespace only: /healthz, /readyz, the SSE stream
+# (ingest proxies it; bearer token and owner are checked again here) and the test-only /control surface.
+# Only the pod that owns the Postgres schema is Ready, so the Service always points at the owner.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-orchestrator
+spec:
+  selector:
+    app.kubernetes.io/name: pi-orchestrator
+    app.kubernetes.io/instance: pi-orchestrator
+  ports:
+    - { name: control, port: 8081, targetPort: control }

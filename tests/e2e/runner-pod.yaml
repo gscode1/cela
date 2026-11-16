@@ -1,0 +1,40 @@
+# Stand-in orchestrator: public node image, code shipped with kubectl cp (no registry push needed).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-runner
+  namespace: pi-durable-poc
+  labels:
+    app.kubernetes.io/name: pi-orchestrator
+spec:
+  serviceAccountName: e2e-runner
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+  containers:
+    - name: node
+      image: node:22-bookworm-slim
+      command: [sleep, "86400"]
+      env:
+        - name: HOME
+          value: /work
+        - name: PI_SANDBOX_NAMESPACE
+          value: pi-durable-poc
+        # run-phase1.sh sets the claim name and derives PI_SANDBOX_AUTH_TOKEN from the master inside this pod.
+        - name: PI_SANDBOX_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sandboxd-auth
+              key: master
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: work
+          mountPath: /work
+  volumes:
+    - name: work
+      emptyDir: {}

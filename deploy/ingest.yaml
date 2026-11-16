@@ -1,0 +1,113 @@
+# ingest: the stateless HTTP front of the session API. Two replicas, any node, no volume.
+# Code delivery: an initContainer unpacks the bundle in ConfigMap `ingest-code` (deploy/push-ingest.sh builds it,
+# about 140 KB, limit 1 MiB) into an emptyDir. Chosen over a code PVC because a ReadWriteOnce volume cannot be
+# shared across nodes, which would pin both replicas to one node; the ConfigMap needs no pinning and a rollout
+# is "replace the ConfigMap, restart". No image is pushed.
+# Ingest never talks to the orchestrator except to proxy a stream, so it keeps accepting events while the
+# orchestrator restarts. Its readiness depends on the database only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-ingest
+  labels:
+    app.kubernetes.io/name: pi-ingest
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-ingest
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: pi-ingest
+      initContainers:
+        - name: unpack
+          image: node:22-bookworm-slim
+          command: [sh, -c, "mkdir -p /app/code && tar xzmf /bundle/app.tgz -C /app/code && test -f /app/code/dist/main.js"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: bundle, mountPath: /bundle, readOnly: true }
+            - { name: app, mountPath: /app }
+      containers:
+        - name: ingest
+          image: node:22-bookworm-slim
+          workingDir: /app/code
+          command: [node, dist/main.js]
+          # The default model and allowlist POST /sessions is checked against (the orchestrator reads the same).
+          envFrom:
+            - configMapRef: { name: pi-model-config }
+          env:
+            - { name: HOME, value: /tmp }
+            - { name: PI_INGEST_PORT, value: "8080" }
+            - { name: PI_ORCH_URL, value: "http://pi-orchestrator:8081" }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            # The CNPG -rw service, straight: no transaction-pooled proxy.
+            - name: PI_DURABLE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: pi-pg-app, key: uri } }
+            - name: PI_API_TOKENS
+              valueFrom: { secretKeyRef: { name: api-auth, key: tokens } }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: app, mountPath: /app, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: bundle
+          configMap: { name: ingest-code }
+        - name: app
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-ingest
+spec:
+  selector:
+    app.kubernetes.io/name: pi-ingest
+  ports:
+    - { name: http, port: 8080, targetPort: http }
