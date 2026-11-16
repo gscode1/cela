@@ -84,6 +84,13 @@ spec:
           readinessProbe:
             httpGet: { path: /readyz, port: control }
             periodSeconds: 3
+          # /healthz is a pure event-loop check: no Postgres, no drain, and 200 while waiting for the schema lock,
+          # so a standby or a long drain never gets killed. 6 x 10 s of failures means the process is wedged.
+          livenessProbe:
+            httpGet: { path: /healthz, port: control }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 2Gi }
