@@ -16,7 +16,7 @@ import type { FetchLike } from "./github-app.js";
 import { OneCliAdmin } from "./onecli-admin.js";
 import { RepoAccess } from "./repo-access.js";
 import type { SandboxHooks } from "./sandboxes.js";
-import { publishAndCheckProfiles } from "./capabilities.js";
+import { liveConversationProfiles, publishAndCheckProfiles } from "./capabilities.js";
 import { Host } from "./host.js";
 import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
@@ -132,7 +132,10 @@ async function main(): Promise<void> {
     sessionKeyOf,
     hooks,
     recycleAtStart,
-    { catalog: mcpCatalog },
+    {
+      catalog: mcpCatalog,
+      conversationProfiles: () => liveConversationProfiles(pool),
+    },
   );
   // Visible to the signal handler before Host.open settles, so a shutdown in that window still closes the host.
   running.opening = opening;

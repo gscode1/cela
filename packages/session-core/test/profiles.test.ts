@@ -319,3 +319,19 @@ describe("capabilities", () => {
     expect(db.capabilities?.instance).toBe("o2");
   });
 });
+
+describe("strings Postgres cannot store", () => {
+  it.each(["a\u0000b", "lone \ud800 high", "lone \udc00 low"])(
+    "rejects %j in instructions and defaultModel, so the write is a 400 and never a 500",
+    (text) => {
+      expect(validateProfileDefinition({ instructions: text })).toMatch(/instructions/);
+      expect(validateProfileDefinition({ defaultModel: `p/${text}` })).toMatch(/defaultModel/);
+    },
+  );
+
+  it("accepts a well-formed surrogate pair", () => {
+    expect(validateProfileDefinition({ instructions: "ok \u{1f600}" })).toEqual({
+      instructions: "ok \u{1f600}",
+    });
+  });
+});

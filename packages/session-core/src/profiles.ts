@@ -25,6 +25,9 @@ const MAX_LIST = 32;
 const MAX_INSTRUCTIONS = 8_000;
 const MAX_TURN_BUDGET = 1_000_000;
 const MAX_MODEL = 200;
+/** Postgres text and jsonb reject NUL, and jsonb the `\udXXX` escape JSON.stringify emits for a lone surrogate. */
+const unstorable = (text: string): boolean => text.includes("\u0000") || !text.isWellFormed();
+
 const KEYS = [
   "tools",
   "modelTools",
@@ -118,15 +121,15 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
       typeof text !== "string" ||
       text.trim() === "" ||
       text.length > MAX_INSTRUCTIONS ||
-      text.includes("\u0000")
+      unstorable(text)
     ) {
-      return `instructions must be a non-empty string of at most ${String(MAX_INSTRUCTIONS)} characters without NUL`;
+      return `instructions must be a non-empty string of at most ${String(MAX_INSTRUCTIONS)} characters, without NUL or unpaired surrogates`;
     }
     definition.instructions = text;
   }
   if (body.defaultModel !== undefined) {
     const text = body.defaultModel;
-    if (typeof text !== "string" || text.length > MAX_MODEL) {
+    if (typeof text !== "string" || text.length > MAX_MODEL || unstorable(text)) {
       return "defaultModel must be a provider/model string";
     }
     try {

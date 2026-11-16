@@ -80,6 +80,33 @@ export interface HostOptions {
   /** Test seams of the remote MCP client; production passes nothing. */
   mcpTransport?: McpTransportFactory;
   mcpTimings?: McpTimings;
+  /** Test seam: the coding extension to install (a later release with one more tool). Production passes nothing. */
+  codingExtension?: Extension;
+  /**
+   * Profile definitions of the live conversations by id, read once before runs resume: the tool filters are recomputed
+   * against the tools installed now (see `toolFilters`).
+   */
+  conversationProfiles?: () => Promise<ReadonlyMap<number, ProfileDefinition>>;
+}
+
+/**
+ * The `tools` and `modelTools` of a profile as Pi stores them: `{ remove }` lists, so `tool_search` and the MCP tools
+ * found later stay enabled (an array would enable exactly the names it holds). A remove list names the installed coding
+ * tools the profile does not allow, so it is only right for the tools installed when it was computed: it is computed
+ * again against the tools installed now before every input and when the host opens (`Host.applyProfileTools`), which
+ * keeps the effective set equal to the snapshot's allowlist whatever a later release installs.
+ */
+function toolFilters(
+  coding: readonly ToolRegistration[],
+  definition: ProfileDefinition,
+): Pick<AgentChange, "tools" | "modelTools"> {
+  const without = (keep: readonly string[]) => ({
+    remove: coding.filter((tool) => !keep.includes(tool.name)),
+  });
+  return {
+    ...(definition.tools === undefined ? {} : { tools: without(definition.tools) }),
+    ...(definition.modelTools === undefined ? {} : { modelTools: without(definition.modelTools) }),
+  };
 }
 
 /**
@@ -148,9 +175,6 @@ export class Host {
    */
   #agentFor(definition: ProfileDefinition): AgentChange {
     const coding: readonly ToolRegistration[] = this.#coding.tools ?? [];
-    const without = (keep: readonly string[]) => ({
-      remove: coding.filter((tool) => !keep.includes(tool.name)),
-    });
     for (const name of [...(definition.tools ?? []), ...(definition.modelTools ?? [])]) {
       if (!coding.some((tool) => tool.name === name)) {
         log("profile-tool-unresolved", { tool: name });
@@ -158,10 +182,7 @@ export class Host {
     }
     const servers = definition.mcpServers ?? [];
     return {
-      ...(definition.tools === undefined ? {} : { tools: without(definition.tools) }),
-      ...(definition.modelTools === undefined
-        ? {}
-        : { modelTools: without(definition.modelTools) }),
+      ...toolFilters(coding, definition),
       ...(definition.instructions === undefined ? {} : { instructions: definition.instructions }),
       ...(servers.length === 0
         ? {}
@@ -195,7 +216,7 @@ export class Host {
   ): Promise<Host> {
     const models = await buildModels(config);
     const registry = createRegistry();
-    const coding = createCodingTools();
+    const coding = options.codingExtension ?? createCodingTools();
     registry.install(coding);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in pi-durable
@@ -233,6 +254,19 @@ export class Host {
     void harness.closed.then((end) => {
       if (end.kind === "failed") onFailed(end.error);
     });
+    // Before resume(): a run that continues must not see a coding tool its profile does not allow, installed since
+    // the conversation was created.
+    for (const [id, definition] of (await options.conversationProfiles?.()) ?? []) {
+      const filters = toolFilters(coding.tools ?? [], definition);
+      if (filters.tools === undefined && filters.modelTools === undefined) continue;
+      try {
+        await (
+          await harness.conversation(id as ConversationId, context)
+        )?.configure(filters, context);
+      } catch (error) {
+        log("profile-tools-reapply-failed", { conversation: id, message: errorMessage(error) });
+      }
+    }
     // No new input needed: open recovers nothing by itself, resume() continues unfinished runs.
     harness.resume();
     // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
@@ -371,6 +405,13 @@ export class Host {
       cursor = page.next;
     } while (cursor !== undefined);
     return turns;
+  }
+
+  /** Recomputes the profile's tool filters against the tools installed now (see `toolFilters`); a no-op without any. */
+  async applyProfileTools(id: number, definition: ProfileDefinition): Promise<void> {
+    const filters = toolFilters(this.#coding.tools ?? [], definition);
+    if (filters.tools === undefined && filters.modelTools === undefined) return;
+    await (await this.#conversation(id)).configure(filters, context);
   }
 
   /** Caps the tool rounds of any run of this conversation, so one run cannot overshoot the session's turn budget. */

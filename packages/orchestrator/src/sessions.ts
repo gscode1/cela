@@ -311,8 +311,11 @@ export class SessionService {
    * Turns are model responses, counted from the stored transcript, so a restart does not reset the count.
    */
   async #withinBudget(session: SessionRow, conversationId: number): Promise<void> {
+    const definition = definitionOf(session);
+    // Before every input, like the budget: a coding tool installed by a later release must not reach this session.
+    await this.#host.applyProfileTools(conversationId, definition);
     const used = await this.#host.turnsUsed(conversationId);
-    const left = (definitionOf(session).turnBudget ?? this.#options.turnBudget()) - used;
+    const left = (definition.turnBudget ?? this.#options.turnBudget()) - used;
     if (left <= 0) {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");

@@ -1,5 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { defineExtension, defineTool, MemoryStorage } from "@earendil-works/pi-durable";
+import type { Extension } from "@earendil-works/pi-durable";
+import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
+import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type pg from "pg";
-import { MemoryStorage } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_TOOL_NAMES } from "@pi-durable-k8s/session-core";
 import type { InboxEvent, ProfileDefinition, SessionRow } from "@pi-durable-k8s/session-core";
@@ -269,5 +276,110 @@ describe("publishAndCheckProfiles", () => {
     expect(await publishAndCheckProfiles(db.asPool(), { tools: [], extensions: [] }, "o1")).toEqual(
       [],
     );
+  });
+});
+
+describe("a coding tool installed by a later release", () => {
+  const EXTRA = defineTool<object>({
+    name: "extra",
+    description: "a tool a later release adds",
+    parameters: { type: "object", properties: {} },
+    execute: () => Promise.resolve({ output: [{ type: "text", text: "x" }] }),
+  });
+  const withExtra = () => {
+    const base = createCodingTools();
+    return defineExtension({ name: base.name, tools: [...(base.tools ?? []), EXTRA] });
+  };
+  async function reopen(
+    dir: string,
+    extension?: Extension,
+    profiles?: Map<number, ProfileDefinition>,
+  ) {
+    const host = await Host.open(
+      await openNodeJsonlStorage(dir, context),
+      config,
+      (error) => {
+        throw error;
+      },
+      () => Promise.resolve("session"),
+      {},
+      [],
+      {
+        ...(extension === undefined ? {} : { codingExtension: extension }),
+        ...(profiles === undefined
+          ? {}
+          : { conversationProfiles: () => Promise.resolve(profiles) }),
+      },
+    );
+    hosts.push(host);
+    return host;
+  }
+
+  it("is not offered to a session whose profile allows only some tools: recomputed at the next input and at open", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-tools-"));
+    try {
+      const definition = { tools: ["read"] };
+      const first = await reopen(dir);
+      const id = await first.createConversation(MODEL, definition);
+      const plain = await first.createConversation(MODEL);
+      await first.close();
+
+      // The new release without recomputing: the stored remove list does not know "extra", so it widens.
+      const second = await reopen(dir, withExtra());
+      expect((await second.toolsOf(id)).offered).toEqual(["read", "extra"]);
+      // The input path recomputes it.
+      await second.applyProfileTools(id, definition);
+      expect((await second.toolsOf(id)).offered).toEqual(["read"]);
+      // A session without a restriction (the empty definition) is meant to get every installed coding tool.
+      expect((await second.toolsOf(plain)).offered).toContain("extra");
+      await second.close();
+
+      // Opening recomputes it too, before runs resume.
+      const third = await reopen(dir, withExtra(), new Map([[id, definition]]));
+      expect((await third.toolsOf(id)).offered).toEqual(["read"]);
+    } finally {
+      for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("modelTools are recomputed the same way, and MCP's tool_search stays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-tools-"));
+    try {
+      const definition = { tools: ["read", "bash"], modelTools: ["read"], mcpServers: ["demo"] };
+      const first = await reopen(dir);
+      const id = await first.createConversation(MODEL, definition);
+      await first.close();
+      const second = await reopen(dir, withExtra(), new Map([[id, definition]]));
+      expect((await second.toolsOf(id)).offered).toEqual(["read", "tool_search"]);
+    } finally {
+      for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("SessionService applies the filters before every input", async () => {
+    const applied: ProfileDefinition[] = [];
+    const host = {
+      applyProfileTools: (_id: number, definition: ProfileDefinition) => {
+        applied.push(definition);
+        return Promise.resolve();
+      },
+      turnsUsed: () => Promise.resolve(0),
+      limitTurns: () => Promise.resolve(),
+      submitInput: () => Promise.resolve(),
+    } as unknown as Host;
+    const pool = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) } as unknown as pg.Pool;
+    const svc = new SessionService(pool, host, {
+      testFaults: false,
+      defaultModel: config.models.default,
+      turnBudget: () => 5,
+    });
+    await svc.apply(
+      message("hi", "1"),
+      session({ name: "r", version: 1, snapshot: { tools: ["read"] } }, 3),
+    );
+    expect(applied).toEqual([{ tools: ["read"] }]);
+    svc.stop();
   });
 });
