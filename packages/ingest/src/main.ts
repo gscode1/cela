@@ -13,23 +13,14 @@ async function main(): Promise<void> {
   const authenticate = tokenAuthenticator(config.apiTokens);
   const pool = createPool(config.databaseUrl, config.instance, 5);
 
-  // The inbox schema is ingest's own precondition: it must accept events while the orchestrator is down.
-  // Retry instead of crashing, so a database that is briefly unreachable does not restart-loop the pod.
-  for (;;) {
-    try {
-      await applyMigrations(pool);
-      break;
-    } catch (error) {
-      log("migrate-failed", { message: errorMessage(error) });
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-    }
-  }
-
+  let schemaReady = false;
+  const state = { stopping: false };
   const server = createIngestServer({
     pool,
     authenticate,
     orchestratorUrl: config.orchestratorUrl,
     models: config.models,
+    schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.
   server.requestTimeout = 0;
@@ -37,8 +28,26 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   log("listening", { instance: config.instance, port: config.port });
 
+  // The inbox schema is ingest's own precondition: it must accept events while the orchestrator is down. The server
+  // is already up, so /healthz answers while a migration waits for a lock (a liveness failure would only restart
+  // the pod into the same wait). Retry instead of crashing; /readyz stays 503 until it succeeds.
+  void (async () => {
+    while (!state.stopping) {
+      try {
+        await applyMigrations(pool);
+        schemaReady = true;
+        log("migrated", { instance: config.instance });
+        return;
+      } catch (error) {
+        log("migrate-failed", { message: errorMessage(error) });
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+    }
+  })();
+
   const shutdown = (signal: string): void => {
     log("shutdown", { signal });
+    state.stopping = true;
     server.close();
     server.closeAllConnections();
     void pool.end().finally(() => process.exit(0));

@@ -33,7 +33,7 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
 | `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model. |
 | `DELETE /sessions/{id}` | `202 { sessionId, status }` | Idempotent. See Deletion. |
-| `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
+| `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when migrations succeeded and the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
 
 Status codes for authentication: `401` for a missing or wrong token. `404` when the session does not exist **or
 belongs to another owner**: the two look the same, so the API does not reveal that a session exists.
@@ -224,9 +224,16 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql`, `002_models.sql`), applied in order
-  and idempotently by both processes at start under an advisory lock. After migration 002 an older ingest or
-  orchestrator still runs but does not know the `failed` status or the model columns.
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `005_exec_in_flight.sql`), applied
+  in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
+  recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
+  and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
+  start after this table was introduced re-runs the idempotent files once to record them
+  (`docs/decisions/0005-migrations-without-ddl-locks.md`). After migration 002 an older ingest or orchestrator still
+  runs but does not know the `failed` status or the model columns.
+- Probes: ingest serves `/healthz` as soon as the process is up and `503`s `/readyz` and the API until migrations
+  succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
+  owner-only.
 - `deploy/model-config.yaml` (ConfigMap `pi-model-config`) feeds both Deployments; the orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 

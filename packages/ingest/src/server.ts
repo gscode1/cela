@@ -31,6 +31,8 @@ export interface IngestDeps {
   authenticate: Authenticator;
   orchestratorUrl: string;
   models: ModelPolicy;
+  /** False until the inbox schema is migrated; liveness does not wait for it, readiness and the API do. */
+  schemaReady: () => boolean;
 }
 
 export function createIngestServer(deps: IngestDeps): Server {
@@ -53,13 +55,23 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
     return;
   }
   if (method === "GET" && url.pathname === "/readyz") {
-    // Ready means "can accept events": the database answers. The orchestrator is deliberately not checked.
+    // Ready means "can accept events": the schema is migrated and the database answers. The orchestrator is
+    // deliberately not checked.
+    if (!deps.schemaReady()) {
+      sendJson(res, 503, { status: "migrating" });
+      return;
+    }
     try {
       await deps.pool.query("select 1");
       sendJson(res, 200, { status: "ready" });
     } catch {
       sendJson(res, 503, { status: "database unavailable" });
     }
+    return;
+  }
+
+  if (!deps.schemaReady()) {
+    sendJson(res, 503, { error: "starting" }, { "retry-after": "2" });
     return;
   }
 

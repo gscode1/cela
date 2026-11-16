@@ -253,6 +253,7 @@ Tests:
 | Single replica | Downtime during restart | Accepted for the PoC; revisit durable-harness or leader election later |
 | Non-idempotent external tools | Duplicate side effects after a crash | Mark tools `replay` correctly; add execution IDs for external APIs |
 | gVisor I/O overhead on PVCs | Slow builds | Measure in Phase 3; consider Kata if unacceptable |
+| Inbox drain transaction stays open for the whole repo preparation (about 96 s) | Row locks held, one pool connection per busy session; migrations used to queue behind it and crash-loop ingest | Migrations skip DDL when current and fail fast on locks, ingest serves `/healthz` first (`docs/decisions/0005-migrations-without-ddl-locks.md`); shortening the transaction is a follow-up |
 
 ## 7. Out of scope for the PoC
 
