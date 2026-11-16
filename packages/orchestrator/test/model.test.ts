@@ -53,6 +53,14 @@ describe("scripted model", () => {
     expect(first.content).toEqual(second.content);
   });
 
+  it("calls a named tool with its arguments for a tool step", async () => {
+    const tools = { steps: [{ tool: "tool_search", args: { query: "wiki" } }] };
+    const message = await reply([user(JSON.stringify(tools))]);
+    expect(message.content).toMatchObject([
+      { type: "toolCall", name: "tool_search", arguments: { query: "wiki" } },
+    ]);
+  });
+
   it("answers once every step has a result, even an interrupted one", async () => {
     const message = await reply([user(JSON.stringify(script)), result("a"), result("b")]);
     expect(message.content).toMatchObject([{ type: "text", text: "all done" }]);
@@ -80,5 +88,6 @@ describe("parseScript", () => {
   it("rejects scripts without bash steps", () => {
     expect(() => parseScript("{}")).toThrow(/steps/);
     expect(() => parseScript('{"steps":[{"cmd":"x"}]}')).toThrow(/bash/);
+    expect(() => parseScript('{"steps":[{"tool":"t"}]}')).toThrow(/args/);
   });
 });
