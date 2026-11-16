@@ -16,3 +16,6 @@ examples/*/verified/
 examples/*/raw/
 examples/*/false-start/
 examples/*/briefs/
+examples/*/briefs.json
+examples/*/create-all.mjs
+examples/*/batches.txt
