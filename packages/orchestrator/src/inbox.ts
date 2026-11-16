@@ -134,6 +134,7 @@ export class InboxLoop {
     while (!this.#stopped) {
       const client = await this.#pool.connect();
       let finished = true;
+      let submitted = 0;
       try {
         await client.query("begin");
         const { rows } = await client.query<EventDbRow>(
@@ -156,6 +157,7 @@ export class InboxLoop {
             break;
           }
           progressed = true;
+          if (outcome === "submitted") submitted += 1;
         }
         await client.query("commit");
       } catch (error) {
@@ -164,12 +166,31 @@ export class InboxLoop {
       } finally {
         client.release();
       }
+      // Once per batch and after the commit. Inside the transaction this update would hold the session row's lock
+      // until the commit, and a later row of the batch (delete, a failSession) updates the same row on another
+      // connection: it would wait for a lock that only this transaction's end releases, until statement_timeout.
+      if (submitted > 0) await this.#touchSession(sessionId);
       if (!finished) return progressed;
     }
     return progressed;
   }
 
-  async #applyRow(client: pg.PoolClient, event: InboxEvent): Promise<"done" | "retry-later"> {
+  async #touchSession(sessionId: string): Promise<void> {
+    try {
+      await this.#pool.query(
+        "update inbox.sessions set last_activity_at = clock_timestamp() where id = $1",
+        [sessionId],
+      );
+    } catch (error) {
+      // Only the idle clock; the rows are already committed.
+      log("inbox-touch-failed", { session: sessionId, message: errorMessage(error) });
+    }
+  }
+
+  async #applyRow(
+    client: pg.PoolClient,
+    event: InboxEvent,
+  ): Promise<"submitted" | "gave-up" | "retry-later"> {
     const attempt = event.attempts + 1;
     try {
       const session = await getSession(client, event.sessionId);
@@ -181,13 +202,9 @@ export class InboxLoop {
           where id = $1`,
         [event.id, attempt],
       );
-      await client.query(
-        "update inbox.sessions set last_activity_at = clock_timestamp() where id = $1",
-        [event.sessionId],
-      );
       this.#notBefore.delete(event.sessionId);
       log("event-submitted", { eventId: event.id, session: event.sessionId, kind: event.kind });
-      return "done";
+      return "submitted";
     } catch (error) {
       const message = errorMessage(error).slice(0, 500);
       const permanent =
@@ -206,7 +223,7 @@ export class InboxLoop {
         permanent,
         message,
       });
-      return permanent ? "done" : "retry-later";
+      return permanent ? "gave-up" : "retry-later";
     }
   }
 }

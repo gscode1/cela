@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EventDbRow } from "@pi-durable-k8s/session-core";
+import type { EventDbRow, InboxEvent } from "@pi-durable-k8s/session-core";
 import { deleteRetryDelayMs, InboxLoop } from "../src/inbox.ts";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -29,8 +29,18 @@ class FakeInbox {
     return row;
   }
 
+  /** True while the transaction has updated the session row and not committed: Postgres' row lock. */
+  #sessionLocked = false;
+  /** Updates of the session row that arrived on the pool while the transaction held its lock. */
+  readonly blocked: string[] = [];
+
   #run(sql: string, params: unknown[], where: string): { rows: unknown[] } {
     this.log.push(`${where}: ${sql.trim().split("\n")[0] ?? ""}`);
+    if (sql.startsWith("update inbox.sessions")) {
+      if (where === "tx") this.#sessionLocked = true;
+      else if (this.#sessionLocked) this.blocked.push(sql);
+    }
+    if (sql === "commit" || sql === "rollback") this.#sessionLocked = false;
     if (sql.includes("select distinct session_id")) {
       const any = this.rows.some((r) => r.status === "pending");
       return { rows: any ? [{ session_id: SESSION }] : [] };
@@ -137,5 +147,34 @@ describe("a failing delete", () => {
     }
     expect(row.status).toBe("failed");
     expect(row.attempts).toBe(5);
+  });
+});
+
+describe("a batch with a message followed by a delete", () => {
+  it("never updates the session row from the pool while the batch transaction holds it", async () => {
+    const inbox = new FakeInbox();
+    const message = inbox.add("message");
+    const del = inbox.add("delete");
+    const pool = inbox.pool();
+    // What the real #delete does: mark the session deleted on the pool, not on the batch's connection.
+    const apply = async (event: InboxEvent): Promise<void> => {
+      if (event.kind === "delete") {
+        await pool.query("update inbox.sessions set status = 'deleted' where id = $1", [SESSION]);
+      }
+    };
+    const loop = new InboxLoop(pool, apply);
+    loop.wake();
+    await flush();
+
+    expect(message.status).toBe("submitted");
+    expect(del.status).toBe("submitted");
+    // Before the fix the first row's last_activity update held the lock and the delete's update waited on it.
+    expect(inbox.blocked).toEqual([]);
+    // The idle clock is still bumped, once for the batch, after the commit.
+    const touches = inbox.log.filter((l) => l.includes("set last_activity_at"));
+    expect(touches).toEqual([
+      "pool: update inbox.sessions set last_activity_at = clock_timestamp() where id = $1",
+    ]);
+    expect(inbox.log.indexOf("tx: commit")).toBeLessThan(inbox.log.indexOf(touches[0] ?? ""));
   });
 });
