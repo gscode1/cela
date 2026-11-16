@@ -5,6 +5,11 @@ go 1.27
 toolchain go1.27.3
 
 require (
+	github.com/stripe/goproxy v0.0.0-20260922184237-948457f542a3
+	github.com/stripe/smokescreen/v2 v2.0.0-20261112132816-8ba9b4e488a8
+)
+
+require (
 	github.com/DataDog/datadog-go/v5 v5.9.1 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -17,9 +22,6 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/rs/xid v1.6.1-0.20260724084550-40a728ce78a4 // indirect
-	github.com/stripe/goproxy v0.0.0-20260922184237-948457f542a3 // indirect
-	github.com/stripe/smokescreen/v2 v2.0.0-20261112132816-8ba9b4e488a8 // indirect
-	github.com/urfave/cli/v3 v3.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
