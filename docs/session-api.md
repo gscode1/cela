@@ -35,6 +35,11 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
 | `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, maxReasoning?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it, `maxReasoning: null` removes the cap, and `reasoning` above `maxReasoning` is `400`. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
 | `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
+| `GET /admin/mcp-servers` | `200 { servers: [...], invalid: [{ name, message }] }` | Admins only. Every server of the MCP catalog, by name. A server is `{ name, url, transport, enabled, readOnly, timeoutMs, maxOutputBytes, onecliSecret, reachability, createdAt, createdBy, updatedAt, updatedBy }`. `reachability` is always `"unknown"`: the API does not probe the network, and a host that is not allowed in the OneCLI rules fails only when the orchestrator connects (log `mcp-discovery-failed`). `invalid` lists rows edited by hand into something the validator rejects; the orchestrator skips them. |
+| `GET /admin/mcp-servers/{name}` | `200`, one server as above | Admins only. `404` if there is none. |
+| `PUT /admin/mcp-servers/{name}` body `{ url?, transport?, enabled?, readOnly?, timeoutMs?, maxOutputBytes?, onecliSecret? }` | `201` for a new server, `200` for an update, the server as in GET | Admins only; creates or updates. A create needs `url` (https, no credentials) and `readOnly` (your declaration that the server is stateless and read-only: one client serves every session); `transport` is `streamable-http` (the only one), `enabled` defaults to true, `timeoutMs` to 60000 (1000 to 300000), `maxOutputBytes` to 24576 (1024 to 24576: it can only tighten the cut of the text a call returns), `onecliSecret` (a reference, never a secret; unused until #42) to null. An update lays the body over the stored row, so `{"enabled": false}` disables a server. `name` matches `^[a-z][a-z0-9-]{0,31}$`, is immutable (`history` is reserved) and becomes the tool prefix `mcp__<name>__`. A bad value, an unknown key or a `name` that differs from the path is `400` and changes nothing. A change that alters nothing writes nothing. Writes a history entry and notifies the orchestrators. |
+| `DELETE /admin/mcp-servers/{name}` | `200 { name, deleted: true }` | Admins only. Removes the row for real (to keep it, `PUT` `enabled: false`); the history keeps the old value. `404` if there is none. |
+| `GET /admin/mcp-servers/history` (`?name=`, `?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, name, action, old, new }] }` | Admins only. Newest first. `action` is `create`, `update` or `delete`; `old` is null for a create, `new` for a delete. |
 | `DELETE /sessions/{id}` | `202 { sessionId, status }` | Idempotent. See Deletion. |
 | `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when migrations succeeded and the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
 
@@ -278,3 +283,20 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   enforce NetworkPolicy, so the bearer token is the only control between pods.
 - `GET /sessions/{id}` reports inbox counts and last activity, not whether a turn is running; the stream's `live`
   event does.
+
+## MCP server catalog
+
+Remote MCP servers (ADR 0007) are managed at runtime through `/admin/mcp-servers` (table above; ADR 0009); there is no
+`PI_MCP_SERVERS` any more. The orchestrator reloads the catalog on `LISTEN pi_mcp_servers` (and a 30 s poll), so a change
+takes effect without a restart:
+
+- A server that is added or enabled gets its `mcp-<name>` extension. Its tools are listed in the background; until that
+  works, calls to them settle `tool_unavailable`.
+- A server that is disabled or deleted loses its extension: a new call to one of its tools settles `tool_unavailable`.
+  Calls that already run finish, and then the client is closed.
+- A server whose row changed (url, limits, anything) gets a new client and its tools are listed again; a tool whose
+  input schema changed is logged as `mcp-schema-changed`.
+- Which sessions get which servers: until per-session profiles (#41), a session created while the catalog has enabled
+  servers gets `tool_search` and every one of them. A server added later reaches only sessions created after it, and a
+  session created while the catalog was empty never gains MCP. The orchestrator's `ONECLI_AGENT_TOKEN` and the host rule
+  are still needed: a row never opens egress (`docs/onecli-host-rules.md`).

@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
-# MCP acceptance tests (issue #39): native remote MCP tools called from the orchestrator through the OneCLI gateway.
+# MCP acceptance tests (issues #39 and #40): native remote MCP tools called from the orchestrator through the OneCLI
+# gateway, from a catalog in Postgres that the admin API changes at runtime.
 # Runs IN the cluster as the e2e-driver Job started by `tests/e2e/run.sh mcp`. WRITTEN, NOT YET RUN. Not part of `all`:
 # it needs the internet (DeepWiki is a public server) and a live OneCLI host rule for mcp.deepwiki.com.
 #
-# Prerequisites (otherwise the tests SKIP, they never fake a result):
-#   - the orchestrator runs with PI_MCP_SERVERS naming deepwiki: `run.sh mcp` sets it for the run (MCP_SERVERS overrides
-#     the JSON, MCP_SERVERS=off leaves it empty so these tests SKIP) and restores the empty base value at the end
-#   - OneCLI allows mcp.deepwiki.com: `deploy/onecli-host-rules.sh --apply` and deploy/onecli-policies/egress.yaml (Argo repo)
+# Setup: the suite PUTs server deepwiki to /admin/mcp-servers (alice is in PI_API_ADMINS) and DELETEs it at the end, so
+# nothing is restarted and no Deployment is edited. Prerequisite (otherwise the tests fail to connect, never fake a
+# result): OneCLI allows mcp.deepwiki.com (`deploy/onecli-host-rules.sh --apply`, deploy/onecli-policies/egress.yaml).
 #
-#   discovery     the orchestrator logged mcp-tools-ready for deepwiki, and its tools were never offered up front
-#   call          a scripted session calls tool_search, then mcp__deepwiki__read_wiki_structure, and gets a real,
-#                 non-error result; the sandbox Pod is the same one afterwards (no recycle) and no exec marker is set
-#   flag-off      (manual, listed here for the record) with PI_MCP_SERVERS empty the same script's tool_search call is
-#                 "not available"; covered by unit tests, not run here
+#   add           PUT creates deepwiki (201); the orchestrator logs mcp-server-added and mcp-tools-ready without a restart
+#   call          a scripted session created after that calls tool_search, then mcp__deepwiki__read_wiki_structure, and
+#                 gets a real, non-error result; no SandboxClaim is created and no exec marker is set
+#   disable       PUT enabled:false; a NEW call in the same session returns tool_unavailable ("not available"), the
+#                 orchestrator pod is the same one (no restart), and mcp-server-removed was logged
+#   unreachable   a row for a host that is not in the OneCLI allowlist never gets tools: mcp-discovery-failed is logged
+#                 for it, and a session created after it calls into tool_unavailable
+#   history       the admin history shows create, update and delete by alice
 #
-# ONLY="discovery,call" runs just those tests. Exit code: 0 when no test failed (SKIPPED is not a failure).
+# ONLY="add,call" runs just those tests (they depend on each other in the order above: add, call, disable). Exit code: 0
+# when no test failed (SKIPPED is not a failure).
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}
@@ -38,8 +42,11 @@ results() { k exec -i "$(ingest_pod)" -c ingest -- node - results "$@" <"$here/c
 sql() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 -c "$1"; }
 orch_log() { k logs deploy/pi-orchestrator --tail=2000; }
 
+admin() { api alice "$@"; } # METHOD PATH [BODY]
 cleanup() {
   local id
+  admin DELETE /admin/mcp-servers/deepwiki >/dev/null 2>&1 || true
+  admin DELETE /admin/mcp-servers/blocked >/dev/null 2>&1 || true
   while read -r id; do
     [[ -n $id ]] || continue
     api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true
@@ -65,44 +72,56 @@ assert_jq() { # description json jq-expression
   fi
 }
 
-need_deepwiki() {
-  local value
-  value=$(k exec deploy/pi-orchestrator -c orchestrator -- printenv PI_MCP_SERVERS 2>/dev/null || true)
-  if [[ $value != *'"deepwiki"'* ]]; then
-    note "SKIPPED: the orchestrator has no deepwiki in PI_MCP_SERVERS (see the header of this script)"
-    return 3
-  fi
+orch_pod() {
+  k get pods -l app.kubernetes.io/name=pi-orchestrator -o json |
+    jq -r '[.items[] | select(.status.phase=="Running" and .metadata.deletionTimestamp==null)][0].metadata.name // empty'
 }
-
-# ---------------------------------------------------------------- tests
-t_discovery() {
-  need_deepwiki || return 3
-  local deadline=$(($(now) + 120))
-  until orch_log | grep -q '"event":"mcp-tools-ready","server":"deepwiki"'; do
+wait_log() { # description pattern seconds
+  local deadline=$(($(now) + $3))
+  until orch_log | grep -q "$2"; do
     [[ $(now) -lt $deadline ]] || {
-      note "no mcp-tools-ready for deepwiki after 120 s; last discovery log lines:"
+      note "no log line matching $2 after $3 s ($1); last discovery failures:"
       orch_log | grep 'mcp-discovery-failed' | tail -3 | cut -c1-300 || true
       exit 1
     }
     sleep 3
   done
-  note "ok: deepwiki tools discovered"
+  note "ok: $1"
 }
-
-t_call() {
-  need_deepwiki || return 3
-  local out id script res claim_before pod_before pod_after
+new_session() { # sets $id
+  local out
   out=$(api alice POST /sessions '{"provider":"scripted","model":"scripted-1"}')
   assert_jq "session created" "$out" '.status==201'
   id=$(jq -r .body.sessionId <<<"$out")
   echo "$id" >>"$sessions_file"
+}
+send_script() { # session-id needle steps-json -> prints the results JSON
+  local script
+  script=$(jq -nc --argjson s "$3" --arg f "$2" '{steps:$s, final:$f}')
+  api alice POST "/sessions/$1/events" "$(jq -nc --arg t "$script" '{kind:"message", text:$t}')" >/dev/null
+  results alice "$1" "$2" 120
+}
+
+# ---------------------------------------------------------------- tests
+t_add() {
+  local out
+  out=$(admin PUT /admin/mcp-servers/deepwiki '{"url":"https://mcp.deepwiki.com/mcp","readOnly":true}')
+  assert_jq "the server was created (or already existed)" "$out" '.status==201 or .status==200'
+  assert_jq "the row is enabled, https, streamable-http" "$out" '.body | .enabled==true and .transport=="streamable-http" and (.url|startswith("https://"))'
+  orch_pod >"$work/orch_pod_before"
+  wait_log "the orchestrator added the server without a restart" '"event":"mcp-server-added","server":"deepwiki"' 90
+  wait_log "deepwiki tools discovered" '"event":"mcp-tools-ready","server":"deepwiki"' 120
+}
+
+t_call() {
+  local id res
+  new_session
   # tool_search loads the deferred tools; the next step calls one by name. Neither step touches the sandbox.
-  script=$(jq -nc '{steps:[
-      {tool:"tool_search", args:{query:"read wiki structure of a repository"}},
-      {tool:"mcp__deepwiki__read_wiki_structure", args:{repoName:"facebook/react"}}
-    ], final:"mcp-finished"}')
-  api alice POST "/sessions/$id/events" "$(jq -nc --arg t "$script" '{kind:"message", text:$t}')" >/dev/null
-  res=$(results alice "$id" mcp-finished 120)
+  res=$(send_script "$id" mcp-finished '[
+      {"tool":"tool_search","args":{"query":"read wiki structure of a repository"}},
+      {"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}
+    ]')
+  echo "$id" >"$work/call_session"
   assert_jq "the session answered" "$res" '.found==true'
   assert_jq "two tool results" "$res" '.results|length==2'
   # "Loaded" is only in tool_search's own output, never in the script.
@@ -112,6 +131,42 @@ t_call() {
   # ADR 0007 / 0003: no sandbox was needed, so no claim exists for this session and no exec marker was set.
   assert_eq "no SandboxClaim was created for the session" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$id" -o name | wc -l | tr -d ' ')"
   assert_eq "no exec-in-flight marker" "0" "$(sql "select count(*) from inbox.sessions where id='$id' and exec_in_flight_at is not null" 2>/dev/null || echo 0)"
+}
+
+t_disable() {
+  local id res out
+  id=$(cat "$work/call_session" 2>/dev/null || true)
+  [[ -n $id ]] || {
+    note "SKIPPED: run the call test first (it creates the session this test calls again)"
+    return 3
+  }
+  out=$(admin PUT /admin/mcp-servers/deepwiki '{"enabled":false}')
+  assert_jq "the server is disabled" "$out" '.status==200 and .body.enabled==false'
+  wait_log "the orchestrator removed the server without a restart" '"event":"mcp-server-removed","server":"deepwiki"' 90
+  # The same session, a NEW call: the tool settles tool_unavailable, it does not hang and it does not run.
+  res=$(send_script "$id" mcp-disabled '[{"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
+  assert_jq "the call after disabling is tool_unavailable" "$res" '.found==true and (.results|last|.isError==true and (.text|test("not available")))'
+  assert_eq "the orchestrator was not restarted" "$(cat "$work/orch_pod_before")" "$(orch_pod)"
+}
+
+t_unreachable() {
+  local out id res
+  # A row never opens egress (docs/decisions/0009): a host outside the OneCLI allowlist is stored fine, and fails to connect.
+  out=$(admin PUT /admin/mcp-servers/blocked '{"url":"https://not-allowlisted.invalid/mcp","readOnly":true}')
+  assert_jq "the row is stored" "$out" '.status==201 or .status==200'
+  wait_log "discovery fails for the host that is not allowlisted" '"event":"mcp-discovery-failed","server":"blocked"' 90
+  new_session
+  res=$(send_script "$id" mcp-blocked '[{"tool":"mcp__blocked__anything","args":{}}]')
+  assert_jq "its tools are tool_unavailable" "$res" '.found==true and (.results|last|.isError==true and (.text|test("not available")))'
+  admin DELETE /admin/mcp-servers/blocked >/dev/null
+}
+
+t_history() {
+  local out
+  admin DELETE /admin/mcp-servers/deepwiki >/dev/null 2>&1 || true
+  out=$(admin GET '/admin/mcp-servers/history?name=deepwiki&limit=20')
+  assert_jq "the history has create, update and delete by alice" "$out" '[.body.history[] | select(.changedBy=="alice") | .action] as $a | ($a|index("create")) != null and ($a|index("update")) != null and ($a|index("delete")) != null'
+  assert_jq "the server is gone from the list" "$(admin GET /admin/mcp-servers)" '[.body.servers[].name] | index("deepwiki") == null'
 }
 
 # ---------------------------------------------------------------- driver
@@ -145,8 +200,11 @@ run() { # name function
   esac
 }
 
-run discovery t_discovery
+run add t_add
 run call t_call
+run disable t_disable
+run unreachable t_unreachable
+run history t_history
 
 log "summary"
 for line in "${summary[@]}"; do note "$line"; done
