@@ -34,6 +34,8 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 now() { date +%s; }
+# shellcheck source=fns.sh
+. "$here/fns.sh"
 
 cleanup() {
   [[ -n "$holder_pid" ]] && kill "$holder_pid" 2>/dev/null || true
@@ -458,71 +460,27 @@ wait_owner
 fi
 
 # ---------------------------------------------------------------- run
-declare -a summary=()
-failed=0
-isolation_status=""
 # ONLY="double-owner,restart" runs just those tests (debugging aid); the full suite runs when unset.
-want() { [[ -z ${ONLY:-} || ",$ONLY," == *",$1,"* ]]; }
-record() { # name rc
-  if [[ $2 -eq 0 ]]; then
-    summary+=("PASS  $1")
-  elif [[ $1 == isolation && $2 -eq 3 ]]; then
+isolation_status=""
+record() { # name rc: like the shared one, plus isolation's KNOWN-FAIL (exit 3)
+  if [[ $1 == isolation && $2 -eq 3 ]]; then
     summary+=("KNOWN-FAIL  $1 (NetworkPolicy is not enforced by the CNI yet; passes once Cilium enforces deploy/networkpolicy*.yaml)")
     isolation_status=known-fail
+  elif [[ $2 -eq 0 ]]; then
+    summary+=("PASS  $1")
   else
     summary+=("FAIL  $1")
     failed=1
   fi
 }
-run_test() { # name function: serial, output streams live
-  local name=$1 fn=$2 rc
-  log "TEST $name"
-  set +e
-  (
-    set -euo pipefail
-    "$fn"
-  ) 2>&1 | tee "$work/$name.log"
-  rc=${PIPESTATUS[0]}
-  set -e
-  record "$name" "$rc"
-}
-# Independent tests (own sessions, own claims, nothing killed or scaled outside their own sandbox) run side by side,
-# at most PAR at a time; their output is printed per test afterwards.
-PAR=${PAR:-3}
-run_parallel() { # name:function ...
-  local spec name fn running=0 names=()
-  for spec in "$@"; do
-    name=${spec%%:*}
-    fn=${spec#*:}
-    want "$name" || continue
-    names+=("$name")
-    while [[ $running -ge $PAR ]]; do
-      wait -n || true
-      running=$((running - 1))
-    done
-    (
-      set +e
-      (
-        set -euo pipefail
-        "$fn"
-      ) >"$work/$name.log" 2>&1
-      echo $? >"$work/$name.rc"
-    ) &
-    running=$((running + 1))
-  done
-  wait
-  for name in ${names[@]+"${names[@]}"}; do
-    log "TEST $name (ran in parallel)"
-    cat "$work/$name.log"
-    record "$name" "$(cat "$work/$name.rc")"
-  done
-}
+E2E_AFTER=wait_owner
 
-# Parallel group first; the tests that kill the orchestrator or hold the DB lock run alone afterwards.
-run_parallel sandbox-loss:t_sandbox_loss concurrency:t_concurrency isolation:t_isolation
-want restart && { run_test restart t_restart; wait_owner; }
-want double-owner && { run_test double-owner t_double_owner; wait_owner; }
-want long-command && { run_test long-command t_long_command; wait_owner; }
+# Parallel: each test has its own sessions and claims and only touches its own sandbox (sandbox-loss deletes its own
+# Pod, the orchestrator keeps running). Serial afterwards: they kill the orchestrator or hold the database lock.
+e2e_parallel sandbox-loss:t_sandbox_loss concurrency:t_concurrency isolation:t_isolation
+e2e_serial restart t_restart
+e2e_serial double-owner t_double_owner
+e2e_serial long-command t_long_command
 
 log "RESULT"
 printf '%s\n' "${summary[@]}"

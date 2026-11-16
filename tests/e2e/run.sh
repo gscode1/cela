@@ -20,6 +20,9 @@
 #   SKIP_SWEEP=1       do not delete e2e namespaces older than SWEEP_MAX_AGE_HOURS (default 6, tests/e2e/sweep.sh) first
 # An unfinished Job (exit 2) always keeps the namespace so the Job can still be read.
 #
+# Within a suite, independent tests run side by side, at most E2E_PARALLEL at a time (default 4; 1 = one by one); tests that
+# restart or kill the orchestrator or depend on shared state run alone afterwards. See tests/e2e/fns.sh.
+#
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, in the run namespace), so a
 # result never depends on the laptop's network. The Mac does only this:
 #   1. create the namespace and the stack, the secrets, build and push code (pnpm builds, deploy/push-code.sh and
@@ -53,6 +56,7 @@ kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 log() { printf '\n## %s\n' "$*"; }
 
 only=${ONLY:-} # ONLY="a,b" runs just those tests of the phase; smoke sets its own list
+[[ ${E2E_PARALLEL:-4} =~ ^[1-9][0-9]*$ ]] || { echo "E2E_PARALLEL must be a positive integer" >&2; exit 64; }
 label=""
 started=$(date +%s)
 case ${1:-} in
@@ -204,7 +208,7 @@ fi
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"
 stage=$work/stage
 mkdir -p "$stage/tests/e2e" "$stage/deploy"
-cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
+cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here/fns.sh" "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
 cp "$root/deploy/gen-api-secret.sh" "$stage/deploy/"
 if has_phase phase1; then
   (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/sandbox-env..." build >/dev/null)
@@ -258,7 +262,7 @@ run_phase() { # phase1|phase3|phase4
   job=e2e-driver-$name-$(date +%s)
   keep_job=0
   log "$name: Job $job"
-  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" -e "s|__ONECLI_NAME_PREFIX__|$onecli_prefix|" "$here/job.yaml.tpl" | k create -f - >/dev/null
+  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__E2E_PARALLEL__|${E2E_PARALLEL:-4}|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" -e "s|__ONECLI_NAME_PREFIX__|$onecli_prefix|" "$here/job.yaml.tpl" | k create -f - >/dev/null
 
   # Live view only. Best effort: if this stream dies the run is unaffected; the final logs fill the gap.
   (

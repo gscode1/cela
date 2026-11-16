@@ -39,6 +39,10 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 now() { date +%s; }
+# shellcheck source=fns.sh
+. "$here/fns.sh"
+E2E_TEST_PREFIX=""
+E2E_ERR_TRAP=1
 
 ingest_pod() {
   k get pods -l app.kubernetes.io/name=pi-ingest -o json |
@@ -216,44 +220,17 @@ t_history() {
 }
 
 # ---------------------------------------------------------------- driver
-pass=0 fail=0 skip=0
-summary=()
-run() { # name function
-  local name=$1 rc
-  [[ -z ${ONLY:-} || ",$ONLY," == *",$name,"* ]] || return 0
-  log "$name"
-  set +e
-  (
-    set -eE
-    trap 'note "ERROR: command failed at line $LINENO (exit $?): $BASH_COMMAND"' ERR
-    "$2"
-  )
-  rc=$?
-  set -e
-  case $rc in
-    0)
-      pass=$((pass + 1))
-      summary+=("PASS  $name")
-      ;;
-    3)
-      skip=$((skip + 1))
-      summary+=("SKIP  $name")
-      ;;
-    *)
-      fail=$((fail + 1))
-      summary+=("FAIL  $name")
-      ;;
-  esac
-}
-
-run add t_add
-run profile t_profile
-run call t_call
-run default t_default
-run edit t_edit
-run disable t_disable
-run unreachable t_unreachable
-run history t_history
+# The tests share the MCP catalog and the research profile, and run in the dependency order of the header. Only call and
+# default are independent of each other once add and profile are done (own sessions, they only read the catalog), so
+# they run side by side. Everything that edits the catalog or the profile (add, profile, edit, disable, unreachable,
+# history) is serial, around them.
+e2e_serial add t_add
+e2e_serial profile t_profile
+e2e_parallel call:t_call default:t_default
+e2e_serial edit t_edit
+e2e_serial disable t_disable
+e2e_serial unreachable t_unreachable
+e2e_serial history t_history
 
 log "summary"
 for line in "${summary[@]}"; do note "$line"; done
