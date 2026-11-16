@@ -18,8 +18,12 @@ if k get secret sandboxd-auth >/dev/null 2>&1; then
     exit 0
   fi
 fi
-master=$(openssl rand -hex 32)
-manifest=$(k create secret generic sandboxd-auth --from-literal=master="$master" --dry-run=client -o yaml)
+# The value goes to kubectl through a file in a private temp dir, not argv (visible in `ps`).
+umask 077
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+openssl rand -hex 32 | tr -d '\n' >"$tmp/master"
+manifest=$(k create secret generic sandboxd-auth --from-file=master="$tmp/master" --dry-run=client -o yaml)
 # replace swaps the whole data map, which also drops the legacy keys.
 if [[ $exists == 1 ]]; then k replace -f - <<<"$manifest" >/dev/null; else k create -f - <<<"$manifest" >/dev/null; fi
 echo "sandboxd-auth: master written"

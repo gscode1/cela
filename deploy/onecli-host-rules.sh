@@ -11,8 +11,9 @@
 # `kubectl -n onecli port-forward svc/onecli 10256`). KUBE_CONTEXT defaults to the current kubectl context.
 #
 # Rules are matched by name (`pi-allow-<host>`, `pi-block-all`), so a rerun only adds what is missing. Order matters:
-# the block rule must come after every allow rule. If an allow rule has to be added while `pi-block-all` exists, the
-# block rule is deleted and recreated last. Rules written here are live at once and change what every OneCLI agent
+# the block rule must come after every allow rule. Missing allow rules are created first, while the old block still
+# exists (a new allow rule is then at worst ineffective, never a hole). Only then is the block deleted and recreated
+# last: the one step with a window, and an EXIT trap recreates the block if anything fails inside it. Rules written here are live at once and change what every OneCLI agent
 # can reach, so run this only when the hosts below are complete for the work in flight.
 set -euo pipefail
 
@@ -62,17 +63,37 @@ has() { grep -qxF -- "$1" <<<"$names"; }
 missing=()
 for h in "${hosts[@]}"; do has "$(rule_name "$h")" || missing+=("$h"); done
 
-if [[ -n $block_id && ${#missing[@]} -gt 0 ]]; then
-  echo "plan: delete $block_name ($block_id) so it can be recreated after the new allow rules"
-  [[ $apply -eq 1 ]] && api DELETE "$rules_path/$block_id" >/dev/null
-  block_id=""
-fi
 for h in ${missing[@]+"${missing[@]}"}; do
   echo "plan: allow $h"
   [[ $apply -eq 1 ]] && api POST "$rules_path" "$(rule_json "$(rule_name "$h")" allow "$h")" >/dev/null
 done
+block_gone=0
+restore_block() { # EXIT trap: never leave the allowlist off after the block was deleted
+  local rc=$?
+  trap - EXIT
+  if [[ $block_gone -eq 1 ]]; then
+    echo "failed after deleting $block_name: recreating it" >&2
+    api POST "$rules_path" "$(rule_json "$block_name" block '*')" >/dev/null ||
+      echo "could not recreate $block_name; rerun with --apply NOW (the allowlist is off)" >&2
+  fi
+  exit "$rc"
+}
+trap restore_block EXIT
+if [[ -n $block_id && ${#missing[@]} -gt 0 ]]; then
+  echo "plan: delete $block_name ($block_id) and recreate it last, after the new allow rules"
+  if [[ $apply -eq 1 ]]; then
+    api DELETE "$rules_path/$block_id" >/dev/null # an HTTP error here means nothing was deleted
+    block_gone=1
+  fi
+  block_id=""
+fi
 if [[ -z $block_id ]]; then
   echo "plan: block * (last)"
-  [[ $apply -eq 1 ]] && api POST "$rules_path" "$(rule_json "$block_name" block '*')" >/dev/null
+  if [[ $apply -eq 1 ]]; then
+    block_gone=1
+    api POST "$rules_path" "$(rule_json "$block_name" block '*')" >/dev/null
+    block_gone=0
+  fi
 fi
+trap - EXIT
 [[ $apply -eq 1 ]] && echo "done: ${#hosts[@]} allow rules, then block *. Verify with docs/onecli-host-rules.md." || true

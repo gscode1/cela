@@ -50,8 +50,13 @@ deploy/onecli-host-rules.sh --apply    # needs the admin key
 - `ONECLI_URL` (required): the OneCLI API base, e.g. `https://onecli.example.com`. Use `http://localhost:10256` with
   `kubectl -n onecli port-forward svc/onecli 10256` if the Cilium ingress policy has closed the route.
 - Idempotent by rule name (`pi-allow-<host>`, `pi-block-all`). Adding a host later: add it to `hosts` in the script and to
-  `egress.yaml`, rerun; the script deletes `pi-block-all` and recreates it last. There is a short window with no block
-  rule (the gateway relays public hosts as before), so do it when no session is running.
+  `egress.yaml`, rerun; the script creates the missing allow rules first, while `pi-block-all` still exists, then deletes
+  and recreates the block last. If creating an allow rule fails, the old block is untouched (the allowlist stays on).
+  Only between the block DELETE and its POST is there no block rule (the gateway relays public hosts as before): an
+  EXIT trap recreates the block if anything fails in that step, and prints a "rerun with --apply NOW" message if even
+  that fails. Do it when no session is running. Whether the gateway evaluates by creation order is UNVERIFIED, so a
+  new allow rule created before the block is recreated may be ineffective until the block is recreated last; that is
+  fail-closed.
 - The list response is a bare array (seen on 2026-11-16, empty before the first apply). UNVERIFIED: `DELETE
   /v1/org/policy/rules/<id>` and the id field (not exercised yet).
 

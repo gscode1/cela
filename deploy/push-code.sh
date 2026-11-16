@@ -13,7 +13,17 @@ work=$(mktemp -d)
 deployments=("$@")
 [[ ${#deployments[@]} -gt 0 ]] || deployments=(pi-orchestrator)
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
-trap 'rm -rf "$work"; k delete pod orchestrator-code-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true' EXIT
+scaled=() # deployments this run scaled to 0; the trap restores exactly these
+# Runs on every exit path: a failed wait, cp or extract must not leave the orchestrator at 0 replicas.
+cleanup() {
+  local d
+  rm -rf "$work"
+  k delete pod orchestrator-code-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  for d in ${scaled[@]+"${scaled[@]}"}; do
+    k scale deployment "$d" --replicas=1 >/dev/null || echo "could not scale $d back to 1; run: kubectl -n $ns scale deployment $d --replicas=1" >&2
+  done
+}
+trap cleanup EXIT
 
 (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/orchestrator..." build >/dev/null)
 (cd "$root" && pnpm --filter @pi-durable-k8s/orchestrator deploy --prod "$work/app" >/dev/null)
@@ -21,7 +31,10 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/app.tgz" -C "$work/app" .
 
 k apply -f "$here/orchestrator-code-pvc.yaml" >/dev/null
 for d in "${deployments[@]}"; do
-  k get deployment "$d" >/dev/null 2>&1 && k scale deployment "$d" --replicas=0 >/dev/null
+  if k get deployment "$d" >/dev/null 2>&1; then
+    scaled+=("$d")
+    k scale deployment "$d" --replicas=0 >/dev/null
+  fi
 done
 for d in "${deployments[@]}"; do
   k wait --for=delete pod -l "app.kubernetes.io/instance=$d" --timeout=120s >/dev/null 2>&1 || true
@@ -51,10 +64,16 @@ spec:
 EOF
 k wait --for=condition=Ready pod/orchestrator-code-loader --timeout=240s >/dev/null
 k cp "$work/app.tgz" orchestrator-code-loader:/tmp/app.tgz >/dev/null
-k exec orchestrator-code-loader -- sh -c 'rm -rf /code/app && mkdir -p /code/app && tar xzf /tmp/app.tgz -C /code/app && ls /code/app/dist/main.js >/dev/null'
+# Extract beside the live tree and swap only after the entry point exists, so a failed extract leaves the old
+# code in place. Same volume, so each mv is a rename.
+k exec orchestrator-code-loader -- sh -c 'set -e
+rm -rf /code/app.new /code/app.old
+mkdir -p /code/app.new
+tar xzf /tmp/app.tgz -C /code/app.new
+ls /code/app.new/dist/main.js >/dev/null
+if [ -e /code/app ]; then mv /code/app /code/app.old; fi
+mv /code/app.new /code/app
+rm -rf /code/app.old'
 k delete pod orchestrator-code-loader --wait=true >/dev/null
-
-for d in "${deployments[@]}"; do
-  k get deployment "$d" >/dev/null 2>&1 && k scale deployment "$d" --replicas=1 >/dev/null
-done
+# The EXIT trap scales the deployments back to 1.
 echo "orchestrator code pushed to PVC orchestrator-code"

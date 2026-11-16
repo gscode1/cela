@@ -63,13 +63,18 @@ cleanup() {
     api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true
   done <"$sessions_file"
   # Wait until every session is `deleted` (bounded), so the claims and OneCLI objects are gone when the run ends.
-  local list deadline left=1
+  # A failed query is not "nothing left": it is retried until the deadline.
+  local list deadline pending drained=0
   list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, -)
   deadline=$(($(now) + 180))
-  while [[ -n $list && $left -ne 0 && $(now) -lt $deadline ]]; do
-    left=$(sql "select count(*) from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null | tr -d ' ' || echo 1)
-    [[ $left == 0 ]] || sleep 3
+  while [[ -n $list && $(now) -lt $deadline ]]; do
+    if pending=$(sql "select id from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null) && [[ -z $pending ]]; then
+      drained=1
+      break
+    fi
+    sleep 3
   done
+  [[ -z $list || $drained -eq 1 ]] || note "cleanup: sessions not deleted after the wait (or status unreadable); their claims may remain"
   rm -rf "$work"
 }
 trap cleanup EXIT
