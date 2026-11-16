@@ -71,7 +71,7 @@ function setup(options: { dbStatus: string; failRows: number; abortFailures?: nu
   const service = new SessionService(pool, host, {
     testFaults: false,
     defaultModel: { provider: "p", model: "m" },
-    turnBudget: 5,
+    turnBudget: () => 5,
   });
   return { service, aborts };
 }

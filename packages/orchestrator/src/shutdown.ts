@@ -3,6 +3,7 @@ import { log } from "./log.js";
 /** What main() has started so far. Each part is set as soon as it exists, so a signal during startup sees it. */
 export interface Running {
   inbox?: { stop(): Promise<void> };
+  settings?: { stop(): Promise<void> };
   service?: { stop(): void };
   sweeper?: { stop(): void };
   /** The Harness host, once opened. */
@@ -32,6 +33,7 @@ export function createShutdown(deps: ShutdownDeps): (signal: string) => void {
       running.service?.stop();
       running.sweeper?.stop();
       await running.inbox?.stop();
+      await running.settings?.stop();
       const host = running.host ?? (await running.opening?.catch(() => undefined));
       await host?.close();
       server.closeAllConnections();

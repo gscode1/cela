@@ -52,8 +52,8 @@ export interface SessionServiceOptions {
   testFaults: boolean;
   /** Model of a session that predates the per-session model (null in `inbox.sessions`). */
   defaultModel: ModelChoice;
-  /** Model turns one session may use in total. A session that reaches it is `failed`. */
-  turnBudget: number;
+  /** Model turns one session may use in total, read per input from the settings cache. A session that reaches it is `failed`. */
+  turnBudget: () => number;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
 }
@@ -285,7 +285,7 @@ export class SessionService {
    */
   async #withinBudget(session: SessionRow, conversationId: number): Promise<void> {
     const used = await this.#host.turnsUsed(conversationId);
-    const left = this.#options.turnBudget - used;
+    const left = this.#options.turnBudget() - used;
     if (left <= 0) {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");
