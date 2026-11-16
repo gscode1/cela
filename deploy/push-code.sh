@@ -15,6 +15,8 @@ deployments=("$@")
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 scaled=() # deployments this run scaled to 0; the trap restores exactly these
 lock=orchestrator-code-push-lock
+# shellcheck source=push-lock.sh
+. "$here/push-lock.sh"
 locked=0 # 1 only when this run created the lock; the trap must never touch another run's lock or loader
 # Runs on every exit path: a failed wait, cp or extract must not leave the orchestrator at 0 replicas.
 cleanup() {
@@ -25,7 +27,7 @@ cleanup() {
     for d in ${scaled[@]+"${scaled[@]}"}; do
       k scale deployment "$d" --replicas=1 >/dev/null || echo "could not scale $d back to 1; run: kubectl -n $ns scale deployment $d --replicas=1" >&2
     done
-    k delete configmap "$lock" --ignore-not-found >/dev/null 2>&1 || echo "could not remove the push lock; run: kubectl -n $ns delete configmap $lock" >&2
+    push_lock_release || true
   fi
 }
 trap cleanup EXIT
@@ -35,11 +37,8 @@ trap cleanup EXIT
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/app.tgz" -C "$work/app" .
 
 # Create-if-absent is atomic, so it is the lock: a second push stops here instead of deleting this run's loader.
-if ! lock_err=$(k create configmap "$lock" 2>&1 >/dev/null); then
-  echo "another push-code run holds the lock ($lock_err)." >&2
-  echo "If no push is running, remove a stale lock with: kubectl -n $ns delete configmap $lock" >&2
-  exit 1
-fi
+# An expired lock (crashed run, failed delete) is taken over with a resourceVersion precondition.
+push_lock_acquire || exit 1
 locked=1
 k apply -f "$here/orchestrator-code-pvc.yaml" >/dev/null
 for d in "${deployments[@]}"; do
