@@ -115,7 +115,20 @@ export function bypassesProxy(url: URL, noProxy: readonly string[]): boolean {
   return false;
 }
 
+/** An IPv6 literal in the canonical form of `URL.hostname` (without brackets), so `::1` equals `0:0:0:0:0:0:0:1`. */
+function canonicalIpv6(address: string): string {
+  try {
+    return new URL(`http://[${address}]/`).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return address;
+  }
+}
+
 function splitPort(entry: string): [string, string | undefined] {
+  // `[::1]:8080` (port optional) and a bare `::1`: a colon in an IPv6 literal is not a port separator.
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry);
+  if (bracketed?.[1] !== undefined) return [canonicalIpv6(bracketed[1]), bracketed[2]];
+  if (entry.split(":").length > 2) return [canonicalIpv6(entry), undefined];
   const match = /^(.*):(\d+)$/.exec(entry);
   return match?.[1] === undefined ? [entry, undefined] : [match[1], match[2]];
 }
