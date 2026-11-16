@@ -33,11 +33,14 @@ block_name=pi-block-all
 
 rule_name() { printf 'pi-allow-%s' "${1//\*./wild-}"; }
 
+# A dry run never contacts OneCLI, so only --apply needs the admin key.
 key=${ONECLI_API_KEY:-}
-if [[ -z $key ]]; then
-  key=$(kubectl ${ctx:+--context="$ctx"} -n secret-store get secret pi-onecli-admin -o jsonpath='{.data.api-key}' | base64 -d)
+if [[ $apply -eq 1 ]]; then
+  if [[ -z $key ]]; then
+    key=$(kubectl ${ctx:+--context="$ctx"} -n secret-store get secret pi-onecli-admin -o jsonpath='{.data.api-key}' | base64 -d)
+  fi
+  [[ -n $key ]] || { echo "no admin key (secret-store/pi-onecli-admin api-key or ONECLI_API_KEY)" >&2; exit 1; }
 fi
-[[ -n $key ]] || { echo "no admin key (secret-store/pi-onecli-admin api-key or ONECLI_API_KEY)" >&2; exit 1; }
 
 api() { # method path [json body]: prints the response body, fails on HTTP >= 400
   local method=$1 path=$2 body=${3:-}
