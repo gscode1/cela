@@ -15,6 +15,9 @@ class Wire extends InMemoryTransport {
   }
   override async start(): Promise<void> {
     if (this.#fake.down) throw new TypeError("fetch failed");
+    if (this.#fake.startDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.#fake.startDelayMs));
+    }
     this.#fake.open.add(this);
     await super.start();
   }
@@ -37,6 +40,8 @@ export class FakeMcp {
   down = false;
   /** The next `tools/call` on a connection fails the way an expired Mcp-Session-Id does (HTTP 404). */
   expireNextCall = false;
+  /** A connect takes this long, as a slow gateway or a far server would make it. */
+  startDelayMs = 0;
   connects = 0;
   /** Client ends that are connected and not closed. */
   readonly open = new Set<InMemoryTransport>();
@@ -68,7 +73,9 @@ export class FakeMcp {
       }
       return;
     }
-    const reply = (result: unknown) => server.send({ jsonrpc: "2.0", id: message.id, result });
+    // A client that gave up and closed no longer hears the answer: that is not a server error.
+    const reply = (result: unknown) =>
+      server.send({ jsonrpc: "2.0", id: message.id, result }).catch(() => undefined);
     const params = (message.params ?? {}) as Record<string, unknown>;
     switch (message.method) {
       case "initialize":

@@ -122,6 +122,10 @@ export function validateMcpServer(
     return "url must be a valid URL";
   }
   if (url.protocol !== "https:") return "url must be https";
+  // The stored text is the normalised one (spaces become %20 and so on), so that is the length the table allows.
+  if (url.toString().length > MAX_URL) {
+    return `url must have at most ${String(MAX_URL)} characters once normalised`;
+  }
   if (url.username !== "" || url.password !== "") return "url must not carry credentials";
   if (pick("transport") !== MCP_TRANSPORT) return `transport must be "${MCP_TRANSPORT}"`;
   const enabled = pick("enabled");
@@ -294,6 +298,9 @@ export async function putMcpServer(
   by: string,
 ): Promise<PutResult | string> {
   return inTransaction(pool, async (client) => {
+    // `for update` locks nothing while the row does not exist, so two creates of one name would both see "no row", and
+    // the second would overwrite the first with create defaults. The advisory lock serialises writers per name.
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`mcp:${name}`]);
     const { rows } = await client.query<McpRow>(
       `select ${COLUMNS} from inbox.mcp_servers where name = $1 for update`,
       [name],
@@ -358,6 +365,7 @@ function fromStored(server: McpServerConfig, by: string): StoredMcpServer {
 export async function deleteMcpServer(pool: pg.Pool, name: string, by: string): Promise<boolean> {
   if (mcpServerNameError(name) !== undefined) return false;
   return inTransaction(pool, async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`mcp:${name}`]);
     const { rows } = await client.query<McpRow>(
       `delete from inbox.mcp_servers where name = $1 returning ${COLUMNS}`,
       [name],

@@ -88,6 +88,11 @@ async function bounded<T>(work: Promise<T>, ms: number, what: string, onTimeout:
   }
 }
 
+/** Rejects after `ms` without cancelling `work`, which others may share. */
+async function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  return bounded(work, ms, what, () => undefined);
+}
+
 /**
  * One server: one shared `McpClient` (so the server must be stateless across conversations), and one extension
  * `mcp-<name>` of deferred tools. The extension is installed empty at once and replaced when discovery succeeds;
@@ -286,13 +291,21 @@ export class McpServer {
   ): Promise<CallToolResult> {
     if (this.#retired) throw new Error(`MCP server ${this.#spec.name} is no longer available`);
     this.#inFlight += 1;
+    // One budget for the whole call: waiting for a connection, the call itself and the retry after a session expiry.
+    const deadline = Date.now() + this.#spec.timeoutMs;
+    const remaining = () => Math.max(1, deadline - Date.now());
     try {
       for (let attempt = 0; ; attempt += 1) {
-        const client = await this.#connected();
+        // The connect may be shared with other callers, so only this call's wait for it is cut, not the connect.
+        const client = await within(
+          this.#connected(),
+          remaining(),
+          `mcp ${this.#spec.name} call (connect)`,
+        );
         try {
           return await client.callTool(name, args, {
             ...(signal === undefined ? {} : { signal }),
-            timeoutMs: this.#spec.timeoutMs,
+            timeoutMs: remaining(),
           });
         } catch (error) {
           if (error instanceof McpSessionExpiredError && attempt === 0) {

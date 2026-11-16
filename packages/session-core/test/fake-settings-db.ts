@@ -59,6 +59,8 @@ export class FakeSettingsDb {
   readonly listeners = new Set<FakeListener>();
   /** inbox.mcp_servers by name, and its history. */
   mcp = new Map<string, McpRow>();
+  /** Advisory transaction locks by key, and the client that holds each. */
+  readonly locks = new Map<string, FakeListener>();
   readonly mcpHistory: McpHistoryRow[] = [];
   #pending: string[] = [];
   #snapshot:
@@ -278,11 +280,25 @@ export class FakeListener extends EventEmitter {
     super();
   }
 
-  query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number }> {
+  async query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number }> {
+    if (sql.startsWith("select pg_advisory_xact_lock")) {
+      // Held until this client commits or rolls back; a second client asking for the same key waits.
+      const key = String(params?.[0]);
+      while (this.db.locks.has(key) && this.db.locks.get(key) !== this) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      this.db.locks.set(key, this);
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql === "commit" || sql === "rollback") {
+      const result = await this.db.query(sql, params);
+      for (const [key, holder] of this.db.locks) if (holder === this) this.db.locks.delete(key);
+      return result;
+    }
     if (sql.startsWith("listen ")) {
       this.channels.add(sql.slice("listen ".length).trim());
       this.db.listeners.add(this);
-      return Promise.resolve({ rows: [], rowCount: 0 });
+      return { rows: [], rowCount: 0 };
     }
     return this.db.query(sql, params);
   }

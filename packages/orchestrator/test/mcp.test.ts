@@ -141,6 +141,32 @@ describe("McpTools", () => {
     await expect(run(await ready(tools), {})).rejects.toThrow(/timed out/i);
   });
 
+  it("counts the wait for a reconnect inside the call's timeout: one deadline for connect and call", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    fake.onCall = () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ content: [{ type: "text", text: "slow" }] }), 200),
+      );
+    // 300 ms budget: a 150 ms reconnect leaves 150 ms for a call that takes 200 ms. Each alone fits, the sum does not.
+    const { tools } = open(fake, { timeoutMs: 300 });
+    const tool = await ready(tools);
+    expect(await run(tool, {})).toMatchObject({ isError: false });
+    fake.drop();
+    fake.startDelayMs = 150;
+    await expect(run(tool, {})).rejects.toThrow(/timed out/i);
+  });
+
+  it("stops a reconnect wait that outlasts the whole budget", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const { tools } = open(fake, { timeoutMs: 100 });
+    const tool = await ready(tools);
+    fake.drop();
+    fake.startDelayMs = 180; // under the 200 ms connect bound, over the call's 100 ms
+    await expect(run(tool, {})).rejects.toThrow(/timed out/i);
+  });
+
   it("stops a call when the conversation aborts it, and tells the server", async () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];

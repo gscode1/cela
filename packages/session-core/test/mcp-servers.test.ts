@@ -46,6 +46,11 @@ describe("validateMcpServer", () => {
     ["a url with credentials", "demo", { ...BASE, url: "https://u:p@mcp.example.com/" }],
     ["a url that is not a url", "demo", { ...BASE, url: "mcp.example.com" }],
     [
+      "a url over 2048 characters once spaces become %20",
+      "demo",
+      { ...BASE, url: `https://a.example/a${" ".repeat(800)}b` },
+    ],
+    [
       "a url over 2048 characters",
       "demo",
       { ...BASE, url: `https://a.example/${"x".repeat(2048)}` },
@@ -141,6 +146,23 @@ describe("the catalog in the database", () => {
     const catalog = await readMcpServers(pool);
     expect(catalog.invalid).toEqual([]);
     expect(catalog.servers).toHaveLength(bodies.length);
+  });
+
+  it("serialises concurrent creates of one name: the second sees the first and does not overwrite it", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    const [a, b] = await Promise.all([
+      putMcpServer(pool, "demo", { ...BASE, enabled: false }, "alice"),
+      putMcpServer(pool, "demo", { ...BASE, timeoutMs: 5000 }, "bob"),
+    ]);
+    expect(typeof a).not.toBe("string");
+    expect(typeof b).not.toBe("string");
+    // Whichever ran second updated the first, so exactly one create exists and the other entry has an old value.
+    expect(db.mcpHistory.map((h) => h.action).sort()).toEqual(["create", "update"]);
+    expect(db.mcpHistory.find((h) => h.action === "update")?.old).not.toBeNull();
+    // The update started from what the create wrote, not from nothing.
+    const [created, updated] = db.mcpHistory;
+    expect(updated?.old).toEqual(created?.new);
   });
 
   it("reports a row edited by hand into something invalid, and still lists the others", async () => {
