@@ -201,6 +201,40 @@ describe("McpTools", () => {
     expect(fake.calls).toHaveLength(1);
   });
 
+  it("shares one connect among concurrent calls after a drop, and close() closes it", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const { tools } = open(fake);
+    const tool = await ready(tools);
+    expect(fake.open.size).toBe(1);
+    fake.drop();
+    expect(fake.open.size).toBe(0);
+    const connects = fake.connects;
+    await Promise.all(Array.from({ length: 5 }, () => run(tool, {})));
+    expect(fake.connects).toBe(connects + 1);
+    expect(fake.open.size).toBe(1);
+    await tools.close();
+    expect(fake.open.size).toBe(0);
+  });
+
+  it("does not pile up abort listeners over discovery retries", async () => {
+    const fake = new FakeMcp();
+    fake.down = true;
+    const added = vi.spyOn(AbortSignal.prototype, "addEventListener");
+    const removed = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+    try {
+      const { tools } = open(fake);
+      await until(() => fake.connects >= 6, "retries");
+      await tools.close();
+      const aborts = (spy: typeof added) => spy.mock.calls.filter(([type]) => type === "abort");
+      // Every listener added for a backoff is removed again; none outlives its timer.
+      expect(aborts(removed).length).toBeGreaterThanOrEqual(aborts(added).length - 3);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
   it("installs an empty extension at once, and its tools when a down server comes back", async () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];

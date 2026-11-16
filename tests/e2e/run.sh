@@ -59,7 +59,13 @@ has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0;
 work=$(mktemp -d)
 job=""
 keep_job=0
+mcp_env_set=0
 cleanup() {
+  # The mcp suite sets PI_MCP_SERVERS on the Deployment for its run; put the base (empty) value back.
+  if [[ $mcp_env_set -eq 1 ]]; then
+    k set env deploy/pi-orchestrator PI_MCP_SERVERS= >/dev/null 2>&1 || true
+    k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null 2>&1 || echo "could not restore PI_MCP_SERVERS=; run: kubectl -n $ns set env deploy/pi-orchestrator PI_MCP_SERVERS=" >&2
+  fi
   pkill -f "logs -f job/e2e-driver" 2>/dev/null || true
   if [[ -n $job && $keep_job -eq 0 ]]; then
     k delete job "$job" --ignore-not-found --cascade=foreground --wait=true >/dev/null 2>&1 || true
@@ -99,10 +105,21 @@ if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4
   "$root/deploy/push-ingest.sh" >/dev/null
 fi
 
+# The overlay above applies the base Deployment, which has PI_MCP_SERVERS empty, so the mcp suite sets it here, after
+# the overlay. MCP_SERVERS overrides the JSON (default: DeepWiki); MCP_SERVERS=off leaves it empty and the suite SKIPs.
+if has_phase mcp && [[ ${MCP_SERVERS:-} != off ]]; then
+  log "PI_MCP_SERVERS on the orchestrator for this run (restored empty at the end)"
+  mcp_env_set=1
+  # A variable, not an inline default: the first `}` of the JSON would end the ${...:-...} expansion.
+  mcp_default='[{"name":"deepwiki","url":"https://mcp.deepwiki.com/mcp"}]'
+  k set env deploy/pi-orchestrator "PI_MCP_SERVERS=${MCP_SERVERS:-$mcp_default}" >/dev/null
+  k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
+fi
+
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"
 stage=$work/stage
 mkdir -p "$stage/tests/e2e" "$stage/deploy"
-cp "$here"/run-phase*.sh "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
+cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
 cp "$root/deploy/gen-api-secret.sh" "$stage/deploy/"
 if has_phase phase1; then
   (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/sandbox-env..." build >/dev/null)
@@ -141,7 +158,10 @@ if [[ -f $stage/bundle.tgz ]]; then
   got=$(k exec e2e-driver-loader -- sha256sum /driver/bundle.tgz | awk '{print $1}')
   [[ $want == "$got" ]] || { echo "bundle upload is corrupt (sha256 differs)" >&2; exit 1; }
 fi
-k exec e2e-driver-loader -- test -f /driver/tests/e2e/run-phase3.sh
+# Every selected suite's script must be on the volume before a Job is created for it.
+for p in "${phases[@]}"; do
+  k exec e2e-driver-loader -- test -f "/driver/tests/e2e/run-$p.sh" || { echo "run-$p.sh is not on the driver volume (is it staged above?)" >&2; exit 1; }
+done
 k delete pod e2e-driver-loader --wait=true >/dev/null
 
 # ------------------------------------------------------------------ 2+3. create the Job, wait, read the verdict

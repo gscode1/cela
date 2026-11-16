@@ -4,8 +4,8 @@
 # it needs the internet (DeepWiki is a public server) and a live OneCLI host rule for mcp.deepwiki.com.
 #
 # Prerequisites (otherwise the tests SKIP, they never fake a result):
-#   - the orchestrator runs with PI_MCP_SERVERS='[{"name":"deepwiki","url":"https://mcp.deepwiki.com/mcp"}]'
-#     (deploy/orchestrator.yaml has it empty and commented; set it for the run, then clear it again)
+#   - the orchestrator runs with PI_MCP_SERVERS naming deepwiki: `run.sh mcp` sets it for the run (MCP_SERVERS overrides
+#     the JSON, MCP_SERVERS=off leaves it empty so these tests SKIP) and restores the empty base value at the end
 #   - OneCLI allows mcp.deepwiki.com: `deploy/onecli-host-rules.sh --apply` and deploy/onecli-policies/egress.yaml (Argo repo)
 #
 #   discovery     the orchestrator logged mcp-tools-ready for deepwiki, and its tools were never offered up front

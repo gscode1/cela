@@ -140,7 +140,8 @@ export class McpServer {
   readonly #timings: McpTimings;
   readonly #registry: Registry;
   readonly #stop = new AbortController();
-  #client: Promise<McpClient> | undefined;
+  /** The connect in progress, shared by every caller that needs a connection meanwhile. */
+  #connecting: Promise<McpClient> | undefined;
   #ready: McpClient | undefined;
   #discovery: Promise<void> | undefined;
 
@@ -168,8 +169,9 @@ export class McpServer {
   async close(): Promise<void> {
     this.#stop.abort();
     await this.#discovery;
-    const client = await this.#client?.catch(() => undefined);
-    this.#client = undefined;
+    const pending = await this.#connecting?.catch(() => undefined);
+    const client = this.#ready ?? pending;
+    this.#connecting = undefined;
     this.#ready = undefined;
     await client?.close().catch(() => undefined);
   }
@@ -182,10 +184,7 @@ export class McpServer {
     });
     // A dropped connection or an expired session makes the next use connect again.
     client.onClose(() => {
-      if (this.#ready === client) {
-        this.#ready = undefined;
-        this.#client = undefined;
-      }
+      if (this.#ready === client) this.#ready = undefined;
     });
     await bounded(
       client.connect(this.#transport(this.#spec)),
@@ -204,20 +203,19 @@ export class McpServer {
     if (this.#ready !== undefined && this.#ready.connectionState === "connected") {
       return Promise.resolve(this.#ready);
     }
+    // One connect at a time: concurrent callers after a drop share it instead of each opening (and leaking) a client.
+    if (this.#connecting !== undefined) return this.#connecting;
     const connecting = this.#connect();
-    this.#client = connecting;
-    // A failed connect must not stay cached.
-    connecting.catch(() => {
-      if (this.#client === connecting) this.#client = undefined;
-    });
+    this.#connecting = connecting;
+    const clear = () => {
+      if (this.#connecting === connecting) this.#connecting = undefined;
+    };
+    connecting.then(clear, clear);
     return connecting;
   }
 
   async #drop(client: McpClient): Promise<void> {
-    if (this.#ready === client) {
-      this.#ready = undefined;
-      this.#client = undefined;
-    }
+    if (this.#ready === client) this.#ready = undefined;
     await client.close().catch(() => undefined);
   }
 
@@ -236,6 +234,21 @@ export class McpServer {
     return this.#stop.signal.aborted;
   }
 
+  /** Waits `ms`, or until close. The abort listener is removed when the timer fires, so retries do not pile them up. */
+  #sleep(ms: number): Promise<void> {
+    const signal = this.#stop.signal;
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      signal.addEventListener("abort", done, { once: true });
+    });
+  }
+
   async #discover(): Promise<void> {
     let delay = this.#timings.retryMinMs;
     while (!this.#stopped()) {
@@ -252,17 +265,7 @@ export class McpServer {
           message: errorMessage(error),
           retryMs: delay,
         });
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, delay);
-          this.#stop.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(timer);
-              resolve();
-            },
-            { once: true },
-          );
-        });
+        await this.#sleep(delay);
         delay = Math.min(delay * 2, this.#timings.retryMaxMs);
       }
     }

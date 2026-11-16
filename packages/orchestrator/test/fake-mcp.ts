@@ -9,8 +9,13 @@ class Wire extends InMemoryTransport {
     super();
     this.#fake = fake;
   }
+  override async close(): Promise<void> {
+    this.#fake.open.delete(this);
+    await super.close();
+  }
   override async start(): Promise<void> {
     if (this.#fake.down) throw new TypeError("fetch failed");
+    this.#fake.open.add(this);
     await super.start();
   }
   override async send(message: JsonRpcMessage): Promise<void> {
@@ -33,6 +38,12 @@ export class FakeMcp {
   /** The next `tools/call` on a connection fails the way an expired Mcp-Session-Id does (HTTP 404). */
   expireNextCall = false;
   connects = 0;
+  /** Client ends that are connected and not closed. */
+  readonly open = new Set<InMemoryTransport>();
+  /** The server side drops every connection. */
+  drop(): void {
+    for (const wire of [...this.open]) void wire.close();
+  }
   readonly calls: { name: string; args: Record<string, unknown> }[] = [];
   readonly cancelled: string[] = [];
 
