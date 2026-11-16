@@ -77,6 +77,9 @@ cleanup() {
         k delete sandboxclaim "$claim" --ignore-not-found --wait=false >/dev/null 2>&1 || true
         k delete pvc "workspace-$claim" --ignore-not-found --wait=false >/dev/null 2>&1 || true
       fi
+      # Keep the rows: the orchestrator's delete (and OneCLI revoke) can still retry, and dropping them would leak.
+      note "session $id was not deleted through the API; its rows are kept"
+      continue
     fi
     pg -c "delete from inbox.events where session_id='$id'; delete from inbox.sessions where id='$id'" >/dev/null 2>&1 || true
   done <"$sessions_file"

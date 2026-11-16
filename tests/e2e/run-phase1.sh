@@ -43,7 +43,8 @@ trap cleanup EXIT
 # Fresh runner pod with the code unpacked at /work/app. Called again to model an orchestrator restart.
 start_runner() {
   k delete pod e2e-runner --ignore-not-found --wait=true >/dev/null
-  k create -f "$here/runner-pod.yaml" >/dev/null
+  # The manifest hard-codes the default namespace; follow NAMESPACE so `kubectl create` does not reject it.
+  sed "s/^  namespace: pi-durable-poc\$/  namespace: $ns/" "$here/runner-pod.yaml" | k create -f - >/dev/null
   k wait --for=condition=Ready pod/e2e-runner --timeout=240s >/dev/null
   k exec -i e2e-runner -- sh -c 'mkdir -p /work/app && tar xzf - -C /work/app' <"$bundle"
 }
@@ -64,7 +65,12 @@ hash_js='import {deriveSandboxToken as d, sandboxTokenSha256 as h} from "/work/a
 token_sha=$(k exec e2e-runner -- env PI_SANDBOX_CLAIM="$claim" node --input-type=module -e "$hash_js")
 [[ $token_sha =~ ^[0-9a-f]{64}$ ]] || fail "could not derive the token hash for $claim (is the master in secret sandboxd-auth?)"
 k delete sandboxclaim "$claim" --ignore-not-found --wait=true >/dev/null
-k wait --for=delete "pvc/workspace-$claim" --timeout=120s >/dev/null 2>&1 || true
+# Poll with get: the driver Role has no PVC watch, which `kubectl wait --for=delete` needs.
+pvc_deadline=$(($(date +%s) + 120))
+while k get pvc "workspace-$claim" -o name >/dev/null 2>&1; do
+  [[ $(date +%s) -lt $pvc_deadline ]] || fail "workspace-$claim is still terminating after 120s"
+  sleep 2
+done
 k create -f - >/dev/null <<YAML
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxClaim

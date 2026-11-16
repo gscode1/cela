@@ -12,9 +12,11 @@ const base = process.env.API_BASE ?? "http://127.0.0.1:8080";
 
 function tokenFor(owner) {
   if (process.env.API_TOKEN) return process.env.API_TOKEN;
-  for (const line of (process.env.PI_API_TOKENS ?? "").split("\n")) {
-    const [name, token] = line.trim().split(":");
-    if (name === owner && token) return token;
+  // Same parsing as packages/session-core/src/auth.ts: split on newline or comma, trim, split at the first colon.
+  for (const entry of (process.env.PI_API_TOKENS ?? "").split(/[\n,]/)) {
+    const line = entry.trim();
+    const at = line.indexOf(":");
+    if (at > 0 && line.slice(0, at) === owner && line.length > at + 1) return line.slice(at + 1);
   }
   throw new Error(`no token for owner ${owner}`);
 }

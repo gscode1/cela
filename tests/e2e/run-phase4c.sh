@@ -52,8 +52,21 @@ onecli() { # METHOD PATH
     const [method, path] = process.argv.slice(1);
     fetch((process.env.PI_ONECLI_API ?? "http://onecli.onecli:10256") + path, {
       method, headers: { authorization: `Bearer ${process.env.ONECLI_API_KEY}` } })
-      .then(async (r) => { process.stdout.write(await r.text() || "[]"); })
+      .then(async (r) => {
+        // An HTTP error body would parse as "nothing found" and make a negative assertion pass.
+        if (!r.ok) { console.error(`OneCLI ${method} ${path}: HTTP ${r.status}`); process.exit(1); }
+        process.stdout.write(await r.text() || "[]");
+      })
       .catch((e) => { console.error(e.message); process.exit(1); });' "$1" "$2"
+}
+# Counts the objects a jq filter selects in a OneCLI listing. A failed request prints "onecli-error", never 0.
+onecli_count() { # PATH jq-args... filter
+  local body
+  body=$(onecli GET "$1") || {
+    echo onecli-error
+    return 0
+  }
+  jq "${@:2}" <<<"$body"
 }
 
 cleanup() {
@@ -65,7 +78,7 @@ cleanup() {
   # Wait until every session is `deleted` (bounded), so the claims and OneCLI objects are gone when the run ends.
   # A failed query is not "nothing left": it is retried until the deadline.
   local list deadline pending drained=0
-  list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, -)
+  list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, - || true) # no session created: empty list
   deadline=$(($(now) + 180))
   while [[ -n $list && $(now) -lt $deadline ]]; do
     if pending=$(sql "select id from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null) && [[ -z $pending ]]; then
@@ -148,10 +161,11 @@ t_no_repo() {
   id=$(jq -r .body.sessionId <<<"$out")
   echo "$id" >>"$sessions_file"
   send "$id" plain-done "pwd" "ls -A /workspace | wc -l"
-  assert_eq "the session answers" found "$(stream_has alice "$id" plain-done 90)"
+  # answer_has, not stream_has: the final answer text is also in the user's own message.
+  assert_eq "the session answers" found "$(answer_has alice "$id" plain-done 90)"
   assert_eq "no repo columns, no OneCLI ids, no ready marker" "||" "$(sql "select coalesce(repo,'')||'|'||coalesce(onecli_agent_id,'')||'|'||coalesce(workspace_ready_at::text,'') from inbox.sessions where id='$id'")"
-  assert_eq "no OneCLI agent exists for it" 0 "$(onecli GET /v1/agents | jq --arg n "pi-session-$id" '[.. | objects | select(.identifier? == $n)] | length')"
-  assert_eq "no OneCLI secret exists for it" 0 "$(onecli GET /v1/secrets | jq --arg n "pi-session-$id" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
+  assert_eq "no OneCLI agent exists for it" 0 "$(onecli_count /v1/agents --arg n "pi-session-$id" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "no OneCLI secret exists for it" 0 "$(onecli_count /v1/secrets --arg n "pi-session-$id" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
   out=$(api alice POST /sessions '{"repo":"https://github.com/a/b"}')
   assert_jq "a URL is refused" "$out" '.status==400'
   out=$(api alice POST /sessions '{"repo":"a/b","branch":"--upload-pack=x"}')
@@ -174,13 +188,13 @@ t_clone_push() {
     "test -d /workspace/repo/.git && echo CLONE_O''K" \
     "test -f /workspace/.pi-workspace.json && echo MARKER_O''K" \
     "echo sentinel >/workspace/repo/.e2e-sentinel" \
-    "env | grep -c -E 'ghs_|github_pat_' || true" \
-    "grep -r -c -E 'ghs_|github_pat_' /workspace/repo/.git/config /workspace/.onecli || true" \
+    "! env | grep -q -E 'ghs[_]|github_pat[_]' && echo ENV_CLE''AN_OK" \
+    "! grep -r -q -E 'ghs[_]|github_pat[_]' /workspace/repo/.git/config && { [ ! -e /workspace/.onecli ] || ! grep -r -q -E 'ghs[_]|github_pat[_]' /workspace/.onecli; } && echo FILES_CLE''AN_OK" \
     "cd /workspace/repo && git checkout -q -b $branch && date >e2e-$run_id.txt && git add e2e-$run_id.txt && git commit -q -m 'e2e $run_id' && git push -q origin HEAD:refs/heads/$branch && echo PUSH_O''K" \
     "cd /workspace/repo && git ls-remote origin refs/heads/$branch | wc -l" \
     "cd /workspace/repo && git push -q origin --delete $branch && echo BRANCH_REMO''VED"
   assert_eq "the session ran its script" found "$(answer_has alice "$id" clone-push-finished 240)"
-  for needle in CLONE_OK MARKER_OK PUSH_OK BRANCH_REMOVED; do
+  for needle in CLONE_OK MARKER_OK ENV_CLEAN_OK FILES_CLEAN_OK PUSH_OK BRANCH_REMOVED; do
     assert_eq "tool output has $needle" found "$(stream_has alice "$id" "$needle" 20)"
   done
   assert_jq "the session is still active" "$(api alice GET "/sessions/$id")" '.body.status=="active"'
@@ -221,7 +235,7 @@ t_restart_skip() {
   assert_eq "the sentinel written before the restart is still there" found "$(stream_has alice "$repo_session" SENTINEL_OK 20)"
   assert_eq "the clone was found and skipped" 1 "$(orch_log | grep -c "\"event\":\"workspace-present\".*$repo_session")"
   assert_eq "no second clone after the restart" 0 "$(orch_log | grep -c "\"event\":\"workspace-cloned\".*$repo_session" || true)"
-  assert_eq "still exactly one OneCLI agent for the session" 1 "$(onecli GET /v1/agents | jq --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "still exactly one OneCLI agent for the session" 1 "$(onecli_count /v1/agents --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
 }
 
 t_scope() {
@@ -242,8 +256,8 @@ t_delete() {
   agent_id=$(sql "select onecli_agent_id from inbox.sessions where id='$repo_session'")
   assert_jq "DELETE is accepted" "$(api alice DELETE "/sessions/$repo_session")" '.status==202'
   wait_status alice "$repo_session" deleted 120 >/dev/null || exit 1
-  assert_eq "the OneCLI agent is gone" 0 "$(onecli GET /v1/agents | jq --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
-  assert_eq "its secrets are gone" 0 "$(onecli GET /v1/secrets | jq --arg n "pi-session-$repo_session" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
+  assert_eq "the OneCLI agent is gone" 0 "$(onecli_count /v1/agents --arg n "pi-session-$repo_session" '[.. | objects | select(.identifier? == $n)] | length')"
+  assert_eq "its secrets are gone" 0 "$(onecli_count /v1/secrets --arg n "pi-session-$repo_session" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
   assert_eq "the old agent id no longer has grants" 0 "$(onecli GET "/v1/agents/$agent_id/grants" | jq '[.. | objects | select(has("id"))] | length' 2>/dev/null || echo 0)"
   assert_eq "the tombstone was written first and completed" t "$(sql "select (completed_at is not null) from inbox.tombstones where session_id='$repo_session'" | tr -d ' ')"
   assert_eq "the claim is gone" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$repo_session" -o name | wc -l | tr -d ' ')"

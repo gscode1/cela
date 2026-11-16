@@ -83,6 +83,15 @@ orch_restarts() {
 orch_log() {
   if [[ $mode == local ]]; then cat "$ORCH_LOG"; else k logs deploy/pi-orchestrator --tail=500; fi
 }
+# True when the orchestrator log matches. An unreadable log fails the test: "no match" must not come from a failed read.
+orch_log_matches() { # extended regex
+  local out
+  out=$(orch_log) || {
+    note "ASSERT FAILED: could not read the orchestrator log"
+    exit 1
+  }
+  grep -q -E "$1" <<<"$out"
+}
 
 cleanup() {
   local id
@@ -95,7 +104,7 @@ cleanup() {
   # delete had not reached yet, so the others are reported and kept. A failed query is not "nothing left": it is
   # retried until the deadline.
   local list deadline pending status
-  list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, -)
+  list=$(grep -v '^$' "$sessions_file" | sed "s/.*/'&'/" | paste -sd, - || true) # no session created: empty list
   deadline=$(($(now) + 180))
   while [[ -n $list && $(now) -lt $deadline ]]; do
     if pending=$(sql "select id from inbox.sessions where status <> 'deleted' and id in ($list)" 2>/dev/null) && [[ -z $pending ]]; then
@@ -210,7 +219,7 @@ t_failed_401() {
   assert_eq "the orchestrator did not restart" "$restarts" "$(orch_restarts)"
   assert_eq "the event was submitted once, not retried" "1|submitted" "$(sql "select attempts||'|'||status from inbox.events where session_id='$id' and kind='message' and payload->>'text' like '%401%'")"
   assert_eq "the session stays failed" failed "$(sql "select status from inbox.sessions where id='$id'")"
-  if orch_log | grep -q -E 'fail-closed|"event":"fatal"'; then
+  if orch_log_matches 'fail-closed|"event":"fatal"'; then
     note "ASSERT FAILED: the orchestrator logged a fatal or fail-closed event"
     exit 1
   fi
@@ -224,19 +233,27 @@ t_failed_401() {
 t_real_model() {
   # OpenAI Codex (ChatGPT subscription) through OneCLI. The default pair is in the committed ConfigMap's allowlist.
   local models=${REAL_MODELS:-openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol}
-  local entry provider model out id answer
+  local entry provider model out id answer secret_err env_names
   if [[ $mode == local ]]; then
     note "SKIPPED: the real-model test needs the cluster (MODE=cluster)"
     return 3
   fi
-  if ! k get secret pi-onecli >/dev/null 2>&1; then
+  if ! secret_err=$(k get secret pi-onecli -o name 2>&1 >/dev/null); then
+    if [[ $secret_err != *NotFound* ]]; then
+      note "ASSERT FAILED: could not look up Secret pi-onecli: $secret_err"
+      exit 1
+    fi
     note "SKIPPED: Secret pi-onecli does not exist in the namespace (ExternalSecret pi-onecli, key agent-token)."
     note "  See docs/model-credentials.md, Set up."
     return 3
   fi
   note "ok: pi-onecli delivered by the ExternalSecret"
   # Names only, never values: no provider credential is in the orchestrator's environment.
-  if k exec deploy/pi-orchestrator -- sh -c 'env | cut -d= -f1' | grep -q -E '^(OPENROUTER|OPENAI|ANTHROPIC)_API_KEY$'; then
+  env_names=$(k exec deploy/pi-orchestrator -- sh -c 'env | cut -d= -f1') || {
+    note "ASSERT FAILED: could not list the orchestrator environment"
+    exit 1
+  }
+  if grep -q -E '^(OPENROUTER|OPENAI|ANTHROPIC)_API_KEY$' <<<"$env_names"; then
     note "ASSERT FAILED: a provider API key is in the orchestrator environment"
     exit 1
   fi
@@ -259,7 +276,7 @@ t_real_model() {
         ;;
     esac
     assert_jq "the session is still active" "$(api alice GET "/sessions/$id")" '.body.status=="active"'
-    if orch_log | grep -q -E 'aoc_|eyJ|sk-'; then
+    if orch_log_matches 'aoc_|eyJ|sk-'; then
       note "ASSERT FAILED: the orchestrator log holds something shaped like a token or key"
       exit 1
     fi
