@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     pool,
     authenticate,
     orchestratorUrl: config.orchestratorUrl,
+    shards: config.shards,
     settings,
     admins: config.admins,
     schemaReady: () => schemaReady,
