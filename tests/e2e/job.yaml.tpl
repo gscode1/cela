@@ -1,4 +1,4 @@
-# Template for the driver Job; tests/e2e/run.sh fills __JOB__, __PHASE__, __IMAGE__, __ONLY__ and __REAL_MODEL__ (1 = also the real-model test of phase4b, which spends model turns) (the tests to run; empty = all of the phase).
+# Template for the driver Job; tests/e2e/run.sh fills __JOB__, __PHASE__, __IMAGE__, __ONLY__, __E2E_PARALLEL__ (tests run at once within a suite) and __REAL_MODEL__ (1 = also the real-model test of phase4b, which spends model turns) (the tests to run; empty = all of the phase).
 # The image is public and pinned by digest (multi-arch index, includes linux/arm64): bash, curl, jq, openssl, kubectl.
 # The Job talks to the API server with its ServiceAccount (in-cluster config); no kubeconfig, no context.
 apiVersion: batch/v1
@@ -34,6 +34,7 @@ spec:
             - { name: KUBE_CONTEXT, value: "" }
             - { name: NO_COLOR, value: "1" }
             - { name: ONLY, value: "__ONLY__" }
+            - { name: E2E_PARALLEL, value: "__E2E_PARALLEL__" }
             - { name: REAL_MODEL, value: "__REAL_MODEL__" }
             - { name: REPO_A, value: "__REPO_A__" }
             - { name: REPO_B, value: "__REPO_B__" }

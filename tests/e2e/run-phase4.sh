@@ -41,6 +41,8 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 now() { date +%s; }
+# shellcheck source=fns.sh
+. "$here/fns.sh"
 
 pg() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 "$@"; }
 
@@ -283,7 +285,7 @@ t_create_send_stream() {
   assert_jq "ingest /readyz answers 200" "$(api none GET /readyz)" '.status==200'
   assert "orchestrator /healthz and /readyz answer 200" orch_probe
 
-  out=$(post alice "$id" message "$(mkscript -f all-done 'echo HELLO-FROM-SANDBOX; sleep 6; echo $((6*7))')" client-1)
+  out=$(post alice "$id" message "$(mkscript -f all-done 'echo HELLO-FROM-SANDBOX; sleep 6; echo $((6*7))')" "client-$id")
   assert_jq "POST events answers 202 with an eventId" "$out" '.status==202 and (.body.eventId|test("^[0-9]+$"))'
   s=$(transcript alice "$id" all-done 240)
   e=$(entries "$s")
@@ -320,8 +322,8 @@ t_sandbox_is_lazy() { # part of test 1's claim (brief 6): no claim until the fir
 t_dedup() {
   local id r1 r2 e s
   id=$(new_session alice)
-  r1=$(post alice "$id" message "dedupe-me" same-id-1)
-  r2=$(post alice "$id" message "dedupe-me" same-id-1)
+  r1=$(post alice "$id" message "dedupe-me" "same-id-$id")
+  r2=$(post alice "$id" message "dedupe-me" "same-id-$id")
   assert_jq "first post: 202, not a duplicate" "$r1" '.status==202 and .body.duplicate==false'
   assert_jq "second post: 202, flagged duplicate, same eventId" "$r2" ".status==202 and .body.duplicate==true and .body.eventId==$(jq '.body.eventId' <<<"$r1")"
   assert_eq "exactly one inbox row" 1 "$(ev_count "$id")"
@@ -332,7 +334,7 @@ t_dedup() {
   assert_jq "exactly one submission: one user message and one answer" "$e" \
     '([.[].messages[]|select(.role=="user")]|length)==1 and ([.[].messages[]|select(.role=="assistant")]|length)==1'
   assert_jq "the same sourceEventId on another session is refused (409)" \
-    "$(post alice "$(new_session alice)" message "x" same-id-1)" '.status==409'
+    "$(post alice "$(new_session alice)" message "x" "same-id-$id")" '.status==409'
   note "EVIDENCE dedup: two POSTs -> eventId $(jq -r '.body.eventId' <<<"$r1") twice, inbox rows=1, user messages=1, answers=1"
 }
 
@@ -691,74 +693,24 @@ jq -c '.body | {defaultModel, allowlist, reasoning, turnBudget}' <<<"$before" >"
 assert_jq "the scripted default is set" "$(api alice PUT /admin/settings '{"defaultModel":"scripted/scripted-1","reasoning":null}')" '.status==200 and .body.defaultModel=="scripted/scripted-1"'
 
 # ---------------------------------------------------------------- run
-declare -a summary=()
-failed=0
 # ONLY="dedup,steer" runs just those tests (debugging aid); the full suite runs when unset.
-want() { [[ -z ${ONLY:-} || ",$ONLY," == *",$1,"* ]]; }
-record() { # name rc
-  if [[ $2 -eq 0 ]]; then summary+=("PASS  $1"); else
-    summary+=("FAIL  $1")
-    failed=1
-  fi
-}
-run_test() { # name function: serial, output streams live
-  local name=$1 fn=$2 rc
-  want "$name" || return 0
-  log "TEST $name"
-  set +e
-  (
-    set -euo pipefail
-    "$fn"
-  ) 2>&1 | tee "$work/$name.log"
-  rc=${PIPESTATUS[0]}
-  set -e
-  record "$name" "$rc"
-  wait_orch >/dev/null 2>&1 || true
-}
-# Independent tests (own sessions, own claims, nothing killed or scaled) run side by side, at most PAR at a time;
-# their output is printed per test afterwards.
-PAR=${PAR:-4}
-run_parallel() { # name:function ...
-  local spec name fn running=0 names=()
-  for spec in "$@"; do
-    name=${spec%%:*}
-    fn=${spec#*:}
-    want "$name" || continue
-    names+=("$name")
-    while [[ $running -ge $PAR ]]; do
-      wait -n || true
-      running=$((running - 1))
-    done
-    (
-      set +e
-      (
-        set -euo pipefail
-        "$fn"
-      ) >"$work/$name.log" 2>&1
-      echo $? >"$work/$name.rc"
-    ) &
-    running=$((running + 1))
-  done
-  wait
-  for name in ${names[@]+"${names[@]}"}; do
-    log "TEST $name (ran in parallel)"
-    cat "$work/$name.log"
-    record "$name" "$(cat "$work/$name.rc")"
-  done
-}
+# Parallel tests (see tests/e2e/fns.sh): own sessions and claims, no orchestrator kill or scale, no shared settings,
+# and no counter or fixed name that another test also touches. Everything else is serial and runs after them.
+e2e_settle_orch() { wait_orch >/dev/null 2>&1 || true; }
+E2E_AFTER=e2e_settle_orch
 
-# Parallel group first. Then the tests that kill, scale or race the orchestrator run alone, in order.
-run_parallel create-send-stream:t_create_send_stream sandbox-is-lazy:t_sandbox_is_lazy dedup:t_dedup \
+e2e_parallel create-send-stream:t_create_send_stream sandbox-is-lazy:t_sandbox_is_lazy dedup:t_dedup \
   busy-order:t_busy_order steer:t_steer auth:t_auth delete:t_delete concurrency:t_concurrency
-wait_orch >/dev/null 2>&1 || true
 # The lifecycle tests are a second group: every open env is a bridge process in the orchestrator (1 Gi limit; it was
 # OOM-killed when these ran beside the first group), and they take minutes each (idle waits, a 300 s command).
-run_parallel recycle-on-interrupt:t_recycle_on_interrupt idle-suspend:t_idle_suspend orphan-sweep:t_orphan_sweep
-wait_orch >/dev/null 2>&1 || true
-run_test orchestrator-down t_orchestrator_down
-run_test crash-before-mark t_crash_before_mark
-run_test reconnect t_reconnect
-run_test recycle-on-restart t_recycle_on_restart
+# orphan-sweep stays here although the sweep is cluster-wide: it only acts on claims it created itself (fixed names
+# pi-conv-99000x, e2e-sweep-keep) and on sessions that no test of this group owns.
+e2e_parallel recycle-on-interrupt:t_recycle_on_interrupt idle-suspend:t_idle_suspend orphan-sweep:t_orphan_sweep
+# These kill, scale or race the orchestrator, so nothing else may run beside them.
+e2e_serial orchestrator-down t_orchestrator_down
+e2e_serial crash-before-mark t_crash_before_mark
+e2e_serial reconnect t_reconnect
+e2e_serial recycle-on-restart t_recycle_on_restart
 
 log "RESULT"
 printf '%s\n' "${summary[@]}"
