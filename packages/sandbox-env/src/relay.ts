@@ -78,6 +78,19 @@ async function main(): Promise<void> {
   process.stdout.on("error", () => data.destroy());
   process.stdin.pipe(data);
   data.pipe(process.stdout, { end: false });
+  // The broker ended its side (remote start failed, stream lost). pi-env's stdin stays open, so with half-open sockets
+  // `close` would never come: treat EOF as fatal, stop forwarding stdin and let the close path flush and exit.
+  const lost = (socket: Socket): void => {
+    process.stdin.unpipe(data);
+    socket.destroy();
+    data.destroy();
+  };
+  data.once("end", () => {
+    lost(data);
+  });
+  log.once("end", () => {
+    lost(log);
+  });
   data.once("close", () => {
     // Give the log connection a moment to deliver its last lines, then flush and leave.
     const leave = (): void => {

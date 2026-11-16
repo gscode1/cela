@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve } from "node:path";
@@ -106,20 +106,46 @@ describe("broker socket", () => {
   });
 
   it("accepts a nonce once", async () => {
-    const broker = startBroker({ start: localStart(), command: "sh" });
+    let started = 0;
+    const fake: StartProcess = () => {
+      started++;
+      const proc: RemoteProcess = {
+        write: () => Promise.resolve(),
+        closeStdin: () => Promise.resolve(),
+        wait: () => Promise.resolve({ exitCode: 0 }),
+        close: () => Promise.resolve(),
+      };
+      return Promise.resolve(proc);
+    };
+    const broker = startBroker({ start: fake, command: "unused" });
     try {
       await broker.ready;
       const nonce = broker.issueNonce();
-      const header = (role: string) => `${JSON.stringify({ nonce, role, args: ["-c", "true"] })}\n`;
-      // `serve` is required as the first argument; the broker refuses anything else even with a good nonce.
-      const log = connect({ path: broker.socketPath });
-      log.on("error", () => undefined);
-      log.write(header("log"));
-      await new Promise<void>((done) => log.once("data", () => done()));
-      const data = connect({ path: broker.socketPath });
-      data.on("error", () => undefined);
-      data.write(header("data"));
-      await new Promise<void>((done) => data.once("close", () => done()));
+      const header = (role: string) =>
+        `${JSON.stringify({ nonce, role, args: ["serve", "--token", "x"] })}\n`;
+      const attempt = async (): Promise<string> => {
+        const log = connect({ path: broker.socketPath });
+        log.on("error", () => undefined);
+        const chunks: Buffer[] = [];
+        log.on("data", (chunk: Buffer) => chunks.push(chunk));
+        log.write(header("log"));
+        const closed = new Promise<void>((done) => log.once("close", () => done()));
+        const acked = await Promise.race([
+          new Promise<boolean>((done) => log.once("data", () => done(true))),
+          closed.then(() => false),
+        ]);
+        if (!acked) return "";
+        const data = connect({ path: broker.socketPath });
+        data.on("error", () => undefined);
+        data.write(header("data"));
+        await new Promise<void>((done) => data.once("close", () => done()));
+        await closed;
+        return Buffer.concat(chunks).toString();
+      };
+      expect(await attempt()).toContain("bridge: ready");
+      expect(started).toBe(1);
+      expect(await attempt()).toBe("");
+      expect(started).toBe(1);
     } finally {
       broker.close();
     }
@@ -127,6 +153,56 @@ describe("broker socket", () => {
 });
 
 describe("relay", () => {
+  it("exits when the broker ends the connection while stdin is still open", async () => {
+    const broker = startBroker({
+      start: () => Promise.reject(new Error("sandbox unreachable")),
+      command: "unused",
+    });
+    await broker.ready;
+    const child = spawn(
+      process.execPath,
+      [
+        relay[1] ?? "",
+        "--socket",
+        broker.socketPath,
+        "--nonce",
+        broker.issueNonce(),
+        "--claim",
+        "c",
+        "serve",
+        "--token",
+        "x",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    try {
+      // stdin stays open: only the broker's EOF can end the relay.
+      const code = await Promise.race([
+        new Promise<number | null>((done) => child.once("exit", (c) => done(c))),
+        new Promise<string>((done) => setTimeout(() => done("hung"), 8_000)),
+      ]);
+      expect(code).not.toBe("hung");
+      expect(stderr).toContain("bridge: cannot start");
+    } finally {
+      child.kill("SIGKILL");
+      broker.close();
+    }
+  }, 15_000);
+
+  it("is respawned and succeeds after the broker ended a connection with stdin open", async () => {
+    let attempts = 0;
+    const flaky: StartProcess = (command, args, handlers) =>
+      ++attempts === 1
+        ? Promise.reject(new Error("sandbox unreachable"))
+        : localStart()(command, args, handlers);
+    const sandbox = env("pi-conv-eof", flaky);
+    expect((await run(sandbox, "echo x")).ok).toBe(false);
+    const again = await run(sandbox, "echo back");
+    expect(again.stdout).toContain("back");
+  }, 30_000);
+
   it("has no token in its argv or environment", async () => {
     const sandbox = env("pi-conv-token", localStart(), "SECRET-SANDBOXD-TOKEN");
     expect((await run(sandbox, "echo hi")).ok).toBe(true);
