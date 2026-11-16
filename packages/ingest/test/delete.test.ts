@@ -67,3 +67,27 @@ describe("DELETE and client event ids", () => {
     expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
   });
 }, 10_000);
+
+describe("event admission races with deletion", () => {
+  it("answers 410 and stores nothing when the session is deleted after the status check", async () => {
+    const db = new FakeInboxDb();
+    const base = await start(db);
+    // The handler has already loaded the session as active; the delete lands before the insert.
+    db.beforeInsert = () => {
+      db.status = "deleted";
+    };
+    const res = await post(base, { kind: "message", text: "late" });
+    expect(res.status).toBe(410);
+    expect(db.events).toHaveLength(0);
+  });
+
+  it("answers 409 when the session started deleting in that window", async () => {
+    const db = new FakeInboxDb();
+    const base = await start(db);
+    db.beforeInsert = () => {
+      db.status = "deleting";
+    };
+    expect((await post(base, { kind: "message", text: "late" })).status).toBe(409);
+    expect(db.events).toHaveLength(0);
+  });
+}, 10_000);
