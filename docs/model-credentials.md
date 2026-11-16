@@ -82,17 +82,20 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
    `deploy/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready.
 4. **Gateway egress.** OneCLI v2 still relays any public host by default. Add org rules that allow the model hosts and
    block the rest (`docs/research/onecli-v2-recheck.md`, section 2).
-5. **Choose models** in ConfigMap `pi-model-config`, then restart ingest and the orchestrator (env is read at start):
+5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).
+   Ingest seeds them once from ConfigMap `pi-model-config` (the keys below) when the row is absent; **after that the
+   table wins** and a differing ConfigMap value only logs `settings-env-ignored`. Change them with
+   `PUT /admin/settings` (`docs/session-api.md`), no restart. The orchestrator reads `PI_MODEL_ALLOWLIST` at start to
+   install the providers it may need: restart it after adding a provider that was not installed before.
 
-| Key                      | Meaning                                                                                                  |
+| Key (seed only)          | Setting (admin API)                                                                                       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `PI_MODEL_PROVIDER`      | Default provider for sessions that name none. `scripted` is the e2e fake model (`tests/e2e/deploy` sets it). |
-| `PI_MODEL_ID`            | Default model id.                                                                                        |
-| `PI_MODEL_REASONING`     | Reasoning effort of every new session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. Unset: none.  |
-| `PI_MODEL_ALLOWLIST`     | Comma-separated `provider/model` pairs; the model id may contain slashes. The default is always allowed. |
-| `PI_SESSION_TURN_BUDGET` | Model turns one session may use in total (default 100).                                                  |
+| `PI_MODEL_PROVIDER`, `PI_MODEL_ID` | `defaultModel` (`provider/model`) for sessions that name none.                                  |
+| `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `null`.  |
+| `PI_MODEL_ALLOWLIST`     | `allowlist`: `provider/model` pairs; the model id may contain slashes. The default is always allowed.     |
+| `PI_SESSION_TURN_BUDGET` | `turnBudget`: model turns one session may use in total (default 100).                                     |
 
-Example for OpenRouter: `PI_MODEL_PROVIDER=openrouter`, `PI_MODEL_ID=openai/gpt-4.1-nano`,
+Example for OpenRouter (seed values): `PI_MODEL_PROVIDER=openrouter`, `PI_MODEL_ID=openai/gpt-4.1-nano`,
 `PI_MODEL_ALLOWLIST=openrouter/openai/gpt-4.1-nano,openrouter/google/gemini-2.5-flash-lite`. An allowlisted model that
 pi-ai does not know stops the orchestrator at start with a clear message, not at the first request.
 
