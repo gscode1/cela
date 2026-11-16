@@ -17,6 +17,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   repo: null,
   onecli: null,
   workspaceReadyAt: null,
+  profile: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });
@@ -58,6 +59,7 @@ function setup(options: { dbStatus: string; failRows: number; abortFailures?: nu
   } as unknown as pg.Pool;
   const host = {
     // Over the budget of 5 turns, so an input to an active session fails it.
+    applyProfileTools: () => Promise.resolve(),
     turnsUsed: () => Promise.resolve(10),
     abort: (id: number) => {
       aborts.push(id);

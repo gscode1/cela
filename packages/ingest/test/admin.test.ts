@@ -11,6 +11,7 @@ const seed: Settings = {
   allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
   reasoning: null,
   maxReasoning: null,
+  defaultProfile: "coding",
   turnBudget: 100,
 };
 

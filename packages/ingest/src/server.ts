@@ -4,6 +4,7 @@ import { URL } from "node:url";
 import type pg from "pg";
 import {
   BodyError,
+  BUILTIN_TOOL_NAMES,
   chooseModel,
   chooseRepo,
   createSession,
@@ -12,11 +13,18 @@ import {
   getSession,
   deleteMcpServer,
   isAdmin,
+  LEGACY_PROFILE,
   listMcpServerHistory,
+  listProfileVersions,
   listSettingsHistory,
   mcpServerNameError,
+  profileNameError,
   putMcpServer,
+  putProfile,
+  readCapabilities,
   readMcpServers,
+  readProfile,
+  readProfiles,
   readJsonObject,
   readSettings,
   updateSettings,
@@ -31,9 +39,11 @@ import type {
   ModelChoice,
   ModelPolicy,
   Principal,
+  ProfileSnapshot,
   SessionRow,
   Settings,
   StoredMcpServer,
+  StoredProfile,
 } from "@pi-durable-k8s/session-core";
 import { parseEventBody } from "./events.js";
 import { log } from "./log.js";
@@ -129,6 +139,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       sessionId: session.id,
       status: summary.status,
       model: modelOf(session, deps.settings.policy()),
+      profile: session.profile === null ? LEGACY_PROFILE : profileRef(session.profile),
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
       createdAt: session.createdAt.toISOString(),
@@ -177,6 +188,10 @@ async function handleAdmin(
     await handleAdminMcpServers(req, res, deps, principal, url, parts);
     return;
   }
+  if (parts[1] === "profiles") {
+    await handleAdminProfiles(req, res, deps, principal, parts);
+    return;
+  }
   if (
     parts[1] !== "settings" ||
     parts.length > 3 ||
@@ -219,6 +234,13 @@ async function handleAdmin(
       }
       throw error;
     }
+    if (body.defaultProfile !== undefined) {
+      const problem = await defaultProfileProblem(deps.pool, body.defaultProfile);
+      if (problem !== undefined) {
+        sendJson(res, 400, { error: problem });
+        return;
+      }
+    }
     const stored = await updateSettings(deps.pool, body, principal.owner);
     if (typeof stored === "string") {
       sendJson(res, 400, { error: stored });
@@ -229,6 +251,136 @@ async function handleAdmin(
       ...stored.settings,
       updatedAt: stored.updatedAt.toISOString(),
       updatedBy: stored.updatedBy,
+    });
+    return;
+  }
+  sendJson(res, 405, { error: "method not allowed" });
+}
+
+/** The default profile must exist and be open to new sessions, or every `POST /sessions` without `profile` would fail. */
+async function defaultProfileProblem(pool: pg.Pool, name: unknown): Promise<string | undefined> {
+  const nameError = profileNameError(name);
+  if (nameError !== undefined) return `defaultProfile: ${nameError}`;
+  let profile: StoredProfile | undefined;
+  try {
+    profile = await readProfile(pool, String(name));
+  } catch {
+    return `defaultProfile: profile "${String(name)}" is invalid`;
+  }
+  if (profile === undefined) return `defaultProfile: profile "${String(name)}" does not exist`;
+  return profile.enabledForNew
+    ? undefined
+    : `defaultProfile: profile "${String(name)}" is disabled for new sessions`;
+}
+
+function profileRef(profile: { name: string; version: number }): { name: string; version: number } {
+  return { name: profile.name, version: profile.version };
+}
+
+function profileJson(stored: StoredProfile) {
+  return {
+    name: stored.name,
+    currentVersion: stored.currentVersion,
+    enabledForNew: stored.enabledForNew,
+    definition: stored.definition,
+    createdAt: stored.createdAt.toISOString(),
+    createdBy: stored.createdBy,
+    updatedAt: stored.updatedAt.toISOString(),
+    updatedBy: stored.updatedBy,
+  };
+}
+
+/**
+ * `/admin/profiles` (the caller is already known to be an admin): list, get (with every version), put (create, new
+ * version, enable or disable for new sessions). No delete (docs/decisions/0010-session-profiles.md): a profile is
+ * disabled, so its versions stay as the record of what sessions ran with.
+ */
+async function handleAdminProfiles(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: IngestDeps,
+  principal: Principal,
+  parts: string[],
+): Promise<void> {
+  const method = req.method ?? "GET";
+  if (parts.length > 3) {
+    sendJson(res, 404, { error: "not found" });
+    return;
+  }
+  const name = parts[2];
+  if (name === undefined) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const catalog = await readProfiles(deps.pool);
+    sendJson(res, 200, {
+      defaultProfile: deps.settings.get().defaultProfile,
+      profiles: catalog.profiles.map(profileJson),
+      invalid: catalog.invalid,
+    });
+    return;
+  }
+  const nameError = profileNameError(name);
+  if (nameError !== undefined) {
+    sendJson(res, 400, { error: nameError });
+    return;
+  }
+  if (method === "GET") {
+    const found = await readProfile(deps.pool, name).catch((error: unknown) => {
+      log("profile-invalid", { profile: name, message: errorMessage(error) });
+      return null;
+    });
+    if (found === null) {
+      sendJson(res, 409, { error: "the current version of this profile is invalid" });
+      return;
+    }
+    if (found === undefined) {
+      sendJson(res, 404, { error: "profile not found" });
+      return;
+    }
+    const versions = await listProfileVersions(deps.pool, name);
+    sendJson(res, 200, {
+      ...profileJson(found),
+      versions: versions.map((version) => ({
+        ...version,
+        createdAt: version.createdAt.toISOString(),
+      })),
+    });
+    return;
+  }
+  if (method === "PUT") {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+    } catch (error) {
+      if (error instanceof BodyError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    for (const key of Object.keys(body)) {
+      if (key !== "definition" && key !== "enabledForNew") {
+        sendJson(res, 400, { error: `unknown field "${key.slice(0, 50)}"` });
+        return;
+      }
+    }
+    // The installed tools, as the orchestrator published them; before it ever started, the built-in names.
+    const capabilities = await readCapabilities(deps.pool);
+    if (capabilities === undefined) log("capabilities-missing", { using: "builtin tool names" });
+    const catalog = await readMcpServers(deps.pool);
+    const result = await putProfile(deps.pool, name, body, principal.owner, {
+      tools: capabilities?.tools ?? BUILTIN_TOOL_NAMES,
+      mcpServers: catalog.servers.map((stored) => stored.server.name),
+    });
+    if (!result.ok) {
+      sendJson(res, 400, { error: result.message });
+      return;
+    }
+    sendJson(res, result.created ? 201 : 200, {
+      ...profileJson(result.stored),
+      versionCreated: result.versionCreated,
     });
     return;
   }
@@ -359,9 +511,32 @@ async function postSession(
     }
     throw error;
   }
-  const model = chooseModel(deps.settings.policy(), body);
+  const resolved = await chooseProfile(deps, body);
+  if ("status" in resolved) {
+    sendJson(res, resolved.status, { error: resolved.error });
+    return;
+  }
+  const { snapshot } = resolved;
+  // Precedence: the request, then the profile, then the settings. All three go through the same checks (the allowlist
+  // and the reasoning cap) when the session is created, so a profile that no longer fits is refused, not applied.
+  const fromProfile = {
+    ...(body.provider === undefined &&
+    body.model === undefined &&
+    snapshot.definition.defaultModel !== undefined
+      ? parseProfileModel(snapshot.definition.defaultModel)
+      : {}),
+    ...(body.reasoning === undefined && snapshot.definition.reasoning !== undefined
+      ? { reasoning: snapshot.definition.reasoning }
+      : {}),
+  };
+  const model = chooseModel(deps.settings.policy(), { ...fromProfile, ...body });
   if (typeof model === "string") {
-    sendJson(res, 400, { error: model });
+    const inherited = Object.keys(fromProfile).length > 0;
+    sendJson(res, 400, {
+      error: inherited
+        ? `profile "${snapshot.name}" v${String(snapshot.version)}: ${model}`
+        : model,
+    });
     return;
   }
   const repo = chooseRepo(body);
@@ -369,9 +544,10 @@ async function postSession(
     sendJson(res, 400, { error: repo });
     return;
   }
-  const sessionId = await createSession(deps.pool, principal, model, repo);
+  const sessionId = await createSession(deps.pool, principal, model, repo, snapshot);
   sendJson(res, 201, {
     sessionId,
+    profile: profileRef(snapshot),
     provider: model.provider,
     model: model.model,
     ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
@@ -379,6 +555,44 @@ async function postSession(
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),
   });
+}
+
+function parseProfileModel(key: string): { provider: string; model: string } {
+  const slash = key.indexOf("/");
+  return { provider: key.slice(0, slash), model: key.slice(slash + 1) };
+}
+
+/**
+ * The profile a new session gets, as the snapshot it stores: the requested one, else the settings' default. A request
+ * for a profile that does not exist or is not open to new sessions is a 400. The default failing is the operator's
+ * misconfiguration (a 503), and never falls back to another profile: a missing profile fails closed.
+ */
+async function chooseProfile(
+  deps: IngestDeps,
+  body: Record<string, unknown>,
+): Promise<{ snapshot: ProfileSnapshot } | { status: number; error: string }> {
+  const asked = body.profile;
+  if (asked !== undefined) {
+    const nameError = profileNameError(asked);
+    if (nameError !== undefined) return { status: 400, error: nameError };
+  }
+  const name = typeof asked === "string" ? asked : deps.settings.get().defaultProfile;
+  const refused = (message: string) =>
+    asked === undefined
+      ? { status: 503, error: `the default profile "${name}" ${message}` }
+      : { status: 400, error: `profile "${name}" ${message}` };
+  let stored: StoredProfile | undefined;
+  try {
+    stored = await readProfile(deps.pool, name);
+  } catch (error) {
+    log("profile-invalid", { profile: name, message: errorMessage(error) });
+    return refused("is invalid");
+  }
+  if (stored === undefined) return refused("does not exist");
+  if (!stored.enabledForNew) return refused("is not available for new sessions");
+  return {
+    snapshot: { name: stored.name, version: stored.currentVersion, definition: stored.definition },
+  };
 }
 
 async function ownedSession(

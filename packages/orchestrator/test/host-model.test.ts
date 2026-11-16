@@ -142,6 +142,7 @@ describe("turn budget", () => {
     repo: null,
     onecli: null,
     workspaceReadyAt: null,
+    profile: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

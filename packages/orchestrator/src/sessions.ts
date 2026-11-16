@@ -5,9 +5,15 @@ import {
   errorMessage,
   failSession,
   getSession,
+  validateProfileDefinition,
   writeTombstone,
 } from "@pi-durable-k8s/session-core";
-import type { InboxEvent, ModelChoice, SessionRow } from "@pi-durable-k8s/session-core";
+import type {
+  InboxEvent,
+  ModelChoice,
+  ProfileDefinition,
+  SessionRow,
+} from "@pi-durable-k8s/session-core";
 import { terminalFailure } from "./failure.js";
 import type { RunOutcome } from "./failure.js";
 import { GithubDeniedError } from "./github-app.js";
@@ -21,6 +27,22 @@ import type { Watched } from "./watcher.js";
 
 /** An event that can never succeed (deleted session, malformed payload): the row is marked failed, not retried. */
 export class PermanentError extends Error {}
+
+/**
+ * What a session's profile snapshot says. A session without one (it predates profiles) is `coding` version 1: the
+ * empty definition. A snapshot that does not validate (edited by hand) is refused: acting on part of it could hand the
+ * session more than its profile allowed.
+ */
+export function definitionOf(session: SessionRow): ProfileDefinition {
+  if (session.profile === null) return {};
+  const definition = validateProfileDefinition(session.profile.snapshot);
+  if (typeof definition === "string") {
+    throw new PermanentError(
+      `the session's profile snapshot (${session.profile.name} v${String(session.profile.version)}) is invalid: ${definition}`,
+    );
+  }
+  return definition;
+}
 
 /** Open SSE streams by session, so deleting a session can end them. */
 export class StreamRegistry {
@@ -52,7 +74,10 @@ export interface SessionServiceOptions {
   testFaults: boolean;
   /** Model of a session that predates the per-session model (null in `inbox.sessions`). */
   defaultModel: ModelChoice;
-  /** Model turns one session may use in total, read per input from the settings cache. A session that reaches it is `failed`. */
+  /**
+   * Model turns one session may use in total, read per input from the settings cache. A profile's own budget replaces
+   * it for that profile's sessions. A session that reaches it is `failed`.
+   */
   turnBudget: () => number;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
@@ -182,8 +207,10 @@ export class SessionService {
   async #create(sessionId: string): Promise<number> {
     const current = await getSession(this.#pool, sessionId);
     if (current?.conversationId != null) return current.conversationId;
+    // The profile snapshot of the session row, never the live profile: edits and deletes do not reach this session.
     const conversationId = await this.#host.createConversation(
       current?.model ?? this.#options.defaultModel,
+      current === undefined ? {} : definitionOf(current),
     );
     await this.#pool.query(
       "update inbox.sessions set conversation_id = $1 where id = $2 and conversation_id is null",
@@ -284,8 +311,11 @@ export class SessionService {
    * Turns are model responses, counted from the stored transcript, so a restart does not reset the count.
    */
   async #withinBudget(session: SessionRow, conversationId: number): Promise<void> {
+    const definition = definitionOf(session);
+    // Before every input, like the budget: a coding tool installed by a later release must not reach this session.
+    await this.#host.applyProfileTools(conversationId, definition);
     const used = await this.#host.turnsUsed(conversationId);
-    const left = this.#options.turnBudget() - used;
+    const left = (definition.turnBudget ?? this.#options.turnBudget()) - used;
     if (left <= 0) {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");

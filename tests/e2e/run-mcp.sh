@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# MCP acceptance tests (issues #39 and #40): native remote MCP tools called from the orchestrator through the OneCLI
-# gateway, from a catalog in Postgres that the admin API changes at runtime.
+# MCP acceptance tests (issues #39, #40 and #41): native remote MCP tools called from the orchestrator through the OneCLI
+# gateway, from a catalog in Postgres that the admin API changes at runtime, offered only to sessions whose profile
+# names the server.
 # Runs IN the cluster as the e2e-driver Job started by `tests/e2e/run.sh mcp`. WRITTEN, NOT YET RUN. Not part of `all`:
 # it needs the internet (DeepWiki is a public server) and a live OneCLI host rule for mcp.deepwiki.com.
 #
@@ -9,15 +10,21 @@
 # result): OneCLI allows mcp.deepwiki.com (`deploy/onecli-host-rules.sh --apply`, deploy/onecli-policies/egress.yaml).
 #
 #   add           PUT creates deepwiki (201); the orchestrator logs mcp-server-added and mcp-tools-ready without a restart
-#   call          a scripted session created after that calls tool_search, then mcp__deepwiki__read_wiki_structure, and
-#                 gets a real, non-error result; no SandboxClaim is created and no exec marker is set
+#   profile       PUT /admin/profiles/research {mcpServers:[deepwiki]} (profiles are never deleted: cleanup disables it)
+#   call          a scripted session created with profile research calls tool_search, then
+#                 mcp__deepwiki__read_wiki_structure, and gets a real, non-error result; no SandboxClaim is created and
+#                 no exec marker is set
+#   default       a session with the default profile (coding) has no MCP: tool_search and the MCP tool settle
+#                 tool_unavailable, although deepwiki is enabled in the catalog
+#   edit          a new version of research does not change the session created with version 1
 #   disable       PUT enabled:false; a NEW call in the same session returns tool_unavailable ("not available"), the
 #                 orchestrator pod is the same one (no restart), and mcp-server-removed was logged
 #   unreachable   a row for a host that is not in the OneCLI allowlist never gets tools: mcp-discovery-failed is logged
 #                 for it, and a session created after it calls into tool_unavailable
 #   history       the admin history shows create, update and delete by alice
 #
-# ONLY="add,call" runs just those tests (they depend on each other in the order above: add, call, disable). Exit code: 0
+# ONLY="add,profile,call" runs just those tests (they depend on each other in the order above: add, profile, call,
+# edit, disable). Exit code: 0
 # when no test failed (SKIPPED is not a failure).
 set -euo pipefail
 
@@ -47,6 +54,8 @@ cleanup() {
   local id
   admin DELETE /admin/mcp-servers/deepwiki >/dev/null 2>&1 || true
   admin DELETE /admin/mcp-servers/blocked >/dev/null 2>&1 || true
+  # No DELETE for profiles (their versions are the audit trail): leave research disabled for new sessions.
+  admin PUT /admin/profiles/research '{"enabledForNew":false}' >/dev/null 2>&1 || true
   while read -r id; do
     [[ -n $id ]] || continue
     api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true
@@ -88,10 +97,12 @@ wait_log() { # description pattern seconds
   done
   note "ok: $1"
 }
-new_session() { # sets $id
-  local out
-  out=$(api alice POST /sessions '{"provider":"scripted","model":"scripted-1"}')
+new_session() { # [profile] sets $id
+  local out body='{"provider":"scripted","model":"scripted-1"}'
+  [[ -z ${1:-} ]] || body=$(jq -c --arg p "$1" '. + {profile:$p}' <<<"$body")
+  out=$(api alice POST /sessions "$body")
   assert_jq "session created" "$out" '.status==201'
+  [[ -z ${1:-} ]] || assert_jq "the response echoes the profile" "$out" ".body.profile.name==\"$1\" and .body.profile.version>=1"
   id=$(jq -r .body.sessionId <<<"$out")
   echo "$id" >>"$sessions_file"
 }
@@ -113,9 +124,18 @@ t_add() {
   wait_log "deepwiki tools discovered" '"event":"mcp-tools-ready","server":"deepwiki"' 120
 }
 
+t_profile() {
+  local out
+  out=$(admin PUT /admin/profiles/research '{"definition":{"mcpServers":["deepwiki"],"instructions":"Answer from the wiki."},"enabledForNew":true}')
+  assert_jq "the profile was created or updated" "$out" '.status==201 or .status==200'
+  assert_jq "it selects deepwiki" "$out" '.body.definition.mcpServers==["deepwiki"]'
+  assert_jq "an MCP server that is not in the catalog is refused" "$(admin PUT /admin/profiles/bad '{"definition":{"mcpServers":["no-such-server"]}}')" '.status==400'
+  assert_jq "the default profile has no MCP servers" "$(admin GET /admin/profiles/coding)" '.body.definition.mcpServers==null'
+}
+
 t_call() {
   local id res
-  new_session
+  new_session research
   # tool_search loads the deferred tools; the next step calls one by name. Neither step touches the sandbox.
   res=$(send_script "$id" mcp-finished '[
       {"tool":"tool_search","args":{"query":"read wiki structure of a repository"}},
@@ -131,6 +151,32 @@ t_call() {
   # ADR 0007 / 0003: no sandbox was needed, so no claim exists for this session and no exec marker was set.
   assert_eq "no SandboxClaim was created for the session" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$id" -o name | wc -l | tr -d ' ')"
   assert_eq "no exec-in-flight marker" "0" "$(sql "select count(*) from inbox.sessions where id='$id' and exec_in_flight_at is not null" 2>/dev/null || echo 0)"
+}
+
+t_default() {
+  local id res
+  new_session
+  assert_jq "the response names the default profile" "$(api alice GET "/sessions/$id")" '.body.profile.name=="coding"'
+  # deepwiki is enabled in the catalog, but the coding profile selects no MCP server: nothing to search, nothing to call.
+  res=$(send_script "$id" mcp-default '[
+      {"tool":"tool_search","args":{"query":"read wiki structure of a repository"}},
+      {"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}
+    ]')
+  assert_jq "tool_search is not available to a session without MCP" "$res" '.found==true and (.results[0] | .isError==true and (.text|test("not available")))'
+  assert_jq "the MCP tool is not available either" "$res" '.results[1] | .isError==true and (.text|test("not available"))'
+}
+
+t_edit() {
+  local id out
+  id=$(cat "$work/call_session" 2>/dev/null || true)
+  [[ -n $id ]] || {
+    note "SKIPPED: run the call test first (it creates the session this test checks)"
+    return 3
+  }
+  out=$(admin PUT /admin/profiles/research '{"definition":{"mcpServers":["deepwiki"],"instructions":"A different instruction."}}')
+  assert_jq "the edit made a new version" "$out" '.body.currentVersion>=2 and .body.versionCreated==true'
+  assert_jq "the session keeps the version it was created with" "$(api alice GET "/sessions/$id")" ".body.profile.version==$(($(jq -r .body.currentVersion <<<"$out") - 1))"
+  assert_eq "its stored snapshot is unchanged" "Answer from the wiki." "$(sql "select profile_snapshot->>'instructions' from inbox.sessions where id='$id'")"
 }
 
 t_disable() {
@@ -201,7 +247,10 @@ run() { # name function
 }
 
 run add t_add
+run profile t_profile
 run call t_call
+run default t_default
+run edit t_edit
 run disable t_disable
 run unreachable t_unreachable
 run history t_history

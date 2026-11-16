@@ -9,8 +9,9 @@ import type {
   Cursor,
   Storage,
 } from "@earendil-works/pi-durable";
-import type { McpServerConfig, ModelChoice } from "@pi-durable-k8s/session-core";
-import type { Extension } from "@earendil-works/pi-durable";
+import type { McpServerConfig, ModelChoice, ProfileDefinition } from "@pi-durable-k8s/session-core";
+import { defineExtension } from "@earendil-works/pi-durable";
+import type { AgentChange, Extension, ToolRegistration } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
@@ -79,6 +80,33 @@ export interface HostOptions {
   /** Test seams of the remote MCP client; production passes nothing. */
   mcpTransport?: McpTransportFactory;
   mcpTimings?: McpTimings;
+  /** Test seam: the coding extension to install (a later release with one more tool). Production passes nothing. */
+  codingExtension?: Extension;
+  /**
+   * Profile definitions of the live conversations by id, read once before runs resume: the tool filters are recomputed
+   * against the tools installed now (see `toolFilters`).
+   */
+  conversationProfiles?: () => Promise<ReadonlyMap<number, ProfileDefinition>>;
+}
+
+/**
+ * The `tools` and `modelTools` of a profile as Pi stores them: `{ remove }` lists, so `tool_search` and the MCP tools
+ * found later stay enabled (an array would enable exactly the names it holds). A remove list names the installed coding
+ * tools the profile does not allow, so it is only right for the tools installed when it was computed: it is computed
+ * again against the tools installed now before every input and when the host opens (`Host.applyProfileTools`), which
+ * keeps the effective set equal to the snapshot's allowlist whatever a later release installs.
+ */
+function toolFilters(
+  coding: readonly ToolRegistration[],
+  definition: ProfileDefinition,
+): Pick<AgentChange, "tools" | "modelTools"> {
+  const without = (keep: readonly string[]) => ({
+    remove: coding.filter((tool) => !keep.includes(tool.name)),
+  });
+  return {
+    ...(definition.tools === undefined ? {} : { tools: without(definition.tools) }),
+    ...(definition.modelTools === undefined ? {} : { modelTools: without(definition.modelTools) }),
+  };
 }
 
 /**
@@ -107,6 +135,7 @@ export class Host {
   readonly #storage: Storage;
   readonly #mcp: McpTools;
   readonly #toolSearch: Extension;
+  readonly #coding: Extension;
   readonly #unsubscribe: () => void;
 
   private constructor(
@@ -115,6 +144,7 @@ export class Host {
     storage: Storage,
     mcp: McpTools,
     toolSearch: Extension,
+    coding: Extension,
     unsubscribe: () => void,
   ) {
     this.#harness = harness;
@@ -122,18 +152,53 @@ export class Host {
     this.#storage = storage;
     this.#mcp = mcp;
     this.#toolSearch = toolSearch;
+    this.#coding = coding;
     this.#unsubscribe = unsubscribe;
   }
 
+  /** What the orchestrator has installed, for ingest to check profile writes against (`publishCapabilities`). */
+  capabilities(): { tools: string[]; extensions: string[] } {
+    return {
+      tools: (this.#coding.tools ?? []).map((tool) => tool.name),
+      extensions: [this.#coding.name, this.#toolSearch.name],
+    };
+  }
+
   /**
-   * `agent` of a new conversation: when the catalog has an enabled server now, it adds `tool_search` and the servers'
-   * extensions (see `open`). The names are stored, so the conversation keeps them; a server added later reaches only
-   * conversations created after it, and one removed leaves a stored name that selects nothing (its tools settle
-   * `tool_unavailable`).
+   * The tools, instructions and extensions of a new conversation, from its session's profile snapshot (docs/decisions/
+   * 0010-session-profiles.md). Pi stores names: `tools` and `modelTools` are given as `{ remove }` so the tools that
+   * are not coding tools (`tool_search`, the MCP tools found later) stay enabled and offered, where an array would
+   * enable exactly those named. The host default (pinned to `coding`) is edited, never replaced, so extensions the
+   * profile does not name never reach the session. A profile with MCP servers adds `tool_search` and one `mcp-<name>`
+   * extension per server, taken from the catalog's installed ones; a server that is missing or disabled now is stored by
+   * name anyway (an empty stand-in), so its tools are `tool_unavailable` and appear if it is enabled later.
    */
-  #extensionsAdded(): { extensions: { add: Extension[] } } | Record<string, never> {
-    const servers = this.#mcp.extensions;
-    return servers.length === 0 ? {} : { extensions: { add: [this.#toolSearch, ...servers] } };
+  #agentFor(definition: ProfileDefinition): AgentChange {
+    const coding: readonly ToolRegistration[] = this.#coding.tools ?? [];
+    for (const name of [...(definition.tools ?? []), ...(definition.modelTools ?? [])]) {
+      if (!coding.some((tool) => tool.name === name)) {
+        log("profile-tool-unresolved", { tool: name });
+      }
+    }
+    const servers = definition.mcpServers ?? [];
+    return {
+      ...toolFilters(coding, definition),
+      ...(definition.instructions === undefined ? {} : { instructions: definition.instructions }),
+      ...(servers.length === 0
+        ? {}
+        : {
+            extensions: {
+              add: [
+                this.#toolSearch,
+                ...servers.map(
+                  (name) =>
+                    this.#mcp.extensionOf(name) ??
+                    defineExtension({ name: `mcp-${name}`, tools: [] }),
+                ),
+              ],
+            },
+          }),
+    };
   }
 
   /**
@@ -151,13 +216,13 @@ export class Host {
   ): Promise<Host> {
     const models = await buildModels(config);
     const registry = createRegistry();
-    const coding = createCodingTools();
+    const coding = options.codingExtension ?? createCodingTools();
     registry.install(coding);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in pi-durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
     // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
-    // created from now on add `tool_search` and the MCP extensions. #41 replaces that `add` with a per-session profile.
+    // created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
     const mcp = new McpTools(registry, mcpTransport, options.mcpTimings);
     const toolSearch = createToolSearchExtension();
@@ -189,12 +254,25 @@ export class Host {
     void harness.closed.then((end) => {
       if (end.kind === "failed") onFailed(end.error);
     });
+    // Before resume(): a run that continues must not see a coding tool its profile does not allow, installed since
+    // the conversation was created.
+    for (const [id, definition] of (await options.conversationProfiles?.()) ?? []) {
+      const filters = toolFilters(coding.tools ?? [], definition);
+      if (filters.tools === undefined && filters.modelTools === undefined) continue;
+      try {
+        await (
+          await harness.conversation(id as ConversationId, context)
+        )?.configure(filters, context);
+      } catch (error) {
+        log("profile-tools-reapply-failed", { conversation: id, message: errorMessage(error) });
+      }
+    }
     // No new input needed: open recovers nothing by itself, resume() continues unfinished runs.
     harness.resume();
     // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
     // its tools unavailable until a retry succeeds.
     mcp.start();
-    return new Host(harness, sandboxes, storage, mcp, toolSearch, unsubscribe);
+    return new Host(harness, sandboxes, storage, mcp, toolSearch, coding, unsubscribe);
   }
 
   /** Creates the conversation and its sandbox claim, then submits the script as the first input. */
@@ -205,7 +283,6 @@ export class Host {
         agent: {
           model: { provider: "faux", modelId: "faux-1" },
           cwd: WORKSPACE,
-          ...this.#extensionsAdded(),
         },
       },
       context,
@@ -269,8 +346,12 @@ export class Host {
    *
    * Pi Durable stores the model in the conversation's `pi.agent` document, in the creating commit. It survives
    * restarts, so it is set once here and not on every turn; only the provider must be installed again at each start.
+   * `definition` is the session's validated profile snapshot (`{}`: every coding tool, no instructions, no MCP).
    */
-  async createConversation(model: ModelChoice): Promise<number> {
+  async createConversation(
+    model: ModelChoice,
+    definition: ProfileDefinition = {},
+  ): Promise<number> {
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
@@ -278,7 +359,7 @@ export class Host {
           model: { provider: model.provider, modelId: model.model },
           ...(model.reasoning === undefined ? {} : { thinkingLevel: model.reasoning }),
           cwd: WORKSPACE,
-          ...this.#extensionsAdded(),
+          ...this.#agentFor(definition),
         },
       },
       context,
@@ -308,6 +389,11 @@ export class Host {
     };
   }
 
+  /** The profile's instructions as Pi resolved them for the conversation; undefined when it has none. */
+  async instructionsOf(id: number): Promise<string | undefined> {
+    return (await (await this.#conversation(id)).agent(context)).instructions;
+  }
+
   /** Model turns (assistant responses) in the conversation's transcript so far. */
   async turnsUsed(id: number): Promise<number> {
     const conversation = await this.#conversation(id);
@@ -319,6 +405,13 @@ export class Host {
       cursor = page.next;
     } while (cursor !== undefined);
     return turns;
+  }
+
+  /** Recomputes the profile's tool filters against the tools installed now (see `toolFilters`); a no-op without any. */
+  async applyProfileTools(id: number, definition: ProfileDefinition): Promise<void> {
+    const filters = toolFilters(this.#coding.tools ?? [], definition);
+    if (filters.tools === undefined && filters.modelTools === undefined) return;
+    await (await this.#conversation(id)).configure(filters, context);
   }
 
   /** Caps the tool rounds of any run of this conversation, so one run cannot overshoot the session's turn budget. */

@@ -114,6 +114,7 @@ async function setup(repo: SessionRow["repo"]) {
     repo,
     onecli: null,
     workspaceReadyAt: null,
+    profile: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };
