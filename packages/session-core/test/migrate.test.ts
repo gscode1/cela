@@ -12,20 +12,22 @@ class FakeDb {
   recorded: string[] | undefined;
   failOn: string | undefined;
 
-  async query(sql: string, params?: unknown[]): Promise<{ rows: { version: string }[] }> {
+  query(sql: string, params?: unknown[]): Promise<{ rows: { version: string }[] }> {
     this.statements.push(sql.trim().split("\n")[0] ?? "");
     if (this.failOn !== undefined && sql.includes(this.failOn)) {
-      throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+      return Promise.reject(
+        Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }),
+      );
     }
     if (sql.startsWith("select version")) {
       if (this.recorded === undefined)
         throw Object.assign(new Error("no table"), { code: "42P01" });
-      return { rows: this.recorded.map((version) => ({ version })) };
+      return Promise.resolve({ rows: this.recorded.map((version) => ({ version })) });
     }
     if (sql.startsWith("create table if not exists inbox.schema_migrations")) this.recorded ??= [];
     if (sql.startsWith("insert into inbox.schema_migrations"))
       this.recorded?.push(String(params?.[0]));
-    return { rows: [] };
+    return Promise.resolve({ rows: [] });
   }
 
   connect(): Promise<{ query: FakeDb["query"]; release: () => void }> {
