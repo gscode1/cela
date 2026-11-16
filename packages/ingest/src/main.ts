@@ -2,6 +2,10 @@ import {
   applyMigrations,
   createPool,
   errorMessage,
+  seedSettings,
+  SettingsCache,
+  readSettings,
+  settingsEqual,
   tokenAuthenticator,
 } from "@pi-durable-k8s/session-core";
 import { loadConfig } from "./config.js";
@@ -13,13 +17,15 @@ async function main(): Promise<void> {
   const authenticate = tokenAuthenticator(config.apiTokens);
   const pool = createPool(config.databaseUrl, config.instance, 5);
 
+  const settings = new SettingsCache(pool, { log });
   let schemaReady = false;
   const state = { stopping: false };
   const server = createIngestServer({
     pool,
     authenticate,
     orchestratorUrl: config.orchestratorUrl,
-    models: config.models,
+    settings,
+    admins: config.admins,
     schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.
@@ -35,6 +41,16 @@ async function main(): Promise<void> {
     while (!state.stopping) {
       try {
         await applyMigrations(pool);
+        // Seed once from the environment (a no-op when the row exists); after that the table wins.
+        await seedSettings(pool, config.seed);
+        const stored = await readSettings(pool);
+        if (stored !== undefined && !settingsEqual(stored.settings, config.seed)) {
+          log("settings-env-ignored", {
+            message:
+              "PI_MODEL_* and PI_SESSION_TURN_BUDGET differ from the settings table; the table wins",
+          });
+        }
+        await settings.start();
         schemaReady = true;
         log("migrated", { instance: config.instance });
         return;
@@ -48,6 +64,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     log("shutdown", { signal });
     state.stopping = true;
+    void settings.stop();
     server.close();
     server.closeAllConnections();
     void pool.end().finally(() => process.exit(0));

@@ -1,5 +1,5 @@
-import { loadModelPolicy } from "@pi-durable-k8s/session-core";
-import type { ModelPolicy } from "@pi-durable-k8s/session-core";
+import { parseAdmins, settingsFromEnv } from "@pi-durable-k8s/session-core";
+import type { Settings } from "@pi-durable-k8s/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
 export interface IngestConfig {
@@ -10,8 +10,13 @@ export interface IngestConfig {
   orchestratorUrl: string;
   port: number;
   instance: string;
-  /** Default model and allowlist for POST /sessions (same variables as the orchestrator, from one ConfigMap). */
-  models: ModelPolicy;
+  /**
+   * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`). Seed only: ingest writes them to
+   * Postgres once, when the settings row is absent, and the table wins from then on.
+   */
+  seed: Settings;
+  /** Owner names (`PI_API_ADMINS`) allowed to call `/admin/*`. */
+  admins: string[];
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -45,6 +50,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     orchestratorUrl,
     port,
     instance: env.POD_NAME ?? `ingest-${String(process.pid)}`,
-    models: loadModelPolicy(env),
+    seed: settingsFromEnv(env),
+    admins: parseAdmins(env.PI_API_ADMINS),
   };
 }

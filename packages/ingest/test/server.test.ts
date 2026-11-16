@@ -2,8 +2,8 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import type pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ModelPolicy } from "@pi-durable-k8s/session-core";
 import { createIngestServer } from "../src/server.ts";
+import type { SettingsView } from "../src/server.ts";
 
 let server: Server | undefined;
 afterEach(() => {
@@ -17,7 +17,8 @@ async function start(schemaReady: () => boolean): Promise<string> {
     pool,
     authenticate: () => Promise.resolve(undefined),
     orchestratorUrl: "http://unused",
-    models: {} as ModelPolicy,
+    settings: {} as SettingsView,
+    admins: [],
     schemaReady,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
