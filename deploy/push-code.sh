@@ -18,6 +18,8 @@ scaled=() # deployments this run scaled to 0; the trap restores exactly these
 lock=orchestrator-code-push-lock
 # shellcheck source=push-lock.sh
 . "$here/push-lock.sh"
+# shellcheck source=push-retry.sh
+. "$here/push-retry.sh"
 locked=0 # 1 only when this run created the lock; the trap must never touch another run's lock or loader
 # Runs on every exit path: a failed wait, cp or extract must not leave the orchestrator at 0 replicas.
 cleanup() {
@@ -75,10 +77,12 @@ spec:
       persistentVolumeClaim: { claimName: orchestrator-code }
 EOF
 k wait --for=condition=Ready pod/orchestrator-code-loader --timeout=240s >/dev/null
-k cp "$work/app.tgz" orchestrator-code-loader:/tmp/app.tgz >/dev/null
+# cp and exec are retried on a connection reset (the lock stays held). Both can be redone: cp overwrites
+# /tmp/app.tgz, and the script below starts by clearing app.new and app.old, then swaps by rename.
+push_retry k cp "$work/app.tgz" orchestrator-code-loader:/tmp/app.tgz >/dev/null
 # Extract beside the live tree and swap only after the entry point exists, so a failed extract leaves the old
 # code in place. Same volume, so each mv is a rename.
-k exec orchestrator-code-loader -- sh -c 'set -e
+push_retry k exec orchestrator-code-loader -- sh -c 'set -e
 rm -rf /code/app.new /code/app.old
 mkdir -p /code/app.new
 tar xzf /tmp/app.tgz -C /code/app.new

@@ -11,6 +11,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 work=$(mktemp -d)
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
+# shellcheck source=push-retry.sh
+. "$here/push-retry.sh"
 trap 'rm -rf "$work"' EXIT
 
 (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter @pi-durable-k8s/session-core --filter @pi-durable-k8s/ingest build >/dev/null)
@@ -37,8 +39,10 @@ fi
 # last-applied-configuration annotation, which is capped at 256 KiB, far below the 1 MiB ConfigMap limit.
 k create configmap ingest-code --from-file=app.tgz="$work/app.tgz" --dry-run=client -o yaml |
   k annotate --local -f - "bundle-sha256=$sum" -o yaml >"$work/cm.yaml"
+# replace is retried on a connection reset: it sends the same full object, so repeating it is harmless.
+# create is not retried, because a repeat after a lost reply would fail with AlreadyExists.
 if k get configmap ingest-code >/dev/null 2>&1; then
-  k replace -f "$work/cm.yaml" >/dev/null
+  push_retry k replace -f "$work/cm.yaml" >/dev/null
 else
   k create -f "$work/cm.yaml" >/dev/null
 fi
