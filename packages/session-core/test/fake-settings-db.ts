@@ -19,9 +19,34 @@ interface HistoryRow {
   new: unknown;
 }
 
+export interface McpRow {
+  name: string;
+  url: string;
+  transport: string;
+  enabled: boolean;
+  read_only: boolean;
+  timeout_ms: number;
+  max_output_bytes: number;
+  onecli_secret: string | null;
+  created_at: Date;
+  created_by: string;
+  updated_at: Date;
+  updated_by: string;
+}
+
+interface McpHistoryRow {
+  id: string;
+  changed_at: Date;
+  changed_by: string;
+  name: string;
+  action: string;
+  old: unknown;
+  new: unknown;
+}
+
 /**
- * An in-memory stand-in for inbox.settings and inbox.settings_history that answers only the statements
- * settings.ts issues (the same approach as the ingest FakeInboxDb). `begin` snapshots and `rollback` restores;
+ * An in-memory stand-in for inbox.settings, inbox.settings_history, inbox.mcp_servers and its history that answers only
+ * the statements settings.ts and mcp-servers.ts issue (the same approach as the ingest FakeInboxDb). `begin` snapshots and `rollback` restores;
  * notifications are delivered to listening clients at `commit`, like Postgres does.
  */
 export class FakeSettingsDb {
@@ -32,8 +57,18 @@ export class FakeSettingsDb {
   /** Makes the next settings select throw, as a lost connection would. */
   failReads = false;
   readonly listeners = new Set<FakeListener>();
+  /** inbox.mcp_servers by name, and its history. */
+  mcp = new Map<string, McpRow>();
+  readonly mcpHistory: McpHistoryRow[] = [];
   #pending: string[] = [];
-  #snapshot: { row: Row | undefined; history: HistoryRow[] } | undefined;
+  #snapshot:
+    | {
+        row: Row | undefined;
+        history: HistoryRow[];
+        mcp: Map<string, McpRow>;
+        mcpHistory: McpHistoryRow[];
+      }
+    | undefined;
 
   asPool(): pg.Pool {
     return this as unknown as pg.Pool;
@@ -54,9 +89,10 @@ export class FakeSettingsDb {
   }
 
   /** What `pg_notify` of a committed writer does. */
-  notify(): void {
-    for (const listener of this.listeners)
-      listener.emit("notification", { channel: "pi_settings" });
+  notify(channel = "pi_settings"): void {
+    for (const listener of this.listeners) {
+      if (listener.channels.has(channel)) listener.emit("notification", { channel });
+    }
   }
 
   connect(): Promise<FakeListener> {
@@ -71,6 +107,8 @@ export class FakeSettingsDb {
       this.#snapshot = {
         row: this.row === undefined ? undefined : { ...this.row },
         history: [...this.history],
+        mcp: new Map([...this.mcp].map(([name, row]) => [name, { ...row }])),
+        mcpHistory: [...this.mcpHistory],
       };
       return done();
     }
@@ -78,18 +116,21 @@ export class FakeSettingsDb {
       this.#snapshot = undefined;
       const sent = this.#pending;
       this.#pending = [];
-      if (sent.length > 0) this.notify();
+      for (const channel of new Set(sent)) this.notify(channel);
       return done();
     }
     if (text === "rollback") {
       if (this.#snapshot !== undefined) {
         this.row = this.#snapshot.row;
         this.history.splice(0, this.history.length, ...this.#snapshot.history);
+        this.mcp = this.#snapshot.mcp;
+        this.mcpHistory.splice(0, this.mcpHistory.length, ...this.#snapshot.mcpHistory);
       }
       this.#snapshot = undefined;
       this.#pending = [];
       return done();
     }
+    if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
     if (text.startsWith("select default_model")) {
       if (this.failReads) return Promise.reject(new Error("connection lost"));
       return done(this.row === undefined ? [] : [{ ...this.row }]);
@@ -140,11 +181,98 @@ export class FakeSettingsDb {
     }
     throw new Error(`FakeSettingsDb: unexpected statement ${text.slice(0, 60)}`);
   }
+
+  /** The statements of mcp-servers.ts, matched by their first words. */
+  #mcpQuery(
+    text: string,
+    params: unknown[],
+    done: (rows?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>,
+  ) {
+    if (this.failReads && text.startsWith("select")) {
+      return Promise.reject(new Error("connection lost"));
+    }
+    if (text.startsWith("select name, url")) {
+      if (text.includes("where name = $1")) {
+        const row = this.mcp.get(String(params[0]));
+        return done(row === undefined ? [] : [{ ...row }]);
+      }
+      return done(
+        [...this.mcp.values()].sort((a, b) => a.name.localeCompare(b.name)).map((r) => ({ ...r })),
+      );
+    }
+    if (text.startsWith("insert into inbox.mcp_servers (")) {
+      const [name, url, transport, enabled, readOnly, timeoutMs, maxOut, secret, by] = params as [
+        string,
+        string,
+        string,
+        boolean,
+        boolean,
+        number,
+        number,
+        string | null,
+        string,
+      ];
+      const before = this.mcp.get(name);
+      const now = new Date();
+      const row: McpRow = {
+        name,
+        url,
+        transport,
+        enabled,
+        read_only: readOnly,
+        timeout_ms: timeoutMs,
+        max_output_bytes: maxOut,
+        onecli_secret: secret,
+        created_at: before?.created_at ?? now,
+        created_by: before?.created_by ?? by,
+        updated_at: now,
+        updated_by: by,
+      };
+      this.mcp.set(name, row);
+      return done([{ ...row }]);
+    }
+    if (text.startsWith("delete from inbox.mcp_servers")) {
+      const row = this.mcp.get(String(params[0]));
+      this.mcp.delete(String(params[0]));
+      return done(row === undefined ? [] : [{ ...row }]);
+    }
+    if (text.startsWith("insert into inbox.mcp_servers_history")) {
+      const [by, name, action, old, next] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+      ];
+      this.mcpHistory.push({
+        id: String(this.mcpHistory.length + 1),
+        changed_at: new Date(),
+        changed_by: by,
+        name,
+        action,
+        old: old === null ? null : (JSON.parse(old) as unknown),
+        new: next === null ? null : (JSON.parse(next) as unknown),
+      });
+      return done();
+    }
+    if (text.startsWith("select id, changed_at, changed_by, name")) {
+      const [limit, name] = params as [number, string | null];
+      return done(
+        [...this.mcpHistory]
+          .filter((entry) => name === null || entry.name === name)
+          .reverse()
+          .slice(0, limit),
+      );
+    }
+    throw new Error(`FakeSettingsDb: unexpected MCP statement ${text.slice(0, 60)}`);
+  }
 }
 
 /** One pooled client: transaction statements go to the db; `listen` registers it for notifications. */
 export class FakeListener extends EventEmitter {
   released = false;
+  /** Channels this client LISTENs on. */
+  readonly channels = new Set<string>();
   /** Every client handed out, so a test can check each was released once. */
   constructor(private readonly db: FakeSettingsDb) {
     super();
@@ -152,6 +280,7 @@ export class FakeListener extends EventEmitter {
 
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number }> {
     if (sql.startsWith("listen ")) {
+      this.channels.add(sql.slice("listen ".length).trim());
       this.db.listeners.add(this);
       return Promise.resolve({ rows: [], rowCount: 0 });
     }

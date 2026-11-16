@@ -16,6 +16,28 @@ export {
   THINKING_LEVELS,
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
+export { McpCatalogCache } from "./mcp-cache.js";
+export type { McpCatalogCacheOptions, McpCatalogListener } from "./mcp-cache.js";
+export {
+  DEFAULT_MCP_TIMEOUT_MS,
+  deleteMcpServer,
+  listMcpServerHistory,
+  MAX_MCP_OUTPUT_BYTES,
+  MCP_SERVER_NAME,
+  MCP_SERVERS_CHANNEL,
+  mcpServerNameError,
+  mcpServersEqual,
+  putMcpServer,
+  readMcpServers,
+  validateMcpServer,
+} from "./mcp-servers.js";
+export type {
+  McpCatalog,
+  McpServerConfig,
+  McpServerHistoryEntry,
+  PutResult,
+  StoredMcpServer,
+} from "./mcp-servers.js";
 export { SettingsCache } from "./settings-cache.js";
 export type { SettingsCacheOptions } from "./settings-cache.js";
 export {
