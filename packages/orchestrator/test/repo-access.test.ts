@@ -25,6 +25,7 @@ const session = (over: Partial<SessionRow> = {}): SessionRow => ({
   repo: { repo: "octo/hello" },
   onecli: null,
   workspaceReadyAt: null,
+  profile: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
   ...over,

@@ -17,6 +17,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   repo: null,
   onecli: null,
   workspaceReadyAt: null,
+  profile: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

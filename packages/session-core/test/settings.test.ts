@@ -16,6 +16,7 @@ const base: Settings = {
   allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
   reasoning: null,
   maxReasoning: null,
+  defaultProfile: "coding",
   turnBudget: 100,
 };
 
@@ -34,6 +35,7 @@ describe("settingsFromEnv", () => {
       allowlist: ["openai-codex/gpt-6.1-terra", "openai-codex/gpt-6.1-sol", "scripted/scripted-1"],
       reasoning: "medium",
       maxReasoning: null,
+      defaultProfile: "coding",
       turnBudget: 7,
     });
   });
@@ -60,8 +62,23 @@ describe("validateSettings", () => {
       allowlist: ["a/b/c", "x/y"],
       reasoning: "high",
       maxReasoning: null,
+      defaultProfile: "coding",
       turnBudget: 5,
     });
+  });
+
+  it("treats a missing defaultProfile as coding and rejects a bad name", () => {
+    const legacy: Record<string, unknown> = { ...base };
+    delete legacy.defaultProfile;
+    expect(validateSettings(legacy)).toEqual({ ...base, defaultProfile: "coding" });
+    expect(validateSettings({ ...base, defaultProfile: "research" })).toMatchObject({
+      defaultProfile: "research",
+    });
+    for (const bad of ["Research", "", 3, null, "a b"]) {
+      expect(validateSettings({ ...base, defaultProfile: bad }), String(bad)).toMatch(
+        /defaultProfile/,
+      );
+    }
   });
 
   it("treats a missing maxReasoning as no cap, so older rows and clients still validate", () => {

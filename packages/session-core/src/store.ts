@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { THINKING_LEVELS } from "./models.js";
 import type { ModelChoice } from "./models.js";
+import type { ProfileSnapshot } from "./profiles.js";
 import type { RepoSpec } from "./repo.js";
 
 /** `failed` is terminal: the model credentials were rejected or the turn budget is used up. Only DELETE is accepted. */
@@ -27,6 +28,12 @@ export interface SessionRow {
   onecli: { agentId: string; secretIds: string[] } | null;
   /** When the clone and the workspace marker were first completed; null before. */
   workspaceReadyAt: Date | null;
+  /**
+   * The profile the session was created with and the definition it resolved to then (docs/decisions/0010-session-profiles.md).
+   * `snapshot` is raw JSON: whoever acts on it validates it first. Null for sessions that predate profiles (`coding`
+   * version 1: today's behaviour).
+   */
+  profile: { name: string; version: number; snapshot: unknown } | null;
   createdAt: Date;
   lastActivityAt: Date;
 }
@@ -61,6 +68,9 @@ interface SessionDbRow {
   onecli_agent_id: string | null;
   onecli_secret_ids: string[] | null;
   workspace_ready_at: Date | null;
+  profile_name: string | null;
+  profile_version: number | null;
+  profile_snapshot: unknown;
   created_at: Date;
   last_activity_at: Date;
 }
@@ -103,6 +113,14 @@ const toSession = (row: SessionDbRow): SessionRow => ({
       ? null
       : { agentId: row.onecli_agent_id, secretIds: row.onecli_secret_ids ?? [] },
   workspaceReadyAt: row.workspace_ready_at,
+  profile:
+    row.profile_name === null || row.profile_version === null
+      ? null
+      : {
+          name: row.profile_name,
+          version: row.profile_version,
+          snapshot: row.profile_snapshot ?? null,
+        },
   createdAt: row.created_at,
   lastActivityAt: row.last_activity_at,
 });
@@ -132,10 +150,13 @@ export async function createSession(
   principal: { owner: string; subject: string },
   model: ModelChoice,
   repo?: RepoSpec,
+  profile?: ProfileSnapshot,
 ): Promise<string> {
   const id = randomUUID();
   await pool.query(
-    "insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+    `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
+       profile_name, profile_version, profile_snapshot)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       id,
       principal.owner,
@@ -145,6 +166,9 @@ export async function createSession(
       model.reasoning ?? null,
       repo?.repo ?? null,
       repo?.branch ?? null,
+      profile?.name ?? null,
+      profile?.version ?? null,
+      profile === undefined ? null : JSON.stringify(profile.definition),
     ],
   );
   return id;

@@ -8,6 +8,7 @@ import {
   THINKING_LEVELS,
 } from "./models.js";
 import type { ModelPolicy, ThinkingLevel } from "./models.js";
+import { DEFAULT_PROFILE_NAME, PROFILE_NAME, profileNameError } from "./profiles.js";
 
 /** Notification channel a writer signals on, in the same transaction as the write. */
 export const SETTINGS_CHANNEL = "pi_settings";
@@ -25,7 +26,9 @@ export interface Settings {
   reasoning: ThinkingLevel | null;
   /** Highest reasoning effort a session request may ask for; null for no cap. */
   maxReasoning: ThinkingLevel | null;
-  /** Model turns one session may use in total. */
+  /** The profile a new session gets when its request names none (docs/decisions/0010-session-profiles.md). */
+  defaultProfile: string;
+  /** Model turns one session may use in total (a profile may replace it for its sessions). */
   turnBudget: number;
 }
 
@@ -43,7 +46,14 @@ export interface SettingsHistoryEntry {
   new: Settings;
 }
 
-const KEYS = ["defaultModel", "allowlist", "reasoning", "maxReasoning", "turnBudget"] as const;
+const KEYS = [
+  "defaultModel",
+  "allowlist",
+  "reasoning",
+  "maxReasoning",
+  "defaultProfile",
+  "turnBudget",
+] as const;
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
 /** Bound on what is parsed; the real limit applies to the normalised list (default added, duplicates dropped). */
@@ -65,6 +75,7 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
     allowlist: policy.allowed.map(modelKey),
     reasoning: policy.reasoning ?? null,
     maxReasoning: null,
+    defaultProfile: DEFAULT_PROFILE_NAME,
     turnBudget,
   });
   if (typeof settings === "string")
@@ -97,10 +108,12 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   for (const key of Object.keys(body)) {
     if (!(KEYS as readonly string[]).includes(key)) return `unknown setting "${key.slice(0, 50)}"`;
   }
-  // A missing cap is no cap: older clients and rows predate the field.
+  // A missing cap is no cap and a missing default profile is `coding`: older clients and rows predate the fields.
   const pick = (key: (typeof KEYS)[number]): unknown => {
     const value = key in body ? body[key] : current?.[key];
-    return key === "maxReasoning" && value === undefined ? null : value;
+    if (value !== undefined) return value;
+    if (key === "maxReasoning") return null;
+    return key === "defaultProfile" ? DEFAULT_PROFILE_NAME : undefined;
   };
   const pickLevel = (key: "reasoning" | "maxReasoning"): ThinkingLevel | null | "invalid" => {
     const value = pick(key);
@@ -130,6 +143,10 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   if (reasoning !== null && maxReasoning !== null && exceedsReasoning(reasoning, maxReasoning)) {
     return `reasoning ${reasoning} is above maxReasoning ${maxReasoning}`;
   }
+  const defaultProfile = pick("defaultProfile");
+  if (typeof defaultProfile !== "string" || profileNameError(defaultProfile) !== undefined) {
+    return `defaultProfile must be a profile name matching ${PROFILE_NAME.source}`;
+  }
   const turnBudget = pick("turnBudget");
   if (
     typeof turnBudget !== "number" ||
@@ -158,6 +175,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
     allowlist,
     reasoning,
     maxReasoning,
+    defaultProfile,
     turnBudget,
   };
 }
@@ -171,6 +189,7 @@ interface SettingsRow {
   allowlist: unknown;
   default_reasoning: string | null;
   max_reasoning: string | null;
+  default_profile: string | null;
   turn_budget: number;
   updated_at: Date;
   updated_by: string;
@@ -183,6 +202,7 @@ function fromRow(row: SettingsRow): StoredSettings {
     allowlist: row.allowlist,
     reasoning: row.default_reasoning,
     maxReasoning: row.max_reasoning,
+    defaultProfile: row.default_profile ?? undefined,
     turnBudget: row.turn_budget,
   });
   if (typeof settings === "string") throw new Error(`stored settings are invalid: ${settings}`);
@@ -190,7 +210,7 @@ function fromRow(row: SettingsRow): StoredSettings {
 }
 
 const COLUMNS =
-  "default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_at, updated_by";
+  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_at, updated_by";
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -241,8 +261,8 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
   if (typeof seed === "string") throw new Error(`invalid seed settings: ${seed}`);
   return inTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_by)
-       values ($1, $2, $3, $4, $5, 'seed')
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_by)
+       values ($1, $2, $3, $4, $5, $6, 'seed')
        on conflict (id) do nothing
        returning default_model`,
       [
@@ -250,6 +270,7 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
         JSON.stringify(seed.allowlist),
         seed.reasoning,
         seed.maxReasoning,
+        seed.defaultProfile,
         seed.turnBudget,
       ],
     );
@@ -278,12 +299,12 @@ export async function updateSettings(
     if (typeof next === "string") return next;
     if (current !== undefined && settingsEqual(current.settings, next)) return current;
     const { rows: written } = await client.query<SettingsRow>(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_by)
-       values ($1, $2, $3, $4, $5, $6)
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (id) do update set
          default_model = excluded.default_model, allowlist = excluded.allowlist,
          default_reasoning = excluded.default_reasoning, max_reasoning = excluded.max_reasoning,
-         turn_budget = excluded.turn_budget,
+         default_profile = excluded.default_profile, turn_budget = excluded.turn_budget,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
       [
@@ -291,6 +312,7 @@ export async function updateSettings(
         JSON.stringify(next.allowlist),
         next.reasoning,
         next.maxReasoning,
+        next.defaultProfile,
         next.turnBudget,
         by,
       ],

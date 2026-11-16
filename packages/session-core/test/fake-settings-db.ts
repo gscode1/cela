@@ -6,6 +6,7 @@ interface Row {
   allowlist: unknown;
   default_reasoning: string | null;
   max_reasoning: string | null;
+  default_profile: string | null;
   turn_budget: number;
   updated_at: Date;
   updated_by: string;
@@ -44,6 +45,24 @@ interface McpHistoryRow {
   new: unknown;
 }
 
+export interface ProfileRowF {
+  name: string;
+  current_version: number;
+  enabled_for_new: boolean;
+  created_at: Date;
+  created_by: string;
+  updated_at: Date;
+  updated_by: string;
+}
+
+export interface ProfileVersionRowF {
+  name: string;
+  version: number;
+  definition: unknown;
+  created_at: Date;
+  created_by: string;
+}
+
 /**
  * An in-memory stand-in for inbox.settings, inbox.settings_history, inbox.mcp_servers and its history that answers only
  * the statements settings.ts and mcp-servers.ts issue (the same approach as the ingest FakeInboxDb). `begin` snapshots and `rollback` restores;
@@ -62,6 +81,28 @@ export class FakeSettingsDb {
   /** Advisory transaction locks by key, and the client that holds each. */
   readonly locks = new Map<string, FakeListener>();
   readonly mcpHistory: McpHistoryRow[] = [];
+  /** inbox.profiles and inbox.profile_versions; `coding` version 1 is what migration 008 seeds. */
+  profiles = new Map<string, ProfileRowF>([
+    [
+      "coding",
+      {
+        name: "coding",
+        current_version: 1,
+        enabled_for_new: true,
+        created_at: new Date(0),
+        created_by: "seed",
+        updated_at: new Date(0),
+        updated_by: "seed",
+      },
+    ],
+  ]);
+  versions: ProfileVersionRowF[] = [
+    { name: "coding", version: 1, definition: {}, created_at: new Date(0), created_by: "seed" },
+  ];
+  /** inbox.orchestrator_capabilities (one row) once an orchestrator published. */
+  capabilities: { tools: unknown; extensions: unknown; instance: string } | undefined;
+  /** inbox.sessions rows by id, as the columns the profile code writes and reads. */
+  sessions = new Map<string, Record<string, unknown>>();
   #pending: string[] = [];
   #snapshot:
     | {
@@ -69,6 +110,8 @@ export class FakeSettingsDb {
         history: HistoryRow[];
         mcp: Map<string, McpRow>;
         mcpHistory: McpHistoryRow[];
+        profiles: Map<string, ProfileRowF>;
+        versions: ProfileVersionRowF[];
       }
     | undefined;
 
@@ -83,6 +126,7 @@ export class FakeSettingsDb {
       allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
       default_reasoning: null,
       max_reasoning: null,
+      default_profile: null,
       turn_budget: 100,
       updated_at: new Date(0),
       updated_by: "seed",
@@ -111,6 +155,8 @@ export class FakeSettingsDb {
         history: [...this.history],
         mcp: new Map([...this.mcp].map(([name, row]) => [name, { ...row }])),
         mcpHistory: [...this.mcpHistory],
+        profiles: new Map([...this.profiles].map(([name, row]) => [name, { ...row }])),
+        versions: this.versions.map((row) => ({ ...row })),
       };
       return done();
     }
@@ -127,20 +173,27 @@ export class FakeSettingsDb {
         this.history.splice(0, this.history.length, ...this.#snapshot.history);
         this.mcp = this.#snapshot.mcp;
         this.mcpHistory.splice(0, this.mcpHistory.length, ...this.#snapshot.mcpHistory);
+        this.profiles = this.#snapshot.profiles;
+        this.versions = this.#snapshot.versions;
       }
       this.#snapshot = undefined;
       this.#pending = [];
       return done();
     }
+    if (text.includes("from inbox.events where session_id")) return done([]);
     if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
+    if (/inbox\.(profiles|profile_versions|orchestrator_capabilities|sessions)\b/.test(text)) {
+      return this.#profileQuery(text, params, done);
+    }
     if (text.startsWith("select default_model")) {
       if (this.failReads) return Promise.reject(new Error("connection lost"));
       return done(this.row === undefined ? [] : [{ ...this.row }]);
     }
     if (text.startsWith("insert into inbox.settings (")) {
-      const [model, list, reasoning, maxReasoning, budget, by] = params as [
+      const [model, list, reasoning, maxReasoning, defaultProfile, budget, by] = params as [
         string,
         string,
+        string | null,
         string | null,
         string | null,
         number,
@@ -151,6 +204,7 @@ export class FakeSettingsDb {
         allowlist: JSON.parse(list) as unknown,
         default_reasoning: reasoning,
         max_reasoning: maxReasoning,
+        default_profile: defaultProfile,
         turn_budget: budget,
         updated_at: new Date(),
         updated_by: by ?? "seed",
@@ -182,6 +236,127 @@ export class FakeSettingsDb {
       return done([...this.history].reverse().slice(0, Number(params[0])));
     }
     throw new Error(`FakeSettingsDb: unexpected statement ${text.slice(0, 60)}`);
+  }
+
+  #profileJoin(): (ProfileRowF & { definition: unknown })[] {
+    return [...this.profiles.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .flatMap((profile) => {
+        const version = this.versions.find(
+          (v) => v.name === profile.name && v.version === profile.current_version,
+        );
+        return version === undefined ? [] : [{ ...profile, definition: version.definition }];
+      });
+  }
+
+  /** The statements of profiles.ts and the session insert and select that carry the profile snapshot. */
+  #profileQuery(
+    text: string,
+    params: unknown[],
+    done: (rows?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>,
+  ) {
+    if (this.failReads && text.startsWith("select")) {
+      return Promise.reject(new Error("connection lost"));
+    }
+    if (text.startsWith("select p.name")) {
+      const all = this.#profileJoin();
+      return done(
+        text.includes("where p.name = $1") ? all.filter((p) => p.name === params[0]) : all,
+      );
+    }
+    if (text.startsWith("select version, definition")) {
+      return done(
+        this.versions
+          .filter((v) => v.name === params[0])
+          .sort((a, b) => b.version - a.version)
+          .map((v) => ({ ...v })),
+      );
+    }
+    if (text.startsWith("insert into inbox.profiles (")) {
+      const [name, enabled, by] = params as [string, boolean, string];
+      if (this.profiles.has(name)) throw new Error("duplicate key value (profiles)");
+      const now = new Date();
+      this.profiles.set(name, {
+        name,
+        current_version: 1,
+        enabled_for_new: enabled,
+        created_at: now,
+        created_by: by,
+        updated_at: now,
+        updated_by: by,
+      });
+      return done();
+    }
+    if (text.startsWith("insert into inbox.profile_versions")) {
+      const [name, version, definition, by] = params as [string, number, string, string];
+      if (!this.profiles.has(name)) throw new Error("foreign key violation (profile_versions)");
+      if (this.versions.some((v) => v.name === name && v.version === version)) {
+        throw new Error("duplicate key value (profile_versions)");
+      }
+      this.versions.push({
+        name,
+        version,
+        definition: JSON.parse(definition) as unknown,
+        created_at: new Date(),
+        created_by: by,
+      });
+      return done();
+    }
+    if (text.startsWith("update inbox.profiles set")) {
+      const [name, version, enabled, by] = params as [string, number, boolean, string];
+      const row = this.profiles.get(name);
+      if (row === undefined) return done();
+      Object.assign(row, {
+        current_version: version,
+        enabled_for_new: enabled,
+        updated_at: new Date(),
+        updated_by: by,
+      });
+      return done();
+    }
+    if (text.startsWith("select tools, extensions")) {
+      return done(this.capabilities === undefined ? [] : [{ ...this.capabilities }]);
+    }
+    if (text.startsWith("insert into inbox.orchestrator_capabilities")) {
+      const [tools, extensions, instance] = params as [string, string, string];
+      this.capabilities = {
+        tools: JSON.parse(tools) as unknown,
+        extensions: JSON.parse(extensions) as unknown,
+        instance,
+      };
+      return done();
+    }
+    if (text.startsWith("insert into inbox.sessions (")) {
+      const [id, owner, subject, provider, model, reasoning, repo, branch, pName, pVersion, pSnap] =
+        params as (string | null)[];
+      this.sessions.set(String(id), {
+        id,
+        owner,
+        owner_subject: subject,
+        status: "active",
+        conversation_id: null,
+        model_provider: provider,
+        model_id: model,
+        model_reasoning: reasoning,
+        failure: null,
+        repo,
+        repo_branch: branch,
+        onecli_agent_id: null,
+        onecli_secret_ids: null,
+        workspace_ready_at: null,
+        profile_name: pName,
+        profile_version: pVersion,
+        profile_snapshot: pSnap === null ? null : (JSON.parse(String(pSnap)) as unknown),
+        created_at: new Date(),
+        last_activity_at: new Date(),
+      });
+      return done();
+    }
+    if (text.startsWith("select * from inbox.sessions")) {
+      const row = this.sessions.get(String(params[0]));
+      return done(row === undefined ? [] : [{ ...row }]);
+    }
+    throw new Error(`FakeSettingsDb: unexpected profile statement ${text.slice(0, 60)}`);
   }
 
   /** The statements of mcp-servers.ts, matched by their first words. */

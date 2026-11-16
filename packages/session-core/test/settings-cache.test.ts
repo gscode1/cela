@@ -8,6 +8,7 @@ const fallback: Settings = {
   allowlist: ["env/model"],
   reasoning: null,
   maxReasoning: null,
+  defaultProfile: "coding",
   turnBudget: 11,
 };
 

@@ -38,6 +38,33 @@ export type {
   PutResult,
   StoredMcpServer,
 } from "./mcp-servers.js";
+export {
+  BUILTIN_TOOL_NAMES,
+  checkProfileNames,
+  DEFAULT_PROFILE_NAME,
+  LEGACY_PROFILE,
+  listProfileVersions,
+  profileDefinitionsEqual,
+  profileNameError,
+  PROFILE_NAME,
+  publishCapabilities,
+  putProfile,
+  readCapabilities,
+  readProfile,
+  readProfiles,
+  validateProfileDefinition,
+} from "./profiles.js";
+export type {
+  Capabilities,
+  ProfileCatalog,
+  ProfileDefinition,
+  ProfileRef,
+  ProfileSnapshot,
+  ProfileVersion,
+  PutProfileInput,
+  PutProfileResult,
+  StoredProfile,
+} from "./profiles.js";
 export { SettingsCache } from "./settings-cache.js";
 export type { SettingsCacheOptions } from "./settings-cache.js";
 export {
