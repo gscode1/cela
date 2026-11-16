@@ -30,7 +30,9 @@ const base = flags.base ?? "http://127.0.0.1:8080";
 function token() {
   if (who === "none") return undefined;
   if (who === "bad") return "0".repeat(48);
-  for (const line of (process.env.PI_API_TOKENS ?? "").split(/[\n,]/)) {
+  // Same parsing as packages/session-core/src/auth.ts: split on newline or comma, trim, split at the first colon.
+  for (const entry of (process.env.PI_API_TOKENS ?? "").split(/[\n,]/)) {
+    const line = entry.trim();
     const at = line.indexOf(":");
     if (at > 0 && line.slice(0, at) === who) return line.slice(at + 1);
   }
