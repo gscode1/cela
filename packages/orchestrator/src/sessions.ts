@@ -363,6 +363,7 @@ export class SessionService {
         return;
       }
       case "cancel": {
+        if (session.conversationId !== null) this.#options.timings?.clear(session.conversationId);
         if (session.conversationId !== null) await this.#host.abort(session.conversationId);
         return;
       }

@@ -25,7 +25,9 @@ describe("TurnTimings", () => {
     timings.begin(turn);
     advance(20);
     timings.mark(7, "input-submitted");
-    advance(3_000);
+    advance(2_000);
+    timings.mark(7, "tool-requested");
+    advance(1_000); // waiting for a bridge slot
     timings.mark(7, "claim-requested");
     timings.setState(7, "cold");
     advance(9_000);
@@ -34,7 +36,7 @@ describe("TurnTimings", () => {
     advance(12_000);
     timings.mark(7, "bridge-ready");
     advance(100);
-    timings.mark(7, "first-exec");
+    timings.mark(7, "first-exec-start");
 
     expect(lines.map((l) => l.event)).toEqual([
       "turn-phase",
@@ -43,25 +45,28 @@ describe("TurnTimings", () => {
       "turn-phase",
       "turn-phase",
       "turn-phase",
+      "turn-phase",
       "turn-timing",
     ]);
-    expect(lines[2]?.fields).toEqual({ ...turn, phase: "claim-ready", ms: 12_020 });
-    expect(lines[6]?.fields).toEqual({
+    expect(lines[3]?.fields).toEqual({ ...turn, phase: "claim-ready", ms: 12_020 });
+    expect(lines[7]?.fields).toEqual({
       ...turn,
       sandbox: "cold",
       phases: {
         "input-submitted": 20,
+        "tool-requested": 2_020,
         "claim-requested": 3_020,
         "claim-ready": 12_020,
         "bridge-started": 12_020,
         "bridge-ready": 24_020,
-        "first-exec": 24_120,
+        "first-exec-start": 24_120,
       },
       spans: {
-        "agent-to-tool": 3_000,
+        model: 2_000,
+        "cap-wait": 1_000,
         claim: 9_000,
         bridge: 12_000,
-        "sandbox-to-exec": 21_100,
+        "sandbox-to-exec": 22_100,
       },
     });
   });
@@ -73,9 +78,9 @@ describe("TurnTimings", () => {
     advance(50);
     timings.mark(7, "bridge-started"); // a bridge respawn
     expect(lines).toHaveLength(1);
-    timings.mark(7, "first-exec");
+    timings.mark(7, "first-exec-start");
     const count = lines.length;
-    timings.mark(7, "first-exec");
+    timings.mark(7, "first-exec-start");
     timings.mark(7, "bridge-ready");
     expect(lines).toHaveLength(count);
     expect(timings.fields(7)).toEqual({});
@@ -87,10 +92,10 @@ describe("TurnTimings", () => {
     expect(lines).toEqual([]);
     timings.begin(turn);
     advance(5);
-    timings.mark(7, "first-exec");
+    timings.mark(7, "first-exec-start");
     expect(lines[1]).toMatchObject({
       event: "turn-timing",
-      fields: { sandbox: "warm", phases: { "first-exec": 5 }, spans: {} },
+      fields: { sandbox: "warm", phases: { "first-exec-start": 5 }, spans: {} },
     });
   });
 
@@ -102,7 +107,7 @@ describe("TurnTimings", () => {
     timings.begin({ ...turn, turn: "evt-2" });
     timings.setState(7, "resumed");
     advance(7);
-    timings.mark(7, "first-exec");
+    timings.mark(7, "first-exec-start");
     expect(lines[1]?.fields).toMatchObject({ turn: "evt-2", sandbox: "resumed" });
     expect(lines[0]?.fields).toMatchObject({ ms: 7 });
   });
@@ -111,9 +116,60 @@ describe("TurnTimings", () => {
     const { timings, lines } = setup();
     timings.begin(turn);
     timings.begin({ session: "s-2", conversation: 8, turn: "evt-9" });
-    timings.mark(8, "first-exec");
+    timings.mark(8, "first-exec-start");
     expect(lines[0]?.fields).toMatchObject({ session: "s-2", turn: "evt-9" });
     expect(timings.fields(7)).toMatchObject({ turn: "evt-1" });
+  });
+});
+
+describe("startup is measured to the dispatch of the first exec", () => {
+  it("does not count a long command, and keeps cap wait out of model time", () => {
+    const { timings, lines, advance } = setup();
+    timings.begin(turn);
+    timings.mark(7, "input-submitted");
+    advance(4_000);
+    timings.mark(7, "tool-requested");
+    advance(30_000);
+    timings.mark(7, "claim-requested");
+    advance(5);
+    timings.mark(7, "first-exec-start");
+    advance(60_000); // the command runs; nothing more is logged for it
+    timings.mark(7, "first-exec-start");
+    expect(lines.at(-1)?.fields).toMatchObject({
+      spans: { model: 4_000, "cap-wait": 30_000, "sandbox-to-exec": 30_005 },
+    });
+    expect(lines.filter((l) => l.event === "turn-timing")).toHaveLength(1);
+  });
+});
+
+describe("clearing", () => {
+  it("clear forgets a turn without a summary", () => {
+    const { timings, lines } = setup();
+    timings.begin(turn);
+    timings.clear(7);
+    timings.mark(7, "first-exec-start");
+    expect(lines).toEqual([]);
+    expect(timings.fields(7)).toEqual({});
+  });
+
+  it("expires turns that never ran a tool, at the next begin", () => {
+    const { timings, advance } = setup();
+    timings.begin(turn);
+    advance(61 * 60_000);
+    timings.begin({ session: "s-2", conversation: 8, turn: "evt-2" });
+    expect(timings.fields(7)).toEqual({});
+    expect(timings.fields(8)).toMatchObject({ turn: "evt-2" });
+  });
+
+  it("keeps at most 1000 turns, dropping the oldest", () => {
+    const { timings, advance } = setup();
+    for (let i = 0; i < 1005; i++) {
+      timings.begin({ session: "s", conversation: i, turn: `e${String(i)}` });
+      advance(1);
+    }
+    expect(timings.fields(0)).toEqual({});
+    expect(timings.fields(1004)).toMatchObject({ turn: "e1004" });
+    expect(timings.fields(5)).toMatchObject({ turn: "e5" });
   });
 });
 

@@ -264,6 +264,8 @@ export class Sandboxes {
           };
           this.#usage.set(conversationId, usage);
           usage.inUse++;
+          // Before anything the call may wait for (a recycle, credential renewal, a bridge slot at the cap).
+          this.timings.mark(conversationId, "tool-requested");
           let outcome: { threw: true } | { threw: false; result: unknown } | undefined;
           try {
             // A recycle or suspend of this sandbox finishes first; the env opened below is then for the new Pod.
@@ -289,9 +291,9 @@ export class Sandboxes {
               usage.recorded = true;
             }
             try {
+              if (property === "exec") this.timings.mark(conversationId, "first-exec-start");
               const result = await real[property]?.(...args);
               outcome = { threw: false, result };
-              if (property === "exec") this.timings.mark(conversationId, "first-exec");
               return result;
             } catch (error) {
               outcome = { threw: true };
@@ -598,6 +600,7 @@ export class Sandboxes {
     this.#interrupted.delete(conversationId);
     this.#failed.delete(conversationId);
     this.#lastUsed.delete(conversationId);
+    this.timings.clear(conversationId);
     const opened = this.#envs.get(conversationId);
     this.#usage.delete(conversationId);
     this.#dropEnv(conversationId);

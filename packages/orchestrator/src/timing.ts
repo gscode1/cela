@@ -7,11 +7,12 @@
 /** In the order a cold start passes through them. */
 export const PHASES = [
   "input-submitted",
+  "tool-requested",
   "claim-requested",
   "claim-ready",
   "bridge-started",
   "bridge-ready",
-  "first-exec",
+  "first-exec-start",
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
@@ -20,10 +21,14 @@ export type SandboxState = "cold" | "resumed" | "warm";
 
 /** Named intervals of the summary, each from one phase to a later one. Omitted when either end was not reached. */
 export const SPANS = {
-  "agent-to-tool": ["input-submitted", "claim-requested"],
+  /** Model time: input handed over until the first tool call asks for the sandbox. */
+  model: ["input-submitted", "tool-requested"],
+  /** Waiting before the claim is requested: a bridge slot at the cap, a recycle under way, credential renewal. */
+  "cap-wait": ["tool-requested", "claim-requested"],
   claim: ["claim-requested", "claim-ready"],
   bridge: ["bridge-started", "bridge-ready"],
-  "sandbox-to-exec": ["claim-requested", "first-exec"],
+  /** Time to first instruction: the platform's share, from the first tool call to the first exec being dispatched. */
+  "sandbox-to-exec": ["tool-requested", "first-exec-start"],
 } as const satisfies Record<string, readonly [Phase, Phase]>;
 
 /** What ties a log line to a turn. `turn` is the inbox event id, which is also the Pi Durable request id. */
@@ -44,6 +49,10 @@ interface Turn extends TurnContext {
   phases: Partial<Record<Phase, number>>;
 }
 
+/** A turn that never ran a tool is dropped after this long, and at most this many turns are kept. */
+const MAX_AGE_MS = 60 * 60_000;
+const MAX_TURNS = 1000;
+
 export class TurnTimings {
   readonly #now: () => number;
   readonly #emit: TimingSink;
@@ -59,12 +68,28 @@ export class TurnTimings {
    * and a message queued behind a running turn restarts the clock: the summary then belongs to the later input.
    */
   begin(context: TurnContext): void {
+    this.#expire();
+    this.#turns.delete(context.conversation); // re-inserted last: Map order is age order
     this.#turns.set(context.conversation, {
       ...context,
       startedAt: this.#now(),
       state: "warm",
       phases: {},
     });
+  }
+
+  /** Forgets the conversation's turn (cancelled, deleted, torn down) without a summary. */
+  clear(conversation: number): void {
+    this.#turns.delete(conversation);
+  }
+
+  /** Drops turns that never reached a tool call and were never cleared, oldest first. */
+  #expire(): void {
+    const cutoff = this.#now() - MAX_AGE_MS;
+    for (const [conversation, turn] of this.#turns) {
+      if (turn.startedAt >= cutoff && this.#turns.size < MAX_TURNS) break;
+      this.#turns.delete(conversation);
+    }
   }
 
   /** `session`, `conversation` and `turn` of the conversation's current turn, to spread into a log line. */
@@ -80,8 +105,9 @@ export class TurnTimings {
   }
 
   /**
-   * Records the first time the turn reaches a phase and logs it. Reaching `first-exec` ends the cold-start part of the
-   * turn: the summary is logged and the turn is forgotten, so a later exec of the same turn adds nothing.
+   * Records the first time the turn reaches a phase and logs it. Reaching `first-exec-start` (the first exec is
+   * dispatched, not finished: a long command must not count as startup) ends the cold-start part of the turn: the
+   * summary is logged and the turn is forgotten, so a later exec of the same turn adds nothing.
    * A phase with no turn (a bridge restarting between turns) is ignored.
    */
   mark(conversation: number, phase: Phase): void {
@@ -90,7 +116,7 @@ export class TurnTimings {
     const ms = this.#now() - turn.startedAt;
     turn.phases[phase] = ms;
     this.#emit("turn-phase", { ...contextOf(turn), phase, ms });
-    if (phase === "first-exec") {
+    if (phase === "first-exec-start") {
       this.#turns.delete(conversation);
       this.#emit("turn-timing", {
         ...contextOf(turn),
