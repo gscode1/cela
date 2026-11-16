@@ -9,7 +9,6 @@ import {
 } from "@pi-durable-k8s/sandbox-env";
 import type { SandboxEnv } from "@pi-durable-k8s/sandbox-env";
 import type { OrchestratorConfig } from "./config.js";
-import { fileURLToPath } from "node:url";
 import {
   deleteClaimAndPvc,
   ensureLabeledClaim,
@@ -18,6 +17,7 @@ import {
   resumeIfSuspended,
   suspendSandbox,
 } from "./kube.js";
+import { bridgeCommand } from "./bridge-launcher.js";
 import { conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
 import { errorMessage, log } from "./log.js";
 
@@ -25,9 +25,6 @@ export const WORKSPACE = "/workspace";
 
 /** The value of the claim's session label for a conversation: the API session UUID. */
 export type SessionKeyOf = (conversationId: number) => Promise<string>;
-
-/** The bridge is started through this launcher so it does not inherit the orchestrator's secrets. */
-const BRIDGE_LAUNCHER = fileURLToPath(new URL("./bridge-launcher.js", import.meta.url));
 
 /** Per-session hooks for repo sessions (Phase 4c). Plain sessions ignore them: both answer "nothing". */
 export interface SandboxHooks {
@@ -364,14 +361,14 @@ export class Sandboxes {
     }
     log("claim-ready", { claim: claimName });
     // Credentials for a repo session's commands only; plain sessions get nothing here. The token travels through the
-    // pi-env protocol to the daemon, never through the bridge process environment (bridge-launcher derives its own claim's token and drops the master).
+    // pi-env protocol to the daemon, never through the bridge process environment (bridgeCommand starts the bridge with a trimmed environment and its own claim's token).
     const shellEnv = await this.#hooks.shellEnv?.(conversationId);
     return connectSandboxEnv({
       claimName,
       namespace,
       cwd: WORKSPACE,
       id: `pi-env:${claimName}`,
-      bridgeCommand: [process.execPath, BRIDGE_LAUNCHER],
+      bridgeCommand: bridgeCommand(process.env, token),
       ...(shellEnv === undefined ? {} : { shellEnv }),
     });
   }

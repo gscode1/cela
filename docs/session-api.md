@@ -149,8 +149,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   right name and another or no label is refused, and never deleted by session deletion. (Claims that predate this
   label are therefore not adopted; the claim name `pi-conv-<conversation id>` alone proves nothing.)
 - The bridge processes (one Node process per session with a sandbox) are started through
-  `bridge-launcher.js`, which gives them only `PI_SANDBOX_AUTH_TOKEN` (the token of their own claim, derived from the
-  master key; see `docs/decisions/0001-per-sandbox-sandboxd-token.md`), the in-cluster Kubernetes endpoint, `PATH`
+  `/usr/bin/env -i` (`bridgeCommand` in `bridge-launcher.ts`), which gives them only `PI_SANDBOX_AUTH_TOKEN` (the token
+  of their own claim, derived by the orchestrator from the master key; see `docs/decisions/0001-per-sandbox-sandboxd-token.md`), the in-cluster Kubernetes endpoint, `PATH`
   and `HOME`. The database URL, the API tokens, the OneCLI agent token and the sandbox master key are not in their
   environment (checked by the e2e suite in `/proc/<pid>/environ`).
 - An existing claim is adopted only if its `SANDBOXD_AUTH_TOKEN_SHA256` env matches the token hash the orchestrator

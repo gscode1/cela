@@ -18,8 +18,13 @@ policy is wrong or a sandbox is reached another way.
   `SANDBOXD_AUTH_TOKEN_SHA256`. The hash does not reveal the token, and it is the hash of one claim's token only.
 - **Where the master lives.** Secret `sandboxd-auth`, key `master` (`deploy/gen-secret.sh`, idempotent, `ROTATE=1`
   to replace). It reaches the orchestrator (`PI_SANDBOX_MASTER_KEY`) and the e2e driver and runner. It never reaches a
-  sandbox or a bridge. `bridge-launcher.js` derives the token of the bridge's own `--claim`, sets
-  `PI_SANDBOX_AUTH_TOKEN` for that process and drops the master.
+  sandbox or a bridge. The orchestrator derives the token of the bridge's own claim and starts the
+  bridge through `env -i NAME=value... node cli.js` (`bridgeCommand`, `bridge-launcher.ts`): the allow-listed variables
+  plus `PI_SANDBOX_AUTH_TOKEN`, nothing else. There is no intermediate launcher process. (An earlier launcher
+  inherited the orchestrator's whole environment from pi-env's spawn, master key included, and only trimmed its
+  child's: a same-uid bridge could read the launcher's `/proc/<pid>/environ`, which keeps the initial environment.
+  Deleting the variable at runtime would not have helped.) The token is an argument of that command, visible to
+  same-uid processes in the pod, exactly as it is in the bridge's own environment; it opens one sandbox only.
 - **Re-derived, not stored.** The orchestrator derives the token whenever it opens a session's env, so a restart needs
   no state.
 
