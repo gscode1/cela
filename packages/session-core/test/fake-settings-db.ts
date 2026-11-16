@@ -472,6 +472,7 @@ export class FakeSettingsDb {
         owner,
         owner_subject: subject,
         status: "active",
+        shard: 0,
         conversation_id: null,
         model_provider: provider,
         model_id: model,
@@ -490,11 +491,11 @@ export class FakeSettingsDb {
       });
       return done();
     }
-    if (text.startsWith("select profile_snapshot from inbox.sessions where conversation_id")) {
+    if (text.startsWith("select * from inbox.sessions where shard = $1 and conversation_id = $2")) {
       return done(
         [...this.sessions.values()]
-          .filter((row) => row.conversation_id === params[0])
-          .map((row) => ({ profile_snapshot: row.profile_snapshot })),
+          .filter((row) => row.shard === params[0] && row.conversation_id === params[1])
+          .map((row) => ({ ...row })),
       );
     }
     if (text.startsWith("select * from inbox.sessions")) {
