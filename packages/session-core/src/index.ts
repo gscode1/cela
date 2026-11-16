@@ -27,6 +27,7 @@ export {
   listSessionRefs,
   markWorkspaceReady,
   requestDelete,
+  requeueFailedDelete,
   setExecInFlight,
   setOneCliObjects,
   summarize,

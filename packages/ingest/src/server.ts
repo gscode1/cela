@@ -13,6 +13,7 @@ import {
   getSession,
   readJsonObject,
   requestDelete,
+  requeueFailedDelete,
   sendJson,
   summarize,
   UUID,
@@ -239,6 +240,8 @@ async function queueDelete(pool: pg.Pool, session: SessionRow, res: ServerRespon
     payload: {},
   });
   await requestDelete(pool, session.id);
+  // A repeated DELETE is the client's retry: a delete row that ended `failed` runs again.
+  await requeueFailedDelete(pool, session.id);
   const eventId = result.outcome === "conflict" ? undefined : result.eventId;
   sendJson(res, 202, { sessionId: session.id, status: "deleting", eventId });
 }

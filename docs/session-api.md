@@ -58,7 +58,7 @@ belongs to another owner**: the two look the same, so the API does not reveal th
 
 Guarantees:
 
-- **Deduplication.** `UNIQUE (source, source_event_id)`. `source` is `api:<owner>`. A repeated post returns the
+- **Deduplication.** `UNIQUE (source, source_event_id)`. `source` is `api:<owner>` for client events; the server's own delete row uses `system:delete` with the session id as `source_event_id`, so no client id can collide with it. A repeated post returns the
   first event's id with `duplicate: true` and writes nothing. Without a `sourceEventId` every post is its own event.
   The same id for another session is `409`.
 - **No double durability, no re-run.** Pi Durable owns run recovery. The orchestrator never resubmits a row that is
@@ -198,6 +198,13 @@ That job is not implemented here. Until it runs, deleted sessions' transcripts r
 
 A deletion cut off by a crash is safe to repeat: the `delete` row is still pending, and the Kubernetes deletes ignore
 "not found".
+
+**A delete is retried until it succeeds** (`docs/decisions/0006-deletes-retry-until-done.md`). Other events end `failed`
+after 5 attempts; a `delete` row has no attempt cap, because a failed delete leaves the session `deleting` with its
+sandbox, PVC and OneCLI agent alive, and the orphan sweep never touches a `deleting` session. A failing delete is
+retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per session; a restart retries at once). Only a
+`PermanentError` (the session row is gone or already `deleted`) ends the row `failed`. A repeated `DELETE` also puts a
+`failed` delete row back to `pending`, so a client can always retry a delete that was given up on.
 
 ### Orphan sweep
 

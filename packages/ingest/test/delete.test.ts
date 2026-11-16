@@ -54,4 +54,16 @@ describe("DELETE and client event ids", () => {
     await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" });
     expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
   });
+
+  it("a repeated DELETE puts a failed delete row back to pending", async () => {
+    const db = new FakeInboxDb();
+    const base = await start(db);
+    await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" });
+    const row = db.events.find((e) => e.kind === "delete");
+    if (row === undefined) throw new Error("no delete row");
+    row.status = "failed";
+    await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" });
+    expect(row.status).toBe("pending");
+    expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
+  });
 }, 10_000);

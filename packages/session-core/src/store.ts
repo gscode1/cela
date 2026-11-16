@@ -230,6 +230,19 @@ export function deleteEventKey(sessionId: string): { source: string; sourceEvent
   return { source: "system:delete", sourceEventId: sessionId };
 }
 
+/**
+ * Puts a `failed` delete row back to `pending`. A repeated DELETE calls it: the row is deduplicated, so without this
+ * a delete that failed (rows from before deletes were retried without limit, or a permanent error since fixed) could
+ * never run again.
+ */
+export async function requeueFailedDelete(pool: pg.Pool, sessionId: string): Promise<void> {
+  await pool.query(
+    `update inbox.events set status = 'pending', attempts = 0, error = null
+      where session_id = $1 and kind = 'delete' and status = 'failed'`,
+    [sessionId],
+  );
+}
+
 /** Marks an active session as being deleted, so no further events are accepted. Idempotent. */
 export async function requestDelete(pool: pg.Pool, sessionId: string): Promise<void> {
   await pool.query(

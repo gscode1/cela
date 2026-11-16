@@ -74,6 +74,12 @@ export class FakeInboxDb {
       );
       return done(found === undefined ? [] : [{ id: found.id, session_id: found.sessionId }]);
     }
+    if (sql.includes("set status = 'pending'") && sql.includes("kind = 'delete'")) {
+      for (const e of this.events) {
+        if (e.kind === "delete" && e.status === "failed") e.status = "pending";
+      }
+      return done();
+    }
     if (sql.includes("set status = 'deleting'")) {
       if (this.status === "active" || this.status === "failed") this.status = "deleting";
       return done();
