@@ -105,13 +105,21 @@ if p50 improves by more than the run-to-run spread; a 1 s probe adds one tiny re
 
 ## Results
 
-TODO: fill in after the live measurement (cluster, date, N, orchestrator and template versions).
+First baseline: c2 lab cluster, 2026-11-16, throwaway namespace `pi-e2e-t58a`, branch `58-timing-metrics` (default
+template, readinessProbe period 10 s, orchestrator `cpu: "1"`), driven by phase 4's `create-send-stream`, `concurrency`,
+`idle-suspend` and `sandbox-is-lazy` tests. The sample is small (5 cold, 1 resumed, no warm turn that ran a tool), so
+treat these as orders of magnitude, not a benchmark; a second run of the same tests earlier that evening gave a resume
+claim of 3.8 s, so the resume number varies a lot.
 
 | sandbox | n | claim p50 | claim p90 | bridge p50 | bridge p90 | sandbox-to-exec p50 | sandbox-to-exec p90 |
 | ------- | - | --------- | --------- | ---------- | ---------- | ------------------- | ------------------- |
-| cold    | TODO | TODO   | TODO      | TODO       | TODO       | TODO                | TODO                |
-| resumed | TODO | TODO   | TODO      | TODO       | TODO       | TODO                | TODO                |
-| warm    | TODO | TODO   | TODO      | TODO       | TODO       | TODO                | TODO                |
+| cold    | 5 | 17.0 s    | 28.0 s    | 1.8 s      | 2.3 s      | 20.6 s              | 30.0 s              |
+| resumed | 1 | 15.5 s    | –         | 1.9 s      | –          | 17.5 s              | –                   |
+| warm    | 0 | –         | –         | –          | –          | –                   | –                   |
+
+What it says: the claim (Pod ready) dominates; the bridge cold start is about 2 s at the current CPU limit, not the ~12 s
+of plan.md, so #59 (shared bridge) is mainly a memory change. `model` and `cap-wait` were near zero (scripted model, no
+bridge-cap contention).
 
 readinessProbe `periodSeconds` 10 against 1:
 
@@ -122,4 +130,4 @@ readinessProbe `periodSeconds` 10 against 1:
 | 10 s         | resumed | TODO | TODO   | TODO      |
 | 1 s          | resumed | TODO | TODO   | TODO      |
 
-Bridge RSS per open session: TODO (p50 and peak in MiB, with the number of open bridges).
+Bridge RSS per open session (same run): p50 about 126 MiB, peak 133 MiB, with up to 5 bridges open.
