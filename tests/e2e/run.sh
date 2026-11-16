@@ -120,7 +120,8 @@ kubectl config get-contexts ${ctx:-"$(kubectl config current-context)"} >/dev/nu
 
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null | tr -c 'A-Za-z0-9._/\n-' '_' || true)
 if kc get namespace "$ns" >/dev/null 2>&1; then
-  [[ -n $(kc get namespace "$ns" -l pi-durable-e2e=true -o name 2>/dev/null) ]] || {
+  # kubectl rejects a name together with a label selector, so read the label itself.
+  [[ $(kc get namespace "$ns" -o jsonpath='{.metadata.labels.pi-durable-e2e}' 2>/dev/null) == true ]] || {
     echo "namespace $ns exists but is not an e2e run namespace (label pi-durable-e2e=true); refusing to use it" >&2
     exit 1
   }
