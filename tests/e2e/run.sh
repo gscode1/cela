@@ -11,27 +11,41 @@
 #           mcp.deepwiki.com. The suite removes the server again at the end. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
-# The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, namespace pi-durable-poc), so a
+# Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres, orchestrator, ingest, sandbox
+# template, RBAC, network policies and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
+# same time, and the long-lived namespace pi-durable-poc is never touched: this script refuses any other prefix.
+#   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
+#   KEEP_NS_ON_FAIL=1  keep it only when the run did not pass
+#   RUN_ID=<id>        use pi-e2e-<id> (default: 6 random hex digits); an existing e2e namespace is reused (re-run in a kept one)
+#   SKIP_SWEEP=1       do not delete e2e namespaces older than SWEEP_MAX_AGE_HOURS (default 6, tests/e2e/sweep.sh) first
+# An unfinished Job (exit 2) always keeps the namespace so the Job can still be read.
+#
+# The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, in the run namespace), so a
 # result never depends on the laptop's network. The Mac does only this:
-#   1. build and push code: pnpm builds, deploy/push-code.sh and push-ingest.sh, the Phase 1 bundle, the driver scripts
+#   1. create the namespace and the stack, the secrets, build and push code (pnpm builds, deploy/push-code.sh and
+#      push-ingest.sh), the Phase 1 bundle, the driver scripts
 #   2. create the Job
 #   3. wait for it with `kubectl wait` and read the result from the Job status plus the final logs
 # The live log stream is for watching only. If it drops, nothing changes: the verdict comes from the Job status and
 # whatever the stream missed is printed from the final `kubectl logs`. No test is retried.
 #
-# Current kubectl context, namespace pi-durable-poc, nothing else is touched. Exit: 0 all green, 1 a suite failed,
+# Current kubectl context (KUBE_CONTEXT); only the run namespace is touched. Exit: 0 all green, 1 a suite failed,
 # 2 the Mac lost contact before the Job finished (the Job is left running; see the message for how to read it).
-# The Job and its pods are deleted at the end (and ttlSecondsAfterFinished removes them if this script is killed).
+# The namespace, with the Job and its pods, is deleted at the end; if this script is killed, `tests/e2e/sweep.sh` removes it.
 set -euo pipefail
 
 # Public driver image, pinned by digest (multi-arch index with linux/arm64): bash, curl, jq, openssl, kubectl 1.36.
 IMAGE=docker.io/alpine/k8s:1.36.2@sha256:44ef4942e171939b9c665a4a84beb80e2dcdb9a24330d4651cfdfd2e9deecc47
 
 ctx=${KUBE_CONTEXT:-}
-ns=pi-durable-poc
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
+run_id=${RUN_ID:-$(openssl rand -hex 3)}
+ns=pi-e2e-$run_id
+# The prefix is the whole safety net: nothing below may ever run against pi-durable-poc or any other namespace.
+[[ $ns =~ ^pi-e2e-[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || { echo "bad RUN_ID '$run_id': the namespace must be pi-e2e-<lowercase letters, digits, dashes>" >&2; exit 64; }
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
+kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 log() { printf '\n## %s\n' "$*"; }
 
 only=${ONLY:-} # ONLY="a,b" runs just those tests of the phase; smoke sets its own list
@@ -60,44 +74,118 @@ has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0;
 work=$(mktemp -d)
 job=""
 keep_job=0
+ns_touched=0 # 1 once this run may have created or reused the namespace; the trap then decides keep or delete
 cleanup() {
-  pkill -f "logs -f job/e2e-driver" 2>/dev/null || true
-  if [[ -n $job && $keep_job -eq 0 ]]; then
-    k delete job "$job" --ignore-not-found --cascade=foreground --wait=true >/dev/null 2>&1 || true
-  fi
-  k delete pod e2e-driver-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  local rc=$? gone=0 _
+  trap - EXIT
+  # Match on the namespace too: another run's log follower on this machine must survive.
+  pkill -f -- "-n $ns logs -f job/e2e-driver" 2>/dev/null || true
   rm -rf "$work"
+  [[ $ns_touched -eq 1 ]] || return "$rc"
+  # What a kept namespace must not hold on to: the loader pod and a finished Job mount the ReadWriteOnce driver volume.
+  # An unfinished Job (keep_job=1) stays for the reader.
+  if [[ $keep_job -eq 0 ]]; then k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --wait=false >/dev/null 2>&1 || true; fi
+  k delete pod e2e-driver-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  if [[ ${KEEP_NS:-0} == 1 || ( $rc -ne 0 && ${KEEP_NS_ON_FAIL:-0} == 1 ) || $rc -eq 2 ]]; then
+    printf '\nnamespace %s kept. Delete it with: kubectl %s delete namespace %s (tests/e2e/sweep.sh removes it after %s h)\n' \
+      "$ns" "${ctx:+--context=$ctx}" "$ns" "${SWEEP_MAX_AGE_HOURS:-6}" >&2
+    return "$rc"
+  fi
+  # Deleting the namespace removes the Job and its pods, the CNPG cluster, the PVCs, sandboxes and secrets with it.
+  log "delete namespace $ns"
+  kc delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || echo "could not delete namespace $ns; run tests/e2e/sweep.sh" >&2
+  for _ in $(seq 1 "${NS_DELETE_WAIT_SECONDS:-300}"); do
+    kc get namespace "$ns" >/dev/null 2>&1 || { gone=1; break; }
+    sleep 1
+  done
+  [[ $gone -eq 1 ]] && echo "namespace $ns is gone" || echo "namespace $ns is still terminating; tests/e2e/sweep.sh will retry" >&2
+  return "$rc"
 }
 trap cleanup EXIT
 
 # Empty KUBE_CONTEXT means the current context; fail early if there is none.
 kubectl config get-contexts ${ctx:-"$(kubectl config current-context)"} >/dev/null
 
-# Per-sandbox sandboxd tokens (docs/decisions/0001-per-sandbox-sandboxd-token.md): every suite creates claims that
-# carry a token hash, which the template accepts only with envVarsInjectionPolicy Allowed.
-[[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
-  echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
-  exit 1
-}
-[[ $(k get sandboxtemplate pi-env-template -o jsonpath='{.spec.envVarsInjectionPolicy}' 2>/dev/null) == Allowed ]] || {
-  echo "SandboxTemplate pi-env-template does not allow claim env: apply deploy/ (kubectl apply -k deploy)" >&2
-  exit 1
-}
+# ------------------------------------------------------------------ 0. the run namespace and its stack
+# Orphans of killed runs go first (this run's namespace does not exist yet). Never fails the run.
+[[ ${SKIP_SWEEP:-0} == 1 ]] || "$here/sweep.sh" || echo "sweep failed (ignored)" >&2
 
-# ------------------------------------------------------------------ 1. build and push (Mac-only work)
-log "driver identity, RBAC and code volume"
-kubectl ${ctx:+--context="$ctx"} apply -k "$here/driver" >/dev/null
+branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null | tr -c 'A-Za-z0-9._/\n-' '_' || true)
+if kc get namespace "$ns" >/dev/null 2>&1; then
+  [[ -n $(kc get namespace "$ns" -l pi-durable-e2e=true -o name 2>/dev/null) ]] || {
+    echo "namespace $ns exists but is not an e2e run namespace (label pi-durable-e2e=true); refusing to use it" >&2
+    exit 1
+  }
+  log "reusing namespace $ns"
+else
+  log "create namespace $ns"
+fi
+ns_touched=1
+# The label is what the OneCLI ingress policy (argo-c2, docs/e2e.md) and the sweeper select on. It must exist before the
+# first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts.
+kc apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: $ns
+  labels:
+    pi-durable-e2e: "true"
+    app.kubernetes.io/managed-by: pi-e2e
+  annotations:
+    pi-durable-e2e/branch: "${branch:-unknown}"
+    pi-durable-e2e/suite: "${1:-}"
+EOF
+
+# One overlay per run: the repository's stack (tests/e2e/deploy, which includes deploy/ and tests/e2e/driver) with
+# `namespace:` set. kustomize wants relative paths and resolves symlinks (a macOS temp dir is one), so both ends are resolved first.
+relpath() { python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$1" "$2"; }
+mkdir -p "$work/stack" "$work/cilium"
+printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
+  "$ns" "$(relpath "$here/deploy" "$work/stack")" >"$work/stack/kustomization.yaml"
+printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
+  "$ns" "$(relpath "$root/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
+
+log "stack: CiliumNetworkPolicies, network policies, RBAC, Postgres, template, ingest, orchestrator (at 0), driver identity"
+# CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
+kc apply -k "$work/cilium" >/dev/null
+kc apply -k "$work/stack" >/dev/null
 # A Job left by an earlier killed run would hold the code volume (ReadWriteOnce).
 k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=foreground --wait=true >/dev/null
 
+log "secrets"
+# sandboxd-auth and api-auth are random per run, made in the namespace (never copied from pi-durable-poc, never printed).
+NAMESPACE=$ns "$root/deploy/gen-secret.sh" >/dev/null
+NAMESPACE=$ns "$root/deploy/gen-api-secret.sh" >/dev/null
+# pi-onecli, pi-onecli-admin and pi-github-app are ExternalSecrets on the ClusterSecretStore: ESO copies them in. The
+# orchestrator reads them optionally and only once at start, so they must be Ready before it starts (push-code.sh below).
+if ! k wait --for=condition=Ready externalsecret --all --timeout=120s >/dev/null 2>&1; then
+  echo "WARNING: some ExternalSecrets are not Ready (kubectl -n $ns get externalsecret); suites that need OneCLI or GitHub will SKIP or fail" >&2
+fi
+# The gateway CA (public) from OneCLI itself, for the orchestrator's model calls and MCP. Only the suites that use OneCLI need it.
+if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/fetch-onecli-ca.sh" >"$work/ca.log" 2>&1; then
+  if [[ ${REAL_MODEL:-0} == 1 ]] || has_phase phase4c || has_phase mcp; then
+    cat "$work/ca.log" >&2
+    echo "could not fetch the OneCLI CA, and this suite needs it" >&2
+    exit 1
+  fi
+  echo "WARNING: could not fetch the OneCLI CA (ignored: the suites selected do not call OneCLI)" >&2
+fi
+
+# Per-sandbox sandboxd tokens (docs/decisions/0001-per-sandbox-sandboxd-token.md): every suite creates claims that
+# carry a token hash, which the template accepts only with envVarsInjectionPolicy Allowed.
+[[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
+  echo "secret sandboxd-auth has no master key in $ns" >&2
+  exit 1
+}
+[[ $(k get sandboxtemplate pi-env-template -o jsonpath='{.spec.envVarsInjectionPolicy}' 2>/dev/null) == Allowed ]] || {
+  echo "SandboxTemplate pi-env-template in $ns does not allow claim env" >&2
+  exit 1
+}
+
 if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp; then
-  log "test overlay, api-auth secret, orchestrator and ingest code (build + push on the Mac)"
-  "$root/deploy/gen-api-secret.sh" >/dev/null
-  # CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
-  kubectl ${ctx:+--context="$ctx"} apply -k "$root/deploy/cilium" >/dev/null
-  kubectl ${ctx:+--context="$ctx"} apply -k "$here/deploy" >/dev/null
-  "$root/deploy/push-code.sh" >/dev/null
-  "$root/deploy/push-ingest.sh" >/dev/null
+  log "orchestrator and ingest code (build + push on the Mac)"
+  NAMESPACE=$ns "$root/deploy/push-code.sh" >/dev/null
+  NAMESPACE=$ns "$root/deploy/push-ingest.sh" >/dev/null
 fi
 
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"
@@ -184,7 +272,7 @@ run_phase() { # phase1|phase3|phase4
   # Let the stream flush its tail, then print whatever it did not show from the final logs.
   for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$follow_pid" 2>/dev/null || break; sleep 1; done
   touch "$work/$name.stop"
-  pkill -f "logs -f job/$job" 2>/dev/null || true
+  pkill -f -- "-n $ns logs -f job/$job" 2>/dev/null || true
   kill "$follow_pid" 2>/dev/null || true # no-op when it already ended; stops a follower stuck in its wait loop
   wait "$follow_pid" 2>/dev/null || true
   if k logs "job/$job" >"$work/$name.full" 2>&1; then
