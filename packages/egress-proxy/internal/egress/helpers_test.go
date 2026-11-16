@@ -197,6 +197,9 @@ type envOpts struct {
 	rules  func(origin, upstream string) map[string][]HostRule // addresses host:port
 	dns    fakeResolver
 	tweak  func(*smokescreen.Config)
+	// upstream replaces the fake OneCLI address; handshake the CONNECT timeout.
+	upstream  string
+	handshake time.Duration
 }
 
 func newEnv(t *testing.T, o envOpts) *env {
@@ -222,12 +225,17 @@ func newEnv(t *testing.T, o envOpts) *env {
 		t.Fatal(err)
 	}
 	dns := o.dns
+	upAddr := up.ln.Addr().String()
+	if o.upstream != "" {
+		upAddr = o.upstream
+	}
 	p, err := Build(Options{
-		Principals:   st,
-		Policy:       st,
-		UpstreamAddr: up.ln.Addr().String(),
-		MaxTunnelAge: o.maxAge,
-		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Principals:               st,
+		Policy:                   st,
+		UpstreamAddr:             upAddr,
+		UpstreamHandshakeTimeout: o.handshake,
+		MaxTunnelAge:             o.maxAge,
+		Log:                      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Tweak: func(c *smokescreen.Config) {
 			c.Resolver = dns
 			if o.tweak != nil {

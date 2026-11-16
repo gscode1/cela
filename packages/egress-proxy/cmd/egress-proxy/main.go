@@ -47,6 +47,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	handshake, err := durationEnv("EGRESS_UPSTREAM_HANDSHAKE_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return err
+	}
 	static, err := egress.LoadStatic(policyFile)
 	if err != nil {
 		return fmt.Errorf("policy file: %w", err)
@@ -58,7 +62,9 @@ func run() error {
 		UpstreamAddr: upstream,
 		MaxTunnelAge: maxAge,
 		IdleTimeout:  idle,
-		Log:          log,
+
+		UpstreamHandshakeTimeout: handshake,
+		Log:                      log,
 		Tweak: func(c *smokescreen.Config) {
 			if err := c.InitializeSelfConnectionDetection(); err != nil {
 				log.Warn("self-connection detection unavailable", "err", err)

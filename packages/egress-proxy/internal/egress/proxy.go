@@ -30,7 +30,11 @@ type Options struct {
 	MaxTunnelAge   time.Duration
 	ConnectTimeout time.Duration
 	IdleTimeout    time.Duration
-	Log            *slog.Logger
+	// UpstreamHandshakeTimeout bounds the CONNECT exchange with the upstream
+	// (default 10 s). Without it an upstream that accepts TCP but never
+	// answers would hold the tunnel until MaxTunnelAge.
+	UpstreamHandshakeTimeout time.Duration
+	Log                      *slog.Logger
 	// Tweak lets tests adjust the Smokescreen config (resolver, address ranges).
 	Tweak func(*smokescreen.Config)
 }
@@ -56,6 +60,9 @@ func Build(o Options) (*Proxy, error) {
 	}
 	if o.ConnectTimeout == 0 {
 		o.ConnectTimeout = 10 * time.Second
+	}
+	if o.UpstreamHandshakeTimeout == 0 {
+		o.UpstreamHandshakeTimeout = 10 * time.Second
 	}
 	p := &Proxy{
 		Registry:    NewRegistry(o.MaxTunnelAge),
@@ -192,6 +199,11 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 		}
 		dialer := net.Dialer{Timeout: p.opts.ConnectTimeout}
 		c, err = dialer.DialContext(context.Background(), network, addr)
+		if err == nil {
+			// goproxy has no hook between its CONNECT write and the tunnel
+			// being established, so the wrapper clears the deadline itself.
+			c = newHandshakeConn(c, p.opts.UpstreamHandshakeTimeout)
+		}
 	} else {
 		if addr != d.OutboundHost {
 			return nil, errors.New("direct route may only dial the requested destination")
@@ -257,4 +269,40 @@ func (d *decider) Decide(a acl.DecideArgs) (acl.Decision, error) {
 		}
 	}
 	return acl.Decision{Result: acl.Allow, Reason: "allowed, route " + string(route)}, nil
+}
+
+// handshakeConn applies a deadline to the CONNECT exchange with the upstream
+// and clears it once the response header (ending in a blank line) has been
+// read, so the established tunnel is bounded only by idle time and max age.
+// goproxy reads the response on the same goroutine that then starts the
+// tunnel, so no locking is needed.
+type handshakeConn struct {
+	net.Conn
+	done bool
+	tail [3]byte
+	n    int // valid bytes in tail
+}
+
+func newHandshakeConn(c net.Conn, timeout time.Duration) *handshakeConn {
+	_ = c.SetDeadline(time.Now().Add(timeout))
+	return &handshakeConn{Conn: c}
+}
+
+func (h *handshakeConn) Read(b []byte) (int, error) {
+	n, err := h.Conn.Read(b)
+	if h.done || n == 0 {
+		return n, err
+	}
+	// Scan the previous 3 bytes plus the new ones for the header terminator.
+	buf := append(append(make([]byte, 0, h.n+n), h.tail[:h.n]...), b[:n]...)
+	if strings.Contains(string(buf), "\r\n\r\n") {
+		h.done = true
+		_ = h.Conn.SetDeadline(time.Time{})
+		return n, err
+	}
+	if len(buf) > 3 {
+		buf = buf[len(buf)-3:]
+	}
+	h.n = copy(h.tail[:], buf)
+	return n, err
 }

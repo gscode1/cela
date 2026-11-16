@@ -398,3 +398,45 @@ func TestMaxTunnelAge(t *testing.T) {
 		t.Errorf("ended after %v", d)
 	}
 }
+
+// An upstream that accepts TCP but never answers CONNECT must fail the client
+// within the handshake timeout, not hold the tunnel until max age.
+func TestUpstreamHandshakeTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	e := newEnv(t, envOpts{handshake: 300 * time.Millisecond, upstream: ln.Addr().String()})
+	start := time.Now()
+	c, _, code, _ := connect(t, e.proxyAddr, "svc.example:443", basic(tokA))
+	_ = c.Close()
+	if code == http.StatusOK {
+		t.Fatalf("status = %d, want an error", code)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %v, want about the 300ms handshake timeout", d)
+	}
+}
+
+// The handshake deadline must be cleared once the tunnel is established.
+func TestUpstreamHandshakeDeadlineClearedAfterTunnel(t *testing.T) {
+	e := newEnv(t, envOpts{handshake: 300 * time.Millisecond})
+	c, br, code, _ := connect(t, e.proxyAddr, "svc.example:443", basic(tokA))
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	time.Sleep(700 * time.Millisecond)
+	if got := get(t, c, br, "/"); got != http.StatusOK {
+		t.Fatalf("GET after the handshake window = %d", got)
+	}
+}
