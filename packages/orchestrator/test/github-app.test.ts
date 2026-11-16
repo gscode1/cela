@@ -70,7 +70,12 @@ describe("loadGithubApp", () => {
   it("names the missing file and rejects non-numeric ids", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gh-app-"));
     dirs.push(dir);
-    await expect(loadGithubApp(dir)).rejects.toThrow(/app-id is missing/);
+    await expect(loadGithubApp(dir)).rejects.toThrow(
+      /app-id, installation-id, private-key\.pem are missing/,
+    );
+    await writeFile(join(dir, "app-id"), "1");
+    await writeFile(join(dir, "installation-id"), "1");
+    await expect(loadGithubApp(dir)).rejects.toThrow(/private-key\.pem is missing/);
     await writeFile(join(dir, "app-id"), "not-a-number");
     await writeFile(join(dir, "installation-id"), "1");
     await writeFile(join(dir, "private-key.pem"), "k");
