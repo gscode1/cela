@@ -3,7 +3,6 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: e2e-driver
-  namespace: pi-durable-poc
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn-static

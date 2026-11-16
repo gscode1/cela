@@ -1,5 +1,6 @@
 import type { SessionRef } from "@pi-durable-k8s/session-core";
 import { UUID } from "@pi-durable-k8s/session-core";
+import { DEFAULT_ONECLI_NAME_PREFIX, namePatterns } from "./onecli-names.js";
 
 /**
  * The decision half of the orphan sweep (docs/decisions/0002-orphan-sweep.md): which sandbox resources have no
@@ -9,7 +10,9 @@ import { UUID } from "@pi-durable-k8s/session-core";
  * Only three kinds of object are ever candidates, and only by exact name or label pattern:
  *  - a SandboxClaim `pi-conv-<n>` whose `pi-durable-k8s/session-id` label is a session UUID;
  *  - a PVC `workspace-pi-conv-<n>` for which no SandboxClaim of that name exists;
- *  - a OneCLI agent `pi-session-<uuid>` and its secrets `pi-session-<uuid>-git` / `-api`.
+ *  - a OneCLI agent `<prefix><uuid>` and its secrets `<prefix><uuid>-git` / `-api`, where the prefix is this
+ *    orchestrator's own (`pi-session-` by default). Names with any other prefix belong to another stack that shares
+ *    the OneCLI workspace and are never judged.
  * Anything else is left alone: unlabelled claims (the e2e Phase 1 claim `e2e-phase1`), `control-<n>` labels of
  * the test-only control sessions, other namespaces' naming schemes.
  *
@@ -48,6 +51,8 @@ export interface SweepInput {
   /** Undefined when OneCLI is not configured: no agent is judged. */
   agents: readonly SweepAgent[] | undefined;
   secrets: readonly SweepSecret[];
+  /** This orchestrator's OneCLI name prefix; see `onecli-names.ts`. Default `pi-session-`. */
+  namePrefix?: string | undefined;
   now: number;
   /** An object younger than this is never touched, so a session being created cannot race the sweep. */
   graceMs: number;
@@ -73,10 +78,11 @@ export type SweepAction =
 
 const CLAIM_NAME = /^pi-conv-(\d+)$/;
 const PVC_NAME = /^workspace-(pi-conv-(\d+))$/;
-const AGENT_IDENTIFIER = /^pi-session-([0-9a-f-]{36})$/;
-const SECRET_NAME = /^pi-session-([0-9a-f-]{36})-(git|api)$/;
 
 export function planSweep(input: SweepInput): SweepAction[] {
+  const { agent: AGENT_IDENTIFIER, secret: SECRET_NAME } = namePatterns(
+    input.namePrefix ?? DEFAULT_ONECLI_NAME_PREFIX,
+  );
   const bySession = new Map(input.sessions.map((s) => [s.id, s]));
   const byConversation = new Map(
     input.sessions.flatMap((s) => (s.conversationId === null ? [] : [[s.conversationId, s]])),

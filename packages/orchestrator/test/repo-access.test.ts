@@ -63,7 +63,9 @@ function githubApi(): FetchLike {
   };
 }
 
-function access(over: { onecli?: OneCliAdmin | undefined } = {}): RepoAccess {
+function access(
+  over: { onecli?: OneCliAdmin | undefined; namePrefix?: string | undefined } = {},
+): RepoAccess {
   return new RepoAccess({
     pool,
     onecli:
@@ -74,6 +76,7 @@ function access(over: { onecli?: OneCliAdmin | undefined } = {}): RepoAccess {
     gateway: "http://onecli.onecli:10255",
     caFile: join(dir, "ca.pem"),
     fetch: githubApi(),
+    namePrefix: over.namePrefix,
     now: () => clock,
   });
 }
@@ -312,6 +315,25 @@ describe("teardown", () => {
     await access().teardown(session());
     expect([...onecli.agents.values()].map((a) => a.identifier)).toEqual([agentIdentifier(other)]);
     expect(onecli.secretNamed(`${agentIdentifier(other)}-git`)).toBeDefined();
+  });
+});
+
+describe("name prefix", () => {
+  it("names the agent and secrets with the prefix, and teardown touches only that prefix's objects", async () => {
+    const e2e = "pi-e2e-ab12cd-";
+    await access().shellEnv(session(), 7);
+    await access({ namePrefix: e2e }).shellEnv(session(), 7);
+    const prefixed = agentIdentifier(SESSION, e2e);
+    expect(prefixed).toBe(`pi-e2e-ab12cd-${SESSION}`);
+    expect([...onecli.agents.values()].map((a) => a.identifier).sort()).toEqual([prefixed, NAME]);
+    expect(onecli.secretNamed(`${prefixed}-git`)).toBeDefined();
+    await access({ namePrefix: e2e }).teardown(session());
+    expect([...onecli.agents.values()].map((a) => a.identifier)).toEqual([NAME]);
+    expect(onecli.secretNamed(`${NAME}-git`)).toBeDefined();
+  });
+
+  it("refuses an invalid prefix at construction", () => {
+    expect(() => access({ namePrefix: "Bad_" })).toThrow(/PI_ONECLI_NAME_PREFIX/);
   });
 });
 

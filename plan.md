@@ -295,7 +295,7 @@ packages/
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
 deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployment
 images/sandbox/     # image with the pi-env daemon
-tests/e2e/          # restart, double-owner, long-command, sandbox-loss; run.sh <phase1|phase3|phase4|all> runs them as an in-cluster Job
+tests/e2e/          # restart, double-owner, long-command, sandbox-loss; run.sh <phase1|phase3|phase4|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
 ```
 
 Extract `sandbox-env` into its own package once it passes the env conformance suite; it is the piece most useful to others.

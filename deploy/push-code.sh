@@ -2,6 +2,7 @@
 # Bundle the orchestrator and copy it onto the orchestrator-code PVC, so the stock node image can run it and
 # a pod restart keeps the code. No image is built or pushed. The orchestrator Deployment (if present) is
 # scaled to 0 while the volume is written, because a ReadWriteOnce volume is mounted by one node at a time.
+# NAMESPACE (default pi-durable-poc) picks the target; every e2e run passes its own pi-e2e-<id>.
 # Usage: deploy/push-code.sh [deployment...]   (default: pi-orchestrator; scaled back to 1 afterwards)
 set -euo pipefail
 

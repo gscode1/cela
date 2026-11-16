@@ -1,12 +1,39 @@
-# Test overlay: the base plus the orchestrator's test-only switches. The suites pick the scripted default model
-# through PUT /admin/settings (model settings live in Postgres), not through the ConfigMap.
-# Applied by tests/e2e/run-phase3.sh and run-phase4.sh during setup.
-#   kubectl apply -k tests/e2e/deploy
+# The stack of one e2e run: the base deploy/ plus the e2e driver (tests/e2e/driver), the orchestrator's test-only
+# switches and smaller resource requests. It carries no namespace of its own: tests/e2e/run.sh generates a tiny overlay
+# that sets `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is. The suites
+# pick the scripted default model through PUT /admin/settings (model settings live in Postgres), not through the ConfigMap.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../deploy
+  - ../driver
 patches:
+  # run.sh creates the Namespace itself (labels and an annotation for the sweeper, before any Pod exists).
+  - target: { kind: Namespace }
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: unused
+  # Start at 0: deploy/push-code.sh scales the orchestrator to 1 once the code is on the volume, after the secrets
+  # exist (a Pod that starts before an optional secret does would never see it).
+  - target: { kind: Deployment, name: pi-orchestrator }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+  # The cluster is small. Requests (what the scheduler reserves) are lowered; limits stay as in production.
+  - target: { kind: Deployment, name: pi-orchestrator }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: { cpu: 50m, memory: 192Mi }
+  - target: { kind: Cluster, name: pi-pg }
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests
+        value: { cpu: 50m, memory: 192Mi }
   - target: { kind: Deployment, name: pi-orchestrator }
     patch: |-
       - op: add

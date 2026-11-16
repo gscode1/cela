@@ -1,15 +1,13 @@
-# The e2e driver Job's identity: exactly what tests/e2e/run-phase{1,3,4}.sh do, in pi-durable-poc only.
+# The e2e driver Job's identity: exactly what tests/e2e/run-phase{1,3,4}.sh do, in its own run namespace only.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: e2e-driver
-  namespace: pi-durable-poc
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: e2e-driver
-  namespace: pi-durable-poc
 rules:
   # Orchestrator, ingest, sandbox and runner pods: look, wait, delete (kill tests), create the Phase 1 runner.
   - apiGroups: [""]
@@ -50,11 +48,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: e2e-driver
-  namespace: pi-durable-poc
 subjects:
   - kind: ServiceAccount
     name: e2e-driver
-    namespace: pi-durable-poc
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

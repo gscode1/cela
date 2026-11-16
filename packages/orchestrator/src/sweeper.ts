@@ -14,6 +14,8 @@ export interface SweeperDeps {
   revokeSession: (sessionId: string) => Promise<void>;
   graceMs: number;
   maxActions: number;
+  /** The OneCLI name prefix of this orchestrator; only names with it are judged. */
+  namePrefix?: string | undefined;
   now?: () => number;
 }
 
@@ -75,6 +77,7 @@ export class OrphanSweeper {
         // A failed or unconfigured OneCLI listing leaves agents alone.
         agents: oneCli?.agents,
         secrets: oneCli?.secrets ?? [],
+        namePrefix: d.namePrefix,
         now: d.now?.() ?? Date.now(),
         graceMs: d.graceMs,
         maxActions: d.maxActions,

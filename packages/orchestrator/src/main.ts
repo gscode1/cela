@@ -108,6 +108,7 @@ async function main(): Promise<void> {
     gateway: config.onecli.gateway,
     caFile: config.onecli.caFile,
     fetch: callApi,
+    namePrefix: config.repos.namePrefix,
   });
   const skills = new SkillLibrary(pool);
   const hooks: SandboxHooks = {
@@ -189,6 +190,7 @@ async function main(): Promise<void> {
     revokeSession: (sessionId) => repos.revokeSession(sessionId),
     graceMs: config.sweep.graceMs,
     maxActions: config.sweep.maxActions,
+    namePrefix: config.repos.namePrefix,
   });
   running.sweeper = sweeper;
   sweeper.start(config.sweep.intervalMs);

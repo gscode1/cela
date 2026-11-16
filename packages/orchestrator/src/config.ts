@@ -2,6 +2,7 @@ import { loadModelPolicy } from "@pi-durable-k8s/session-core";
 import type { ModelPolicy } from "@pi-durable-k8s/session-core";
 import { GITHUB_APP_DIR } from "./github-app.js";
 import type { OneCliCallPolicy } from "./onecli-admin.js";
+import { DEFAULT_ONECLI_NAME_PREFIX, validateNamePrefix } from "./onecli-names.js";
 import { parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
 
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
@@ -70,6 +71,11 @@ export interface OrchestratorConfig {
     githubAppDir: string;
     /** Per-call bounds on the OneCLI management API (PI_ONECLI_TIMEOUT_SECONDS, _RETRIES, _BACKOFF_MS). */
     onecliCalls: OneCliCallPolicy;
+    /**
+     * Prefix of this orchestrator's OneCLI agent and secret names (`PI_ONECLI_NAME_PREFIX`). Stacks that share a OneCLI
+     * workspace need different ones, or each one's orphan sweep revokes the other's agents (ADR 0013).
+     */
+    namePrefix: string;
   };
 }
 
@@ -184,6 +190,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
         backoffMs: count(env, "PI_ONECLI_BACKOFF_MS", 500, 60_000),
         maxBackoffMs: 5_000,
       },
+      namePrefix: validateNamePrefix(env.PI_ONECLI_NAME_PREFIX ?? DEFAULT_ONECLI_NAME_PREFIX),
     },
   };
 }

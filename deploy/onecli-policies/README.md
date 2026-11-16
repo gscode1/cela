@@ -14,6 +14,9 @@ path of `argo-c2` and let Argo sync them.
 - `egress.yaml`: DNS to kube-dns, the onecli database on `postgres-clusters/pg-db-cluster`, and an FQDN allowlist on
   :443. Everything else, including cluster, LAN and node addresses, is denied.
 
+e2e run namespaces (`pi-e2e-<id>`, label `pi-durable-e2e=true`) need two more ingress entries in argo-c2, described in
+`docs/e2e.md` ("The argo-c2 change"). This copy is not changed until argo-c2 has them.
+
 Prerequisites and order (details in `docs/network-policy.md`):
 
 1. Cilium is the CNI and `kubectl get crd ciliumnetworkpolicies.cilium.io` succeeds. Until then these manifests fail to

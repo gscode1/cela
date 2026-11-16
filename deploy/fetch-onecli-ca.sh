@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fill ConfigMap `onecli-ca` in pi-durable-poc with the OneCLI gateway CA. The orchestrator trusts it for the
+# Fill ConfigMap `onecli-ca` in $NAMESPACE (default pi-durable-poc; e2e runs use pi-e2e-<id>) with the OneCLI gateway CA. The orchestrator trusts it for the
 # certificates the gateway presents for model hosts. The CA is public (no auth): OneCLI v2 serves it at
 # GET :10256/v1/gateway/ca (v1.45 served it on :10254). The CA persists in OneCLI's data volume, so this runs once
 # and again only if OneCLI's data is recreated. Read-only against OneCLI. Usage: deploy/fetch-onecli-ca.sh

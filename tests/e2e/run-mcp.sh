@@ -29,7 +29,7 @@
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 sessions_file=$work/sessions

@@ -21,13 +21,13 @@
 #   idle-suspend         an idle sandbox is Suspended (Pod gone, PVC kept) and the next message resumes it, file intact
 #   orphan-sweep         orphaned labelled claims and their PVCs are removed; unlabelled claims and live sessions stay
 #
-# Touches only namespace pi-durable-poc. Secrets stay in the
+# Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Secrets stay in the
 # cluster: nothing here reads or prints them. Throwaway sessions, claims and PVCs are deleted on exit.
 # Exit code: 0 when every test passed, 1 otherwise.
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd) # the driver volume mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
 work=$(mktemp -d)

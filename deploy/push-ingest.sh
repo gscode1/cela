@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bundle ingest (with its workspace dependency session-core) into ConfigMap `ingest-code`, which the
 # pi-ingest Deployment unpacks in an initContainer. No image is built or pushed. Restarts the pods when the
-# bundle changed. Usage: deploy/push-ingest.sh
+# bundle changed. NAMESPACE (default pi-durable-poc) picks the target; every e2e run passes its own pi-e2e-<id>.
+# Usage: deploy/push-ingest.sh
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}

@@ -10,6 +10,7 @@ Files:
 | `deploy/networkpolicy.yaml` | default-deny both ways, DNS, sandbox policies | `kubectl apply -k deploy` |
 | `deploy/networkpolicy-{ingest,orchestrator,postgres,e2e}.yaml` | per-workload allows | `kubectl apply -k deploy` |
 | `deploy/cilium/` | kube-apiserver entity egress, DNS to kube-dns | `kubectl apply -k deploy/cilium` (needs Cilium CRDs, so it is not in `deploy/kustomization.yaml`) |
+| `tests/e2e/run.sh` | the same policies, in every e2e run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`), see `docs/e2e.md` | the run applies `deploy/` and `deploy/cilium` with the namespace set |
 | `deploy/onecli-policies/` | `onecli` namespace ingress and egress (FQDN allowlist) | your Argo repo, see its README |
 | `deploy/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | OneCLI v2 `allow ...` then `block *` | by hand, operator machine |
 
