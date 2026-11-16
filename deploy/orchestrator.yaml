@@ -1,4 +1,6 @@
-# One replica, Recreate: the Postgres adapter allows a single owner per schema.
+# One replica, Recreate: the Postgres adapter allows a single owner per schema. This is shard 0, the only shard of a
+# default stack. More shards are Deployments `pi-orchestrator-<k>` cloned from this one by deploy/add-shard.sh, each
+# owning its own schema `durable_s<k>` (docs/decisions/0017-schema-sharding.md).
 # Code comes from the orchestrator-code PVC (deploy/push-code.sh), so no image is pushed.
 # The DB URI comes from the CNPG-generated secret pi-pg-app and is never printed.
 apiVersion: apps/v1

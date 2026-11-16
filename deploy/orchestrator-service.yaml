@@ -1,6 +1,8 @@
 # HTTP surface of the orchestrator, ClusterIP, inside the namespace only: /healthz, /readyz, the SSE stream
 # (ingest proxies it; bearer token and owner are checked again here) and the test-only /control surface.
-# Only the pod that owns the Postgres schema is Ready, so the Service always points at the owner.
+# Only the pod that owns the Postgres schema is Ready, so the Service always points at the owner. This one is shard 0
+# (it keeps the name of a single-shard stack); deploy/add-shard.sh adds `pi-orchestrator-0` (the same pods) and
+# `pi-orchestrator-<k>` for ingest's {shard} URL template (docs/decisions/0017-schema-sharding.md).
 apiVersion: v1
 kind: Service
 metadata:
