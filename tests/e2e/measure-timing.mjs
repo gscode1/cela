@@ -5,6 +5,7 @@
 //   node tests/e2e/measure-timing.mjs --file orchestrator.log        (offline: a saved log, "-" for stdin)
 //
 // Read-only: the only kubectl call is `kubectl logs`. Runs on the Mac; needs Node 20+ and kubectl, nothing else.
+/* global console, process */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
