@@ -35,7 +35,8 @@ export function branchError(branch: string): string | undefined {
     branch.includes("//") ||
     branch.endsWith("/") ||
     branch.endsWith(".") ||
-    branch.endsWith(".lock") ||
+    // git check-ref-format: no component may end in `.lock`, not only the last one.
+    branch.split("/").some((component) => component.endsWith(".lock")) ||
     branch.includes("/.")
   ) {
     return "branch is not a valid ref name";

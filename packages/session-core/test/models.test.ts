@@ -85,6 +85,16 @@ describe("reasoning effort", () => {
     });
   });
 
+  it("does not let a slash-joined provider/model pair match a different allowed pair", () => {
+    const policy = loadModelPolicy({ PI_MODEL_ALLOWLIST: "openrouter/openai/gpt-4.1-nano" });
+    expect(chooseModel(policy, { provider: "openrouter", model: "openai/gpt-4.1-nano" })).toEqual(
+      expect.objectContaining({ provider: "openrouter", model: "openai/gpt-4.1-nano" }),
+    );
+    expect(chooseModel(policy, { provider: "openrouter/openai", model: "gpt-4.1-nano" })).toMatch(
+      /not allowed/,
+    );
+  });
+
   it("rejects an unknown level at start", () => {
     expect(() => loadModelPolicy({ PI_MODEL_REASONING: "max" })).toThrow(/PI_MODEL_REASONING/);
   });

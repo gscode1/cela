@@ -33,4 +33,16 @@ describe("parseEventBody", () => {
       /sourceEventId/,
     );
   });
+
+  it("answers 400 for strings Postgres cannot store", () => {
+    for (const bad of ["a\u0000b", "a\ud800b", "a\udc00b", "\ud83d"]) {
+      expect(parseEventBody({ kind: "message", text: bad })).toMatch(/text must not contain/);
+      expect(parseEventBody({ kind: "message", text: "ok", sourceEventId: bad })).toMatch(
+        /sourceEventId must not contain/,
+      );
+    }
+    expect(parseEventBody({ kind: "message", text: "ok \u{1F600}" })).toEqual(
+      expect.objectContaining({ payload: { text: "ok \u{1F600}" } }),
+    );
+  });
 });

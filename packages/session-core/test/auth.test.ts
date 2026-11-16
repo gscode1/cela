@@ -23,6 +23,21 @@ describe("tokenAuthenticator", () => {
     expect(await auth({ authorization: "Bearer aaaaaaaaaaaaaaaaaaab" })).toBeUndefined();
   });
 
+  it("refuses tokens that can never be presented, without echoing them", () => {
+    for (const spec of [
+      "alice: abcdefghijklmnop",
+      "alice:abcdefgh ijklmnop",
+      "alice:abcdefghijklmnop\u00a0x",
+    ]) {
+      expect(() => tokenAuthenticator(spec)).toThrow(/entry 1.*no whitespace/);
+      try {
+        tokenAuthenticator(spec);
+      } catch (error) {
+        expect(String(error)).not.toContain("abcdefgh");
+      }
+    }
+  });
+
   it("refuses weak or malformed configuration without echoing the token", () => {
     expect(() => tokenAuthenticator("")).toThrow(/no API tokens/);
     expect(() => tokenAuthenticator("alice:short")).toThrow(/entry 1/);
