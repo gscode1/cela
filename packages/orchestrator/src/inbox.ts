@@ -21,6 +21,8 @@ export function deleteRetryDelayMs(attempt: number): number {
 }
 
 export type ApplyEvent = (event: InboxEvent, session: SessionRow) => Promise<void>;
+/** The slow, idempotent work an input needs before it is submitted. Runs outside any transaction. */
+export type PrepareEvent = (event: InboxEvent, session: SessionRow) => Promise<void>;
 
 /**
  * The orchestrator's side of the inbox. It claims `pending` rows, hands each to Pi Durable (the row id is the
@@ -28,7 +30,11 @@ export type ApplyEvent = (event: InboxEvent, session: SessionRow) => Promise<voi
  * already `submitted` is never touched again, so a run that died is never re-run from here.
  *
  *  - Wake-up: LISTEN on `inbox_events` (sent by a trigger on insert) plus a short poll as the safety net.
- *  - Claim: one transaction per session batch, `FOR UPDATE SKIP LOCKED`, oldest first. The row locks are held
+ *  - Prepare: before the claim, with no transaction and no pool client held, the session's slow idempotent work
+ *    (repo workspace: OneCLI agent, token, clone) runs for the first input of the batch (docs/decisions/0005). It
+ *    writes nothing the claim depends on; a crash leaves the rows `pending` and the retry runs it again. A failure
+ *    is recorded on that row exactly as a failure in apply is.
+ *  - Claim: one short transaction per session batch, `FOR UPDATE SKIP LOCKED`, oldest first. The row locks are held
  *    until the rows are marked, so a crash in between rolls the batch back to `pending`; the retry submits
  *    with the same `requestId` and Pi Durable returns the original submission.
  *  - Ordering: one drain per session at a time, rows in (created_at, id) order. A transient failure stops
@@ -39,6 +45,7 @@ export type ApplyEvent = (event: InboxEvent, session: SessionRow) => Promise<voi
 export class InboxLoop {
   readonly #pool: pg.Pool;
   readonly #apply: ApplyEvent;
+  readonly #prepare: PrepareEvent | undefined;
   readonly #inFlight = new Set<string>();
   /** Sessions whose failing delete waits out its backoff (epoch ms). In memory: a restart simply retries at once. */
   readonly #notBefore = new Map<string, number>();
@@ -48,9 +55,10 @@ export class InboxLoop {
   #again = false;
   #stopped = false;
 
-  constructor(pool: pg.Pool, apply: ApplyEvent) {
+  constructor(pool: pg.Pool, apply: ApplyEvent, prepare?: PrepareEvent) {
     this.#pool = pool;
     this.#apply = apply;
+    this.#prepare = prepare;
   }
 
   start(): void {
@@ -64,7 +72,7 @@ export class InboxLoop {
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#listener?.removeAllListeners();
     this.#listener?.release(true);
-    // Let drains in flight finish their current row: they hold row locks and a transaction.
+    // Let drains in flight finish their current step: a claim holds row locks and a transaction.
     while (this.#inFlight.size > 0) await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
@@ -128,13 +136,17 @@ export class InboxLoop {
     }
   }
 
-  /** Claims and applies batches for one session until none is pending. True if it made progress. */
+  /** Prepares, then claims and applies batches for one session until none is pending. True if it made progress. */
   async #drain(sessionId: string): Promise<boolean> {
     let progressed = false;
     while (!this.#stopped) {
-      const client = await this.#pool.connect();
-      let finished = true;
+      const prep = await this.#prepareHead(sessionId);
+      if (prep === "none") return progressed;
+      // A row that ended `failed` is progress; one left pending for a retry is not (no hot loop).
+      if (prep.gaveUp) progressed = true;
+      let finished = prep.blocked === undefined;
       let submitted = 0;
+      const client = await this.#pool.connect();
       try {
         await client.query("begin");
         const { rows } = await client.query<EventDbRow>(
@@ -150,8 +162,12 @@ export class InboxLoop {
           return progressed;
         }
         for (const row of rows) {
-          const event = toEvent(row);
-          const outcome = await this.#applyRow(client, event);
+          // The row whose prepare failed was already recorded; the rows behind it must not overtake it.
+          if (row.id === prep.blocked) {
+            finished = false;
+            break;
+          }
+          const outcome = await this.#applyRow(client, toEvent(row));
           if (outcome === "retry-later") {
             finished = false;
             break;
@@ -173,6 +189,43 @@ export class InboxLoop {
       if (!finished) return progressed;
     }
     return progressed;
+  }
+
+  /**
+   * The prepare phase of one drain step, on the pool with no transaction: reads the pending rows without locking
+   * them and prepares for the first input that precedes any delete (a session about to be deleted is not worth a
+   * clone). Prepare is per session, so one run covers every input of the batch, including rows that arrive meanwhile.
+   * A failure is recorded on that input's row (`blocked` when it stays pending, so the claim stops in front of it).
+   */
+  async #prepareHead(sessionId: string): Promise<"none" | { blocked?: string; gaveUp?: boolean }> {
+    const { rows } = await this.#pool.query<EventDbRow>(
+      `select * from inbox.events
+        where session_id = $1 and status = 'pending'
+        order by created_at, id
+        limit $2`,
+      [sessionId, BATCH],
+    );
+    if (rows.length === 0) return "none";
+    const prepare = this.#prepare;
+    if (prepare === undefined) return {};
+    let head: InboxEvent | undefined;
+    for (const row of rows) {
+      if (row.kind === "delete") break;
+      if (row.kind === "message" || row.kind === "steer") {
+        head = toEvent(row);
+        break;
+      }
+    }
+    if (head === undefined) return {};
+    try {
+      const session = await getSession(this.#pool, sessionId);
+      // A missing session is apply's PermanentError; there is nothing to prepare for it.
+      if (session !== undefined) await prepare(head, session);
+      return {};
+    } catch (error) {
+      const outcome = await this.#recordFailure(this.#pool, head, error);
+      return outcome === "gave-up" ? { gaveUp: true } : { blocked: head.id };
+    }
   }
 
   async #touchSession(sessionId: string): Promise<void> {
@@ -206,24 +259,34 @@ export class InboxLoop {
       log("event-submitted", { eventId: event.id, session: event.sessionId, kind: event.kind });
       return "submitted";
     } catch (error) {
-      const message = errorMessage(error).slice(0, 500);
-      const permanent =
-        error instanceof PermanentError || (attempt >= MAX_ATTEMPTS && event.kind !== "delete");
-      if (!permanent && event.kind === "delete") {
-        this.#notBefore.set(event.sessionId, Date.now() + deleteRetryDelayMs(attempt));
-      }
-      await client.query(
-        "update inbox.events set status = $2, attempts = $3, error = $4 where id = $1",
-        [event.id, permanent ? "failed" : "pending", attempt, message],
-      );
-      log("event-failed", {
-        eventId: event.id,
-        session: event.sessionId,
-        attempt,
-        permanent,
-        message,
-      });
-      return permanent ? "gave-up" : "retry-later";
+      return this.#recordFailure(client, event, error);
     }
+  }
+
+  /** A failed event becomes the row's outcome: `failed` when it can never succeed, else `pending` with one more attempt. */
+  async #recordFailure(
+    db: Pick<pg.Pool, "query">,
+    event: InboxEvent,
+    error: unknown,
+  ): Promise<"gave-up" | "retry-later"> {
+    const attempt = event.attempts + 1;
+    const message = errorMessage(error).slice(0, 500);
+    const permanent =
+      error instanceof PermanentError || (attempt >= MAX_ATTEMPTS && event.kind !== "delete");
+    if (!permanent && event.kind === "delete") {
+      this.#notBefore.set(event.sessionId, Date.now() + deleteRetryDelayMs(attempt));
+    }
+    await db.query(
+      "update inbox.events set status = $2, attempts = $3, error = $4 where id = $1 and status = 'pending'",
+      [event.id, permanent ? "failed" : "pending", attempt, message],
+    );
+    log("event-failed", {
+      eventId: event.id,
+      session: event.sessionId,
+      attempt,
+      permanent,
+      message,
+    });
+    return permanent ? "gave-up" : "retry-later";
   }
 }

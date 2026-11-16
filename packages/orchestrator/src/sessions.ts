@@ -242,6 +242,21 @@ export class SessionService {
     }
   }
 
+  /**
+   * The slow, idempotent part of an input, run by the inbox *before* it claims the row, so no transaction or pool
+   * connection is held while it runs: for a repo session the OneCLI agent, the GitHub token and the clone. Safe to run
+   * again at any point (a crash, a retry, two orchestrators): objects are found by name, an existing clone is kept.
+   * Throws what `apply` would have thrown for it; the inbox turns that into the row's outcome.
+   */
+  async prepare(event: InboxEvent, session: SessionRow): Promise<void> {
+    if (event.kind !== "message" && event.kind !== "steer") return;
+    // Only a session `apply` would run the input for; the others end in `apply` with their own outcome.
+    if (session.status === "failed" || session.status === "deleted" || session.repo === null)
+      return;
+    if (typeof event.payload.text !== "string" || event.payload.text === "") return;
+    await this.#prepareRepo(session, await this.ensureConversation(session));
+  }
+
   /** Applies one inbox event. Resolves when it is durably handed over; throws PermanentError if it never can be. */
   async apply(event: InboxEvent, session: SessionRow): Promise<void> {
     if (session.status === "deleted") {
@@ -266,8 +281,7 @@ export class SessionService {
         }
         const conversationId = await this.ensureConversation(session);
         await this.#withinBudget(session, conversationId);
-        // Before the first turn: OneCLI agent, token and clone. A session without a repo skips all of it.
-        if (session.repo !== null) await this.#prepareRepo(session, conversationId);
+        // The repo workspace was prepared by `prepare`, outside the inbox transaction (ADR 0005).
         const requestId = event.id;
         const faultArmed =
           this.#options.testFaults && event.payload.testFault === "exit-after-submit";
