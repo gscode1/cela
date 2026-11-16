@@ -15,15 +15,29 @@ export class StartGate {
     this.#maxHoldMs = maxHoldMs;
   }
 
-  /** Resolves on this caller's turn. The returned release hands the turn on; calling it again is a no-op. */
-  async acquire(): Promise<() => void> {
+  /**
+   * Resolves on this caller's turn. The returned release hands the turn on; calling it again is a no-op. Aborting
+   * `signal` while waiting gives the turn up at once and rejects: a waiter that is gone must not take the gate later
+   * and hold it until `maxHoldMs`.
+   */
+  async acquire(signal?: AbortSignal): Promise<() => void> {
     let release: () => void = () => undefined;
     const mine = new Promise<void>((resolve) => {
       release = resolve;
     });
     const previous = this.#tail;
     this.#tail = previous.then(() => mine);
-    await previous;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      const cancel = (): void => {
+        release();
+        reject(new Error("start gate wait cancelled"));
+      };
+      if (signal?.aborted === true) cancel();
+      else signal?.addEventListener("abort", cancel, { once: true });
+    });
+    // Nobody may be waiting on `cancelled` any more once `previous` won; it must not become an unhandled rejection.
+    cancelled.catch(() => undefined);
+    await Promise.race([previous, cancelled]);
     const timer = setTimeout(release, this.#maxHoldMs);
     timer.unref();
     return () => {
@@ -38,13 +52,14 @@ export interface GatedStart {
   command: () => Promise<readonly string[]>;
   /** For `ConnectionOptions.onLog`: frees the gate when the bridge reports ready. */
   onLog: (text: string) => void;
-  /** Frees the gate if this connection still holds it (on close). */
+  /** On close: frees the gate if this connection holds it, and cancels a turn it is still waiting for. */
   release: () => void;
 }
 
 /** Wires one connection's bridge launches through `gate`; every respawn takes a new turn. */
 export function gatedStart(gate: StartGate, argv: readonly string[]): GatedStart {
   let release: (() => void) | undefined;
+  let waiting: AbortController | undefined;
   const free = (): void => {
     release?.();
     release = undefined;
@@ -52,12 +67,22 @@ export function gatedStart(gate: StartGate, argv: readonly string[]): GatedStart
   return {
     command: async () => {
       free();
-      release = await gate.acquire();
+      const mine = new AbortController();
+      waiting = mine;
+      try {
+        release = await gate.acquire(mine.signal);
+      } finally {
+        if (waiting === mine) waiting = undefined;
+      }
       return argv;
     },
     onLog: (text) => {
       if (text.includes(BRIDGE_READY)) free();
     },
-    release: free,
+    release: () => {
+      // A command() still waiting for its turn must give it up, or it would take the gate after the close.
+      waiting?.abort();
+      free();
+    },
   };
 }
