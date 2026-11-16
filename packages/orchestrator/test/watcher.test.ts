@@ -80,3 +80,29 @@ describe("RunWatcher", () => {
     expect(ended[0]?.outcome.detail).toBe('{"turns":3}');
   });
 });
+
+describe("RunWatcher with a stalled handler", () => {
+  it("still handles another watch while one handler has not finished", async () => {
+    const stalled = Promise.withResolvers<undefined>();
+    const handled: string[] = [];
+    const watcher = new RunWatcher({
+      lookup: () => Promise.resolve({ status: "unanswered", reason: "aborted" }),
+      onUnanswered: async (w) => {
+        handled.push(w.requestId);
+        if (w.requestId === "slow") await stalled.promise;
+      },
+    });
+    watcher.add({ sessionId: "a", conversationId: 1, requestId: "slow" });
+    watcher.add({ sessionId: "b", conversationId: 2, requestId: "fast" });
+    const first = watcher.poll(); // blocks on the slow handler
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(handled).toEqual(["slow", "fast"]); // the lookups went on past the slow handler
+    await watcher.poll(); // a later tick must not wait for it, nor run it twice
+    expect(handled).toEqual(["slow", "fast"]);
+    expect(watcher.size).toBe(1);
+    stalled.resolve(undefined);
+    await first;
+    expect(watcher.size).toBe(0);
+    watcher.stop();
+  }, 5_000);
+});

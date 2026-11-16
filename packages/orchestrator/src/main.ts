@@ -20,6 +20,8 @@ import { InboxLoop } from "./inbox.js";
 import { listClaims, listPvcs } from "./kube.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
+import { createShutdown } from "./shutdown.js";
+import type { Running } from "./shutdown.js";
 import { openStorageWhenFree } from "./storage.js";
 import { OrphanSweeper } from "./sweeper.js";
 
@@ -38,22 +40,16 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   log("listening", { instance: config.instance, port: config.port });
 
-  const running: { inbox?: InboxLoop; service?: SessionService; sweeper?: OrphanSweeper } = {};
+  const running: Running = {};
   const stop = new AbortController();
-  const shutdown = (signal: string): void => {
-    log("shutdown", { signal });
-    stop.abort();
-    server.close();
-    void (async () => {
-      running.service?.stop();
-      running.sweeper?.stop();
-      await running.inbox?.stop();
-      await lifecycle.host?.close();
-      server.closeAllConnections();
-      await pool.end().catch(() => undefined);
-    })().finally(() => process.exit(0));
-    setTimeout(() => process.exit(0), 10_000).unref();
-  };
+  const shuttingDown = (): boolean => stop.signal.aborted;
+  const shutdown = createShutdown({
+    running,
+    stop,
+    server,
+    pool,
+    exit: (code) => process.exit(code),
+  });
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 
@@ -108,7 +104,7 @@ async function main(): Promise<void> {
   // Durable resumes (docs/decisions/0003-recycle-pod-on-interrupt.md).
   const recycleAtStart = await conversationsWithExecInFlight(pool);
   if (recycleAtStart.length > 0) log("recycle-at-start", { conversations: recycleAtStart });
-  const host = await Host.open(
+  const opening = Host.open(
     storage,
     config,
     (error) => {
@@ -121,6 +117,11 @@ async function main(): Promise<void> {
     hooks,
     recycleAtStart,
   );
+  // Visible to the signal handler before Host.open settles, so a shutdown in that window still closes the host.
+  running.opening = opening;
+  const host = await opening;
+  running.host = host;
+  if (shuttingDown()) return;
   const service = new SessionService(pool, host, {
     testFaults: config.testFaults,
     defaultModel: config.models.default,
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
   await service.recoverWatches().catch((error: unknown) => {
     log("run-watch-recover-failed", { message: errorMessage(error) });
   });
+  if (shuttingDown()) return; // shutdown began during recovery: do not start the sweeper and inbox after it
   lifecycle.host = host;
   lifecycle.service = service;
   lifecycle.state = "owner";

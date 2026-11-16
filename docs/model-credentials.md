@@ -110,8 +110,8 @@ model.
   It is set once, not applied every turn. A change through `configure` applies from the next request.
 - It is stored as names and **resolved against `Models` at every use**. So every provider a stored conversation may
   name has to be installed at every start. A provider that is gone makes the run fail with `no_model`. This is why the
-  orchestrator installs all allowlisted providers (and the scripted ones) at start, and why removing a model from the
-  allowlist stops new sessions only: existing conversations keep it.
+  orchestrator installs every builtin provider (when the OneCLI token is set) and the scripted ones at start, and why removing a model from the
+  allowlist stops new sessions only: existing conversations keep it, even when it was the provider's last allowed model.
 - The turn limit is `maxTurns` (tool rounds per run, `configure({ maxTurns })`). Pi has no per-session total, so the
   budget below counts assistant entries in the stored transcript and sets `maxTurns` to what is left.
 

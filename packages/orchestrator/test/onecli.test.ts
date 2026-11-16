@@ -39,6 +39,17 @@ describe("placeholderAuthContext", () => {
   });
 });
 
+describe("NO_PROXY matching of IPv6 literals", () => {
+  it("matches bare and bracketed entries, with and without a port", () => {
+    const noProxy = parseNoProxy("::1,[fd00::5]:8080,[0:0:0:0:0:0:0:2]");
+    expect(bypassesProxy(new URL("http://[::1]:9000/"), noProxy)).toBe(true);
+    expect(bypassesProxy(new URL("http://[fd00::5]:8080/"), noProxy)).toBe(true);
+    expect(bypassesProxy(new URL("http://[fd00::5]:9090/"), noProxy)).toBe(false);
+    expect(bypassesProxy(new URL("http://[::2]/"), noProxy)).toBe(true);
+    expect(bypassesProxy(new URL("http://[::3]/"), noProxy)).toBe(false);
+  });
+});
+
 describe("NO_PROXY matching", () => {
   const noProxy = parseNoProxy(
     " .svc, kubernetes.default ,pi-pg-rw,10.0.0.0/8,.cluster.local,db:5432",

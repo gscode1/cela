@@ -56,7 +56,7 @@ spec:
               valueFrom: { secretKeyRef: { name: api-auth, key: tokens } }
             # Model calls go through the OneCLI gateway with this agent token (an ExternalSecret from secret-store,
             # deploy/onecli-externalsecret.yaml). Optional so the scripted model runs without it. It is read from the
-            # environment once and never logged; bridge-launcher strips it from every bridge child.
+            # environment once and never logged; the bridge is started with a trimmed environment (bridgeCommand).
             - name: ONECLI_AGENT_TOKEN
               valueFrom: { secretKeyRef: { name: pi-onecli, key: agent-token, optional: true } }
             # Phase 4c: management API key for per-session OneCLI agents (repo sessions only; optional).

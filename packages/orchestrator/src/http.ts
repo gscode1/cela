@@ -93,12 +93,16 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
       sendJson(res, 404, { error: "session not found" });
       return;
     }
-    if (session.status === "deleted") {
+    // `deleting` is refused too: deletion closes the open streams once, so one admitted afterwards would never end.
+    if (session.status === "deleted" || session.status === "deleting") {
       sendJson(res, 410, { error: "session deleted" });
       return;
     }
     const conversationId = await service.ensureConversation(session);
-    await serveStream(req, res, host, service.streams, session.id, conversationId);
+    await serveStream(req, res, host, service.streams, session.id, conversationId, async () => {
+      const current = await getSession(deps.pool, session.id);
+      return current !== undefined && current.status !== "deleted" && current.status !== "deleting";
+    });
     return;
   }
 

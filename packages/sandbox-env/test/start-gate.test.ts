@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BRIDGE_READY } from "../src/bridge.ts";
+import { freeGateOnBridgeLog } from "../src/index.ts";
 import { StartGate, gatedStart } from "../src/start-gate.ts";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -106,4 +107,26 @@ describe("gatedStart", () => {
     await a.command();
     a.release();
   });
+});
+
+describe("freeGateOnBridgeLog", () => {
+  it("frees the gate when the bridge reports a failed start, so other sandboxes are not held up", async () => {
+    const gate = new StartGate(5_000);
+    const failing = gatedStart(gate, ["bridge"]);
+    await failing.command();
+    freeGateOnBridgeLog(failing, "bridge: cannot start pi-env: spawn failed\n");
+    const started = Date.now();
+    (await gate.acquire())();
+    expect(Date.now() - started).toBeLessThan(1_000);
+  }, 10_000);
+
+  it("keeps the gate held for unrelated output until the bridge is ready", async () => {
+    const gate = new StartGate(200);
+    const start = gatedStart(gate, ["bridge"]);
+    await start.command();
+    freeGateOnBridgeLog(start, "some warning\n");
+    const started = Date.now();
+    (await gate.acquire())();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  }, 10_000);
 });

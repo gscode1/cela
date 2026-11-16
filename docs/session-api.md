@@ -149,8 +149,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   right name and another or no label is refused, and never deleted by session deletion. (Claims that predate this
   label are therefore not adopted; the claim name `pi-conv-<conversation id>` alone proves nothing.)
 - The bridge processes (one Node process per session with a sandbox) are started through
-  `bridge-launcher.js`, which gives them only `PI_SANDBOX_AUTH_TOKEN` (the token of their own claim, derived from the
-  master key; see `docs/decisions/0001-per-sandbox-sandboxd-token.md`), the in-cluster Kubernetes endpoint, `PATH`
+  `/usr/bin/env -i` (`bridgeCommand` in `bridge-launcher.ts`), which gives them only `PI_SANDBOX_AUTH_TOKEN` (the token
+  of their own claim, derived by the orchestrator from the master key; see `docs/decisions/0001-per-sandbox-sandboxd-token.md`), the in-cluster Kubernetes endpoint, `PATH`
   and `HOME`. The database URL, the API tokens, the OneCLI agent token and the sandbox master key are not in their
   environment (checked by the e2e suite in `/proc/<pid>/environ`).
 - An existing claim is adopted only if its `SANDBOXD_AUTH_TOKEN_SHA256` env matches the token hash the orchestrator
@@ -209,7 +209,7 @@ retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per sessi
 ### Orphan sweep
 
 What deletion missed is removed by a periodic sweep in the orchestrator (`docs/decisions/0002-orphan-sweep.md`): every
-`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off) it removes SandboxClaims `pi-conv-<n>` labelled with a session UUID, workspace
+`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off; every seconds setting is at most 2147483, a larger one is refused at start) it removes SandboxClaims `pi-conv-<n>` labelled with a session UUID, workspace
 PVCs `workspace-pi-conv-<n>` without a claim, and OneCLI agents `pi-session-<uuid>` with their secrets, when the session
 is `deleted` or has no row, and the object is older than `PI_SWEEP_GRACE_SECONDS` (600). At most `PI_SWEEP_MAX_ACTIONS`
 (10) per run; each action is one `sweep-action` log line. Unlabelled claims, `control-<n>` labels and every other name are

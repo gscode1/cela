@@ -1,5 +1,6 @@
 import type { Storage } from "@earendil-works/pi-durable";
 import { openNodePostgresStorage } from "@netzlabor/pi-durable-postgres";
+import { createPool } from "@pi-durable-k8s/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 
@@ -25,23 +26,59 @@ export function poolConfig(config: OrchestratorConfig): Record<string, unknown> 
 const LOCK_HELD = /only one owner is supported|in use/;
 
 /**
+ * The adapter's lock query uses `current_schema()`, which is NULL when the schema does not exist, and reports that
+ * as "in use or its schema does not exist". Only a lookup of the schema tells the two apart.
+ */
+async function schemaExists(config: OrchestratorConfig): Promise<boolean> {
+  const pool = createPool(config.databaseUrl, `${config.instance}-schema-probe`, 1);
+  try {
+    const { rowCount } = await pool.query("select 1 from pg_namespace where nspname = $1", [
+      config.schema,
+    ]);
+    return rowCount === 1;
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
+export interface StorageDeps {
+  open: (config: OrchestratorConfig) => Promise<Storage>;
+  schemaExists: (config: OrchestratorConfig) => Promise<boolean>;
+}
+
+const REAL: StorageDeps = {
+  open: (config) => openNodePostgresStorage({ config: poolConfig(config) }),
+  schemaExists,
+};
+
+/**
  * Opens the storage, and waits while another orchestrator owns the schema. The adapter refuses a
  * second owner immediately instead of blocking, so "blocking on the lock" is this retry loop. Other
  * failures (database not reachable yet) are retried the same way; secrets are never in these messages.
+ * A schema that does not exist is logged as such, not as a held lock.
  */
 export async function openStorageWhenFree(
   config: OrchestratorConfig,
   signal: AbortSignal,
   retryMs = 2_000,
+  deps: StorageDeps = REAL,
 ): Promise<Storage> {
   let waitingLogged = false;
   for (;;) {
     signal.throwIfAborted();
     try {
-      return await openNodePostgresStorage({ config: poolConfig(config) });
+      return await deps.open(config);
     } catch (error) {
       const message = errorMessage(error);
-      if (LOCK_HELD.test(message)) {
+      const missing =
+        LOCK_HELD.test(message) && !(await deps.schemaExists(config).catch(() => true));
+      if (missing) {
+        log("storage-schema-missing", {
+          instance: config.instance,
+          schema: config.schema,
+          message,
+        });
+      } else if (LOCK_HELD.test(message)) {
         if (!waitingLogged) log("waiting-for-lock", { instance: config.instance });
         waitingLogged = true;
       } else {

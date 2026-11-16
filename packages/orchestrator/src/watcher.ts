@@ -33,6 +33,8 @@ export class RunWatcher {
   readonly #pending = new Map<string, Watched>();
   #timer: NodeJS.Timeout | undefined;
   #polling = false;
+  /** Submissions whose handler is running: later passes leave them alone. */
+  readonly #handling = new Set<string>();
 
   constructor(options: RunWatcherOptions) {
     this.#options = options;
@@ -53,12 +55,18 @@ export class RunWatcher {
     this.#timer = undefined;
   }
 
-  /** One pass over the pending submissions. Exposed so tests need no timers. */
+  /**
+   * One pass over the pending submissions. Exposed so tests need no timers. The lookups run one after the other, but a
+   * handler runs on its own: `onUnanswered` aborts the run and resolves only once the conversation is idle, which can
+   * take as long as a tool call, and must not hold back the failure detection of every other watch.
+   */
   async poll(): Promise<void> {
     if (this.#polling) return;
     this.#polling = true;
+    const handlers: Promise<void>[] = [];
     try {
       for (const [key, watched] of [...this.#pending]) {
+        if (this.#handling.has(key)) continue;
         try {
           const state = await this.#options.lookup(watched.conversationId, watched.requestId);
           if (state === undefined || state.status === "done") {
@@ -70,12 +78,13 @@ export class RunWatcher {
                 : state.detail === undefined
                   ? undefined
                   : JSON.stringify(state.detail);
-            await this.#options.onUnanswered(watched, {
-              reason: state.reason,
-              ...(detail === undefined ? {} : { detail }),
-            });
-            // Only now: a handler that threw leaves the watch in place, so the failure is not lost.
-            this.#pending.delete(key);
+            this.#handling.add(key);
+            handlers.push(
+              this.#handle(key, watched, {
+                reason: state.reason,
+                ...(detail === undefined ? {} : { detail }),
+              }),
+            );
           }
         } catch (error) {
           // Keep it pending: a storage hiccup must not lose the watch, nor crash the orchestrator.
@@ -84,7 +93,20 @@ export class RunWatcher {
       }
     } finally {
       this.#polling = false;
-      if (this.#pending.size === 0) this.stop();
+    }
+    await Promise.all(handlers);
+    if (this.#pending.size === 0) this.stop();
+  }
+
+  async #handle(key: string, watched: Watched, outcome: RunOutcome): Promise<void> {
+    try {
+      await this.#options.onUnanswered(watched, outcome);
+      // Only now: a handler that threw leaves the watch in place, so the failure is not lost.
+      this.#pending.delete(key);
+    } catch (error) {
+      this.#options.onError?.(error);
+    } finally {
+      this.#handling.delete(key);
     }
   }
 }
