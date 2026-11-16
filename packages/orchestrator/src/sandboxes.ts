@@ -76,6 +76,14 @@ export class Sandboxes {
   readonly #interrupted = new Set<number>();
   /** A recycle or suspend under way. Calls wait for it before opening the env, so none reaches a dying Pod. */
   readonly #replacing = new Map<number, Promise<void>>();
+  /**
+   * Recycles that failed and are still owed, with the work to run again. While an entry exists the old Pod may hold the
+   * leftovers of an interrupted command (ADR 0003), so no call may run until a retry has succeeded.
+   */
+  readonly #failed = new Map<
+    number,
+    { why: "interrupted" | "orchestrator-restart"; work: () => Promise<void> }
+  >();
 
   readonly #sessionKeyOf: SessionKeyOf;
   readonly #hooks: SandboxHooks;
@@ -139,7 +147,7 @@ export class Sandboxes {
           let outcome: { threw: true } | { threw: false; result: unknown } | undefined;
           try {
             // A recycle or suspend of this sandbox finishes first; the env opened below is then for the new Pod.
-            await this.#replacing.get(conversationId);
+            await this.#awaitCleanPod(conversationId);
             await this.#hooks.beforeUse?.(conversationId);
             const real = (await this.ensure(conversationId)).env as unknown as Record<
               string,
@@ -204,8 +212,26 @@ export class Sandboxes {
   }
 
   /**
+   * Waits for a replacement under way, then makes sure no recycle is still owed. A failed recycle is retried here, by
+   * the call that needs the Pod; if it fails again the call throws (the inbox retries the input) rather than run in a
+   * Pod that may still hold an interrupted command's leftovers.
+   */
+  async #awaitCleanPod(conversationId: number): Promise<void> {
+    await this.#replacing.get(conversationId);
+    const owed = this.#failed.get(conversationId);
+    if (owed === undefined) return;
+    this.#replace(conversationId, owed.why, owed.work);
+    await this.#replacing.get(conversationId);
+    if (this.#failed.has(conversationId)) {
+      throw new Error(
+        `sandbox ${claimNameFor(conversationId)} could not be recycled after an interrupted command`,
+      );
+    }
+  }
+
+  /**
    * Runs a Pod replacement (recycle) or suspension for a conversation's sandbox. Calls made meanwhile wait for it.
-   * A failure is logged and leaves the conversation to try again: an interrupted one stays queued.
+   * A failure is logged; a failed recycle stays owed in `#failed` and blocks calls until a retry succeeds.
    */
   #replace(
     conversationId: number,
@@ -216,11 +242,12 @@ export class Sandboxes {
     const claim = claimNameFor(conversationId);
     const run = (async () => {
       await work();
+      this.#failed.delete(conversationId);
       this.#lastUsed.delete(conversationId);
       log(why === "idle" ? "sandbox-suspended" : "sandbox-recycled", { claim, why });
     })()
       .catch((error: unknown) => {
-        if (why !== "idle") this.#interrupted.add(conversationId);
+        if (why !== "idle") this.#failed.set(conversationId, { why, work });
         log("sandbox-replace-failed", { claim, why, message: errorMessage(error) });
       })
       .finally(() => this.#replacing.delete(conversationId));
@@ -359,6 +386,7 @@ export class Sandboxes {
   async #teardown(conversationId: number, sessionKey: string): Promise<void> {
     await this.#replacing.get(conversationId);
     this.#interrupted.delete(conversationId);
+    this.#failed.delete(conversationId);
     this.#lastUsed.delete(conversationId);
     const opened = this.#envs.get(conversationId);
     this.#usage.delete(conversationId);
