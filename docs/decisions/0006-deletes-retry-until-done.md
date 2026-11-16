@@ -13,11 +13,13 @@ leaked for good.
 ## Decision
 
 - A `delete` row has no attempt cap. A failing delete is retried with an exponential backoff (1 s doubling to 60 s),
-  kept in memory per session. Only `PermanentError` (the session row is missing or already `deleted`) ends it `failed`.
+  kept in memory per session. Only `PermanentError` (the session row is missing) ends it `failed`; a session that is already `deleted` just gets its tombstone closed.
 - A repeated `DELETE` re-queues a delete row that is `failed` (`requeueFailedDelete`), so rows that failed before this
   change, or a permanent error that was fixed since, can be retried by the client.
 - The sweep is unchanged: it still never touches `deleting` sessions. Deleting is retried by the loop that owns it, so
   a second actor does not race the teardown.
+- `DELETE` writes `status = 'deleting'` and the delete row in one transaction (`beginDelete`), so a crash between them
+  cannot leave a `deleting` session with no delete row. A repeated `DELETE` also heals a session already stuck that way.
 - The server's delete row has its own dedup source (`system:delete`, session id), so a client-chosen `sourceEventId`
   such as `delete:<id>` cannot occupy its key.
 
@@ -27,7 +29,8 @@ leaked for good.
   is visible, where the old behaviour was silent leakage. It also holds that session's inbox batch (other sessions are
   unaffected). A session in `deleting` accepts no new events anyway.
 - Delete rows written before this carry `api:<owner>` / `delete:<id>`; they stay valid and a new `DELETE` adds a row
-  under the new key. A second delete row for a session that is by then `deleted` ends `failed` ("session is deleted"):
-  harmless.
+  under the new key. A second delete row for a session that is by then `deleted` completes the tombstone if it is still open and ends
+  `submitted`. (It used to end `failed`, and a delete that died between `status = 'deleted'` and `completeTombstone`
+  could never close its tombstone.)
 - Rejected alternative: letting the sweep finish `deleting` sessions after a grace period. It would duplicate the delete
   path in a second process loop and needs a time-based guess at "stuck".

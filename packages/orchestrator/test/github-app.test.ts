@@ -90,7 +90,12 @@ interface Sent {
   body: Record<string, unknown>;
 }
 
-function github(status: number, body: unknown, sent: Sent[] = []): FetchLike {
+function github(
+  status: number,
+  body: unknown,
+  sent: Sent[] = [],
+  headers: Record<string, string> = {},
+): FetchLike {
   return (url, init) => {
     sent.push({
       url,
@@ -100,6 +105,7 @@ function github(status: number, body: unknown, sent: Sent[] = []): FetchLike {
     });
     return Promise.resolve({
       status,
+      headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
       json: () => Promise.resolve(body),
       text: () => Promise.resolve(JSON.stringify(body)),
     });
@@ -151,6 +157,25 @@ describe("mintInstallationToken", () => {
     await expect(mintInstallationToken(app, "octo/hello", github(201, none), NOW)).rejects.toThrow(
       /0 repositories/,
     );
+  });
+
+  it("treats GitHub rate limiting as retryable, whatever status carries it", async () => {
+    const limited: [number, unknown, Record<string, string>][] = [
+      [429, { message: "slow down" }, {}],
+      [403, { message: "Forbidden" }, { "x-ratelimit-remaining": "0" }],
+      [403, { message: "Forbidden" }, { "retry-after": "30" }],
+      [403, { message: "You have exceeded a secondary rate limit." }, {}],
+    ];
+    for (const [status, body, headers] of limited) {
+      const error = await mintInstallationToken(
+        app,
+        "octo/hello",
+        github(status, body, [], headers),
+        NOW,
+      ).catch((e: unknown) => e as Error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(GithubDeniedError);
+    }
   });
 
   it("classifies answers: 404 and 422 are final, 5xx can be retried, and no message holds a secret", async () => {

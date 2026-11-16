@@ -195,7 +195,15 @@ export class SessionService {
 
   /** Applies one inbox event. Resolves when it is durably handed over; throws PermanentError if it never can be. */
   async apply(event: InboxEvent, session: SessionRow): Promise<void> {
-    if (session.status === "deleted") throw new PermanentError("session is deleted");
+    if (session.status === "deleted") {
+      if (event.kind === "delete") {
+        // A delete that died after marking the session deleted but before closing its tombstone: everything it
+        // removes is gone, so only the bookkeeping is left. Finish that instead of ending the row `failed`.
+        await completeTombstone(this.#pool, session.id);
+        return;
+      }
+      throw new PermanentError("session is deleted");
+    }
     switch (event.kind) {
       case "message":
       case "steer": {

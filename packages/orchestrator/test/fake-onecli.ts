@@ -29,6 +29,8 @@ export class FakeOneCli {
   flatGrants = false;
   /** Pretend deleting a grant does nothing, to prove the verification step fails closed. */
   ignoreRevokes = false;
+  /** Fail reading an agent's grants with a 500, like a transient OneCLI error. */
+  failGrantReads = false;
   #seq = 0;
 
   constructor() {
@@ -69,7 +71,11 @@ export class FakeOneCli {
     if (kind === "agents" && id !== undefined && sub === "grants") {
       const held = this.grants.get(id);
       if (held === undefined) return reply(404, { error: "no agent" });
-      if (subKind === undefined) return reply(200, this.#listGrants(held));
+      if (subKind === undefined) {
+        return this.failGrantReads
+          ? reply(500, { error: "unavailable" })
+          : reply(200, this.#listGrants(held));
+      }
       if (subId === undefined) return reply(404, undefined);
       if (init.method === "PUT") held.secrets.add(subId);
       if (init.method === "DELETE" && !this.ignoreRevokes) {

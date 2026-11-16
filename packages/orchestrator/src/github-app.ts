@@ -27,7 +27,13 @@ export interface InstallationToken {
 export type FetchLike = (
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string },
-) => Promise<{ status: number; json(): Promise<unknown>; text(): Promise<string> }>;
+) => Promise<{
+  status: number;
+  /** Optional: a real fetch Response has it. Read only to tell GitHub's rate limiting from a refusal. */
+  headers?: { get(name: string): string | null };
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}>;
 
 const b64url = (value: Buffer | string): string => Buffer.from(value).toString("base64url");
 
@@ -101,6 +107,15 @@ export async function mintInstallationToken(
     // The body of an error is GitHub's message, never a secret; the request carried none that it would echo.
     const detail = (await response.text().catch(() => "")).slice(0, 200);
     const message = `GitHub refused the installation token for ${repo}: HTTP ${String(response.status)} ${detail}`;
+    // GitHub answers its primary and secondary rate limits with 403 (or 429). That is a wait, not a refusal: failing the
+    // session for good over it would lose every session that mints while the limit lasts (the 50-session load).
+    const rateLimited =
+      response.status === 429 ||
+      (response.status === 403 &&
+        (response.headers?.get("x-ratelimit-remaining") === "0" ||
+          response.headers?.get("retry-after") != null ||
+          /rate limit|abuse detection/i.test(detail)));
+    if (rateLimited) throw new Error(message);
     if (
       response.status === 401 ||
       response.status === 403 ||

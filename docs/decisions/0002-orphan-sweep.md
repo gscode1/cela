@@ -34,7 +34,12 @@ never touched.
 
 - *Grace age.* Nothing younger than `PI_SWEEP_GRACE_SECONDS` (600) is swept, from the object's `creationTimestamp`.
   OneCLI does not report creation times; an agent is judged by its session alone. That is safe because the session row
-  exists before any of its objects does and is never hard-deleted by the API.
+  exists before any of its objects does and is never hard-deleted by the API. That holds only if
+  the session list is read after the object lists: the sweeper lists claims, PVCs and OneCLI first and the sessions
+  last, so a session created while the lists were being read is in the snapshot.
+- *Independent sources.* Kubernetes (claims and PVCs together, since a PVC is orphaned only when no claim of that name
+  exists) and OneCLI are listed separately. A failed listing is logged (`sweep-list-failed`) and only that source is
+  skipped; the other is still swept.
 - *Bounded.* At most `PI_SWEEP_MAX_ACTIONS` (10) per run, claims first, then PVCs, then agents. The rest waits.
 - *Logged.* One `sweep-action` line per action (kind, claim or session id, reason), `sweep-action-failed` with the
   message on error. Names and ids only; no token or secret value is ever in the log (the agent token is not even carried

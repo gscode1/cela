@@ -35,6 +35,8 @@ export interface SandboxHooks {
   shellEnv?: (conversationId: number) => Promise<Record<string, string> | undefined>;
   /** Runs before every call on an open env; renews credentials that are about to expire. */
   beforeUse?: (conversationId: number) => Promise<void>;
+  /** True when the open env was built with credentials that were replaced since; the env is then closed and reopened. */
+  envStale?: (conversationId: number) => boolean;
   /**
    * Durable record of "a command may be running in this conversation's sandbox". Set before a burst of commands
    * starts and cleared once the sandbox is known clean. A process that dies mid-command never clears it, so the
@@ -149,6 +151,16 @@ export class Sandboxes {
             // A recycle or suspend of this sandbox finishes first; the env opened below is then for the new Pod.
             await this.#awaitCleanPod(conversationId);
             await this.#hooks.beforeUse?.(conversationId);
+            // The env's `shellEnv` is fixed when it opens. Only when no other call is using it (this one is the only
+            // user), so a running command is never cut off; otherwise a later call does it.
+            if (usage.inUse === 1 && this.#hooks.envStale?.(conversationId) === true) {
+              log("env-reopen", {
+                claim: claimNameFor(conversationId),
+                reason: "credentials-replaced",
+              });
+              await this.#closeEnv(conversationId);
+              this.#usage.set(conversationId, usage);
+            }
             const real = (await this.ensure(conversationId)).env as unknown as Record<
               string,
               (...a: unknown[]) => unknown

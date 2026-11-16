@@ -7,12 +7,11 @@ import {
   chooseModel,
   chooseRepo,
   createSession,
-  deleteEventKey,
   enqueueEvent,
   errorMessage,
   getSession,
   readJsonObject,
-  requestDelete,
+  beginDelete,
   requeueFailedDelete,
   sendJson,
   summarize,
@@ -245,13 +244,8 @@ async function queueDelete(pool: pg.Pool, session: SessionRow, res: ServerRespon
   }
   // Status first: events are admitted only while the session is active, so once this commits nothing new can be
   // accepted, and the delete row below sorts after every event that was. The delete is an inbox row like any other.
-  await requestDelete(pool, session.id);
-  const result = await enqueueEvent(pool, {
-    sessionId: session.id,
-    ...deleteEventKey(session.id),
-    kind: "delete",
-    payload: {},
-  });
+  // Both writes in one transaction (see beginDelete): never `deleting` without a delete row.
+  const result = await beginDelete(pool, session.id);
   // A repeated DELETE is the client's retry: a delete row that ended `failed` runs again.
   await requeueFailedDelete(pool, session.id);
   const eventId = "eventId" in result ? result.eventId : undefined;

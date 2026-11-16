@@ -252,3 +252,23 @@ describe("idle suspend and resume", () => {
     sandboxes.stop();
   });
 });
+
+describe("credentials replaced under an open env", () => {
+  it("closes the env and opens a new one (with the current shellEnv) before the next call", async () => {
+    let stale = false;
+    const sandboxes = new Sandboxes(config(), () => Promise.resolve("session-key"), {
+      envStale: () => stale,
+    });
+    await exec(sandboxes);
+    expect(sandboxEnv.connectSandboxEnv).toHaveBeenCalledTimes(1);
+    await exec(sandboxes);
+    expect(sandboxEnv.connectSandboxEnv).toHaveBeenCalledTimes(1);
+    expect(closed).toBe(0);
+
+    stale = true;
+    await exec(sandboxes);
+    expect(closed).toBe(1);
+    expect(sandboxEnv.connectSandboxEnv).toHaveBeenCalledTimes(2);
+    sandboxes.stop();
+  });
+});

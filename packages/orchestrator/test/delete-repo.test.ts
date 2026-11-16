@@ -55,6 +55,7 @@ async function setup(repo: SessionRow["repo"]) {
     query: (sql: string) => {
       if (sql.includes("inbox.tombstones") && sql.includes("insert")) order.push("tombstone");
       if (sql.includes("set status = 'deleted'")) order.push("deleted");
+      if (sql.includes("update inbox.tombstones")) order.push("tombstone-completed");
       return Promise.resolve({ rows: [], rowCount: 1 });
     },
   } as unknown as pg.Pool;
@@ -127,7 +128,7 @@ describe("session deletion and OneCLI", () => {
 
     await service.apply(deleteEvent, session);
 
-    expect(order).toEqual(["tombstone", "agent-deleted", "deleted"]);
+    expect(order).toEqual(["tombstone", "agent-deleted", "deleted", "tombstone-completed"]);
     expect(onecli.agents.size).toBe(0);
     expect(
       [...onecli.secrets.values()].some((s) => s.name.startsWith(agentIdentifier(SESSION))),
@@ -139,6 +140,14 @@ describe("session deletion and OneCLI", () => {
     const { onecli, order, service, session } = await setup(null);
     await service.apply(deleteEvent, session);
     expect(onecli.calls).toEqual([]);
-    expect(order).toEqual(["tombstone", "deleted"]);
+    expect(order).toEqual(["tombstone", "deleted", "tombstone-completed"]);
+  });
+
+  it("a delete retried after the session was marked deleted completes the tombstone instead of failing", async () => {
+    const { onecli, order, service, session } = await setup(null);
+    // The previous run died between `status = 'deleted'` and completeTombstone.
+    await service.apply(deleteEvent, { ...session, status: "deleted" });
+    expect(order).toEqual(["tombstone-completed"]);
+    expect(onecli.calls).toEqual([]);
   });
 });

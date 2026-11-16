@@ -51,16 +51,28 @@ export class OrphanSweeper {
     const done: SweepAction[] = [];
     try {
       const d = this.#deps;
-      const [sessions, claims, pvcs, oneCli] = await Promise.all([
-        d.listSessions(),
-        d.listClaims(),
-        d.listPvcs(),
-        d.listOneCli?.(),
+      // Resources first, sessions last. A session row exists before any of its objects does, so a session whose object
+      // was listed here is in a snapshot taken after the listing; the other order let a session created in between
+      // look unknown and have its fresh OneCLI agent revoked (secrets have no grace age).
+      // Kubernetes and OneCLI are listed independently: an outage of one must not stop cleanup in the other. Claims and
+      // PVCs stand or fall together, because a PVC is orphaned only if no claim of that name exists.
+      const [kube, oneCli] = await Promise.all([
+        Promise.all([d.listClaims(), d.listPvcs()]).catch((error: unknown) => {
+          log("sweep-list-failed", { source: "kubernetes", message: errorMessage(error) });
+          return undefined;
+        }),
+        (d.listOneCli?.() ?? Promise.resolve(undefined)).catch((error: unknown) => {
+          log("sweep-list-failed", { source: "onecli", message: errorMessage(error) });
+          return undefined;
+        }),
       ]);
+      const sessions = await d.listSessions();
+      const [claims, pvcs] = kube ?? [[], []];
       const actions = planSweep({
         sessions,
         claims,
         pvcs,
+        // A failed or unconfigured OneCLI listing leaves agents alone.
         agents: oneCli?.agents,
         secrets: oneCli?.secrets ?? [],
         now: d.now?.() ?? Date.now(),

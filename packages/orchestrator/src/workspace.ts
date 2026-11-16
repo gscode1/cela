@@ -61,9 +61,13 @@ export function buildShellEnv(input: { gateway: string; token: Redacted }): Reco
   };
 }
 
-async function isTrue(result: ReturnType<WorkspaceEnv["exists"]>): Promise<boolean> {
-  const checked = await result;
-  return checked.ok && checked.value;
+/**
+ * Whether a path exists. A failed check is thrown, not read as "absent": `exists` answers `ok: true, value: false`
+ * for a missing path, so an error is the bridge or Pod failing, and calling that "workspace lost" would fail a
+ * session for good (or start a needless clone) over a transient fault. The inbox retries the plain Error.
+ */
+async function exists(env: WorkspaceEnv, path: string): Promise<boolean> {
+  return must(env.exists(path, context), `check ${path}`);
 }
 
 async function must<T>(
@@ -126,8 +130,8 @@ export async function prepareWorkspace(
 ): Promise<"cloned" | "present"> {
   const p = pathsFor(options.root ?? WORKSPACE_ROOT);
   await writeCa(env, p, options.ca);
-  const hasRepo = await isTrue(env.exists(`${p.repo}/.git`, context));
-  const hasMarker = await isTrue(env.exists(p.marker, context));
+  const hasRepo = await exists(env, `${p.repo}/.git`);
+  const hasMarker = await exists(env, p.marker);
   if (options.wasReady && (!hasMarker || !hasRepo)) {
     throw new WorkspaceLostError(
       "the session's workspace is missing (repository or marker not found); it is not cloned again",

@@ -29,7 +29,10 @@ sandbox command --HTTPS_PROXY=http://x:<agent token>@onecli.onecli:10255--> gate
 - OneCLI auto-grants LLM keys to a new agent. After creating it the orchestrator grants its two secrets, deletes every
   other grant, reads the grants back and requires exactly those two. If it cannot prove that, it deletes the agent and fails.
 - The token is re-minted on every cold `ensure` (orchestrator restart) and before each tool call when less than 10 minutes remain
-  (`PATCH /v1/secrets/{id}`). The OneCLI agent token is stable for the session and is **readable by the agent** (plan: accepted).
+  (`PATCH /v1/secrets/{id}`). The OneCLI agent token is stable for the session and is **readable by the agent** (plan: accepted). A failed
+  grant check on renewal keeps an agent that an earlier attempt proved narrow (a transient OneCLI error says nothing about
+  its grants); an agent proven still wide is deleted and replaced, and the open env, whose `shellEnv` holds the old
+  token, is then closed and reopened before its next call (`RepoAccess.envStale`).
 - Teardown (`DELETE /sessions/{id}`): tombstone row in `inbox.tombstones` first, then the OneCLI agent (its token dies at
   once), then its secrets (found by stored id and by name), then the claim and PVC. Repeatable after a crash.
 - The admin key is `ONECLI_API_KEY` (Secret `pi-onecli-admin`, key `api-key`), orchestrator only. It is account-level; the plan
@@ -55,8 +58,10 @@ Before the session's first turn (`SessionService.apply`): provision, then `prepa
 Skipped when `/workspace/repo/.git` exists. Otherwise `git clone [--branch b] -- <url> /workspace/.clone-tmp`, then rename to
 `/workspace/repo`, so `.git` exists only for a complete clone. A leftover `.clone-tmp` is removed first. Then
 `/workspace/.pi-workspace.json` is written and `workspace_ready_at` set. A session that was ready but whose marker or
-repository is gone is `failed` ("workspace is missing"), never re-cloned. GitHub refusing the token (repo not in the
-installation) also fails the session; transient errors retry through the inbox (5 attempts).
+repository is gone is `failed` ("workspace is missing"), never re-cloned. Only a check that succeeds and reports the
+path absent counts: a failing check (bridge or Pod error) is a transient error and retries. GitHub refusing the token
+(repo not in the installation) also fails the session; transient errors, GitHub rate limiting (429, or 403 with
+`x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (5 attempts).
 
 ## Unverified
 
