@@ -34,7 +34,8 @@ cleanup() {
   rm -rf "$work"
   if [[ $locked -eq 1 ]]; then
     k delete pod orchestrator-code-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    for i in ${!scaled[@]+"${!scaled[@]}"}; do
+    # Index loop: macOS bash 3.2 has no ${!array[@]} for an empty array under set -u, and ${!name+...} is indirection.
+    for ((i = 0; i < ${#scaled[@]}; i++)); do
       d=${scaled[$i]}
       k scale deployment "$d" --replicas="${restore[$i]}" >/dev/null || echo "could not scale $d back to ${restore[$i]}; run: kubectl -n $ns scale deployment $d --replicas=${restore[$i]}" >&2
     done
