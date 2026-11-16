@@ -55,8 +55,10 @@ Before the session's first turn (`SessionService.apply`): provision, then `prepa
 Skipped when `/workspace/repo/.git` exists. Otherwise `git clone [--branch b] -- <url> /workspace/.clone-tmp`, then rename to
 `/workspace/repo`, so `.git` exists only for a complete clone. A leftover `.clone-tmp` is removed first. Then
 `/workspace/.pi-workspace.json` is written and `workspace_ready_at` set. A session that was ready but whose marker or
-repository is gone is `failed` ("workspace is missing"), never re-cloned. GitHub refusing the token (repo not in the
-installation) also fails the session; transient errors retry through the inbox (5 attempts).
+repository is gone is `failed` ("workspace is missing"), never re-cloned. Only a check that succeeds and reports the
+path absent counts: a failing check (bridge or Pod error) is a transient error and retries. GitHub refusing the token
+(repo not in the installation) also fails the session; transient errors, GitHub rate limiting (429, or 403 with
+`x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (5 attempts).
 
 ## Unverified
 

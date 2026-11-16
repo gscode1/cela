@@ -187,4 +187,21 @@ describe("prepareWorkspace against a fake proxy", () => {
     expect(existsSync(join(root, ".clone-tmp"))).toBe(false);
     expect(existsSync(join(root, ".pi-workspace.json"))).toBe(false);
   });
+
+  it("treats a failing existence check as an error, not as a lost workspace", async () => {
+    await run(); // a ready workspace
+    const flaky = new Proxy(env, {
+      get: (target, property) =>
+        property === "exists"
+          ? () => Promise.resolve({ ok: false, error: new Error("bridge hiccup") })
+          : (target as unknown as Record<string | symbol, unknown>)[property],
+    });
+    const attempt = prepareWorkspace(
+      flaky,
+      { repo: "octo/hello" },
+      { ca, sessionId: "s-1", wasReady: true, root, gitBase: "http://git.example.test" },
+    );
+    await expect(attempt).rejects.toThrow(/bridge hiccup/);
+    await expect(attempt).rejects.not.toBeInstanceOf(WorkspaceLostError);
+  });
 });
