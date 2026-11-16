@@ -382,9 +382,9 @@ export class McpTools {
     return [...this.#servers.values()];
   }
 
-  /** The extensions as installed now, to pass to `configure({ extensions: { add } })`: only the names are stored. */
-  get extensions(): Extension[] {
-    return this.servers.map((server) => server.extension);
+  /** The extension of an enabled server as installed now (only the name is stored), or undefined. */
+  extensionOf(name: string): Extension | undefined {
+    return this.#servers.get(name)?.extension;
   }
 
   /** Makes the installed servers the enabled ones of `catalog`. Cheap when nothing changed. */

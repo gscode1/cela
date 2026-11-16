@@ -512,6 +512,8 @@ describe("Host with MCP", () => {
 
   const MODEL = { provider: "scripted", model: "scripted-1" } as const;
   const CODING = ["read", "write", "edit", "bash"];
+  /** A profile that selects the catalog server `demo` (docs/decisions/0010-session-profiles.md). */
+  const MCP = { mcpServers: ["demo"] };
 
   async function runScript(host: Host, id: number, steps: object[], requestId: string) {
     await host.submitInput(id, {
@@ -543,7 +545,7 @@ describe("Host with MCP", () => {
     catalog.servers = [SPEC];
     const execInFlight = vi.fn(() => Promise.resolve());
     const host = await openHost(fake, catalog, new MemoryStorage(), execInFlight);
-    const id = await host.createConversation(MODEL);
+    const id = await host.createConversation(MODEL, MCP);
     const before = await host.toolsOf(id);
     expect(before.offered).toContain("tool_search");
     expect(before.deferred).toEqual([]);
@@ -578,17 +580,29 @@ describe("Host with MCP", () => {
     expect(execInFlight).not.toHaveBeenCalled();
   });
 
-  it("a server added at runtime reaches only conversations created after it; none restarts", async () => {
+  it("an enabled server reaches only the conversations whose profile names it; a plain conversation never gets MCP", async () => {
+    const fake = new FakeMcp();
+    fake.tools = [ECHO];
+    const catalog = new FakeCatalog();
+    catalog.servers = [SPEC];
+    const host = await openHost(fake, catalog);
+    const plain = await host.createConversation(MODEL);
+    const withMcp = await host.createConversation(MODEL, MCP);
+    await until(async () => (await host.toolsOf(withMcp)).deferred.length > 0, "tools");
+    expect((await host.toolsOf(withMcp)).offered).toContain("tool_search");
+    expect(await host.toolsOf(plain)).toEqual({ offered: CODING, deferred: [] });
+  });
+
+  it("a server named by the profile but missing from the catalog is not fatal: tools are unavailable until it is enabled", async () => {
     const fake = new FakeMcp();
     fake.tools = [ECHO];
     const catalog = new FakeCatalog();
     const host = await openHost(fake, catalog);
-    const before = await host.createConversation(MODEL);
+    const id = await host.createConversation(MODEL, MCP);
+    expect(await host.toolsOf(id)).toEqual({ offered: [...CODING, "tool_search"], deferred: [] });
+    // The stored name selects the installation that appears later.
     catalog.set([SPEC]);
-    const after = await host.createConversation(MODEL);
-    await until(async () => (await host.toolsOf(after)).deferred.length > 0, "tools");
-    expect((await host.toolsOf(after)).offered).toContain("tool_search");
-    expect(await host.toolsOf(before)).toEqual({ offered: CODING, deferred: [] });
+    await until(async () => (await host.toolsOf(id)).deferred.includes("mcp__demo__echo"), "tools");
   });
 
   it("disabling or removing a server makes the next call settle tool_unavailable in a conversation that had it, without a restart", async () => {
@@ -598,7 +612,7 @@ describe("Host with MCP", () => {
     const catalog = new FakeCatalog();
     catalog.servers = [SPEC];
     const host = await openHost(fake, catalog);
-    const id = await host.createConversation(MODEL);
+    const id = await host.createConversation(MODEL, MCP);
     await until(async () => (await host.toolsOf(id)).deferred.includes("mcp__demo__echo"), "tools");
     const step = (requestId: string) =>
       runScript(
@@ -643,7 +657,7 @@ describe("Host with MCP", () => {
     catalog.servers = [SPEC];
     const on = await openHost(fake, catalog, await openNodeJsonlStorage(dir, context));
     await until(
-      async () => (await on.toolsOf(await on.createConversation(MODEL))).deferred.length > 0,
+      async () => (await on.toolsOf(await on.createConversation(MODEL, MCP))).deferred.length > 0,
       "tools",
     );
     expect((await on.toolsOf(old)).offered).not.toContain("tool_search");
@@ -666,7 +680,7 @@ describe("Host with MCP", () => {
       { catalog, mcpTimings: TIMINGS },
     );
     hosts.push(host);
-    const id = await host.createConversation(MODEL);
+    const id = await host.createConversation(MODEL, MCP);
     expect((await host.toolsOf(id)).deferred).toEqual([]);
   });
 });

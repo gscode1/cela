@@ -1,0 +1,273 @@
+import type pg from "pg";
+import { MemoryStorage } from "@earendil-works/pi-durable";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BUILTIN_TOOL_NAMES } from "@pi-durable-k8s/session-core";
+import type { InboxEvent, ProfileDefinition, SessionRow } from "@pi-durable-k8s/session-core";
+import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
+import { publishAndCheckProfiles } from "../src/capabilities.ts";
+import { loadConfig } from "../src/config.ts";
+import { Host } from "../src/host.ts";
+import { definitionOf, PermanentError, SessionService } from "../src/sessions.ts";
+
+const config = loadConfig({
+  PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
+  PI_API_TOKENS: "alice:0123456789abcdef0123",
+  PI_SESSION_TURN_BUDGET: "100",
+});
+const MODEL = { provider: "scripted", model: "scripted-1" } as const;
+
+const hosts: Host[] = [];
+async function openHost(): Promise<Host> {
+  const host = await Host.open(
+    new MemoryStorage(),
+    config,
+    (error) => {
+      throw error;
+    },
+    () => Promise.resolve("session"),
+  );
+  hosts.push(host);
+  return host;
+}
+beforeEach(() => {
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+});
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
+  vi.restoreAllMocks();
+});
+
+const session = (profile: SessionRow["profile"], conversationId: number | null): SessionRow => ({
+  id: "s1",
+  owner: "alice",
+  ownerSubject: "static:alice",
+  status: "active",
+  conversationId,
+  model: MODEL,
+  failure: null,
+  repo: null,
+  onecli: null,
+  workspaceReadyAt: null,
+  profile,
+  createdAt: new Date(),
+  lastActivityAt: new Date(),
+});
+
+const message = (text: string, id: string): InboxEvent => ({
+  id,
+  sessionId: "s1",
+  source: "api:alice",
+  sourceEventId: id,
+  kind: "message",
+  payload: { text },
+  status: "pending",
+  attempts: 0,
+  createdAt: new Date(),
+  submittedAt: null,
+  error: null,
+});
+
+describe("Host: the profile decides tools and instructions", () => {
+  it("two conversations with different profiles get different offered tools and instructions", async () => {
+    const host = await openHost();
+    const plain = await host.createConversation(MODEL);
+    const readOnly = await host.createConversation(MODEL, {
+      tools: ["read"],
+      instructions: "Only read; never edit.",
+    });
+    const split = await host.createConversation(MODEL, {
+      tools: ["read", "bash"],
+      modelTools: ["read"],
+      instructions: "Second profile.",
+    });
+    expect(await host.toolsOf(plain)).toEqual({
+      offered: ["read", "write", "edit", "bash"],
+      deferred: [],
+    });
+    expect((await host.toolsOf(readOnly)).offered).toEqual(["read"]);
+    expect((await host.toolsOf(split)).offered).toEqual(["read"]);
+    expect(await host.instructionsOf(plain)).toBeUndefined();
+    expect(await host.instructionsOf(readOnly)).toBe("Only read; never edit.");
+    expect(await host.instructionsOf(split)).toBe("Second profile.");
+  });
+
+  it("an empty tools list leaves a session with no coding tools, and an unknown tool name never widens it", async () => {
+    const host = await openHost();
+    const none = await host.createConversation(MODEL, { tools: [] });
+    const unknown = await host.createConversation(MODEL, { tools: ["grep"] });
+    expect((await host.toolsOf(none)).offered).toEqual([]);
+    expect((await host.toolsOf(unknown)).offered).toEqual([]);
+  });
+
+  it("MCP servers in the profile add tool_search; none means no tool_search at all", async () => {
+    const host = await openHost();
+    const mcp = await host.createConversation(MODEL, { tools: ["read"], mcpServers: ["demo"] });
+    const none = await host.createConversation(MODEL, { tools: ["read"] });
+    expect((await host.toolsOf(mcp)).offered).toEqual(["read", "tool_search"]);
+    expect((await host.toolsOf(none)).offered).toEqual(["read"]);
+  });
+
+  it("publishes the installed tool names, which equal session-core's built-in list", async () => {
+    const host = await openHost();
+    expect(host.capabilities().tools).toEqual([...BUILTIN_TOOL_NAMES]);
+  });
+});
+
+describe("definitionOf", () => {
+  it("a session without a profile is coding v1: the empty definition", () => {
+    expect(definitionOf(session(null, null))).toEqual({});
+  });
+
+  it("validates the snapshot and refuses one that was edited into something invalid", () => {
+    const ok = session(
+      { name: "r", version: 2, snapshot: { turnBudget: 3, tools: ["read"] } },
+      null,
+    );
+    expect(definitionOf(ok)).toEqual({ tools: ["read"], turnBudget: 3 });
+    for (const snapshot of [{ tools: "read" }, { admin: true }, null, "x"]) {
+      expect(() => definitionOf(session({ name: "r", version: 1, snapshot }, null))).toThrow(
+        PermanentError,
+      );
+    }
+  });
+});
+
+describe("SessionService with profiles", () => {
+  function service(host: Host, turnBudget = 100) {
+    const queries: { sql: string; params: unknown[] }[] = [];
+    const pool = {
+      query: (sql: string, params: unknown[] = []) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      },
+    } as unknown as pg.Pool;
+    return {
+      queries,
+      service: new SessionService(pool, host, {
+        testFaults: false,
+        defaultModel: config.models.default,
+        turnBudget: () => turnBudget,
+      }),
+    };
+  }
+
+  it("creates the conversation from the session row's snapshot, not from anything live; a legacy session gets {}", async () => {
+    const created: [unknown, ProfileDefinition][] = [];
+    const host = {
+      createConversation: (model: unknown, definition: ProfileDefinition) => {
+        created.push([model, definition]);
+        return Promise.resolve(created.length);
+      },
+    } as unknown as Host;
+    const snapshot = { tools: ["read"], instructions: "v1" };
+    const row = { ...session({ name: "research", version: 1, snapshot }, null) };
+    const fake = new FakeSettingsDb();
+    // The database holds the session row, as the service reads it again before creating.
+    fake.sessions.set("s1", {
+      id: "s1",
+      owner: "alice",
+      owner_subject: "static:alice",
+      status: "active",
+      conversation_id: null,
+      model_provider: "scripted",
+      model_id: "scripted-1",
+      model_reasoning: null,
+      failure: null,
+      repo: null,
+      repo_branch: null,
+      onecli_agent_id: null,
+      onecli_secret_ids: null,
+      workspace_ready_at: null,
+      profile_name: "research",
+      profile_version: 1,
+      profile_snapshot: snapshot,
+      created_at: new Date(),
+      last_activity_at: new Date(),
+    });
+    const svc = new SessionService(fake.asPool(), host, {
+      testFaults: false,
+      defaultModel: config.models.default,
+      turnBudget: () => 100,
+    });
+    // `update inbox.sessions set conversation_id` is not part of the fake: let it through.
+    const query = fake.query.bind(fake);
+    fake.query = (sql, params) =>
+      sql.startsWith("update inbox.sessions set conversation_id")
+        ? Promise.resolve({ rows: [], rowCount: 1 })
+        : query(sql, params);
+    expect(await svc.ensureConversation(row)).toBe(1);
+    expect(created[0]).toEqual([MODEL, snapshot]);
+
+    // The same session with no stored profile (it predates profiles).
+    const legacy = fake.sessions.get("s1");
+    if (legacy !== undefined)
+      Object.assign(legacy, { profile_name: null, profile_version: null, profile_snapshot: null });
+    expect(await svc.ensureConversation(session(null, null))).toBe(2);
+    expect(created[1]?.[1]).toEqual({});
+    svc.stop();
+  });
+
+  it("enforces the profile's turn budget instead of the settings'; a legacy session still uses the settings budget", async () => {
+    const host = await openHost();
+    const { service: svc, queries } = service(host, 100);
+    const conversationId = await host.createConversation(MODEL, { turnBudget: 1 });
+    const profiled = session(
+      { name: "tiny", version: 1, snapshot: { turnBudget: 1 } },
+      conversationId,
+    );
+
+    await svc.apply(message("one", "1"), profiled);
+    for (let i = 0; i < 200 && (await host.turnsUsed(conversationId)) < 1; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
+    await expect(svc.apply(message("two", "2"), profiled)).rejects.toThrow(/turn budget exhausted/);
+    expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(true);
+
+    // The same history under a legacy session (settings budget 100) is not exhausted.
+    queries.length = 0;
+    await svc.apply(message("three", "3"), session(null, conversationId));
+    expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
+    svc.stop();
+  });
+});
+
+describe("publishAndCheckProfiles", () => {
+  it("publishes the capabilities and logs the profiles whose tools do not resolve, without failing", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const db = new FakeSettingsDb();
+    db.profiles.set("stale", {
+      name: "stale",
+      current_version: 1,
+      enabled_for_new: true,
+      created_at: new Date(),
+      created_by: "alice",
+      updated_at: new Date(),
+      updated_by: "alice",
+    });
+    db.versions.push({
+      name: "stale",
+      version: 1,
+      definition: { tools: ["grep"], mcpServers: ["gone"] },
+      created_at: new Date(),
+      created_by: "alice",
+    });
+    const unresolved = await publishAndCheckProfiles(
+      db.asPool(),
+      { tools: ["read", "bash"], extensions: ["coding-tools"] },
+      "o1",
+    );
+    expect(unresolved).toEqual(["stale"]);
+    expect(db.capabilities).toMatchObject({ tools: ["read", "bash"], instance: "o1" });
+    const logged = write.mock.calls.map(([line]) => String(line)).join("");
+    expect(logged).toContain("profile-unresolved");
+    expect(logged).not.toContain("gone");
+
+    // A database error is logged, never thrown: the orchestrator starts regardless.
+    db.failReads = true;
+    db.query = () => Promise.reject(new Error("down"));
+    expect(await publishAndCheckProfiles(db.asPool(), { tools: [], extensions: [] }, "o1")).toEqual(
+      [],
+    );
+  });
+});
