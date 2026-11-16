@@ -37,9 +37,11 @@ export function tokenAuthenticator(spec: string): Authenticator {
       const at = line.indexOf(":");
       const owner = at < 0 ? "" : line.slice(0, at);
       const token = at < 0 ? "" : line.slice(at + 1);
-      if (!OWNER.test(owner) || token.length < MIN_TOKEN_LENGTH) {
+      // The bearer header is parsed as `Bearer +(\S+)`, so a token with whitespace (`alice: abc...`) could
+      // never be presented back: refuse it at load instead of leaving that owner locked out silently.
+      if (!OWNER.test(owner) || token.length < MIN_TOKEN_LENGTH || /\s/.test(token)) {
         throw new Error(
-          `API token entry ${String(index + 1)} must be owner:token (token at least ${String(MIN_TOKEN_LENGTH)} characters)`,
+          `API token entry ${String(index + 1)} must be owner:token (token at least ${String(MIN_TOKEN_LENGTH)} characters, no whitespace)`,
         );
       }
       return { owner, hash: digest(token) };
