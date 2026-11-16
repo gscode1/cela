@@ -3,6 +3,7 @@ package egress
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,17 +24,26 @@ func NewRegistry(maxAge time.Duration) *Registry {
 // Track registers c under session and returns the wrapper to use in its place.
 func (r *Registry) Track(session string, c net.Conn) net.Conn {
 	t := &trackedConn{Conn: c, session: session, reg: r}
-	r.mu.Lock()
-	set := r.conns[session]
-	if set == nil {
-		set = map[*trackedConn]struct{}{}
-		r.conns[session] = set
-	}
-	set[t] = struct{}{}
-	r.mu.Unlock()
+	// The timer is installed before t is published, under t.mu, so a
+	// concurrent CloseSession (or a very short timer) either sees it and
+	// stops it or runs after it is set.
+	t.mu.Lock()
 	if r.maxAge > 0 {
 		t.timer = time.AfterFunc(r.maxAge, func() { _ = t.Close() })
 	}
+	t.mu.Unlock()
+	r.mu.Lock()
+	// Close sets closed before it takes r.mu to remove t, so a t that was
+	// already closed (a very short max age) is never published and leaked.
+	if !t.closed.Load() {
+		set := r.conns[session]
+		if set == nil {
+			set = map[*trackedConn]struct{}{}
+			r.conns[session] = set
+		}
+		set[t] = struct{}{}
+	}
+	r.mu.Unlock()
 	return t
 }
 
@@ -74,16 +84,21 @@ type trackedConn struct {
 	net.Conn
 	session string
 	reg     *Registry
+	mu      sync.Mutex // guards timer
 	timer   *time.Timer
+	closed  atomic.Bool
 	once    sync.Once
 	err     error
 }
 
 func (t *trackedConn) Close() error {
 	t.once.Do(func() {
+		t.closed.Store(true)
+		t.mu.Lock()
 		if t.timer != nil {
 			t.timer.Stop()
 		}
+		t.mu.Unlock()
 		t.reg.remove(t)
 		t.err = t.Conn.Close()
 	})
