@@ -79,6 +79,8 @@ export class Sandboxes {
   /** Per open env. Drives idle eviction. */
   readonly #usage = new Map<number, Usage>();
   readonly #timers: NodeJS.Timeout[] = [];
+  /** Conversations whose env open has not settled yet. */
+  readonly #opening = new Map<number, Promise<SandboxEnv>>();
   /** Calls that need a new env while `maxOpenBridges` are open or opening and none can be evicted. */
   readonly #slotQueue: SlotWaiter[] = [];
 
@@ -144,10 +146,14 @@ export class Sandboxes {
       max: this.#config.sandbox.maxOpenBridges,
       waiting: this.#slotQueue.length,
     };
-    void opened?.then((env) => {
-      env.close();
-      log(event, counts);
-    });
+    // A failed open has nothing to close and is already reported to its caller.
+    void opened?.then(
+      (env) => {
+        env.close();
+        log(event, counts);
+      },
+      () => undefined,
+    );
   }
 
   /** Evicts the least recently used env with no call in flight. False when every env is in use. */
@@ -159,6 +165,8 @@ export class Sandboxes {
       // Never touch a conversation with a call in flight (its in-flight record, ADR 0003, stays as it is) or one whose
       // Pod is being replaced (its env is closed by that work).
       if (usage === undefined || usage.inUse > 0 || this.#replacing.has(conversationId)) continue;
+      // An open still under way is left alone: its caller holds the promise and would get an env that is already closed.
+      if (this.#opening.has(conversationId)) continue;
       if (usage.lastUsed < oldest) {
         oldest = usage.lastUsed;
         victim = conversationId;
@@ -402,20 +410,25 @@ export class Sandboxes {
       return this.#start(conversationId);
     if (signal?.aborted === true) throw new Error("aborted while waiting for a bridge slot");
     const waiter = new Promise<SandboxEnv>((resolve, reject) => {
-      const entry: SlotWaiter = { conversationId, resolve, reject };
-      this.#slotQueue.push(entry);
-      signal?.addEventListener(
-        "abort",
-        () => {
-          const at = this.#slotQueue.indexOf(entry);
-          if (at < 0) return; // already served: the open goes on
-          this.#slotQueue.splice(at, 1);
-          reject(new Error("aborted while waiting for a bridge slot"));
-          // The head may have been the one that could not be served.
-          this.#serveQueue();
+      // A long-lived signal must not keep a served or rejected waiter (and its env) alive.
+      const onAbort = (): void => {
+        const at = this.#slotQueue.indexOf(entry);
+        if (at < 0) return;
+        this.#slotQueue.splice(at, 1);
+        reject(new Error("aborted while waiting for a bridge slot"));
+        // The head may have been the one that could not be served.
+        this.#serveQueue();
+      };
+      const entry: SlotWaiter = {
+        conversationId,
+        resolve: (env) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(env);
         },
-        { once: true },
-      );
+        reject,
+      };
+      this.#slotQueue.push(entry);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
     log("bridge-cap-wait", {
       claim: claimNameFor(conversationId),
@@ -430,6 +443,11 @@ export class Sandboxes {
   #start(conversationId: number): Promise<SandboxEnv> {
     const env = this.#open(conversationId);
     this.#envs.set(conversationId, env);
+    this.#opening.set(conversationId, env);
+    const settled = (): void => {
+      if (this.#opening.get(conversationId) === env) this.#opening.delete(conversationId);
+    };
+    env.then(settled, settled);
     if (!this.#usage.has(conversationId))
       this.#usage.set(conversationId, { inUse: 0, lastUsed: Date.now(), recorded: false });
     // A failed open must not be cached: the next tool call tries again. Its slot goes to the next waiter.

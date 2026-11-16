@@ -392,4 +392,51 @@ describe("bridge cap", () => {
     expect(opened).toEqual(["pi-conv-2"]);
     sandboxes.stop();
   });
+
+  it("does not evict an env whose open is still under way, and a failed open then raises nothing unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+      let fail: (error: Error) => void = () => undefined;
+      sandboxEnv.ensureClaim.mockImplementationOnce(
+        () => new Promise<void>((_resolve, reject) => (fail = reject)),
+      );
+      const one = sandboxes.ensure(1); // direct caller: no call in flight, so inUse is 0
+      one.catch(() => undefined);
+      await flush();
+      const two = sandboxes.ensure(2);
+      await flush();
+      expect(opened).toEqual([]); // 2 waits; 1 was not evicted
+      fail(new Error("claim never ready"));
+      await expect(one).rejects.toThrow("claim never ready");
+      await two;
+      await flush();
+      expect(opened).toEqual(["pi-conv-2"]);
+      expect(unhandled).toEqual([]);
+      sandboxes.stop();
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("removes a waiter's abort listener once it is served", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+    const finishOne = held();
+    const one = exec(sandboxes, 1);
+    await flush();
+    const abort = new AbortController();
+    const add = vi.spyOn(abort.signal, "addEventListener");
+    const remove = vi.spyOn(abort.signal, "removeEventListener");
+    const two = execWith(sandboxes, 2, abort.signal);
+    await flush();
+    expect(add).toHaveBeenCalledWith("abort", expect.any(Function), { once: true });
+    expect(remove).not.toHaveBeenCalled();
+    finishOne();
+    await one;
+    await two;
+    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
+    sandboxes.stop();
+  });
 });
