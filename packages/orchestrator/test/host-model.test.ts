@@ -67,6 +67,8 @@ describe("per-conversation model (Pi Durable 1.5.2)", () => {
       await second.submitInput(id, { text: "after restart", requestId: "r1", steer: false });
       expect(await settled(second, id, "r1")).toMatchObject({ status: "done" });
     } finally {
+      // Close every Host before deleting its storage dir: an open Harness can still write there (ENOTEMPTY).
+      for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -89,6 +91,8 @@ describe("per-conversation model (Pi Durable 1.5.2)", () => {
       await second.submitInput(id, { text: "hi", requestId: "r1", steer: false });
       expect(await settled(second, id, "r1")).toMatchObject({ status: "done" });
     } finally {
+      // Close every Host before deleting its storage dir: an open Harness can still write there (ENOTEMPTY).
+      for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
       await rm(dir, { recursive: true, force: true });
     }
   });

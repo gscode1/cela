@@ -46,18 +46,21 @@ export function signAppJwt(app: GithubApp, nowMs: number): string {
 
 /** Reads the mounted App secret. Read at every mint, so a rotated key needs no restart. Never logged. */
 export async function loadGithubApp(dir: string): Promise<GithubApp> {
-  const read = async (name: string): Promise<string> => {
-    try {
-      return (await readFile(join(dir, name), "utf8")).trim();
-    } catch {
-      throw new Error(`GitHub App secret is not available: ${name} is missing in ${dir}`);
-    }
-  };
-  const [appId, installationId, privateKey] = await Promise.all([
-    read("app-id"),
-    read("installation-id"),
-    read("private-key.pem"),
-  ]);
+  const names = ["app-id", "installation-id", "private-key.pem"] as const;
+  // allSettled, not all: the error must name every missing file in a fixed order, not whichever read failed first.
+  const results = await Promise.allSettled(
+    names.map(async (name) => (await readFile(join(dir, name), "utf8")).trim()),
+  );
+  const missing = names.filter((_, i) => results[i]?.status === "rejected");
+  if (missing.length > 0) {
+    const verb = missing.length === 1 ? "is" : "are";
+    throw new Error(
+      `GitHub App secret is not available: ${missing.join(", ")} ${verb} missing in ${dir}`,
+    );
+  }
+  const [appId = "", installationId = "", privateKey = ""] = results.map((r) =>
+    r.status === "fulfilled" ? r.value : "",
+  );
   if (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId)) {
     throw new Error("GitHub App app-id and installation-id must be numeric");
   }
