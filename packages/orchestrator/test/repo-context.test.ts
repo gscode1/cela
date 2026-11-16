@@ -250,7 +250,14 @@ describe("readProjectContext", () => {
   it("skips a file over 1 MiB with a log line", async () => {
     await put("AGENTS.md", "x".repeat(1024 * 1024 + 1));
     await put("CLAUDE.md", "small");
+    const opened: string[] = [];
+    const original = env.openBinaryReader.bind(env);
+    env.openBinaryReader = (path, options, c) => {
+      opened.push(path);
+      return original(path, options, c);
+    };
     expect((await read())?.content).toBe("small");
+    expect(opened).toEqual([`${root}/CLAUDE.md`]);
     expect(logs.join()).toContain("repo-context-skipped");
   });
 

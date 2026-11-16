@@ -253,23 +253,17 @@ export async function readProjectContext(
       log("repo-context-skipped", { path, why: `larger than ${String(CONTEXT_READ_LIMIT)} bytes` });
       continue;
     }
-    const read = await env.readTextFile(path, context);
-    if (!read.ok) {
-      log("repo-context-skipped", { path, why: `unreadable: ${read.error.message}` });
+    const read = await readBounded(env, path, CONTEXT_LIMIT);
+    if (typeof read === "string") {
+      log("repo-context-skipped", { path, why: read });
       continue;
     }
-    const text = read.value.startsWith("\uFEFF") ? read.value.slice(1) : read.value;
-    const bytes = Buffer.from(text);
-    if (bytes.length <= CONTEXT_LIMIT) return { path, content: text };
-    log("repo-context-truncated", { path, bytes: bytes.length, limit: CONTEXT_LIMIT });
-    // Cut at a character boundary: decoding a split sequence ends in U+FFFD, which is dropped.
-    const cut = bytes
-      .subarray(0, CONTEXT_LIMIT)
-      .toString("utf8")
-      .replace(/\uFFFD+$/u, "");
+    const text = read.text.startsWith("\uFEFF") ? read.text.slice(1) : read.text;
+    if (!read.more) return { path, content: text };
+    log("repo-context-truncated", { path, bytes: entry.size, limit: CONTEXT_LIMIT });
     return {
       path,
-      content: `${cut}\n\n[truncated: ${name} is ${String(bytes.length)} bytes, only the first ${String(CONTEXT_LIMIT)} are shown]`,
+      content: `${text}\n\n[truncated: ${name} is ${String(entry.size)} bytes, only the first ${String(CONTEXT_LIMIT)} are shown]`,
     };
   }
   return undefined;
