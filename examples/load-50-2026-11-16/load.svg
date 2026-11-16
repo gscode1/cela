@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 380" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
+<rect width="860" height="380" fill="#fff"/>
+<text x="64" y="24" font-size="15" font-weight="700" fill="#0f172a">50 sessions started at once: orchestrator memory, running sandboxes, finished reports</text>
+<line x1="64" x2="796" y1="330.0" y2="330.0" stroke="#e2e8f0"/><text x="56" y="334.0" text-anchor="end" fill="#2563eb">0 GiB</text>
+<line x1="64" x2="796" y1="281.7" y2="281.7" stroke="#e2e8f0"/><text x="56" y="285.7" text-anchor="end" fill="#2563eb">1 GiB</text>
+<line x1="64" x2="796" y1="233.3" y2="233.3" stroke="#e2e8f0"/><text x="56" y="237.3" text-anchor="end" fill="#2563eb">2 GiB</text>
+<line x1="64" x2="796" y1="185.0" y2="185.0" stroke="#e2e8f0"/><text x="56" y="189.0" text-anchor="end" fill="#2563eb">3 GiB</text>
+<line x1="64" x2="796" y1="136.7" y2="136.7" stroke="#e2e8f0"/><text x="56" y="140.7" text-anchor="end" fill="#2563eb">4 GiB</text>
+<line x1="64" x2="796" y1="88.3" y2="88.3" stroke="#e2e8f0"/><text x="56" y="92.3" text-anchor="end" fill="#2563eb">5 GiB</text>
+<line x1="64" x2="796" y1="40.0" y2="40.0" stroke="#e2e8f0"/><text x="56" y="44.0" text-anchor="end" fill="#2563eb">6 GiB</text>
+<text x="804" y="334.0" fill="#334155">0</text>
+<text x="804" y="276.0" fill="#334155">10</text>
+<text x="804" y="218.0" fill="#334155">20</text>
+<text x="804" y="160.0" fill="#334155">30</text>
+<text x="804" y="102.0" fill="#334155">40</text>
+<text x="804" y="44.0" fill="#334155">50</text>
+<text x="64.0" y="348" text-anchor="middle" fill="#64748b">0 min</text>
+<text x="155.5" y="348" text-anchor="middle" fill="#64748b">1 min</text>
+<text x="247.0" y="348" text-anchor="middle" fill="#64748b">2 min</text>
+<text x="338.5" y="348" text-anchor="middle" fill="#64748b">3 min</text>
+<text x="430.0" y="348" text-anchor="middle" fill="#64748b">4 min</text>
+<text x="521.5" y="348" text-anchor="middle" fill="#64748b">5 min</text>
+<text x="613.0" y="348" text-anchor="middle" fill="#64748b">6 min</text>
+<text x="704.5" y="348" text-anchor="middle" fill="#64748b">7 min</text>
+<text x="796.0" y="348" text-anchor="middle" fill="#64748b">8 min</text>
+<line x1="64" x2="796" y1="40.0" y2="40.0" stroke="#dc2626" stroke-dasharray="5 4"/><text x="792" y="54.0" text-anchor="end" fill="#dc2626">memory limit 6 GiB</text>
+<path d="M65.5,323.9 L91.5,324.7 L115.8,324.0 L141.8,286.3 L166.2,267.5 L192.1,237.8 L216.5,207.6 L268.4,188.7 L294.3,154.3 L318.7,126.2 L343.1,108.1 L369.0,95.2 L393.4,108.2 L419.3,98.4 L443.7,106.6 L468.1,129.5 L494.1,164.1 L518.5,153.3 L544.4,142.1 L568.8,173.1 L593.2,167.7 L619.1,181.6 L643.5,201.9 L667.9,238.7 L693.8,245.6" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<path d="M65.5,330.0 L91.5,330.0 L115.8,330.0 L141.8,283.6 L166.2,283.6 L192.1,260.4 L216.5,243.0 L268.4,219.8 L294.3,185.0 L318.7,167.6 L343.1,156.0 L369.0,138.6 L393.4,115.4 L419.3,109.6 L443.7,98.0 L468.1,92.2 L494.1,92.2 L518.5,69.0 L544.4,51.6 L568.8,40.0 L593.2,40.0 L619.1,40.0 L643.5,40.0 L667.9,40.0 L693.8,40.0" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+<path d="M64.0,330.0 L190.6,330.0 L190.6,324.2 L193.6,324.2 L193.6,318.4 L210.4,318.4 L210.4,312.6 L218.0,312.6 L218.0,306.8 L219.6,306.8 L219.6,301.0 L225.7,301.0 L225.7,295.2 L230.2,295.2 L230.2,289.4 L240.9,289.4 L240.9,283.6 L260.7,283.6 L260.7,277.8 L265.3,277.8 L265.3,272.0 L268.4,272.0 L268.4,266.2 L268.4,266.2 L268.4,260.4 L272.9,260.4 L272.9,254.6 L282.1,254.6 L282.1,248.8 L291.2,248.8 L291.2,243.0 L300.4,243.0 L300.4,237.2 L303.4,237.2 L303.4,231.4 L306.5,231.4 L306.5,225.6 L309.5,225.6 L309.5,219.8 L324.8,219.8 L324.8,214.0 L338.5,214.0 L338.5,208.2 L353.8,208.2 L353.8,202.4 L355.3,202.4 L355.3,196.6 L358.3,196.6 L358.3,190.8 L367.5,190.8 L367.5,185.0 L375.1,185.0 L375.1,179.2 L376.6,179.2 L376.6,173.4 L378.1,173.4 L378.1,167.6 L399.5,167.6 L399.5,161.8 L411.7,161.8 L411.7,156.0 L431.5,156.0 L431.5,150.2 L439.1,150.2 L439.1,144.4 L443.7,144.4 L443.7,138.6 L446.8,138.6 L446.8,132.8 L465.1,132.8 L465.1,127.0 L475.8,127.0 L475.8,121.2 L480.3,121.2 L480.3,115.4 L494.1,115.4 L494.1,109.6 L494.1,109.6 L494.1,103.8 L521.5,103.8 L521.5,98.0 L535.2,98.0 L535.2,92.2 L570.3,92.2 L570.3,86.4 L574.9,86.4 L574.9,80.6 L588.6,80.6 L588.6,74.8 L588.6,74.8 L588.6,69.0 L591.6,69.0 L591.6,63.2 L634.4,63.2 L634.4,57.4 L642.0,57.4 L642.0,51.6 L649.6,51.6 L649.6,45.8 L652.6,45.8 L652.6,40.0" fill="none" stroke="#9333ea" stroke-width="2.5"/>
+<line x1="80" x2="102" y1="364" y2="364" stroke="#2563eb" stroke-width="3"/><text x="108" y="368" fill="#334155">orchestrator memory (left axis)</text>
+<line x1="330" x2="352" y1="364" y2="364" stroke="#16a34a" stroke-width="3"/><text x="358" y="368" fill="#334155">sandbox pods running (right axis)</text>
+<line x1="580" x2="602" y1="364" y2="364" stroke="#9333ea" stroke-width="3"/><text x="608" y="368" fill="#334155">reports finished (right axis)</text>
+</svg>
