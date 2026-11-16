@@ -221,6 +221,85 @@ describe("repo skills at each new message", () => {
   });
 });
 
+describe("repo context (AGENTS.md) at each new message", () => {
+  const CONTEXT_ON: ProfileDefinition = { instructions: "Be brief.", repoContext: true };
+
+  it("orders profile instructions, project instructions, then the skills catalog, as Pi does", async () => {
+    await put("AGENTS.md", "Use pnpm.");
+    await put(".pi/skills/csv/SKILL.md", skill("Edit CSV"));
+    const svc = service();
+    await svc.prepare(message, session({ ...CONTEXT_ON, repoSkills: true }));
+    const text = instructions.get(7) ?? "";
+    const at = (needle: string): number => text.indexOf(needle);
+    expect(at("Be brief.")).toBe(0);
+    expect(
+      at('<project_instructions path="/workspace/repo/AGENTS.md">\nUse pnpm.'),
+    ).toBeGreaterThan(at("Be brief."));
+    expect(at("<available_skills>")).toBeGreaterThan(at("</project_instructions>"));
+    svc.stop();
+  });
+
+  it("is its own switch: context without repoSkills lists no repo skill, skills without repoContext load no file", async () => {
+    await put("AGENTS.md", "Use pnpm.");
+    await put(".pi/skills/csv/SKILL.md", skill("Edit CSV"));
+    const contextOnly = service();
+    await contextOnly.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toContain("Use pnpm.");
+    expect(instructions.get(7)).not.toContain("Edit CSV");
+    instructions.clear();
+    await contextOnly.prepare(message, session(ON));
+    expect(instructions.get(7)).toContain("Edit CSV");
+    expect(instructions.get(7)).not.toContain("Use pnpm.");
+    contextOnly.stop();
+  });
+
+  it("flag off: no listing at all", async () => {
+    await put("AGENTS.md", "Use pnpm.");
+    const svc = service();
+    await svc.prepare(message, session({ instructions: "Be brief." }));
+    expect(calls).toEqual(["workspaceEnv"]);
+    expect(configured).toBe(0);
+    svc.stop();
+  });
+
+  it("a suspended sandbox is not opened for it, a restart rescans, and an edit appears at the next message", async () => {
+    await put("AGENTS.md", "v1");
+    const host = fakeHost();
+    const first = service(host);
+    open = false;
+    await first.prepare(message, session(CONTEXT_ON));
+    expect(calls).toEqual(["workspaceEnv"]);
+    open = true;
+    await first.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toContain("v1");
+    await put("AGENTS.md", "v2");
+    await first.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toContain("v2");
+    first.stop();
+    await put("AGENTS.md", "v3");
+    const second = service(host);
+    await second.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toContain("v3");
+    second.stop();
+  });
+
+  it("removing the file removes the section; a scan failure keeps the instructions", async () => {
+    await put("AGENTS.md", "Use pnpm.");
+    const svc = service(fakeHost(), []);
+    await svc.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toContain("Use pnpm.");
+    const before = instructions.get(7);
+    failScan = true;
+    await expect(svc.prepare(message, session(CONTEXT_ON))).resolves.toBeUndefined();
+    expect(instructions.get(7)).toBe(before);
+    failScan = false;
+    await rm(join(root, "AGENTS.md"));
+    await svc.prepare(message, session(CONTEXT_ON));
+    expect(instructions.get(7)).toBe("Be brief.");
+    svc.stop();
+  });
+});
+
 describe("Host.setInstructions", () => {
   let host: Host;
   beforeEach(async () => {

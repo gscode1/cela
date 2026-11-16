@@ -46,6 +46,9 @@ orchestrator's disk. Pi reads skills at startup and on `/reload`, not on every t
   for a session is trusting its text, as with any repository the agent reads. Nothing here widens tools or the
   agent's permissions.
 
+Reading the repo's `AGENTS.md` / `CLAUDE.md` in the same pass is [0015](0015-repo-context.md); both are applied by one
+`configure`, ordered profile instructions, project instructions, skills catalog.
+
 ## Not done
 
 Per-request rescans, watchers, trust labels, collision diagnostics beyond the log line, ignore files, standalone `.md`

@@ -73,6 +73,9 @@ message, but only while the session's sandbox is already open (it never resumes 
 runs through the session's env (`listDir`, `readTextFile`) and writes nothing to the workspace; the result goes into the
 conversation's instructions.
 
+With `repoContext` (ADR 0015) the same pass also reads the repo's `AGENTS.md` / `CLAUDE.md` (the first of five names, at the
+checkout root) into the instructions, before the skills catalog.
+
 ## Branch ruleset: agents may only touch `agent/**`
 
 A session token has `contents: write` on its repository, and GitHub cannot scope a token by ref. Without a guard the agent can

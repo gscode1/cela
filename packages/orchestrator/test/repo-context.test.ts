@@ -4,7 +4,14 @@ import { dirname, join } from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSkillCatalog, SKILL_LIMITS } from "@pi-durable-k8s/session-core";
-import { joinInstructions, mergeCatalog, scanRepoSkills } from "../src/repo-context.ts";
+import {
+  CONTEXT_LIMIT,
+  joinInstructions,
+  mergeCatalog,
+  readProjectContext,
+  renderProjectContext,
+  scanRepoSkills,
+} from "../src/repo-context.ts";
 
 const skillMd = (description: string, extra = ""): string =>
   `---\n${description === "" ? "" : `description: ${description}\n`}${extra}---\n# Body\n`;
@@ -195,5 +202,68 @@ describe("joinInstructions", () => {
   it("joins the non-empty parts with a blank line and is undefined for none", () => {
     expect(joinInstructions(["a", undefined, "", "b"])).toBe("a\n\nb");
     expect(joinInstructions([undefined, ""])).toBeUndefined();
+  });
+});
+
+describe("readProjectContext", () => {
+  const read = () => readProjectContext(env, root);
+
+  it("is undefined without a context file", async () => {
+    await put("README.md", "hi");
+    expect(await read()).toBeUndefined();
+  });
+
+  it("takes the first of AGENTS.override.md, AGENTS.md, AGENTS.MD, CLAUDE.md, CLAUDE.MD", async () => {
+    await put("CLAUDE.md", "claude");
+    expect((await read())?.content).toBe("claude");
+    await put("AGENTS.md", "agents");
+    expect((await read())?.content).toBe("agents");
+    await put("AGENTS.override.md", "override");
+    expect(await read()).toEqual({ path: `${root}/AGENTS.override.md`, content: "override" });
+  });
+
+  it("does not follow a symlink or take a directory, and falls through to the next name", async () => {
+    await put("elsewhere.md", "secret");
+    await symlink(join(root, "elsewhere.md"), join(root, "AGENTS.md"));
+    await mkdir(join(root, "AGENTS.override.md"));
+    await put("CLAUDE.md", "claude");
+    expect((await read())?.content).toBe("claude");
+  });
+
+  it("drops a BOM and leaves a file within the cap as it is", async () => {
+    await put("AGENTS.md", "\uFEFFRules\n");
+    expect((await read())?.content).toBe("Rules\n");
+  });
+
+  it("cuts a file over 32 KiB at a character boundary and says so", async () => {
+    await put("AGENTS.md", "é".repeat(CONTEXT_LIMIT)); // 2 bytes each: twice the cap
+    const file = await read();
+    const content = file?.content ?? "";
+    const [kept = "", note = ""] = content.split("\n\n[truncated");
+    expect(Buffer.byteLength(kept)).toBeLessThanOrEqual(CONTEXT_LIMIT);
+    expect(kept).not.toContain("\uFFFD");
+    expect(kept).toMatch(/^é+$/u);
+    expect(note).toContain(`AGENTS.md is ${String(CONTEXT_LIMIT * 2)} bytes`);
+    expect(logs.join()).toContain("repo-context-truncated");
+  });
+
+  it("skips a file over 1 MiB with a log line", async () => {
+    await put("AGENTS.md", "x".repeat(1024 * 1024 + 1));
+    await put("CLAUDE.md", "small");
+    const opened: string[] = [];
+    const original = env.openBinaryReader.bind(env);
+    env.openBinaryReader = (path, options, c) => {
+      opened.push(path);
+      return original(path, options, c);
+    };
+    expect((await read())?.content).toBe("small");
+    expect(opened).toEqual([`${root}/CLAUDE.md`]);
+    expect(logs.join()).toContain("repo-context-skipped");
+  });
+
+  it("renders as Pi does: the header and one project_instructions element with the path", () => {
+    expect(renderProjectContext({ path: "/workspace/repo/AGENTS.md", content: "Do X." })).toBe(
+      'Project-specific instructions and guidelines:\n\n<project_instructions path="/workspace/repo/AGENTS.md">\nDo X.\n</project_instructions>',
+    );
   });
 });
