@@ -1,7 +1,7 @@
 # 0009: The MCP server catalog lives in Postgres, changed through the admin API
 
 Status: accepted, 2026-11-16 (issue #40). Amends [0007](0007-native-remote-mcp.md): the static `PI_MCP_SERVERS` is gone.
-Per-session selection is #41, credentials are #42.
+Per-session selection is [0010](0010-session-profiles.md) (#41), credentials are #42.
 
 ## Context
 
@@ -50,13 +50,14 @@ a history table and `LISTEN/NOTIFY`; the MCP catalog needs the same properties.
   while the catalog was empty would unpin, and every existing conversation would select all installed extensions
   (`tool_search`, and each `mcp-*` once servers exist) at the next restart that found a server. Always pinned means an
   existing conversation never gains MCP silently, whatever the catalog does. A new conversation adds `tool_search` and
-  the installed `mcp-*` extensions only when at least one server is enabled at creation, so with an empty catalog the
-  offered tools are exactly the coding tools, as with the old flag off.
-- **Which conversations get which servers (until #41).** A new conversation stores the names of every enabled server at
-  creation (as 0007 did). A server added later reaches only conversations created afterwards, and a conversation created
-  while the catalog was empty never gains MCP. A server removed or disabled later leaves a stored name that selects
-  nothing, so its tools settle `tool_unavailable`; enabling it again makes the same name select the new installation.
-  #41 replaces the "all enabled servers" list with a per-session profile.
+  the `mcp-*` extensions of its profile's servers only (0010), so a session whose profile has no MCP servers is offered
+  exactly the coding tools, whatever the catalog holds.
+- **Which conversations get which servers.** Superseded by [0010](0010-session-profiles.md): a conversation gets
+  `tool_search` and the servers its session's profile names (`mcpServers`), not every enabled server, and the default
+  profile names none. The rest still holds: the names are stored with the conversation, a server added later reaches
+  a conversation that already named it (the stored name selects the new installation), and a server removed or disabled
+  leaves a stored name that selects nothing, so its tools settle `tool_unavailable`; enabling it again makes the same
+  name select the new installation.
 - **Enforcement stays outside the database.** A row never opens egress. The host must also be allowed in the OneCLI host
   rules and the orchestrator's egress policy (`docs/onecli-host-rules.md`); otherwise the server fails to connect and its
   tools stay `tool_unavailable`. The issue asked the admin API to report `unreachable`; this PR adds no network probing
@@ -73,6 +74,6 @@ a history table and `LISTEN/NOTIFY`; the MCP catalog needs the same properties.
   stop working in conversations that had them.
 - A server whose tools change without a row change is noticed at the next row change or restart, not on a timer.
 - `read_only` and `onecli_secret` are stored but do not change behaviour yet: `read_only` is the operator's attestation
-  for #41 profiles to select on, `onecli_secret` is for #42.
+  for profiles (0010) to select on, `onecli_secret` is for #42.
 - Rejected: reusing `settings_history` (shape); seeding the table from `PI_MCP_SERVERS` (the orchestrator does not own
   seeding, and the variable was never set outside the e2e); probing reachability in the admin API (tests the wrong path).

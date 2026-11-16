@@ -51,7 +51,7 @@ conversation it creates from then on (`extensions: { add }`, which stores names)
 was set keep their tools. With the flag off nothing is pinned and nothing is added.
 
 Selection is real authorization: the sandbox never holds the grant, so what a conversation stores is what it can call.
-#41 replaces the `add` list with a per-session profile; the pin stays.
+0010 (#41) replaced the `add` list with a per-session profile; the pin stays.
 
 ## Consequences
 
