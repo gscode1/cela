@@ -72,6 +72,12 @@ spec:
             # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway. NO_PROXY
             # is the belt and braces list (cluster, Kubernetes API, Postgres) the orchestrator also applies itself.
             - { name: NO_PROXY, value: "localhost,127.0.0.1,.svc,.cluster.local,kubernetes.default,pi-pg-rw,10.0.0.0/8" }
+            # Remote MCP servers (docs/decisions/0007-native-remote-mcp.md): a JSON array of {name, url}, https only.
+            # Empty = off: no tool_search, no MCP tools, nothing about the offered tools changes. On, the orchestrator
+            # calls the servers through the OneCLI gateway (needs ONECLI_AGENT_TOKEN and the host in the OneCLI rules),
+            # and new sessions get tool_search plus the tools. Stateless servers only. Example (DeepWiki, no auth):
+            #   '[{"name":"deepwiki","url":"https://mcp.deepwiki.com/mcp"}]'
+            - { name: PI_MCP_SERVERS, value: "" }
             # Test-only, both off unless set. CONTROL mounts the authenticated Phase 3 scripted-session surface
             # under /control. TEST_FAULTS honours payload.testFault on inbox rows, which only SQL can write
             # (ingest never does), so the Phase 4 suite can kill the orchestrator between submit and mark.

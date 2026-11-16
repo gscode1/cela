@@ -7,14 +7,20 @@ import {
 import type { FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import type { Message } from "@earendil-works/pi-ai";
 
+/** The JSON object a scripted tool call carries as its arguments. */
+type ToolArgs = Parameters<typeof fauxToolCall>[1];
+
 /**
  * A session's script, carried as the JSON text of its first user message. The model has no state of
  * its own: every reply is a pure function of the transcript, so a restarted orchestrator continues
  * the script exactly where the stored transcript stopped.
  */
 export interface Script {
-  /** One `bash` tool call per step, in order. `timeout` is the bash tool's own limit in seconds. */
-  steps: { bash: string; timeout?: number }[];
+  /**
+   * One tool call per step, in order: `bash` (`timeout` is the bash tool's own limit in seconds), or any named tool
+   * with its arguments (e2e uses it to call `tool_search` and `mcp__*` tools).
+   */
+  steps: ({ bash: string; timeout?: number } | { tool: string; args: ToolArgs })[];
   /** Final answer once every step has a tool result. */
   final?: string;
   /**
@@ -40,14 +46,26 @@ export function parseScript(text: string): Script {
   ) {
     throw new Error("script must be an object with a steps array");
   }
-  const steps = (parsed.steps as unknown[]).map((step) => {
+  const steps = (parsed.steps as unknown[]).map((step): Script["steps"][number] => {
+    if (
+      typeof step === "object" &&
+      step !== null &&
+      "tool" in step &&
+      typeof step.tool === "string" &&
+      "args" in step &&
+      typeof step.args === "object" &&
+      step.args !== null &&
+      !Array.isArray(step.args)
+    ) {
+      return { tool: step.tool, args: step.args as ToolArgs };
+    }
     if (
       typeof step !== "object" ||
       step === null ||
       !("bash" in step) ||
       typeof step.bash !== "string"
     ) {
-      throw new Error("every step needs a bash string");
+      throw new Error("every step needs a bash string, or a tool name and an args object");
     }
     const timeout =
       "timeout" in step && typeof step.timeout === "number" ? step.timeout : undefined;
@@ -94,11 +112,15 @@ export const scriptedReply: FauxResponseFactory = (context) => {
     return fauxAssistantMessage(fauxText(script.final ?? "done"));
   }
   // A stable id per (user message, step): a retried request after a restart repeats the same call.
-  const call = fauxToolCall(
-    "bash",
-    { command: step.bash, ...(step.timeout === undefined ? {} : { timeout: step.timeout }) },
-    { id: `step-${String(lastUser)}-${String(done)}` },
-  );
+  const id = `step-${String(lastUser)}-${String(done)}`;
+  const call =
+    "tool" in step
+      ? fauxToolCall(step.tool, step.args, { id })
+      : fauxToolCall(
+          "bash",
+          { command: step.bash, ...(step.timeout === undefined ? {} : { timeout: step.timeout }) },
+          { id },
+        );
   return fauxAssistantMessage(call, { stopReason: "toolUse" });
 };
 

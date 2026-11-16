@@ -29,9 +29,10 @@ Rule shape (recheck doc): `{"name", "action": "allow|block", "targets": [{"kind"
 | 10 | allow | `registry.npmjs.org` | npm |
 | 11 | allow | `pypi.org` | pip index |
 | 12 | allow | `files.pythonhosted.org` | pip files |
-| 13 | block | `*` | everything else, **created last** |
+| 13 | allow | `mcp.deepwiki.com` | remote MCP server (DeepWiki, no auth), only used when `PI_MCP_SERVERS` lists it |
+| 14 | block | `*` | everything else, **created last** |
 
-Order is the point: rule 13 must be created after rules 1 to 12. The script keeps that invariant (see below).
+Order is the point: rule 14 must be created after rules 1 to 13. The script keeps that invariant (see below).
 Whether the gateway evaluates in creation order or by specificity is UNVERIFIED beyond the recheck test (allow then block
 behaved as an allowlist); check with the probes below after applying.
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|all>
+# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>
 #   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call)
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
 #   phase4c optional repo workspace through OneCLI + a repo-scoped GitHub App token; needs REPO_A and REPO_B
 #           (owner/name, private, in the App installation), otherwise most tests SKIP. Not part of `all`.
+#   mcp     native remote MCP tools through the OneCLI gateway (issue #39): a scripted session calls tool_search and a
+#           DeepWiki tool. Needs the internet, PI_MCP_SERVERS with deepwiki on the orchestrator and the OneCLI host rule
+#           for mcp.deepwiki.com, otherwise its tests SKIP. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, namespace pi-durable-poc), so a
@@ -44,9 +47,10 @@ phase3) phases=(phase3) ;;
 phase4) phases=(phase4) ;;
 phase4b) phases=(phase4b) ;;
 phase4c) phases=(phase4c) ;;
+mcp) phases=(mcp) ;;
 all) phases=(phase1 phase3 phase4 phase4b) ;;
 *)
-  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|all>" >&2
+  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>" >&2
   exit 64
   ;;
 esac
@@ -55,7 +59,13 @@ has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0;
 work=$(mktemp -d)
 job=""
 keep_job=0
+mcp_env_set=0
 cleanup() {
+  # The mcp suite sets PI_MCP_SERVERS on the Deployment for its run; put the base (empty) value back.
+  if [[ $mcp_env_set -eq 1 ]]; then
+    k set env deploy/pi-orchestrator PI_MCP_SERVERS= >/dev/null 2>&1 || true
+    k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null 2>&1 || echo "could not restore PI_MCP_SERVERS=; run: kubectl -n $ns set env deploy/pi-orchestrator PI_MCP_SERVERS=" >&2
+  fi
   pkill -f "logs -f job/e2e-driver" 2>/dev/null || true
   if [[ -n $job && $keep_job -eq 0 ]]; then
     k delete job "$job" --ignore-not-found --cascade=foreground --wait=true >/dev/null 2>&1 || true
@@ -85,7 +95,7 @@ kubectl ${ctx:+--context="$ctx"} apply -k "$here/driver" >/dev/null
 # A Job left by an earlier killed run would hold the code volume (ReadWriteOnce).
 k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=foreground --wait=true >/dev/null
 
-if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c; then
+if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp; then
   log "test overlay, api-auth secret, orchestrator and ingest code (build + push on the Mac)"
   "$root/deploy/gen-api-secret.sh" >/dev/null
   # CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
@@ -95,10 +105,21 @@ if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4
   "$root/deploy/push-ingest.sh" >/dev/null
 fi
 
+# The overlay above applies the base Deployment, which has PI_MCP_SERVERS empty, so the mcp suite sets it here, after
+# the overlay. MCP_SERVERS overrides the JSON (default: DeepWiki); MCP_SERVERS=off leaves it empty and the suite SKIPs.
+if has_phase mcp && [[ ${MCP_SERVERS:-} != off ]]; then
+  log "PI_MCP_SERVERS on the orchestrator for this run (restored empty at the end)"
+  mcp_env_set=1
+  # A variable, not an inline default: the first `}` of the JSON would end the ${...:-...} expansion.
+  mcp_default='[{"name":"deepwiki","url":"https://mcp.deepwiki.com/mcp"}]'
+  k set env deploy/pi-orchestrator "PI_MCP_SERVERS=${MCP_SERVERS:-$mcp_default}" >/dev/null
+  k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
+fi
+
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"
 stage=$work/stage
 mkdir -p "$stage/tests/e2e" "$stage/deploy"
-cp "$here"/run-phase*.sh "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
+cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
 cp "$root/deploy/gen-api-secret.sh" "$stage/deploy/"
 if has_phase phase1; then
   (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/sandbox-env..." build >/dev/null)
@@ -137,7 +158,10 @@ if [[ -f $stage/bundle.tgz ]]; then
   got=$(k exec e2e-driver-loader -- sha256sum /driver/bundle.tgz | awk '{print $1}')
   [[ $want == "$got" ]] || { echo "bundle upload is corrupt (sha256 differs)" >&2; exit 1; }
 fi
-k exec e2e-driver-loader -- test -f /driver/tests/e2e/run-phase3.sh
+# Every selected suite's script must be on the volume before a Job is created for it.
+for p in "${phases[@]}"; do
+  k exec e2e-driver-loader -- test -f "/driver/tests/e2e/run-$p.sh" || { echo "run-$p.sh is not on the driver volume (is it staged above?)" >&2; exit 1; }
+done
 k delete pod e2e-driver-loader --wait=true >/dev/null
 
 # ------------------------------------------------------------------ 2+3. create the Job, wait, read the verdict

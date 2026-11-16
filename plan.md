@@ -8,7 +8,7 @@ Scope: proof of concept. Production hardening is out of scope and listed at the 
 Run Pi Durable agents on my own Kubernetes cluster so that:
 
 - agent state lives in PostgreSQL (CloudNativePG) and survives orchestrator restarts,
-- tools run in a per-session gVisor sandbox with a persistent workspace PVC,
+- tools run in a per-session gVisor sandbox with a persistent workspace PVC; remote MCP tools are the exception: the orchestrator calls them over HTTP through the OneCLI gateway, like the model, and never from the sandbox ([ADR 0007](docs/decisions/0007-native-remote-mcp.md)),
 - sessions are reachable through a small remote API,
 - missing pieces are contributed upstream instead of forked.
 

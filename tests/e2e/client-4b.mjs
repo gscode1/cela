@@ -8,6 +8,8 @@
 //   node client.mjs dump OWNER SESSION SECONDS -> the raw event stream, for debugging
 //   node client.mjs answer OWNER SESSION NEEDLE SECONDS -> prints "found <tools>" when an ASSISTANT text contains
 //     NEEDLE after at least one tool call (<tools> = number of calls seen), else "timeout" or "failed"
+//   node client.mjs results OWNER SESSION NEEDLE SECONDS -> prints {"found":bool,"results":[{"text","isError"}]}: every
+//     tool result seen up to the ASSISTANT text that contains NEEDLE (after at least one tool call)
 const base = process.env.API_BASE ?? "http://127.0.0.1:8080";
 
 function tokenFor(owner) {
@@ -114,6 +116,48 @@ if (command === "call") {
   clearTimeout(timer);
   controller.abort();
   console.log(result);
+} else if (command === "results") {
+  const [session, needle, seconds] = rest;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(seconds) * 1000);
+  let buffer = "";
+  let calls = 0;
+  let found = false;
+  const results = [];
+  try {
+    const response = await fetch(`${base}/sessions/${session}/stream`, {
+      headers: { ...headers, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    const decoder = new TextDecoder();
+    outer: for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let end;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (!block.includes("event: entry")) continue;
+        const data = block.split("\n").find((line) => line.startsWith("data: "));
+        const entry = JSON.parse(data.slice(6));
+        for (const message of entry.messages ?? []) {
+          if (message.role === "toolResult") {
+            results.push({ text: message.text ?? "", isError: message.isError === true });
+          }
+          if (message.role !== "assistant") continue;
+          calls += (message.calls ?? []).length;
+          if (calls > 0 && (message.text ?? "").toLowerCase().includes(needle.toLowerCase())) {
+            found = true;
+            break outer;
+          }
+        }
+      }
+    }
+  } catch {
+    // Aborted by the timer.
+  }
+  clearTimeout(timer);
+  controller.abort();
+  console.log(JSON.stringify({ found, results }));
 } else {
-  throw new Error("usage: call|stream|dump|answer");
+  throw new Error("usage: call|stream|dump|answer|results");
 }

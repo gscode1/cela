@@ -221,6 +221,9 @@ importers:
       '@earendil-works/pi-durable':
         specifier: 1.5.2
         version: 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)
+      '@earendil-works/pi-mcp':
+        specifier: 1.5.2
+        version: 1.5.2
       '@kubernetes/client-node':
         specifier: 2.0.0
         version: 2.0.0(bare-buffer@3.7.2)
@@ -471,6 +474,10 @@ packages:
 
   '@earendil-works/pi-env@1.5.2':
     resolution: {integrity: sha512-yw9dPqPHHP567m7+TDAmuzWC9AU1I3aV3FFdNQlo+UXASYGEIW4QgbYXNTka6Y/Z4+KcifSdgDSiMiTM3ZXBfg==}
+    engines: {node: '>=22.19.0'}
+
+  '@earendil-works/pi-mcp@1.5.2':
+    resolution: {integrity: sha512-zU1UgeXDlbixPqGEWD7Ql0brEMIpYr7aEWjoEE5h5enJbM/kQ2jIr7lN8JoR80oUnq1fJSU7SC8kLx2Fx/IZYg==}
     engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-schema@1.5.2':
@@ -2295,6 +2302,10 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@earendil-works/pi-mcp@1.5.2':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@earendil-works/pi-schema@1.5.2': {}
 

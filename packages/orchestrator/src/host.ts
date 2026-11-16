@@ -10,11 +10,15 @@ import type {
   Storage,
 } from "@earendil-works/pi-durable";
 import type { ModelChoice } from "@pi-durable-k8s/session-core";
+import type { Extension } from "@earendil-works/pi-durable";
+import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 import type { Script } from "./model.js";
-import { buildModels } from "./providers.js";
+import { httpTransportFactory, McpTools } from "./mcp.js";
+import type { McpTimings, McpTransportFactory } from "./mcp.js";
+import { buildGatewayFetch, buildModels } from "./providers.js";
 import { claimNameFor, Sandboxes, WORKSPACE } from "./sandboxes.js";
 import type { SandboxHooks, SessionKeyOf } from "./sandboxes.js";
 import type { SubmissionState } from "./watcher.js";
@@ -62,16 +66,38 @@ export function toEvent(message: Message): SessionEvent {
   return event;
 }
 
+/** Test seams of the remote MCP client; production passes nothing. */
+export interface HostOptions {
+  mcpTransport?: McpTransportFactory;
+  mcpTimings?: McpTimings;
+}
+
 /** The Pi Durable host: one Harness over the Postgres storage, one conversation per session. */
 export class Host {
   readonly #harness: Harness;
   readonly #sandboxes: Sandboxes;
   readonly #storage: Storage;
+  readonly #mcp: McpTools;
+  /** Extensions a new conversation selects on top of the host default; empty with the MCP flag off. */
+  readonly #added: Extension[];
 
-  private constructor(harness: Harness, sandboxes: Sandboxes, storage: Storage) {
+  private constructor(
+    harness: Harness,
+    sandboxes: Sandboxes,
+    storage: Storage,
+    mcp: McpTools,
+    added: Extension[],
+  ) {
     this.#harness = harness;
     this.#sandboxes = sandboxes;
     this.#storage = storage;
+    this.#mcp = mcp;
+    this.#added = added;
+  }
+
+  /** `agent` of a new conversation: with MCP on, it adds `tool_search` and the MCP extensions (see `open`). */
+  #extensionsAdded(): { extensions: { add: Extension[] } } | Record<string, never> {
+    return this.#added.length === 0 ? {} : { extensions: { add: this.#added } };
   }
 
   /**
@@ -85,10 +111,37 @@ export class Host {
     sessionKeyOf: SessionKeyOf,
     hooks: SandboxHooks = {},
     recycleAtStart: readonly number[] = [],
+    options: HostOptions = {},
   ): Promise<Host> {
     const models = await buildModels(config);
     const registry = createRegistry();
-    registry.install(createCodingTools());
+    const coding = createCodingTools();
+    registry.install(coding);
+    // Remote MCP (docs/decisions/0007-native-remote-mcp.md). Off: nothing below runs and nothing changes.
+    // On: Pi Durable selects EVERY installed extension for a conversation whose `pi.agent` stores none
+    // (selectExtensions in pi-durable harness/agent.js), so installing these would hand MCP to every existing
+    // conversation at the next start. The host default is therefore pinned to `coding`, and only conversations
+    // created from now on add `tool_search` and the MCP extensions. #41 replaces that `add` with a per-session profile.
+    const mcpTransport =
+      options.mcpTransport ??
+      (config.mcpServers.length > 0 && config.onecli.token !== undefined
+        ? httpTransportFactory(await buildGatewayFetch(config, config.onecli.token))
+        : undefined);
+    const mcp = new McpTools(
+      config.mcpServers,
+      registry,
+      mcpTransport ??
+        (() => {
+          throw new Error("no MCP transport");
+        }),
+      options.mcpTimings,
+    );
+    const added: Extension[] = [];
+    if (config.mcpServers.length > 0) {
+      const toolSearch = createToolSearchExtension();
+      registry.install(toolSearch);
+      added.push(toolSearch, ...mcp.extensions);
+    }
     const sandboxes = new Sandboxes(config, sessionKeyOf, hooks);
     // Before resume(): a continuing run must not run its next command in a Pod that still holds the leftovers of
     // the command the previous process was killed in.
@@ -99,6 +152,7 @@ export class Host {
       {
         models,
         registry,
+        ...(added.length === 0 ? {} : { settings: { extensions: [coding] } }),
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {
@@ -112,7 +166,10 @@ export class Host {
     });
     // No new input needed: open recovers nothing by itself, resume() continues unfinished runs.
     harness.resume();
-    return new Host(harness, sandboxes, storage);
+    // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
+    // its tools unavailable until a retry succeeds.
+    mcp.start();
+    return new Host(harness, sandboxes, storage, mcp, added);
   }
 
   /** Creates the conversation and its sandbox claim, then submits the script as the first input. */
@@ -120,7 +177,11 @@ export class Host {
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
-        agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: WORKSPACE },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          cwd: WORKSPACE,
+          ...this.#extensionsAdded(),
+        },
       },
       context,
     );
@@ -192,6 +253,7 @@ export class Host {
           model: { provider: model.provider, modelId: model.model },
           ...(model.reasoning === undefined ? {} : { thinkingLevel: model.reasoning }),
           cwd: WORKSPACE,
+          ...this.#extensionsAdded(),
         },
       },
       context,
@@ -210,6 +272,15 @@ export class Host {
   /** The reasoning effort a conversation runs with, as Pi Durable resolved it (`off` when none was stored). */
   async thinkingOf(id: number): Promise<string> {
     return (await (await this.#conversation(id)).agent(context)).thinkingLevel;
+  }
+
+  /** Names of the tools the model is offered now, and of the deferred ones it can load with `tool_search`. */
+  async toolsOf(id: number): Promise<{ offered: string[]; deferred: string[] }> {
+    const agent = await (await this.#conversation(id)).agent(context);
+    return {
+      offered: agent.tools.map((tool) => tool.name),
+      deferred: agent.deferred.map((tool) => tool.name),
+    };
   }
 
   /** Model turns (assistant responses) in the conversation's transcript so far. */
@@ -309,6 +380,7 @@ export class Host {
 
   /** Waits for in-flight work to settle and closes storage; bridges stop, claims stay. */
   async close(): Promise<void> {
+    await this.#mcp.close();
     await this.#harness.close(context);
     await this.#sandboxes.closeAll();
   }

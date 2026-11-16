@@ -28,6 +28,7 @@ hosts=(
   chatgpt.com '*.chatgpt.com' auth.openai.com api.openai.com openrouter.ai
   github.com api.github.com codeload.github.com objects.githubusercontent.com
   registry.npmjs.org pypi.org files.pythonhosted.org
+  mcp.deepwiki.com
 )
 block_name=pi-block-all
 
