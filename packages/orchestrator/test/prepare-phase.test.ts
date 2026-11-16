@@ -16,6 +16,8 @@ class FakePool {
   txOpen = false;
   clientsOut = 0;
   readonly trace: string[] = [];
+  /** Runs once, right after the first read of pending rows (the prepare phase's snapshot). */
+  afterSnapshot: (() => void) | undefined;
 
   add(kind: EventDbRow["kind"], id = String(this.rows.length + 1)): EventDbRow {
     const row: EventDbRow = {
@@ -44,7 +46,11 @@ class FakePool {
       };
     }
     if (sql.includes("select * from inbox.events")) {
-      return { rows: this.rows.filter((r) => r.status === "pending") };
+      const snapshot = this.rows.filter((r) => r.status === "pending");
+      const hook = this.afterSnapshot;
+      this.afterSnapshot = undefined;
+      hook?.();
+      return { rows: snapshot };
     }
     if (sql.includes("select * from inbox.sessions")) {
       return { rows: [{ id: SESSION, status: "active" }] };
@@ -195,6 +201,56 @@ describe("the prepare phase of the inbox drain", () => {
     expect(second.status).toBe("submitted");
   });
 
+  it("prepares for the next input before submitting it after a terminal prepare failure", async () => {
+    const db = new FakePool();
+    const first = db.add("message");
+    const second = db.add("message");
+    const trace: string[] = [];
+    const loop = new InboxLoop(
+      db.pool(),
+      (event) => {
+        trace.push(`apply ${event.id}`);
+        return Promise.resolve();
+      },
+      (event) => {
+        trace.push(`prepare ${event.id}`);
+        return event.id === first.id
+          ? Promise.reject(new PermanentError("no access"))
+          : Promise.resolve();
+      },
+    );
+    loop.wake();
+    await flush();
+    expect(first.status).toBe("failed");
+    expect(second.status).toBe("submitted");
+    expect(trace).toEqual([`prepare ${first.id}`, `prepare ${second.id}`, `apply ${second.id}`]);
+  });
+
+  it("never submits an input that arrived after a cancel-only snapshot without preparing for it", async () => {
+    const db = new FakePool();
+    db.add("cancel");
+    let late: EventDbRow | undefined;
+    db.afterSnapshot = () => {
+      late = db.add("message");
+    };
+    const trace: string[] = [];
+    const loop = new InboxLoop(
+      db.pool(),
+      (event) => {
+        trace.push(`apply ${event.kind}`);
+        return Promise.resolve();
+      },
+      (event) => {
+        trace.push(`prepare ${event.kind}`);
+        return Promise.resolve();
+      },
+    );
+    loop.wake();
+    await flush();
+    expect(late?.status).toBe("submitted");
+    expect(trace).toEqual(["apply cancel", "prepare message", "apply message"]);
+  });
+
   it("gives up on a repeatedly failing prepare after five attempts like any other event", async () => {
     const db = new FakePool();
     const row = db.add("message");
@@ -210,22 +266,27 @@ describe("the prepare phase of the inbox drain", () => {
     expect([row.status, row.attempts]).toEqual(["failed", 5]);
   });
 
-  it("does not prepare for a session whose delete comes first", async () => {
+  it("does not prepare in front of a delete, only for what follows it", async () => {
     const db = new FakePool();
     db.add("delete");
     db.add("message");
-    let prepares = 0;
+    const trace: string[] = [];
     const loop = new InboxLoop(
       db.pool(),
-      () => Promise.resolve(),
-      () => {
-        prepares += 1;
+      (event) => {
+        trace.push(`apply ${event.kind}`);
+        return Promise.resolve();
+      },
+      (event) => {
+        trace.push(`prepare ${event.kind}`);
         return Promise.resolve();
       },
     );
     loop.wake();
     await flush();
-    expect(prepares).toBe(0);
+    // The delete is applied with no clone; the message behind it is prepared for (a no-op for a deleted session)
+    // before apply, never submitted unprepared.
+    expect(trace).toEqual(["apply delete", "prepare message", "apply message"]);
   });
 });
 
@@ -303,8 +364,17 @@ describe("SessionService.prepare", () => {
     const { svc, calls } = service(() => Promise.resolve());
     await svc.prepare(message, sessionRow());
     expect(calls.prepare).toBe(1);
-    await svc.apply(message, sessionRow());
+    await svc.apply(message, sessionRow({ workspaceReadyAt: new Date() }));
     expect(calls).toMatchObject({ prepare: 1, submit: 1 });
+  });
+
+  it("refuses to submit to a repo session whose workspace was never prepared", async () => {
+    const { svc, calls } = service(() => Promise.resolve());
+    await expect(svc.apply(message, sessionRow())).rejects.toThrow(/not prepared/);
+    expect(calls.submit).toBe(0);
+    // A plain session has no workspace to prepare.
+    await svc.apply(message, sessionRow({ repo: null }));
+    expect(calls.submit).toBe(1);
   });
 
   it("is safe to run again", async () => {

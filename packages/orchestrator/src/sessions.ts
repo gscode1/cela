@@ -279,6 +279,11 @@ export class SessionService {
           if (session.conversationId !== null) await this.#host.abort(session.conversationId);
           throw new PermanentError("session has failed");
         }
+        // The invariant behind prepare (ADR 0005): never run the agent in a repo session whose clone was not made. The
+        // inbox only claims prepared inputs; this refuses (and retries) the one that got here anyway.
+        if (session.repo !== null && session.workspaceReadyAt === null) {
+          throw new Error("the repository workspace is not prepared yet");
+        }
         const conversationId = await this.ensureConversation(session);
         await this.#withinBudget(session, conversationId);
         // The repo workspace was prepared by `prepare`, outside the inbox transaction (ADR 0005).

@@ -142,9 +142,14 @@ export class InboxLoop {
     while (!this.#stopped) {
       const prep = await this.#prepareHead(sessionId);
       if (prep === "none") return progressed;
-      // A row that ended `failed` is progress; one left pending for a retry is not (no hot loop).
-      if (prep.gaveUp) progressed = true;
+      // A row that ended `failed` is progress; one left pending for a retry is not (no hot loop). Nothing is claimed
+      // after it: the inputs behind it have not been prepared, so the next step prepares for the next one first.
+      if (prep.gaveUp) {
+        progressed = true;
+        continue;
+      }
       let finished = prep.blocked === undefined;
+      let reprepare = false;
       let submitted = 0;
       const client = await this.#pool.connect();
       try {
@@ -167,6 +172,12 @@ export class InboxLoop {
             finished = false;
             break;
           }
+          // An input prepare did not cover (it ran for no input, or the input arrived after its snapshot) is never
+          // submitted unprepared: stop here, commit what precedes it, and prepare again.
+          if (!prep.prepared && (row.kind === "message" || row.kind === "steer")) {
+            reprepare = true;
+            break;
+          }
           const outcome = await this.#applyRow(client, toEvent(row));
           if (outcome === "retry-later") {
             finished = false;
@@ -186,6 +197,7 @@ export class InboxLoop {
       // until the commit, and a later row of the batch (delete, a failSession) updates the same row on another
       // connection: it would wait for a lock that only this transaction's end releases, until statement_timeout.
       if (submitted > 0) await this.#touchSession(sessionId);
+      if (reprepare) continue;
       if (!finished) return progressed;
     }
     return progressed;
@@ -196,8 +208,12 @@ export class InboxLoop {
    * them and prepares for the first input that precedes any delete (a session about to be deleted is not worth a
    * clone). Prepare is per session, so one run covers every input of the batch, including rows that arrive meanwhile.
    * A failure is recorded on that input's row (`blocked` when it stays pending, so the claim stops in front of it).
+   * `prepared` says prepare ran for this step: only then may the claim submit an input (otherwise it stops in front of
+   * the first one, which the next step prepares for). When the failure ended the row (`gaveUp`) nothing is claimed.
    */
-  async #prepareHead(sessionId: string): Promise<"none" | { blocked?: string; gaveUp?: boolean }> {
+  async #prepareHead(
+    sessionId: string,
+  ): Promise<"none" | { blocked?: string; gaveUp?: boolean; prepared?: boolean }> {
     const { rows } = await this.#pool.query<EventDbRow>(
       `select * from inbox.events
         where session_id = $1 and status = 'pending'
@@ -207,7 +223,7 @@ export class InboxLoop {
     );
     if (rows.length === 0) return "none";
     const prepare = this.#prepare;
-    if (prepare === undefined) return {};
+    if (prepare === undefined) return { prepared: true };
     let head: InboxEvent | undefined;
     for (const row of rows) {
       if (row.kind === "delete") break;
@@ -221,7 +237,7 @@ export class InboxLoop {
       const session = await getSession(this.#pool, sessionId);
       // A missing session is apply's PermanentError; there is nothing to prepare for it.
       if (session !== undefined) await prepare(head, session);
-      return {};
+      return { prepared: true };
     } catch (error) {
       const outcome = await this.#recordFailure(this.#pool, head, error);
       return outcome === "gave-up" ? { gaveUp: true } : { blocked: head.id };
