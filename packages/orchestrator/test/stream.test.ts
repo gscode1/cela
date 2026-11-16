@@ -114,11 +114,11 @@ async function withServer(
 describe("serveStream", () => {
   it("stops the watch when the client leaves while it is being created", async () => {
     const { host, release, stop } = slowHost();
-    const served = Promise.withResolvers<void>();
+    const served = Promise.withResolvers<undefined>();
     await withServer(
       async (req, res) => {
         await serveStream(req, res, host, new StreamRegistry(), "s1", 1);
-        served.resolve();
+        served.resolve(undefined);
       },
       async (port) => {
         const req = request({ port, host: "127.0.0.1", path: "/" });

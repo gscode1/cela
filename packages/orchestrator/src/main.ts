@@ -42,6 +42,7 @@ async function main(): Promise<void> {
 
   const running: Running = {};
   const stop = new AbortController();
+  const shuttingDown = (): boolean => stop.signal.aborted;
   const shutdown = createShutdown({
     running,
     stop,
@@ -120,7 +121,7 @@ async function main(): Promise<void> {
   running.opening = opening;
   const host = await opening;
   running.host = host;
-  if (stop.signal.aborted) return;
+  if (shuttingDown()) return;
   const service = new SessionService(pool, host, {
     testFaults: config.testFaults,
     defaultModel: config.models.default,
@@ -132,7 +133,7 @@ async function main(): Promise<void> {
   await service.recoverWatches().catch((error: unknown) => {
     log("run-watch-recover-failed", { message: errorMessage(error) });
   });
-  if (stop.signal.aborted) return; // shutdown began during recovery: do not start the sweeper and inbox after it
+  if (shuttingDown()) return; // shutdown began during recovery: do not start the sweeper and inbox after it
   lifecycle.host = host;
   lifecycle.service = service;
   lifecycle.state = "owner";

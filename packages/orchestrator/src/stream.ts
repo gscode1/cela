@@ -120,15 +120,18 @@ export async function serveStream(
   /** Re-checked once the stream is registered: a deletion that ran before registration closed nothing. */
   stillOpen: () => Promise<boolean> = () => Promise.resolve(true),
 ): Promise<void> {
-  let watch: ConversationWatch | undefined;
-  let keepalive: NodeJS.Timeout | undefined;
-  let ended = false;
+  // One object: the closures below change these, which control-flow analysis cannot see on separate `let`s.
+  const state: {
+    watch: ConversationWatch | undefined;
+    keepalive: NodeJS.Timeout | undefined;
+    ended: boolean;
+  } = { watch: undefined, keepalive: undefined, ended: false };
   const finish = (reason?: string): void => {
-    if (ended) return;
-    ended = true;
-    if (keepalive !== undefined) clearInterval(keepalive);
+    if (state.ended) return;
+    state.ended = true;
+    if (state.keepalive !== undefined) clearInterval(state.keepalive);
     unregister();
-    void watch?.stop();
+    void state.watch?.stop();
     if (res.writableEnded || res.destroyed) return;
     if (!res.headersSent) {
       // Closed before the SSE head went out (deletion or disconnect while the watch was being created).
@@ -150,8 +153,8 @@ export async function serveStream(
 
   const watched = await host.watch(conversationId);
   if (watched === undefined) {
-    if (!ended) {
-      ended = true;
+    if (!state.ended) {
+      state.ended = true;
       unregister();
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "conversation not found" }));
@@ -159,8 +162,9 @@ export async function serveStream(
     return;
   }
   const { conversation } = watched;
-  watch = watched.watch;
-  if (ended) {
+  const watch = watched.watch;
+  state.watch = watch;
+  if (state.ended) {
     // The client left or the session was deleted while the watch was being created.
     void watch.stop();
     return;
@@ -170,7 +174,6 @@ export async function serveStream(
     finish("deleted");
     return;
   }
-  const liveWatch = watch;
   let cursor = parseLastEventId(req.headers["last-event-id"]);
 
   res.writeHead(200, {
@@ -182,7 +185,7 @@ export async function serveStream(
   res.write("retry: 2000\n\n");
 
   let lastLive = "";
-  keepalive = setInterval(() => {
+  state.keepalive = setInterval(() => {
     if (!res.destroyed) res.write(": keepalive\n\n");
   }, KEEPALIVE_MS);
 
@@ -225,18 +228,18 @@ export async function serveStream(
   };
 
   try {
-    await emit(liveWatch.value);
+    await emit(watch.value);
   } catch (error) {
     log("stream-failed", { session: sessionId, message: errorMessage(error) });
     finish();
     return;
   }
-  liveWatch.start(async (call) => {
+  watch.start(async (call) => {
     if (call.kind !== "value") return;
     await emit(call.value);
   });
   // The watch ends when the Harness closes (orchestrator shutdown) or fails: end the response so the client reconnects.
-  void liveWatch.closed.then(() => {
+  void watch.closed.then(() => {
     finish();
   });
 }

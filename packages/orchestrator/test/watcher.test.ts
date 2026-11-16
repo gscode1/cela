@@ -83,7 +83,7 @@ describe("RunWatcher", () => {
 
 describe("RunWatcher with a stalled handler", () => {
   it("still handles another watch while one handler has not finished", async () => {
-    const stalled = Promise.withResolvers<void>();
+    const stalled = Promise.withResolvers<undefined>();
     const handled: string[] = [];
     const watcher = new RunWatcher({
       lookup: () => Promise.resolve({ status: "unanswered", reason: "aborted" }),
@@ -100,7 +100,7 @@ describe("RunWatcher with a stalled handler", () => {
     await watcher.poll(); // a later tick must not wait for it, nor run it twice
     expect(handled).toEqual(["slow", "fast"]);
     expect(watcher.size).toBe(1);
-    stalled.resolve();
+    stalled.resolve(undefined);
     await first;
     expect(watcher.size).toBe(0);
     watcher.stop();
