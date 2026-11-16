@@ -133,12 +133,6 @@ export const DEFAULT_CALL_POLICY: OneCliCallPolicy = {
   maxBackoffMs: 5_000,
 };
 
-/**
- * A POST may have been applied when its answer was lost, so it is retried only on statuses a proxy sends when it did
- * not deliver the request. The caller's own retry (the inbox) re-runs an idempotent prepare that finds objects by name.
- */
-const POST_RETRY_STATUSES: readonly number[] = [502, 503, 504];
-
 export class OneCliAdmin {
   readonly #base: string;
   readonly #key: Redacted;
@@ -159,7 +153,9 @@ export class OneCliAdmin {
 
   /**
    * One call with a per-attempt timeout and bounded backoff. A network error, a timeout and a 5xx are retried; a 4xx
-   * (and a 2xx the caller does not accept) never is, because asking again cannot change the answer.
+   * (and a 2xx the caller does not accept) never is, because asking again cannot change the answer. A POST is never
+   * retried here: whatever fails after it was sent may hide an applied create (a gateway timing out after OneCLI
+   * committed), so `#createReconciled` decides what to do, by looking the object up again.
    */
   async #call(
     method: string,
@@ -180,12 +176,44 @@ export class OneCliAdmin {
   }
 
   #retryable(method: string, error: unknown): boolean {
-    if (error instanceof OneCliError) {
-      if (error.status < 500) return false;
-      return method !== "POST" || POST_RETRY_STATUSES.includes(error.status);
-    }
+    if (method === "POST") return false;
+    if (error instanceof OneCliError) return error.status >= 500;
     // Only transport failures reach here: a malformed body is a plain Error from parsing, not worth asking again.
-    return error instanceof OneCliTransportError && method !== "POST";
+    return error instanceof OneCliTransportError;
+  }
+
+  /** Whether a failed POST may have been applied: anything but a 4xx, which OneCLI answers before it writes. */
+  #ambiguous(error: unknown): boolean {
+    if (error instanceof OneCliError) return error.status >= 500;
+    return error instanceof OneCliTransportError;
+  }
+
+  /**
+   * Find-or-create with the retry policy applied to the whole step, never to the raw POST. Each round first looks
+   * the object up by name; only if it is absent does it POST. A POST that fails in an ambiguous way (5xx, timeout,
+   * network) is followed, after the backoff, by the next round's lookup, which finds the object if OneCLI applied the
+   * create and so never creates it twice. A definite refusal (4xx) and the last round's failure are thrown.
+   */
+  async #createReconciled<T>(
+    find: () => Promise<T | undefined>,
+    create: () => Promise<void>,
+  ): Promise<T> {
+    const { retries, backoffMs, maxBackoffMs } = this.#policy;
+    const sleep = this.#policy.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt++) {
+      const existing = await find();
+      if (existing !== undefined) return existing;
+      try {
+        await create();
+      } catch (error) {
+        if (attempt >= retries || !this.#ambiguous(error)) throw error;
+        await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** attempt));
+        continue;
+      }
+      const created = await find();
+      if (created === undefined) throw new Error("OneCLI accepted the create but does not list it");
+      return created;
+    }
   }
 
   async #attempt(
@@ -252,9 +280,20 @@ export class OneCliAdmin {
     });
   }
 
-  /** The create answer has no token (v2.20 recheck); read it back with `listAgents`. */
-  async createAgent(name: string, identifier: string): Promise<void> {
-    await this.#call("POST", "/v1/agents", { name, identifier });
+  /**
+   * The agent with this identifier, created if absent. The create answer has no token (v2.20 recheck), so the agent
+   * is read back with `listAgents`. Reconciles by identifier rather than retrying the POST (see `#createReconciled`).
+   */
+  async ensureAgent(identifier: string): Promise<{ agent: OneCliAgent; created: boolean }> {
+    let created = false;
+    const agent = await this.#createReconciled(
+      async () => (await this.listAgents()).find((a) => a.identifier === identifier),
+      async () => {
+        created = true;
+        await this.#call("POST", "/v1/agents", { name: identifier, identifier });
+      },
+    );
+    return { agent, created };
   }
 
   /** Deleting an agent makes its token fail at once (spike Q5). Already gone is fine. */
@@ -273,8 +312,22 @@ export class OneCliAdmin {
     });
   }
 
+  /**
+   * Creates the secret unless one of that name exists, and returns its id. Reconciles by name rather than retrying the
+   * POST. A secret found here (a lost create that was applied) already holds the value just posted.
+   */
+  async ensureSecret(input: SecretInput): Promise<string> {
+    const found = await this.#createReconciled(
+      async () => (await this.listSecrets()).find((s) => s.name === input.name),
+      async () => {
+        await this.#createSecret(input);
+      },
+    );
+    return found.id;
+  }
+
   /** UNVERIFIED on v2: the field names of a generic secret (`injectionConfig`) are those of v1.45. */
-  async createSecret(input: SecretInput): Promise<string> {
+  async #createSecret(input: SecretInput): Promise<string> {
     const { body } = await this.#call("POST", "/v1/secrets", {
       name: input.name,
       type: "generic",

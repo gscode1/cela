@@ -86,19 +86,92 @@ describe("OneCliAdmin retry and timeout", () => {
     await expect(a.listAgents()).rejects.toThrow(/^OneCLI GET \/v1\/agents failed: TypeError$/);
   });
 
-  it("retries a POST only on a status that means it was not delivered", async () => {
-    const lost = scripted(["network", 200]);
-    await expect(admin(lost.fetch).admin.createAgent("n", "i")).rejects.toThrow(/failed/);
-    expect(lost.calls).toHaveLength(1);
+  it("never re-sends a create POST after an ambiguous failure, and finds an applied create by lookup", async () => {
+    for (const failure of ["network", 500, 502, 503, 504, "hang"] as const) {
+      // lookup (empty), POST (fails in a way that may hide an applied create), lookup finds it.
+      const calls: string[] = [];
+      const fetch: FetchLike = (url, init) => {
+        calls.push(`${init.method} ${url}`);
+        const n = calls.length;
+        if (n === 2) {
+          if (failure === "network") return Promise.reject(new TypeError("fetch failed"));
+          if (failure === "hang") {
+            return new Promise((_, reject) => {
+              init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+          }
+          return Promise.resolve({
+            status: failure,
+            json: () => Promise.resolve({}),
+            text: () => Promise.resolve(""),
+          });
+        }
+        const body = n === 1 ? [] : [{ id: "a1", name: "i", identifier: "i", accessToken: "t" }];
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve(body),
+          text: () => Promise.resolve(JSON.stringify(body)),
+        });
+      };
+      const { admin: a } = admin(fetch);
+      const { agent, created } = await a.ensureAgent("i");
+      expect(agent.identifier).toBe("i");
+      expect(created).toBe(true);
+      expect(calls.filter((c) => c.startsWith("POST"))).toHaveLength(1);
+    }
+  });
 
-    const five = scripted([500, 200]);
-    await expect(admin(five.fetch).admin.createAgent("n", "i")).rejects.toMatchObject({
-      status: 500,
+  it("does not retry a create refused with a 4xx", async () => {
+    const calls: string[] = [];
+    const fetch: FetchLike = (url, init) => {
+      calls.push(`${init.method} ${url}`);
+      const status = init.method === "POST" ? 400 : 200;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve([]),
+        text: () => Promise.resolve("[]"),
+      });
+    };
+    await expect(admin(fetch).admin.ensureAgent("i")).rejects.toMatchObject({ status: 400 });
+    expect(calls.filter((c) => c.startsWith("POST"))).toHaveLength(1);
+  });
+
+  it("stops after the bounded retries when the create keeps failing and is never found", async () => {
+    const calls: string[] = [];
+    const fetch: FetchLike = (url, init) => {
+      calls.push(`${init.method} ${url}`);
+      const status = init.method === "POST" ? 503 : 200;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve([]),
+        text: () => Promise.resolve("[]"),
+      });
+    };
+    const { admin: a, sleeps } = admin(fetch, 2);
+    await expect(a.ensureAgent("i")).rejects.toMatchObject({ status: 503 });
+    expect(calls.filter((c) => c.startsWith("POST"))).toHaveLength(3);
+    expect(sleeps).toEqual([100, 200]);
+  });
+
+  it("does not POST a secret that a lookup finds", async () => {
+    const calls: string[] = [];
+    const fetch: FetchLike = (url, init) => {
+      calls.push(`${init.method} ${url}`);
+      const body = [{ id: "s1", name: "n" }];
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    };
+    const id = await admin(fetch).admin.ensureSecret({
+      name: "n",
+      value: "v",
+      hostPattern: "h",
+      header: "Authorization",
+      valueFormat: "{value}",
     });
-    expect(five.calls).toHaveLength(1);
-
-    const gateway = scripted([503, 201]);
-    await admin(gateway.fetch).admin.createAgent("n", "i");
-    expect(gateway.calls).toHaveLength(2);
+    expect(id).toBe("s1");
+    expect(calls).toHaveLength(1);
   });
 });

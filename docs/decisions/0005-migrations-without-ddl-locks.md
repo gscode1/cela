@@ -69,9 +69,10 @@ something the idempotent prepare already makes harmless.
 
 Each attempt has an `AbortSignal.timeout` (default 15 s, `PI_ONECLI_TIMEOUT_SECONDS`). A network error, a timeout or a
 5xx is retried up to `PI_ONECLI_RETRIES` times (default 3) with doubling backoff from `PI_ONECLI_BACKOFF_MS` (default
-500 ms, capped at 5 s); a 4xx never is. A `POST` (create agent, create secret) is retried only on 502/503/504,
-because a lost answer may hide an applied create; the inbox's own retry reruns the idempotent prepare, which finds
-objects by name. The worst case for one call is about 4 x 15 s + 6.5 s of backoff, with no transaction held.
+500 ms, capped at 5 s); a 4xx never is. A `POST` (create agent, create secret) is never re-sent by the
+retry, because a lost answer may hide an applied create. Each create is find-or-create instead: after an ambiguous
+failure (5xx, timeout, network) and the backoff, the next round looks the object up by name and creates it only if
+it is still absent, so it is never created twice. The worst case for one call is about 4 x 15 s + 6.5 s of backoff, with no transaction held.
 
 ### The pool
 

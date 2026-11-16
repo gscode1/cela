@@ -142,32 +142,24 @@ export class RepoAccess {
       suffix === "git" ? gitValue : minted.token.reveal();
 
     const identifier = agentIdentifier(session.id);
-    const findAgent = async () =>
-      (await onecli.listAgents()).find((a) => a.identifier === identifier);
-    let found = await findAgent();
-    const created = found === undefined;
-    if (found === undefined) {
-      await onecli.createAgent(identifier, identifier);
-      found = await findAgent();
-    }
-    if (found === undefined) throw new Error("OneCLI created the agent but does not list it");
-    const agent = found;
+    const { agent, created } = await onecli.ensureAgent(identifier);
     const existing = new Map((await onecli.listSecrets()).map((s) => [s.name, s.id]));
     const secretIds: string[] = [];
     for (const spec of SECRET_SUFFIXES) {
       const name = secretName(session.id, spec.suffix);
-      let id = existing.get(name);
-      if (id === undefined) {
-        id = await onecli.createSecret({
-          name,
-          value: valueOf(spec.suffix),
-          hostPattern: spec.host,
-          header: spec.header,
-          valueFormat: spec.format,
-        });
-      } else {
-        await onecli.updateSecretValue(id, valueOf(spec.suffix));
+      const known = existing.get(name);
+      if (known !== undefined) {
+        await onecli.updateSecretValue(known, valueOf(spec.suffix));
+        secretIds.push(known);
+        continue;
       }
+      const id = await onecli.ensureSecret({
+        name,
+        value: valueOf(spec.suffix),
+        hostPattern: spec.host,
+        header: spec.header,
+        valueFormat: spec.format,
+      });
       secretIds.push(id);
     }
 

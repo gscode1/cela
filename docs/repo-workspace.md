@@ -97,8 +97,8 @@ It does not today; the ruleset is an operator step, and nothing at startup calls
 
 ## OneCLI call bounds
 
-Every management API call has a timeout and a bounded retry on network errors, timeouts and 5xx (never 4xx; a `POST` only on
-502/503/504). Environment: `PI_ONECLI_TIMEOUT_SECONDS` (default 15, per attempt), `PI_ONECLI_RETRIES` (default 3),
+Every management API call has a timeout and a bounded retry on network errors, timeouts and 5xx (never 4xx). A `POST` is never
+re-sent; a create looks the object up by name again after a failure and POSTs only if it is absent. Environment: `PI_ONECLI_TIMEOUT_SECONDS` (default 15, per attempt), `PI_ONECLI_RETRIES` (default 3),
 `PI_ONECLI_BACKOFF_MS` (default 500, doubling, capped at 5 s).
 
 ## Unverified
