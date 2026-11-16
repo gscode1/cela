@@ -62,6 +62,9 @@ spec:
             # Phase 4c: management API key for per-session OneCLI agents (repo sessions only; optional).
             - name: ONECLI_API_KEY
               valueFrom: { secretKeyRef: { name: pi-onecli-admin, key: api-key, optional: true } }
+            # Cap on open sandbox bridges. Each is a ~100 MiB Node process; the 2Gi limit below holds about 18 in
+            # the worst case, so 12 leaves room for the orchestrator itself. Raise it only with the memory limit.
+            - { name: PI_MAX_OPEN_BRIDGES, value: "12" }
             - { name: PI_ONECLI_API, value: "http://onecli.onecli:10256" }
             - { name: PI_ONECLI_GATEWAY, value: "http://onecli.onecli:10255" }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }

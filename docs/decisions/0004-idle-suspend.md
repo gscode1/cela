@@ -61,3 +61,23 @@ sandbox. The next tool call resumes it. No deadline, no deletion, no renewal.
 - The workspace marker for repo sessions is on the PVC and survives. The in-memory GitHub token cache
   (`RepoAccess.beforeUse`) renews its token at the next call as it does after an eviction.
 - Not done: suspending a sandbox that is busy but silent for 30 minutes (a model thinking). Its next command resumes it.
+
+## Addendum: cap on open bridges (issue #43)
+
+Idle eviction is a time rule, not a bound: sessions that all run tools within two minutes keep one bridge each, about
+100 MiB apiece (the load-50 test peaked at 4.9 GiB). With the 2 Gi limit about 18 open bridges OOM-kill the
+orchestrator and interrupt every session. `PI_MAX_OPEN_BRIDGES` (default 12, whole number of 1 or more, checked at
+start) caps envs that are open or opening.
+
+- `Sandboxes.ensure` for a conversation with no env, at the cap, first evicts the least recently used env that has no
+  call in flight (`bridge-cap-evict`). If every env is in use, the call waits in a FIFO queue (`bridge-cap-wait`).
+  Both logs carry `open`, `max` and `waiting`.
+- A slot is an entry in `#envs`, so it is released by close, eviction, teardown and a failed open alike; each of those
+  serves the queue. A call finishing also serves it, because its env has become evictable.
+- The wait ends when the call's abort signal fires (the `Context` passed to every `ExecutionEnv` method); the call then
+  fails and takes no slot. A signal that fires after the slot was granted does not undo the open.
+- Eviction never touches an env with a call in flight, so the in-flight record of ADR 0003 is unaffected. An evicted
+  env's next call opens a fresh bridge on the same claim, as after idle eviction.
+- Separate from the start gate in `packages/sandbox-env/src/start-gate.ts`, which only serialises the CPU-heavy
+  cold starts of bridges that are already allowed to open.
+- A call that waits longer than the model or tool timeout above it fails there; the queue is not durable.
