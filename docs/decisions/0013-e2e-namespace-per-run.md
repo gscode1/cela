@@ -1,4 +1,4 @@
-# 0011: Every e2e run gets its own namespace
+# 0013: Every e2e run gets its own namespace
 
 Status: accepted, 2026-11-16 (issue #69).
 

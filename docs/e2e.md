@@ -1,7 +1,7 @@
 # End-to-end suites: one namespace per run
 
 `tests/e2e/run.sh <suite>` deploys a complete stack into a fresh namespace `pi-e2e-<run id>`, runs the suite there and
-deletes the namespace again (issue #69, [decision 0011](decisions/0011-e2e-namespace-per-run.md)). The long-lived
+deletes the namespace again (issue #69, [decision 0011](decisions/0013-e2e-namespace-per-run.md)). The long-lived
 namespace `pi-durable-poc` is never touched: the script refuses any namespace that does not start with `pi-e2e-`, and the
 `run-*.sh` scripts have no default namespace. Two runs, for example from two branches, can run at the same time.
 
