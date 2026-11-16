@@ -44,6 +44,8 @@ export type PrepareEvent = (event: InboxEvent, session: SessionRow) => Promise<v
  */
 export class InboxLoop {
   readonly #pool: pg.Pool;
+  /** The orchestrator shard: it drains only the events of its own sessions (docs/decisions/0017). */
+  readonly #shard: number;
   readonly #apply: ApplyEvent;
   readonly #prepare: PrepareEvent | undefined;
   readonly #inFlight = new Set<string>();
@@ -55,8 +57,9 @@ export class InboxLoop {
   #again = false;
   #stopped = false;
 
-  constructor(pool: pg.Pool, apply: ApplyEvent, prepare?: PrepareEvent) {
+  constructor(pool: pg.Pool, shard: number, apply: ApplyEvent, prepare?: PrepareEvent) {
     this.#pool = pool;
+    this.#shard = shard;
     this.#apply = apply;
     this.#prepare = prepare;
   }
@@ -116,7 +119,9 @@ export class InboxLoop {
   async #tick(): Promise<void> {
     try {
       const { rows } = await this.#pool.query<{ session_id: string }>(
-        "select distinct session_id from inbox.events where status = 'pending' limit 100",
+        `select distinct e.session_id from inbox.events e join inbox.sessions s on s.id = e.session_id
+          where e.status = 'pending' and s.shard = $1 limit 100`,
+        [this.#shard],
       );
       for (const { session_id: sessionId } of rows) {
         if (this.#inFlight.has(sessionId) || this.#inFlight.size >= MAX_PARALLEL_SESSIONS) continue;

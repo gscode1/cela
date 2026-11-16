@@ -40,7 +40,7 @@ class FakePool {
   #run(sql: string, params: unknown[]): { rows: unknown[] } {
     if (sql === "begin") this.txOpen = true;
     if (sql === "commit" || sql === "rollback") this.txOpen = false;
-    if (sql.includes("select distinct session_id")) {
+    if (sql.includes("select distinct e.session_id")) {
       return {
         rows: this.rows.some((r) => r.status === "pending") ? [{ session_id: SESSION }] : [],
       };
@@ -97,6 +97,7 @@ describe("the prepare phase of the inbox drain", () => {
     const seen: { txOpen: boolean; clientsOut: number }[] = [];
     const loop = new InboxLoop(
       db.pool(),
+      0,
       () => {
         db.trace.push("apply");
         return Promise.resolve();
@@ -128,6 +129,7 @@ describe("the prepare phase of the inbox drain", () => {
     let applies = 0;
     const loop = new InboxLoop(
       db.pool(),
+      0,
       () => {
         applies += 1;
         return applies === 1 ? Promise.reject(new Error("died")) : Promise.resolve();
@@ -154,6 +156,7 @@ describe("the prepare phase of the inbox drain", () => {
     const applied: string[] = [];
     const loop = new InboxLoop(
       db.pool(),
+      0,
       (event) => {
         applied.push(event.id);
         return Promise.resolve();
@@ -175,6 +178,7 @@ describe("the prepare phase of the inbox drain", () => {
     const later = db.add("message");
     const loop = new InboxLoop(
       db.pool(),
+      0,
       () => Promise.resolve(),
       () => Promise.reject(new Error("transient")),
     );
@@ -191,6 +195,7 @@ describe("the prepare phase of the inbox drain", () => {
     const second = db.add("message");
     const loop = new InboxLoop(
       db.pool(),
+      0,
       () => Promise.resolve(),
       (event) =>
         event.id === first.id ? Promise.reject(new PermanentError("no access")) : Promise.resolve(),
@@ -208,6 +213,7 @@ describe("the prepare phase of the inbox drain", () => {
     const trace: string[] = [];
     const loop = new InboxLoop(
       db.pool(),
+      0,
       (event) => {
         trace.push(`apply ${event.id}`);
         return Promise.resolve();
@@ -236,6 +242,7 @@ describe("the prepare phase of the inbox drain", () => {
     const trace: string[] = [];
     const loop = new InboxLoop(
       db.pool(),
+      0,
       (event) => {
         trace.push(`apply ${event.kind}`);
         return Promise.resolve();
@@ -256,6 +263,7 @@ describe("the prepare phase of the inbox drain", () => {
     const row = db.add("message");
     const loop = new InboxLoop(
       db.pool(),
+      0,
       () => Promise.resolve(),
       () => Promise.reject(new Error("boom")),
     );
@@ -273,6 +281,7 @@ describe("the prepare phase of the inbox drain", () => {
     const trace: string[] = [];
     const loop = new InboxLoop(
       db.pool(),
+      0,
       (event) => {
         trace.push(`apply ${event.kind}`);
         return Promise.resolve();
@@ -295,6 +304,7 @@ const sessionRow = (overrides: Partial<SessionRow> = {}): SessionRow => ({
   owner: "alice",
   ownerSubject: "static:alice",
   status: "active",
+  shard: 0,
   conversationId: 7,
   model: null,
   failure: null,
@@ -351,6 +361,7 @@ function service(prepare: () => Promise<void>) {
     },
   } as unknown as RepoAccess;
   const svc = new SessionService(pool, host, {
+    shard: 0,
     testFaults: false,
     defaultModel: { provider: "p", model: "m" },
     turnBudget: () => 5,

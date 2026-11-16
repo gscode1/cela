@@ -3,7 +3,10 @@
 # a pod restart keeps the code. No image is built or pushed. The orchestrator Deployment (if present) is
 # scaled to 0 while the volume is written, because a ReadWriteOnce volume is mounted by one node at a time.
 # NAMESPACE (default pi-durable-poc) picks the target; every e2e run passes its own pi-e2e-<id>.
-# Usage: deploy/push-code.sh [deployment...]   (default: pi-orchestrator; scaled back to 1 afterwards)
+# Usage: deploy/push-code.sh [deployment...]
+#   Default: every orchestrator shard (the Deployments labelled app.kubernetes.io/name=pi-orchestrator, ADR 0017), one
+#   push for all, because they share the code volume. Each is scaled back to the replica count it had, and to at
+#   least 1: a push starts every shard it stopped. Named deployments are scaled back to 1.
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}
@@ -12,23 +15,37 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 work=$(mktemp -d)
 deployments=("$@")
-[[ ${#deployments[@]} -gt 0 ]] || deployments=(pi-orchestrator)
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
-scaled=() # deployments this run scaled to 0; the trap restores exactly these
+scaled=()   # deployments this run scaled to 0; the trap restores exactly these
+restore=()  # their replica counts, same order
 lock=orchestrator-code-push-lock
 # shellcheck source=push-lock.sh
 . "$here/push-lock.sh"
 # shellcheck source=push-retry.sh
 . "$here/push-retry.sh"
+# Which shards to stop. A failed listing must abort: falling back to pi-orchestrator alone would replace the shared code
+# under shards that keep running. The fallback is only for a successful listing that came back empty.
+if [[ ${#deployments[@]} -eq 0 ]]; then
+  listing=$(push_retry k get deployment -l app.kubernetes.io/name=pi-orchestrator -o name) || {
+    rm -rf "$work"
+    echo "could not list the orchestrator Deployments; nothing was changed" >&2
+    exit 1
+  }
+  while IFS= read -r d; do [[ -z $d ]] || deployments+=("${d#deployment.apps/}"); done <<<"$listing"
+  [[ ${#deployments[@]} -gt 0 ]] || deployments=(pi-orchestrator)
+fi
+echo "orchestrator deployments: ${deployments[*]}" >&2
 locked=0 # 1 only when this run created the lock; the trap must never touch another run's lock or loader
 # Runs on every exit path: a failed wait, cp or extract must not leave the orchestrator at 0 replicas.
 cleanup() {
-  local d
+  local d i
   rm -rf "$work"
   if [[ $locked -eq 1 ]]; then
     k delete pod orchestrator-code-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    for d in ${scaled[@]+"${scaled[@]}"}; do
-      k scale deployment "$d" --replicas=1 >/dev/null || echo "could not scale $d back to 1; run: kubectl -n $ns scale deployment $d --replicas=1" >&2
+    # Index loop: macOS bash 3.2 has no ${!array[@]} for an empty array under set -u, and ${!name+...} is indirection.
+    for ((i = 0; i < ${#scaled[@]}; i++)); do
+      d=${scaled[$i]}
+      k scale deployment "$d" --replicas="${restore[$i]}" >/dev/null || echo "could not scale $d back to ${restore[$i]}; run: kubectl -n $ns scale deployment $d --replicas=${restore[$i]}" >&2
     done
     push_lock_release || true
   fi
@@ -47,6 +64,8 @@ k apply -f "$here/orchestrator-code-pvc.yaml" >/dev/null
 for d in "${deployments[@]}"; do
   if k get deployment "$d" >/dev/null 2>&1; then
     scaled+=("$d")
+    n=$(k get deployment "$d" -o jsonpath='{.spec.replicas}')
+    restore+=("$((${n:-1} > 1 ? n : 1))")
     k scale deployment "$d" --replicas=0 >/dev/null
   fi
 done

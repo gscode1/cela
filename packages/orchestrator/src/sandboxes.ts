@@ -18,7 +18,7 @@ import {
   suspendSandbox,
 } from "./kube.js";
 import { bridgeCommand } from "./bridge-launcher.js";
-import { conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
+import { claimNameFor, conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
 import { bridgeRssByClaim } from "./bridge-rss.js";
 import { errorMessage, log } from "./log.js";
 import { TurnTimings } from "./timing.js";
@@ -70,11 +70,6 @@ function abortSignalOf(args: readonly unknown[]): AbortSignal | undefined {
   const last = args[args.length - 1];
   if (typeof last !== "object" || last === null || !("abortSignal" in last)) return undefined;
   return last.abortSignal instanceof AbortSignal ? last.abortSignal : undefined;
-}
-
-/** One conversation maps to one SandboxClaim, named from the conversation id (and so to one PVC). */
-export function claimNameFor(conversationId: number): string {
-  return `pi-conv-${String(conversationId)}`;
 }
 
 /**
@@ -152,7 +147,7 @@ export class Sandboxes {
       if (this.#envs.size === 0) return;
       const rss = await bridgeRssByClaim();
       for (const conversationId of this.#envs.keys()) {
-        const claim = claimNameFor(conversationId);
+        const claim = claimNameFor(this.#config.shard, conversationId);
         const bytes = rss.get(claim);
         if (bytes === undefined) continue;
         log("bridge-rss", {
@@ -190,7 +185,7 @@ export class Sandboxes {
     this.#envs.delete(conversationId);
     this.#bridgeUp.delete(conversationId);
     const counts = {
-      claim: claimNameFor(conversationId),
+      claim: claimNameFor(this.#config.shard, conversationId),
       open: this.#envs.size,
       max: this.#config.sandbox.maxOpenBridges,
       waiting: this.#slotQueue.length,
@@ -253,7 +248,10 @@ export class Sandboxes {
    * forwards to the real env. `id` and `cwd` are plain properties; every other member is an async method.
    */
   lazyEnv(conversationId: number): ExecutionEnv {
-    const target = { id: `pi-env:${claimNameFor(conversationId)}`, cwd: WORKSPACE };
+    const target = {
+      id: `pi-env:${claimNameFor(this.#config.shard, conversationId)}`,
+      cwd: WORKSPACE,
+    };
     return new Proxy(target, {
       get: (object, property) => {
         if (property === "id" || property === "cwd") return object[property];
@@ -280,7 +278,7 @@ export class Sandboxes {
             if (usage.inUse === 1 && this.#hooks.envStale?.(conversationId) === true) {
               log("env-reopen", {
                 ...this.timings.fields(conversationId),
-                claim: claimNameFor(conversationId),
+                claim: claimNameFor(this.#config.shard, conversationId),
                 reason: "credentials-replaced",
               });
               await this.#closeEnv(conversationId);
@@ -339,7 +337,7 @@ export class Sandboxes {
       this.#interrupted.delete(conversationId);
       this.#replace(conversationId, "interrupted", async () => {
         await this.#closeEnv(conversationId);
-        await recyclePod(this.#config.namespace, claimNameFor(conversationId));
+        await recyclePod(this.#config.namespace, claimNameFor(this.#config.shard, conversationId));
         // Cleared only now: if the recycle fails or the process dies first, the record is still there.
         await this.#hooks.execInFlight?.(conversationId, false);
         usage.recorded = false;
@@ -350,7 +348,7 @@ export class Sandboxes {
         usage.recorded = true; // still recorded: the next settle clears it
         log("exec-record-failed", {
           ...this.timings.fields(conversationId),
-          claim: claimNameFor(conversationId),
+          claim: claimNameFor(this.#config.shard, conversationId),
           message: errorMessage(error),
         });
       });
@@ -370,7 +368,7 @@ export class Sandboxes {
     await this.#replacing.get(conversationId);
     if (this.#failed.has(conversationId)) {
       throw new Error(
-        `sandbox ${claimNameFor(conversationId)} could not be recycled after an interrupted command`,
+        `sandbox ${claimNameFor(this.#config.shard, conversationId)} could not be recycled after an interrupted command`,
       );
     }
   }
@@ -385,7 +383,7 @@ export class Sandboxes {
     work: () => Promise<void>,
   ): void {
     if (this.#replacing.has(conversationId)) return;
-    const claim = claimNameFor(conversationId);
+    const claim = claimNameFor(this.#config.shard, conversationId);
     const run = (async () => {
       await work();
       this.#failed.delete(conversationId);
@@ -408,7 +406,7 @@ export class Sandboxes {
   recycleAtStart(conversationIds: readonly number[]): void {
     for (const conversationId of conversationIds) {
       this.#replace(conversationId, "orchestrator-restart", async () => {
-        await recyclePod(this.#config.namespace, claimNameFor(conversationId));
+        await recyclePod(this.#config.namespace, claimNameFor(this.#config.shard, conversationId));
         await this.#hooks.execInFlight?.(conversationId, false);
       });
     }
@@ -421,6 +419,11 @@ export class Sandboxes {
     if (opened !== undefined) (await opened.catch(() => undefined))?.close();
   }
 
+  /** The claim name of a conversation of this orchestrator's shard. */
+  claimOf(conversationId: number): string {
+    return claimNameFor(this.#config.shard, conversationId);
+  }
+
   /** Suspends the sandboxes that have been idle for `idleSuspendMs`. Never throws: it runs on a timer. */
   async #suspendIdle(): Promise<void> {
     try {
@@ -430,11 +433,12 @@ export class Sandboxes {
       for (const [conversationId, usage] of this.#usage)
         if (usage.inUse > 0) busy.add(conversationId);
       for (const sandbox of sandboxes) {
-        const conversationId = conversationOfName(sandbox.name);
+        const conversationId = conversationOfName(this.#config.shard, sandbox.name);
         if (conversationId !== undefined && sandbox.mode === "Suspended")
           this.#lastUsed.delete(conversationId);
       }
       const plan = planSuspend({
+        shard: this.#config.shard,
         running: sandboxes.filter((s) => s.mode === "Running").map((s) => s.name),
         lastUsed: this.#lastUsed,
         busy,
@@ -445,7 +449,10 @@ export class Sandboxes {
       for (const conversationId of plan.suspend) {
         this.#replace(conversationId, "idle", async () => {
           await this.#closeEnv(conversationId);
-          await suspendSandbox(this.#config.namespace, claimNameFor(conversationId));
+          await suspendSandbox(
+            this.#config.namespace,
+            claimNameFor(this.#config.shard, conversationId),
+          );
         });
       }
     } catch (error) {
@@ -492,7 +499,7 @@ export class Sandboxes {
     });
     log("bridge-cap-wait", {
       ...this.timings.fields(conversationId),
-      claim: claimNameFor(conversationId),
+      claim: claimNameFor(this.#config.shard, conversationId),
       open: this.#envs.size,
       max: maxOpenBridges,
       waiting: this.#slotQueue.length,
@@ -519,7 +526,7 @@ export class Sandboxes {
   }
 
   async #open(conversationId: number): Promise<SandboxEnv> {
-    const claimName = claimNameFor(conversationId);
+    const claimName = claimNameFor(this.#config.shard, conversationId);
     const { namespace, warmPool } = this.#config;
     // Required: a sandbox with no token would be unauthenticated or unreachable. Only the hash goes into the claim.
     const master = process.env[ENV.masterKey];
@@ -605,7 +612,7 @@ export class Sandboxes {
    * claim that changed hands meanwhile.
    */
   async destroyOrphan(claimName: string, sessionLabel: string): Promise<void> {
-    const conversationId = conversationOfName(claimName);
+    const conversationId = conversationOfName(this.#config.shard, claimName);
     if (conversationId === undefined) throw new Error(`${claimName} is not a conversation claim`);
     await this.#teardown(conversationId, sessionLabel);
   }
@@ -623,7 +630,7 @@ export class Sandboxes {
       const env = await opened.catch(() => undefined);
       env?.close();
     }
-    const claimName = claimNameFor(conversationId);
+    const claimName = claimNameFor(this.#config.shard, conversationId);
     await deleteClaimAndPvc(this.#config.namespace, claimName, sessionKey);
     log("sandbox-deleted", { claim: claimName });
   }

@@ -2,6 +2,7 @@ import { request as httpRequest, createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import type pg from "pg";
+import { orchestratorUrlFor } from "./config.js";
 import {
   BodyError,
   BUILTIN_TOOL_NAMES,
@@ -61,7 +62,10 @@ import { log } from "./log.js";
 export interface IngestDeps {
   pool: pg.Pool;
   authenticate: Authenticator;
+  /** Stream endpoint of the orchestrator; may hold `{shard}` (see `IngestConfig.orchestratorUrl`). */
   orchestratorUrl: string;
+  /** Number of orchestrator shards; default 1. */
+  shards?: number;
   /** The settings cache: the model policy for POST /sessions and GET, refreshed after an admin write. */
   settings: SettingsView;
   /** Owner names allowed to call `/admin/*`. */
@@ -173,7 +177,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       sendJson(res, 410, { error: "session deleted" });
       return;
     }
-    proxyStream(req, res, deps.orchestratorUrl, session.id);
+    proxyStream(req, res, orchestratorUrlFor(deps.orchestratorUrl, session.shard), session.id);
     return;
   }
   sendJson(res, 404, { error: "not found" });
@@ -723,7 +727,14 @@ async function postSession(
     sendJson(res, 400, { error: repo });
     return;
   }
-  const sessionId = await createSession(deps.pool, principal, model, repo, snapshot);
+  const sessionId = await createSession(
+    deps.pool,
+    principal,
+    model,
+    repo,
+    snapshot,
+    deps.shards ?? 1,
+  );
   sendJson(res, 201, {
     sessionId,
     profile: profileRef(snapshot),
@@ -872,10 +883,13 @@ function proxyStream(
 
   const upstream = httpRequest(target, { method: "GET", headers }, (up) => {
     const type = up.headers["content-type"];
+    const retryAfter = up.headers["retry-after"];
     res.writeHead(up.statusCode ?? 502, {
       "content-type": typeof type === "string" ? type : "application/json",
       "cache-control": "no-cache",
       "x-accel-buffering": "no",
+      // An orchestrator that is not ready says when to retry; the client must see it.
+      ...(typeof retryAfter === "string" ? { "retry-after": retryAfter } : {}),
     });
     up.pipe(res);
     up.on("error", () => res.end());

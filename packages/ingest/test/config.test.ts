@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, orchestratorUrlFor } from "../src/config.ts";
 
 const base = { PI_DURABLE_DATABASE_URL: "postgres://x/y", PI_API_TOKENS: "alice:aaaaaaaaaaaaaaaa" };
 
@@ -24,5 +24,25 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, PI_ORCH_URL: "https://orch.example:8443" }).orchestratorUrl).toBe(
       "https://orch.example:8443",
     );
+  });
+
+  it("takes the shard count and the {shard} URL template", () => {
+    expect(loadConfig(base).shards).toBe(1);
+    const url = "http://pi-orchestrator-{shard}:8081";
+    const config = loadConfig({ ...base, PI_ORCH_URL: url, PI_ORCH_SHARDS: "3" });
+    expect(config.shards).toBe(3);
+    expect(orchestratorUrlFor(config.orchestratorUrl, 2)).toBe("http://pi-orchestrator-2:8081");
+    expect(orchestratorUrlFor("http://pi-orchestrator:8081", 2)).toBe(
+      "http://pi-orchestrator:8081",
+    );
+  });
+
+  it("rejects a bad shard count, and several shards behind one fixed URL", () => {
+    for (const shards of ["", "0", "-1", "1.5", "x"]) {
+      expect(() => loadConfig({ ...base, PI_ORCH_SHARDS: shards }), shards).toThrow(
+        /PI_ORCH_SHARDS/,
+      );
+    }
+    expect(() => loadConfig({ ...base, PI_ORCH_SHARDS: "2" })).toThrow(/\{shard\}/);
   });
 });

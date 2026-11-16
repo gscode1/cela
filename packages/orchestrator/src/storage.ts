@@ -41,12 +41,28 @@ async function schemaExists(config: OrchestratorConfig): Promise<boolean> {
   }
 }
 
+/**
+ * Creates the shard's schema. `deploy/postgres.yaml` creates only the first one, at initdb, and a shard added later
+ * has none. The name was validated in `shardSchema`, so quoting it is enough.
+ */
+async function ensureSchema(config: OrchestratorConfig): Promise<void> {
+  const pool = createPool(config.databaseUrl, `${config.instance}-schema-create`, 1);
+  try {
+    await pool.query(`create schema if not exists "${config.schema}"`);
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
 export interface StorageDeps {
+  /** Run once before the first open; a failure is retried like a failed open. */
+  ensureSchema: (config: OrchestratorConfig) => Promise<void>;
   open: (config: OrchestratorConfig) => Promise<Storage>;
   schemaExists: (config: OrchestratorConfig) => Promise<boolean>;
 }
 
 const REAL: StorageDeps = {
+  ensureSchema,
   open: (config) => openNodePostgresStorage({ config: poolConfig(config) }),
   schemaExists,
 };
@@ -64,9 +80,14 @@ export async function openStorageWhenFree(
   deps: StorageDeps = REAL,
 ): Promise<Storage> {
   let waitingLogged = false;
+  let schemaEnsured = false;
   for (;;) {
     signal.throwIfAborted();
     try {
+      if (!schemaEnsured) {
+        await deps.ensureSchema(config);
+        schemaEnsured = true;
+      }
       return await deps.open(config);
     } catch (error) {
       const message = errorMessage(error);

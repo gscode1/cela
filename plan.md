@@ -18,7 +18,7 @@ Run Pi Durable agents on my own Kubernetes cluster so that:
 |---|---|---|
 | Durability layer | Native Pi Durable, no durable-harness | Single replica is enough; avoids the reference-grade Postgres World and the 120 s takeover trap |
 | Storage | `@netzlabor/pi-durable-postgres`, ported to current Pi Durable | Exists, passes upstream conformance on 1.0.3; needs the 1.5 batched-commit contract |
-| Orchestrator topology | 1 replica, `strategy: Recreate` | Adapter allows one owner per schema (advisory lock) |
+| Orchestrator topology | One replica per shard, `strategy: Recreate`; shard 0 is the default single orchestrator. More shards by Postgres schema sharding, one Deployment each (`docs/decisions/0017-schema-sharding.md`, `docs/scaling.md`) | Adapter allows one owner per schema (advisory lock); shards scale capacity without an adapter fork |
 | Execution | `pi-env` daemon inside the sandbox, bridged over Agent Sandbox `commands.start()` | Conformance-tested `RemoteExecutionEnv`; avoids hand-writing FileSystem + Shell |
 | Execution fallback | `pi-env` over SSH | Documented path if the stdio bridge fails |
 | Sandbox | kubernetes-sigs/agent-sandbox, `runtimeClassName: gvisor`, `volumeClaimTemplates` | Lifecycle, PVC and reattach already exist |
@@ -250,7 +250,7 @@ Tests:
 | Pi Durable breaking releases every few weeks | Repeated porting; no rollback across state migrations | Pin exact versions; upgrade deliberately; back up before each upgrade |
 | Agent Sandbox TS SDK is private and unversioned | API drift | Vendor at a pinned commit; isolate behind one module |
 | Stdio bridge unproven | Phase 1 slips | SSH fallback |
-| Single replica | Downtime during restart | Accepted for the PoC; revisit durable-harness or leader election later |
+| One replica per shard | Downtime of a shard's sessions during its restart | Accepted for the PoC; other shards keep running. Capacity: add a shard (`deploy/add-shard.sh`). Takeover or leader election later |
 | Non-idempotent external tools | Duplicate side effects after a crash | Mark tools `replay` correctly; add execution IDs for external APIs |
 | gVisor I/O overhead on PVCs | Slow builds | Measure in Phase 3; consider Kata if unacceptable |
 | Inbox drain transaction stays open for the whole repo preparation (about 96 s) | Row locks held, one pool connection per busy session; migrations used to queue behind it and crash-loop ingest | Migrations skip DDL when current and fail fast on locks, ingest serves `/healthz` first (`docs/decisions/0005-migrations-without-ddl-locks.md`); shortening the transaction is a follow-up |

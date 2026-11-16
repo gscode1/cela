@@ -1,5 +1,6 @@
 import type { SessionRef } from "@pi-durable-k8s/session-core";
 import { UUID } from "@pi-durable-k8s/session-core";
+import { claimPrefixFor } from "./lifecycle.js";
 import { DEFAULT_ONECLI_NAME_PREFIX, namePatterns } from "./onecli-names.js";
 
 /**
@@ -8,7 +9,7 @@ import { DEFAULT_ONECLI_NAME_PREFIX, namePatterns } from "./onecli-names.js";
  * list of things to remove. Nothing here calls Kubernetes, OneCLI or Postgres.
  *
  * Only three kinds of object are ever candidates, and only by exact name or label pattern:
- *  - a SandboxClaim `pi-conv-<n>` whose `pi-durable-k8s/session-id` label is a session UUID;
+ *  - a SandboxClaim `pi-conv-<n>` (`pi-s<k>-conv-<n>` on shard k) whose `pi-durable-k8s/session-id` label is a session UUID;
  *  - a PVC `workspace-pi-conv-<n>` for which no SandboxClaim of that name exists;
  *  - a OneCLI agent `<prefix><uuid>` and its secrets `<prefix><uuid>-git` / `-api`, where the prefix is this
  *    orchestrator's own (`pi-session-` by default). Names with any other prefix belong to another stack that shares
@@ -45,6 +46,12 @@ export interface SweepSecret {
 }
 
 export interface SweepInput {
+  /**
+   * The shard this orchestrator is. Claims and PVCs are judged only under its name prefix and by its own sessions
+   * (conversation ids repeat across shards). OneCLI agents are UUID-keyed and shared: a shard judges the sessions of
+   * its own shard, and the unknown ones only if it is shard 0, so exactly one shard revokes an unknown agent.
+   */
+  shard: number;
   sessions: readonly SessionRef[];
   claims: readonly SweepClaim[];
   pvcs: readonly SweepPvc[];
@@ -76,16 +83,18 @@ export type SweepAction =
       reason: SweepReason;
     };
 
-const CLAIM_NAME = /^pi-conv-(\d+)$/;
-const PVC_NAME = /^workspace-(pi-conv-(\d+))$/;
-
 export function planSweep(input: SweepInput): SweepAction[] {
+  const prefix = claimPrefixFor(input.shard).replace(/-/g, "\\-");
+  const CLAIM_NAME = new RegExp(`^${prefix}(\\d+)$`);
+  const PVC_NAME = new RegExp(`^workspace-(${prefix}(\\d+))$`);
   const { agent: AGENT_IDENTIFIER, secret: SECRET_NAME } = namePatterns(
     input.namePrefix ?? DEFAULT_ONECLI_NAME_PREFIX,
   );
   const bySession = new Map(input.sessions.map((s) => [s.id, s]));
   const byConversation = new Map(
-    input.sessions.flatMap((s) => (s.conversationId === null ? [] : [[s.conversationId, s]])),
+    input.sessions.flatMap((s) =>
+      s.conversationId === null || s.shard !== input.shard ? [] : [[s.conversationId, s]],
+    ),
   );
   const old = (createdAt: Date | undefined): boolean =>
     createdAt === undefined || input.now - createdAt.getTime() >= input.graceMs;
@@ -93,6 +102,12 @@ export function planSweep(input: SweepInput): SweepAction[] {
   const orphanReason = (session: SessionRef | undefined): SweepReason | undefined => {
     if (session === undefined) return "session-unknown";
     return session.status === "deleted" ? "session-deleted" : undefined;
+  };
+
+  /** Like `orphanReason`, for the UUID-keyed OneCLI objects every shard sees. */
+  const agentReason = (session: SessionRef | undefined): SweepReason | undefined => {
+    if (session === undefined) return input.shard === 0 ? "session-unknown" : undefined;
+    return session.shard === input.shard ? orphanReason(session) : undefined;
   };
 
   const actions: SweepAction[] = [];
@@ -131,17 +146,17 @@ export function planSweep(input: SweepInput): SweepAction[] {
     for (const agent of input.agents) {
       const sessionId = AGENT_IDENTIFIER.exec(agent.identifier)?.[1];
       if (sessionId === undefined || !old(agent.createdAt)) continue;
-      if (orphanReason(bySession.get(sessionId)) !== undefined)
+      if (agentReason(bySession.get(sessionId)) !== undefined)
         entry(sessionId).agentIds.push(agent.id);
     }
     for (const secret of input.secrets) {
       const sessionId = SECRET_NAME.exec(secret.name)?.[1];
       if (sessionId === undefined) continue;
-      if (orphanReason(bySession.get(sessionId)) !== undefined)
+      if (agentReason(bySession.get(sessionId)) !== undefined)
         entry(sessionId).secretIds.push(secret.id);
     }
     for (const [sessionId, ids] of found) {
-      const reason = orphanReason(bySession.get(sessionId));
+      const reason = agentReason(bySession.get(sessionId));
       if (reason !== undefined) actions.push({ kind: "revoke-agent", sessionId, ...ids, reason });
     }
   }

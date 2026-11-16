@@ -49,6 +49,7 @@ const session = (profile: SessionRow["profile"], conversationId: number | null):
   owner: "alice",
   ownerSubject: "static:alice",
   status: "active",
+  shard: 0,
   conversationId,
   model: MODEL,
   failure: null,
@@ -151,6 +152,7 @@ describe("SessionService with profiles", () => {
     return {
       queries,
       service: new SessionService(pool, host, {
+        shard: 0,
         testFaults: false,
         defaultModel: config.models.default,
         turnBudget: () => turnBudget,
@@ -192,6 +194,7 @@ describe("SessionService with profiles", () => {
       last_activity_at: new Date(),
     });
     const svc = new SessionService(fake.asPool(), host, {
+      shard: 0,
       testFaults: false,
       defaultModel: config.models.default,
       turnBudget: () => 100,
@@ -371,6 +374,7 @@ describe("a coding tool installed by a later release", () => {
     } as unknown as Host;
     const pool = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) } as unknown as pg.Pool;
     const svc = new SessionService(pool, host, {
+      shard: 0,
       testFaults: false,
       defaultModel: config.models.default,
       turnBudget: () => 5,

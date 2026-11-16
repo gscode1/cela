@@ -16,7 +16,9 @@ export interface SessionRow {
   /** Subject of the creating principal; the owner check compares this, not `owner`. */
   ownerSubject: string | null;
   status: SessionStatus;
-  /** Pi Durable conversation id; null until the orchestrator has created it. */
+  /** The orchestrator shard that owns the session; assigned at creation and never changed. */
+  shard: number;
+  /** Pi Durable conversation id, minted per shard schema (so unique only with `shard`); null until created. */
   conversationId: number | null;
   /** The model chosen at creation; null for sessions that predate migration 002 (they run the default). */
   model: ModelChoice | null;
@@ -58,6 +60,7 @@ interface SessionDbRow {
   owner: string;
   owner_subject: string | null;
   status: SessionStatus;
+  shard: number;
   conversation_id: string | null;
   model_provider: string | null;
   model_id: string | null;
@@ -94,6 +97,7 @@ const toSession = (row: SessionDbRow): SessionRow => ({
   owner: row.owner,
   ownerSubject: row.owner_subject,
   status: row.status,
+  shard: row.shard,
   conversationId: row.conversation_id === null ? null : Number(row.conversation_id),
   model:
     row.model_provider === null || row.model_id === null
@@ -144,19 +148,28 @@ export const toEvent = (row: EventDbRow): InboxEvent => ({
   error: row.error,
 });
 
-/** Session ids are random UUIDs (v4), never sequential: an id cannot be guessed from another. */
+/**
+ * Session ids are random UUIDs (v4), never sequential: an id cannot be guessed from another. The session goes to the
+ * shard (of `shardCount`) with the fewest active sessions, the lowest on a tie. The count and the insert are not
+ * atomic: two racing creates may pick the same shard, which only affects balance.
+ */
 export async function createSession(
   pool: pg.Pool,
   principal: { owner: string; subject: string },
   model: ModelChoice,
   repo?: RepoSpec,
   profile?: ProfileSnapshot,
+  shardCount = 1,
 ): Promise<string> {
   const id = randomUUID();
   await pool.query(
     `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
-       profile_name, profile_version, profile_snapshot)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       profile_name, profile_version, profile_snapshot, shard)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+       coalesce((select c.shard from generate_series(0, $12::int - 1) as c(shard)
+                  left join (select shard, count(*) as n from inbox.sessions where status = 'active' group by shard) a
+                    on a.shard = c.shard
+                  order by coalesce(a.n, 0), c.shard limit 1), 0))`,
     [
       id,
       principal.owner,
@@ -169,6 +182,7 @@ export async function createSession(
       profile?.name ?? null,
       profile?.version ?? null,
       profile === undefined ? null : JSON.stringify(profile.definition),
+      shardCount,
     ],
   );
   return id;
@@ -404,19 +418,24 @@ export async function completeTombstone(
  */
 export async function setExecInFlight(
   db: Pick<pg.Pool, "query">,
+  shard: number,
   conversationId: number,
   inFlight: boolean,
 ): Promise<void> {
   await db.query(
-    "update inbox.sessions set exec_in_flight_at = case when $2::boolean then clock_timestamp() else null end where conversation_id = $1",
-    [conversationId, inFlight],
+    "update inbox.sessions set exec_in_flight_at = case when $3::boolean then clock_timestamp() else null end where shard = $1 and conversation_id = $2",
+    [shard, conversationId, inFlight],
   );
 }
 
 /** Conversations whose sandbox had a command in flight when the last orchestrator process stopped. */
-export async function conversationsWithExecInFlight(db: Pick<pg.Pool, "query">): Promise<number[]> {
+export async function conversationsWithExecInFlight(
+  db: Pick<pg.Pool, "query">,
+  shard: number,
+): Promise<number[]> {
   const { rows } = await db.query<{ conversation_id: string }>(
-    "select conversation_id from inbox.sessions where exec_in_flight_at is not null and conversation_id is not null and status in ('active', 'failed', 'deleting')",
+    "select conversation_id from inbox.sessions where shard = $1 and exec_in_flight_at is not null and conversation_id is not null and status in ('active', 'failed', 'deleting')",
+    [shard],
   );
   return rows.map((row) => Number(row.conversation_id));
 }
@@ -425,6 +444,7 @@ export async function conversationsWithExecInFlight(db: Pick<pg.Pool, "query">):
 export interface SessionRef {
   id: string;
   status: SessionStatus;
+  shard: number;
   conversationId: number | null;
 }
 
@@ -432,11 +452,30 @@ export async function listSessionRefs(db: Pick<pg.Pool, "query">): Promise<Sessi
   const { rows } = await db.query<{
     id: string;
     status: SessionStatus;
+    shard: number;
     conversation_id: string | null;
-  }>("select id, status, conversation_id from inbox.sessions");
+  }>("select id, status, shard, conversation_id from inbox.sessions");
   return rows.map((row) => ({
     id: row.id,
     status: row.status,
+    shard: row.shard,
     conversationId: row.conversation_id === null ? null : Number(row.conversation_id),
   }));
+}
+
+/**
+ * The session of one conversation. Conversation ids repeat across shards, so this is the only way orchestrator code
+ * looks a session up by conversation id.
+ */
+export async function sessionByConversation(
+  db: Pick<pg.Pool, "query">,
+  shard: number,
+  conversationId: number,
+): Promise<SessionRow | undefined> {
+  const { rows } = await db.query<SessionDbRow>(
+    "select * from inbox.sessions where shard = $1 and conversation_id = $2",
+    [shard, conversationId],
+  );
+  const row = rows[0];
+  return row === undefined ? undefined : toSession(row);
 }

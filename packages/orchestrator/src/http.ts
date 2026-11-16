@@ -22,6 +22,8 @@ export interface ServerDeps {
   authenticate: Authenticator;
   /** For the owner check on the stream. Independent of the Pi Durable storage connection. */
   pool: pg.Pool;
+  /** The shard this orchestrator serves; a stream for a session of another shard is refused (docs/decisions/0017). */
+  shard: number;
   /** Mounts the test-only /control surface (PI_ORCH_CONTROL=1). */
   control: boolean;
 }
@@ -91,6 +93,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
     const session = UUID.test(id) ? await getSession(deps.pool, id) : undefined;
     if (session?.ownerSubject !== principal.subject) {
       sendJson(res, 404, { error: "session not found" });
+      return;
+    }
+    // Before `ensureConversation`: a misrouted stream must never create a conversation in this shard's schema.
+    if (session.shard !== deps.shard) {
+      sendJson(res, 421, { error: "session belongs to another shard" });
       return;
     }
     // `deleting` is refused too: deletion closes the open streams once, so one admitted afterwards would never end.

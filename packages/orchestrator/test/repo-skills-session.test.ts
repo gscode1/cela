@@ -88,6 +88,7 @@ const session = (definition: ProfileDefinition): SessionRow => ({
   owner: "alice",
   ownerSubject: "static:alice",
   status: "active",
+  shard: 0,
   conversationId: 7,
   model: MODEL,
   failure: null,
@@ -114,6 +115,7 @@ const message: InboxEvent = {
 
 function service(host: Host = fakeHost(), admin: (typeof ADMIN)[] = [ADMIN]): SessionService {
   return new SessionService({} as pg.Pool, host, {
+    shard: 0,
     testFaults: false,
     defaultModel: config.models.default,
     turnBudget: () => 100,

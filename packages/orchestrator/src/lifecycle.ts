@@ -19,15 +19,33 @@ export function interruptedExec(
   return result.error?.code === "aborted" || result.error?.code === "timeout";
 }
 
-const SANDBOX_NAME = /^pi-conv-(\d+)$/;
+/**
+ * The claim (and Sandbox) name prefix of a shard's conversations. Shard 0 keeps `pi-conv-` so a single-shard stack is
+ * unchanged; the others carry their shard, because conversation ids repeat across shards (docs/decisions/0017).
+ */
+export function claimPrefixFor(shard: number): string {
+  return shard === 0 ? "pi-conv-" : `pi-s${String(shard)}-conv-`;
+}
 
-/** The conversation id of a `pi-conv-<n>` sandbox or claim name; undefined for any other name (e.g. `e2e-phase1`). */
-export function conversationOfName(name: string): number | undefined {
-  const match = SANDBOX_NAME.exec(name);
-  return match?.[1] === undefined ? undefined : Number(match[1]);
+/** One conversation maps to one SandboxClaim, named from its shard and conversation id (and so to one PVC). */
+export function claimNameFor(shard: number, conversationId: number): string {
+  return `${claimPrefixFor(shard)}${String(conversationId)}`;
+}
+
+/**
+ * The conversation id of a sandbox or claim name of this shard; undefined for any other name, including another
+ * shard's (e.g. `pi-s1-conv-5` for shard 0) and `e2e-phase1`.
+ */
+export function conversationOfName(shard: number, name: string): number | undefined {
+  const prefix = claimPrefixFor(shard);
+  if (!name.startsWith(prefix)) return undefined;
+  const rest = name.slice(prefix.length);
+  return /^\d+$/.test(rest) ? Number(rest) : undefined;
 }
 
 export interface SuspendInput {
+  /** The shard whose sandboxes are considered; the others belong to other orchestrators. */
+  shard: number;
   /** Names of the Sandboxes whose mode is `Running`. */
   running: readonly string[];
   /** When each conversation's sandbox was last used by this process (a call started or ended). */
@@ -49,13 +67,13 @@ export interface SuspendPlan {
 /**
  * Which sandboxes to suspend. Time is measured from the last use this process saw, and a sandbox it has never seen
  * starts its clock at first sight, so an orchestrator restart postpones suspension instead of suspending sessions that
- * are in use. Only `pi-conv-<n>` names are considered.
+ * are in use. Only this shard's `pi-conv-<n>` names are considered.
  */
 export function planSuspend(input: SuspendInput): SuspendPlan {
   const plan: SuspendPlan = { seen: [], suspend: [] };
   if (input.afterMs <= 0) return plan;
   for (const name of input.running) {
-    const conversation = conversationOfName(name);
+    const conversation = conversationOfName(input.shard, name);
     if (conversation === undefined || input.busy.has(conversation)) continue;
     const last = input.lastUsed.get(conversation);
     if (last === undefined) plan.seen.push(conversation);

@@ -17,6 +17,7 @@ export interface StoredEvent {
  */
 export class FakeInboxDb {
   status = "active";
+  shard = 0;
   readonly events: StoredEvent[] = [];
   /** Runs once, right before the event insert: lets a test change the session "between" two statements. */
   beforeInsert: (() => void) | undefined;
@@ -59,6 +60,7 @@ export class FakeInboxDb {
           owner: "alice",
           owner_subject: "static:alice",
           status: this.status,
+          shard: this.shard,
           conversation_id: null,
           model_provider: null,
           model_id: null,

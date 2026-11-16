@@ -19,6 +19,7 @@ const session = (over: Partial<SessionRow> = {}): SessionRow => ({
   owner: "alice",
   ownerSubject: "static:alice",
   status: "active",
+  shard: 0,
   conversationId: 7,
   model: null,
   failure: null,

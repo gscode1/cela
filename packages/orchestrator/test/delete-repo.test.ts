@@ -93,6 +93,7 @@ async function setup(repo: SessionRow["repo"]) {
     () => Promise.resolve("session"),
   );
   const service = new SessionService(pool, host, {
+    shard: 0,
     testFaults: false,
     defaultModel: config.models.default,
     turnBudget: () => 10,
@@ -108,6 +109,7 @@ async function setup(repo: SessionRow["repo"]) {
     owner: "alice",
     ownerSubject: "static:alice",
     status: "deleting",
+    shard: 0,
     conversationId: null,
     model: null,
     failure: null,

@@ -50,12 +50,14 @@ export async function publishAndCheckProfiles(
  */
 export async function liveConversationProfiles(
   pool: pg.Pool,
+  shard: number,
 ): Promise<Map<number, ProfileDefinition>> {
   const found = new Map<number, ProfileDefinition>();
   try {
     const { rows } = await pool.query<{ conversation_id: string; profile_snapshot: unknown }>(
       `select conversation_id, profile_snapshot from inbox.sessions
-        where conversation_id is not null and profile_snapshot is not null and status <> 'deleted'`,
+        where shard = $1 and conversation_id is not null and profile_snapshot is not null and status <> 'deleted'`,
+      [shard],
     );
     for (const row of rows) {
       const definition = validateProfileDefinition(row.profile_snapshot);

@@ -6,8 +6,13 @@ export interface IngestConfig {
   databaseUrl: string;
   /** `owner:token` entries, see session-core `tokenAuthenticator`. */
   apiTokens: string;
-  /** Base URL of the orchestrator's stream endpoint. */
+  /**
+   * Base URL of the orchestrator's stream endpoint. With several shards it holds `{shard}`, which becomes the
+   * session's shard (`http://pi-orchestrator-{shard}:8081`); without it every stream goes to the one URL.
+   */
   orchestratorUrl: string;
+  /** How many orchestrator shards exist (`PI_ORCH_SHARDS`); a new session goes to the one with the fewest active. */
+  shards: number;
   port: number;
   instance: string;
   /**
@@ -32,6 +37,11 @@ function assertHttpUrl(value: string): void {
   }
 }
 
+/** The orchestrator URL of one shard: the `{shard}` placeholder replaced, or the URL as it is. */
+export function orchestratorUrlFor(template: string, shard: number): string {
+  return template.replaceAll("{shard}", String(shard));
+}
+
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): IngestConfig {
   const databaseUrl = env.PI_DURABLE_DATABASE_URL;
   if (!databaseUrl) throw new Error("PI_DURABLE_DATABASE_URL is required");
@@ -43,11 +53,17 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
   const port = /^\d{1,5}$/.test(portText) ? Number(portText) : 0;
   if (port < 1 || port > 65535) throw new Error("PI_INGEST_PORT must be a port from 1 to 65535");
   const orchestratorUrl = env.PI_ORCH_URL ?? "http://pi-orchestrator:8081";
-  assertHttpUrl(orchestratorUrl);
+  assertHttpUrl(orchestratorUrlFor(orchestratorUrl, 0));
+  const shardsText = env.PI_ORCH_SHARDS ?? "1";
+  const shards = /^\d{1,3}$/.test(shardsText) ? Number(shardsText) : 0;
+  if (shards < 1) throw new Error("PI_ORCH_SHARDS must be an integer of 1 or more");
+  if (shards > 1 && !orchestratorUrl.includes("{shard}"))
+    throw new Error("PI_ORCH_URL must contain {shard} when PI_ORCH_SHARDS is above 1");
   return {
     databaseUrl,
     apiTokens,
     orchestratorUrl,
+    shards,
     port,
     instance: env.POD_NAME ?? `ingest-${String(process.pid)}`,
     seed: settingsFromEnv(env),

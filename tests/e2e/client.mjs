@@ -4,7 +4,7 @@
 // environment and picks the entry of the named owner. Nothing here prints a token.
 //
 //   call   <owner|bad|none> <METHOD> <path> [json-body]   [--base URL]
-//          prints one line: {"status":N,"body":<json or text>}
+//          prints one line: {"status":N,"body":<json or text>} (plus "retryAfter" when the response has that header)
 //   stream <owner|bad|none> <sessionId> [--base URL] [--last-id N] [--until-text T] [--max-entries N]
 //          [--reconnect] [--timeout SECONDS]
 //          prints  CONNECT <n> last=<id> status=<code>
@@ -59,7 +59,14 @@ async function call() {
   } catch {
     /* plain text */
   }
-  console.log(JSON.stringify({ status: res.status, body: parsed }));
+  const retryAfter = res.headers.get("retry-after");
+  console.log(
+    JSON.stringify({
+      status: res.status,
+      body: parsed,
+      ...(retryAfter === null ? {} : { retryAfter }),
+    }),
+  );
 }
 
 async function stream() {

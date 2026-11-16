@@ -3,8 +3,8 @@ import {
   conversationsWithExecInFlight,
   createPool,
   errorMessage,
-  getSession,
   listSessionRefs,
+  sessionByConversation,
   setExecInFlight,
   McpCatalogCache,
   SettingsCache,
@@ -40,6 +40,7 @@ async function main(): Promise<void> {
     lifecycle,
     authenticate: tokenAuthenticator(config.apiTokens),
     pool,
+    shard: config.shard,
     control: config.control,
   });
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
@@ -83,12 +84,9 @@ async function main(): Promise<void> {
   const storage = await openStorageWhenFree(config, stop.signal);
   log("lock-acquired", { instance: config.instance });
   const sessionKeyOf = async (conversationId: number): Promise<string> => {
-    const { rows } = await pool.query<{ id: string }>(
-      "select id from inbox.sessions where conversation_id = $1",
-      [conversationId],
-    );
+    const session = await sessionByConversation(pool, config.shard, conversationId);
     // Conversations the inbox does not know are the test-only /control sessions.
-    return rows[0]?.id ?? `control-${String(conversationId)}`;
+    return session?.id ?? `control-${String(conversationId)}`;
   };
   // Repo workspaces (Phase 4c). Plain sessions never touch OneCLI's management API or GitHub through this.
   const callApi: FetchLike = (url, init) => fetch(url, init);
@@ -110,19 +108,16 @@ async function main(): Promise<void> {
     fetch: callApi,
     namePrefix: config.repos.namePrefix,
   });
-  const skills = new SkillLibrary(pool);
+  const skills = new SkillLibrary(pool, config.shard);
   const hooks: SandboxHooks = {
     shellEnv: async (conversationId) => {
-      const { rows } = await pool.query<{ id: string }>(
-        "select id from inbox.sessions where conversation_id = $1",
-        [conversationId],
-      );
-      const session = rows[0] === undefined ? undefined : await getSession(pool, rows[0].id);
+      const session = await sessionByConversation(pool, config.shard, conversationId);
       return session === undefined ? undefined : repos.shellEnv(session, conversationId);
     },
     beforeUse: (conversationId) => repos.beforeUse(conversationId),
     envStale: (conversationId) => repos.envStale(conversationId),
-    execInFlight: (conversationId, inFlight) => setExecInFlight(pool, conversationId, inFlight),
+    execInFlight: (conversationId, inFlight) =>
+      setExecInFlight(pool, config.shard, conversationId, inFlight),
     // Postgres is the source of truth for a session's skills; the workspace holds a copy, written at every attach.
     prepareEnv: async (conversationId, env) => {
       await materializeSkills(env, await skills.bundlesFor(conversationId));
@@ -130,7 +125,7 @@ async function main(): Promise<void> {
   };
   // Sandboxes that had a command running when the previous process died: Host.open recycles their Pods before Pi
   // Durable resumes (docs/decisions/0003-recycle-pod-on-interrupt.md).
-  const recycleAtStart = await conversationsWithExecInFlight(pool);
+  const recycleAtStart = await conversationsWithExecInFlight(pool, config.shard);
   if (recycleAtStart.length > 0) log("recycle-at-start", { conversations: recycleAtStart });
   const opening = Host.open(
     storage,
@@ -146,7 +141,7 @@ async function main(): Promise<void> {
     recycleAtStart,
     {
       catalog: mcpCatalog,
-      conversationProfiles: () => liveConversationProfiles(pool),
+      conversationProfiles: () => liveConversationProfiles(pool, config.shard),
     },
   );
   // Visible to the signal handler before Host.open settles, so a shutdown in that window still closes the host.
@@ -157,6 +152,7 @@ async function main(): Promise<void> {
   // Before the first input: ingest validates profile writes against what is installed here.
   await publishAndCheckProfiles(pool, host.capabilities(), config.instance);
   const service = new SessionService(pool, host, {
+    shard: config.shard,
     testFaults: config.testFaults,
     defaultModel: config.models.default,
     turnBudget: () => settings.turnBudget(),
@@ -177,6 +173,7 @@ async function main(): Promise<void> {
 
   // Orphan sweep (docs/decisions/0002-orphan-sweep.md): only the owner runs it, like the inbox.
   const sweeper = new OrphanSweeper({
+    shard: config.shard,
     listSessions: () => listSessionRefs(pool),
     listClaims: () => listClaims(config.namespace),
     listPvcs: () => listPvcs(config.namespace),
@@ -199,6 +196,7 @@ async function main(): Promise<void> {
   // Only the owner consumes the inbox. Rows that arrived while no orchestrator ran are waiting.
   const inbox = new InboxLoop(
     pool,
+    config.shard,
     (event, session) => service.apply(event, session),
     (event, session) => service.prepare(event, session),
   );

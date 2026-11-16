@@ -12,6 +12,8 @@ export interface SweeperDeps {
   /** The session deletion's teardown: stops the bridge, deletes the claim, then the PVC. Also removes a lone PVC. */
   destroyClaim: (claimName: string, sessionLabel: string) => Promise<void>;
   revokeSession: (sessionId: string) => Promise<void>;
+  /** The shard this orchestrator is; see `SweepInput.shard`. */
+  shard: number;
   graceMs: number;
   maxActions: number;
   /** The OneCLI name prefix of this orchestrator; only names with it are judged. */
@@ -71,6 +73,7 @@ export class OrphanSweeper {
       const sessions = await d.listSessions();
       const [claims, pvcs] = kube ?? [[], []];
       const actions = planSweep({
+        shard: d.shard,
         sessions,
         claims,
         pvcs,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>
+# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all>
 #   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call)
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
@@ -9,6 +9,9 @@
 #           through the admin API (no restart), a scripted session calls tool_search and a DeepWiki tool, and disabling
 #           the server makes a new call return tool_unavailable. Needs the internet and the OneCLI host rule for
 #           mcp.deepwiki.com. The suite removes the server again at the end. Not part of `all`.
+#   shards  horizontal scaling by schema sharding (docs/decisions/0017-schema-sharding.md): the stack gets a second orchestrator
+#           shard (deploy/add-shard.sh 1) and ingest routes between the two. Not part of `all` (it adds a Deployment and
+#           takes about 20 minutes).
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
 # Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres, orchestrator, ingest, sandbox
@@ -71,9 +74,10 @@ phase4) phases=(phase4) ;;
 phase4b) phases=(phase4b) ;;
 phase4c) phases=(phase4c) ;;
 mcp) phases=(mcp) ;;
+shards) phases=(shards) ;;
 all) phases=(phase1 phase3 phase4 phase4b) ;;
 *)
-  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>" >&2
+  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all>" >&2
   exit 64
   ;;
 esac
@@ -200,7 +204,13 @@ fi
   exit 1
 }
 
-if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp; then
+# The second shard exists before the code push, which then starts every shard on the same code (it also sets ingest's
+# PI_ORCH_SHARDS and PI_ORCH_URL template, so a shard count and its Deployments never disagree).
+if has_phase shards; then
+  log "orchestrator shard 1 and ingest routing (deploy/add-shard.sh 1)"
+  NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/add-shard.sh" 1
+fi
+if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp || has_phase shards; then
   log "orchestrator and ingest code (build + push on the Mac)"
   NAMESPACE=$ns "$root/deploy/push-code.sh" >/dev/null
   NAMESPACE=$ns "$root/deploy/push-ingest.sh" >/dev/null
@@ -209,7 +219,7 @@ fi
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"
 stage=$work/stage
 mkdir -p "$stage/tests/e2e" "$stage/deploy"
-cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here/fns.sh" "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
+cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here"/run-shards.sh "$here/fns.sh" "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
 cp "$root/deploy/gen-api-secret.sh" "$stage/deploy/"
 if has_phase phase1; then
   (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/sandbox-env..." build >/dev/null)
@@ -301,7 +311,7 @@ run_phase() { # phase1|phase3|phase4
     fi
     printf '\n-- %s result (final logs) --\n' "$name"
     sed -n '/^== RESULT/,$p' "$work/$name.full"
-    grep -E '^(ALL PHASE 1 E2E CHECKS PASSED|PHASE [34]:|PHASE 4[BC]:)' "$work/$name.full" | sed 's/^/   /' || true
+    grep -E '^(ALL PHASE 1 E2E CHECKS PASSED|PHASE [34]:|PHASE 4[BC]:|SHARDS:)' "$work/$name.full" | sed 's/^/   /' || true
   else
     echo "-- final logs could not be read (the verdict below comes from the Job status) --"
   fi

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import { poolConfig } from "../src/storage.ts";
-import { claimNameFor } from "../src/sandboxes.ts";
+import { claimNameFor } from "../src/lifecycle.ts";
 
 const env = {
   PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
@@ -65,8 +65,8 @@ describe("config", () => {
   });
 
   it("names claims from the conversation id as valid DNS-1123 names", () => {
-    expect(claimNameFor(42)).toBe("pi-conv-42");
-    expect(claimNameFor(42)).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+    expect(claimNameFor(0, 42)).toBe("pi-conv-42");
+    expect(claimNameFor(0, 42)).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
   });
 
   it("defaults the sandbox idle handling and the sweep, and reads them in seconds", () => {

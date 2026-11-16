@@ -38,7 +38,10 @@ tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 h
    CiliumNetworkPolicy. Cilium policies are applied first (`docs/network-policy.md`).
 4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI).
 5. **Code.** `deploy/push-code.sh` and `deploy/push-ingest.sh` with `NAMESPACE=pi-e2e-<id>` (build on the Mac, copy to the
-   code volume and ConfigMap of this namespace). `push-code.sh` scales the orchestrator from 0 to 1, after the secrets exist.
+   code volume and ConfigMap of this namespace). `push-code.sh` scales every orchestrator Deployment (the ones labelled
+   `app.kubernetes.io/name=pi-orchestrator`) from 0 to 1, after the secrets exist. The `shards` suite first runs
+   `deploy/add-shard.sh 1`, which adds the second shard (`pi-orchestrator-1`, schema `durable_s1`) and points ingest at both
+   ([decision 0017](decisions/0017-schema-sharding.md), [scaling](scaling.md)); `run-shards.sh` is not part of `all`.
 6. **Driver.** Stages the driver scripts and loads them onto the namespace's `e2e-driver` volume, then creates one
    Job per suite phase in the namespace. The Job gets `NAMESPACE` from its own metadata, so every `run-*.sh` works in
    the run namespace.

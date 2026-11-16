@@ -128,6 +128,7 @@ export {
   beginDelete,
   requestDelete,
   requeueFailedDelete,
+  sessionByConversation,
   setExecInFlight,
   setOneCliObjects,
   summarize,
