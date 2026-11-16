@@ -136,11 +136,11 @@ export function validateSkillContent(input: unknown): SkillContent | string {
   if (
     typeof description !== "string" ||
     description.trim() === "" ||
-    description.length > SKILL_LIMITS.description ||
+    Buffer.byteLength(description, "utf8") > SKILL_LIMITS.description ||
     unstorable(description) ||
     CONTROL.test(description)
   ) {
-    return `description must be a one-line string of 1 to ${String(SKILL_LIMITS.description)} characters, without control characters, NUL or unpaired surrogates`;
+    return `description must be a one-line string of 1 to ${String(SKILL_LIMITS.description)} bytes of UTF-8, without control characters, NUL or unpaired surrogates`;
   }
   const { files } = body;
   if (!Array.isArray(files) || files.length === 0 || files.length > SKILL_LIMITS.files) {

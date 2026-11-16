@@ -27,6 +27,36 @@ const skill = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("validateSkillContent", () => {
+  it("measures the description in UTF-8 bytes, at the limit and one over", () => {
+    const limit = SKILL_LIMITS.description;
+    // 2 bytes per char (é), 3 (CJK), 4 (emoji: one code point, two UTF-16 units).
+    const exact = ["é".repeat(limit / 2), "世".repeat(341) + "a", "😀".repeat(limit / 4)];
+    for (const description of exact) {
+      expect(Buffer.byteLength(description)).toBe(limit);
+      expect(validateSkillContent(skill({ description }))).not.toBeTypeOf("string");
+    }
+    for (const description of [...exact.map((d) => `${d}x`), "世".repeat(342), "世".repeat(1024)]) {
+      expect(Buffer.byteLength(description)).toBeGreaterThan(limit);
+      expect(validateSkillContent(skill({ description }))).toContain("description must be");
+    }
+  });
+
+  it("measures SKILL.md and the whole skill in bytes, at the limit and one over", () => {
+    const md = (content: string) => ({ files: [file("SKILL.md", content)] });
+    const at = "世".repeat(Math.floor(SKILL_LIMITS.skillMd / 3)) + "ab"; // 10922 * 3 + 2
+    expect(Buffer.byteLength(at)).toBe(SKILL_LIMITS.skillMd);
+    expect(validateSkillContent(skill(md(at)))).not.toBeTypeOf("string");
+    expect(validateSkillContent(skill(md(`${at}x`)))).toContain("at most");
+    const rest = SKILL_LIMITS.bytes - SKILL_LIMITS.skillMd;
+    const big = (n: number) => file("big.txt", "é".repeat(n / 2));
+    expect(
+      validateSkillContent(skill({ files: [file("SKILL.md", at), big(rest)] })),
+    ).not.toBeTypeOf("string");
+    expect(validateSkillContent(skill({ files: [file("SKILL.md", at), big(rest + 2)] }))).toContain(
+      "in all",
+    );
+  });
+
   it("accepts a skill and sorts its files by path", () => {
     const checked = validateSkillContent(
       skill({ files: [file("b.txt"), file("SKILL.md"), file("a/c.txt")] }),
