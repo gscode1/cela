@@ -18,7 +18,8 @@ asks for the sandbox, the claim and bridge come up, the first command is dispatc
 | `claim-ready`      | The claim is bound and its Pod is Ready (the SDK's wait ended).                                   |
 | `bridge-started`   | The start gate let this env spawn its bridge process (bridges start one at a time).               |
 | `bridge-ready`     | The bridge wrote `bridge: ready` (its Kubernetes and gRPC clients are loaded).                    |
-| `first-exec-start` | The first `exec` of the turn is dispatched through the bridge. Not its completion, see below.     |
+| `first-exec-start` | The first `exec` of the turn is dispatched into the env. The bridge is spawned lazily by the first request, so on a cold turn this comes before `bridge-started`. |
+| `first-exec-sent`  | The first exec request leaves for a ready bridge: at `bridge-ready` after the dispatch, or at the dispatch when the bridge was already up. Ends the turn. |
 
 A phase is logged the first time the turn reaches it. A warm turn (env already open) has no claim or bridge phases.
 There is deliberately no phase for the end of the exec: a 60 s command is the user's workload, not startup latency.
@@ -31,14 +32,14 @@ There is deliberately no phase for the end of the exec: a 60 s command is the us
 {"t":"2026-11-16T10:00:03.020Z","event":"turn-phase","session":"6f1c...","conversation":7,"turn":"0b7e...","phase":"claim-ready","ms":12020}
 ```
 
-`turn-timing`, one summary per turn, logged when the first exec is dispatched. `sandbox` is `cold` (the claim was created for this turn),
+`turn-timing`, one summary per turn, logged at `first-exec-sent`. `sandbox` is `cold` (the claim was created for this turn),
 `resumed` (a suspended sandbox was resumed) or `warm` (the claim existed and was running; the bridge may still have been
 reopened after an idle eviction, see the `bridge-*` phases). `spans` are intervals between phases:
 
 ```json
 {"t":"...","event":"turn-timing","session":"6f1c...","conversation":7,"turn":"0b7e...","sandbox":"cold",
- "phases":{"input-submitted":20,"tool-requested":2020,"claim-requested":3020,"claim-ready":12020,"bridge-started":12020,"bridge-ready":24020,"first-exec-start":24120},
- "spans":{"model":2000,"cap-wait":1000,"claim":9000,"bridge":12000,"sandbox-to-exec":22100}}
+ "phases":{"input-submitted":20,"tool-requested":2020,"claim-requested":3020,"claim-ready":12020,"first-exec-start":12020,"bridge-started":12020,"bridge-ready":24020,"first-exec-sent":24020},
+ "spans":{"model":2000,"cap-wait":1000,"claim":9000,"bridge":12000,"sandbox-to-exec":22000}}
 ```
 
 | Span              | From, to                              | Meaning                                                                                                                   |
@@ -47,7 +48,7 @@ reopened after an idle eviction, see the `bridge-*` phases). `spans` are interva
 | `cap-wait`        | `tool-requested`, `claim-requested`   | Waiting before the claim is requested: a bridge slot at `PI_MAX_OPEN_BRIDGES`, a recycle under way, credential renewal.  |
 | `claim`           | `claim-requested`, `claim-ready`      | Claim create or resume until Pod Ready. Cold start and resume latency.                                                    |
 | `bridge`          | `bridge-started`, `bridge-ready`      | Bridge cold start, about 12 s on 250m CPU (plan.md).                                                                      |
-| `sandbox-to-exec` | `tool-requested`, `first-exec-start`  | Time to first instruction: everything the platform adds between the first tool call and the first command being sent.     |
+| `sandbox-to-exec` | `tool-requested`, `first-exec-sent`   | Time to first instruction: everything the platform adds between the first tool call and the first command being sent, bridge start included. |
 
 `turn` is the inbox event id, which is also the Pi Durable `requestId`, so it ties a turn to `event-submitted` and
 `event-failed` (`eventId`). Limits: a turn that never runs an exec logs no summary (if its first tool call is not an

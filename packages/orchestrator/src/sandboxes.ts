@@ -86,6 +86,8 @@ export class Sandboxes {
   readonly #envs = new Map<number, Promise<SandboxEnv>>();
   /** Phase timings of the current turn of each conversation (docs/metrics.md); also tags its log lines. */
   readonly timings = new TurnTimings(log);
+  /** Conversations whose bridge reported ready and has not been (re)spawned or dropped since. */
+  readonly #bridgeUp = new Set<number>();
 
   /** Per open env. Drives idle eviction. */
   readonly #usage = new Map<number, Usage>();
@@ -186,6 +188,7 @@ export class Sandboxes {
     this.#usage.delete(conversationId);
     // Not `#dropEnv`: callers that serve the queue are mid-loop, and serving from here would re-enter them.
     this.#envs.delete(conversationId);
+    this.#bridgeUp.delete(conversationId);
     const counts = {
       claim: claimNameFor(conversationId),
       open: this.#envs.size,
@@ -226,6 +229,7 @@ export class Sandboxes {
   /** Removes an env from the map, which frees its slot, and hands freed slots to waiting calls. */
   #dropEnv(conversationId: number): void {
     this.#envs.delete(conversationId);
+    this.#bridgeUp.delete(conversationId);
     this.#serveQueue();
   }
 
@@ -291,7 +295,12 @@ export class Sandboxes {
               usage.recorded = true;
             }
             try {
-              if (property === "exec") this.timings.mark(conversationId, "first-exec-start");
+              if (property === "exec") {
+                this.timings.mark(conversationId, "first-exec-start");
+                // A bridge that is up sends the request at once; otherwise bridge-ready marks it (TurnTimings).
+                if (this.#bridgeUp.has(conversationId))
+                  this.timings.mark(conversationId, "first-exec-sent");
+              }
               const result = await real[property]?.(...args);
               outcome = { threw: false, result };
               return result;
@@ -560,7 +569,11 @@ export class Sandboxes {
       id: `pi-env:${claimName}`,
       bridgeCommand: bridgeCommand(process.env, token),
       ...(shellEnv === undefined ? {} : { shellEnv }),
-      onPhase: (phase) => this.timings.mark(conversationId, phase),
+      onPhase: (phase) => {
+        if (phase === "bridge-ready") this.#bridgeUp.add(conversationId);
+        else this.#bridgeUp.delete(conversationId);
+        this.timings.mark(conversationId, phase);
+      },
     });
     try {
       await this.#hooks.prepareEnv?.(conversationId, opened.env);

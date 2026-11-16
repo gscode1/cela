@@ -13,6 +13,7 @@ export const PHASES = [
   "bridge-started",
   "bridge-ready",
   "first-exec-start",
+  "first-exec-sent",
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
@@ -27,8 +28,8 @@ export const SPANS = {
   "cap-wait": ["tool-requested", "claim-requested"],
   claim: ["claim-requested", "claim-ready"],
   bridge: ["bridge-started", "bridge-ready"],
-  /** Time to first instruction: the platform's share, from the first tool call to the first exec being dispatched. */
-  "sandbox-to-exec": ["tool-requested", "first-exec-start"],
+  /** Time to first instruction: the platform's share, from the first tool call to the first exec request leaving for a ready bridge. */
+  "sandbox-to-exec": ["tool-requested", "first-exec-sent"],
 } as const satisfies Record<string, readonly [Phase, Phase]>;
 
 /** What ties a log line to a turn. `turn` is the inbox event id, which is also the Pi Durable request id. */
@@ -105,9 +106,11 @@ export class TurnTimings {
   }
 
   /**
-   * Records the first time the turn reaches a phase and logs it. Reaching `first-exec-start` (the first exec is
-   * dispatched, not finished: a long command must not count as startup) ends the cold-start part of the turn: the
-   * summary is logged and the turn is forgotten, so a later exec of the same turn adds nothing.
+   * Records the first time the turn reaches a phase and logs it. The bridge is spawned lazily by the first request, so
+   * `first-exec-start` (dispatch into the env) comes before `bridge-started` on a cold turn. The exec request leaves
+   * when the bridge is ready: `bridge-ready` after a dispatch marks `first-exec-sent` itself, and the caller marks it
+   * right after the dispatch when the bridge was already up. `first-exec-sent` (not the end of the command: a long
+   * command must not count as startup) ends the turn: the summary is logged and the turn is forgotten.
    * A phase with no turn (a bridge restarting between turns) is ignored.
    */
   mark(conversation: number, phase: Phase): void {
@@ -116,7 +119,9 @@ export class TurnTimings {
     const ms = this.#now() - turn.startedAt;
     turn.phases[phase] = ms;
     this.#emit("turn-phase", { ...contextOf(turn), phase, ms });
-    if (phase === "first-exec-start") {
+    if (phase === "bridge-ready" && turn.phases["first-exec-start"] !== undefined) {
+      this.mark(conversation, "first-exec-sent");
+    } else if (phase === "first-exec-sent") {
       this.#turns.delete(conversation);
       this.#emit("turn-timing", {
         ...contextOf(turn),
