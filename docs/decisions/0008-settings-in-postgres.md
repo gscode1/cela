@@ -34,6 +34,16 @@ reasoning) needs settings that change at runtime.
   `select ... for update`, writes row, history and notification in one transaction and refreshes the local cache, so the
   next request on that replica sees it at once.
 
+## Addendum: per-session reasoning and its cap (issue #37)
+
+`POST /sessions` takes an optional `reasoning`. The settings gain `maxReasoning` (column `max_reasoning`, migration
+`009_reasoning_cap.sql`; null or absent means no cap). The levels are ordered `off < minimal < low < medium < high <
+xhigh < max`. A request above the cap is a `400`; the omitted default is the settings `reasoning`, read through the
+same `policyOf`/`defaultReasoning()` path as before. Settings validation requires `reasoning <= maxReasoning` when
+both are set, on seed, on every PUT (also a partial one) and on every read, so an unreachable default cannot be stored.
+Not decided here: refusing a level for a model whose catalog entry has `reasoning: false`, because ingest has no
+catalog (see `docs/session-api.md`).
+
 ## Consequences
 
 - No restart to change the default model, the allowlist, the reasoning or the turn budget; every change has an author
