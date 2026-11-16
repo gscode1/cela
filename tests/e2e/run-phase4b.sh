@@ -37,6 +37,10 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 now() { date +%s; }
+# shellcheck source=fns.sh
+. "$here/fns.sh"
+E2E_TEST_PREFIX=""
+E2E_ERR_TRAP=1
 
 # ---------------------------------------------------------------- adapters: cluster or local stack
 ingest_pod() {
@@ -286,41 +290,13 @@ t_real_model() {
 }
 
 # ---------------------------------------------------------------- driver
-pass=0 fail=0 skip=0
-summary=()
-run() { # name function
-  local name=$1 rc
-  [[ -z ${ONLY:-} || ",$ONLY," == *",$name,"* ]] || return 0
-  log "$name"
-  set +e
-  (
-    set -eE
-    # An unexpected failing command must say so; a bare `set -e` exit left no output at all.
-    trap 'note "ERROR: command failed at line $LINENO (exit $?): $BASH_COMMAND"' ERR
-    "$2"
-  )
-  rc=$?
-  set -e
-  case $rc in
-    0)
-      pass=$((pass + 1))
-      summary+=("PASS  $name")
-      ;;
-    3)
-      skip=$((skip + 1))
-      summary+=("SKIP  $name")
-      ;;
-    *)
-      fail=$((fail + 1))
-      summary+=("FAIL  $name")
-      ;;
-  esac
-}
-
-run models t_models
-run disallowed t_disallowed
-run failed-401 t_failed_401
-if [[ ${REAL_MODEL:-0} == 1 ]]; then run real-model t_real_model; fi
+# models and failed-401 only touch their own sessions (failed-401 also reads the orchestrator's restart count, which
+# nothing in this suite changes), so they run side by side. disallowed compares the table-wide session count before and
+# after, so no other test may create a session meanwhile; real-model scans the orchestrator log for token-shaped text
+# and spends model turns. Both run alone, afterwards.
+e2e_parallel models:t_models failed-401:t_failed_401
+e2e_serial disallowed t_disallowed
+if [[ ${REAL_MODEL:-0} == 1 ]]; then e2e_serial real-model t_real_model; fi
 
 log "summary"
 for line in "${summary[@]}"; do note "$line"; done
