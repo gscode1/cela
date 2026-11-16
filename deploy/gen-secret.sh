@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create secret sandboxd-auth in pi-durable-poc with one key, `master`: the key the orchestrator derives every
+# Create secret sandboxd-auth in $NAMESPACE (default pi-durable-poc; e2e runs use pi-e2e-<id>) with one key, `master`: the key the orchestrator derives every
 # sandbox's token from (token = HMAC-SHA256(master, claimName), packages/sandbox-env/src/token.ts). Never commit or
 # print its value. A sandbox only ever gets the sha256 of its own token (SandboxClaim env), never the master.
 # Idempotent: an existing master is kept. ROTATE=1 replaces it; every existing claim then has to be recreated

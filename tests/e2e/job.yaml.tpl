@@ -5,7 +5,6 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: __JOB__
-  namespace: pi-durable-poc
   labels:
     app.kubernetes.io/name: e2e-driver
 spec:

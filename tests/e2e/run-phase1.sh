@@ -10,7 +10,7 @@
 #   4. reattach (a): write via the env, DELETE the runner pod, start a fresh one, read the file back
 #   5. reattach (b): delete the sandbox Pod, wait for recreation, next env call works, file still there
 #
-# Needs: the pi-durable-poc namespace from deploy/ (template, warm pool) and the sandboxd-auth secret. Touches only
+# Needs: the run namespace $NAMESPACE with deploy/ applied (template, warm pool) and the sandboxd-auth secret. Touches only
 # that namespace. The claim gets the sha256 of its own token (HMAC of the master); the runner pod reads the master from
 # the secret and derives both with sandbox-env's own functions (the driver image has no openssl, and one
 # implementation is enough). Nothing secret is printed. Exits non-zero on any failure. Set KEEP_RUNNER=1 to
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 claim=${CLAIM:-e2e-phase1}
 here=$(cd "$(dirname "$0")" && pwd)
 bundle=${BUNDLE:-/driver/bundle.tgz}
@@ -44,7 +44,7 @@ trap cleanup EXIT
 start_runner() {
   k delete pod e2e-runner --ignore-not-found --wait=true >/dev/null
   # The manifest hard-codes the default namespace; follow NAMESPACE so `kubectl create` does not reject it.
-  sed "s/^  namespace: pi-durable-poc\$/  namespace: $ns/" "$here/runner-pod.yaml" | k create -f - >/dev/null
+  k create -f "$here/runner-pod.yaml" >/dev/null
   k wait --for=condition=Ready pod/e2e-runner --timeout=240s >/dev/null
   k exec -i e2e-runner -- sh -c 'mkdir -p /work/app && tar xzf - -C /work/app' <"$bundle"
 }

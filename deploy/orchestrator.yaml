@@ -40,7 +40,10 @@ spec:
             - configMapRef: { name: pi-model-config }
           env:
             - { name: HOME, value: /tmp }
-            - { name: PI_ORCH_NAMESPACE, value: pi-durable-poc }
+            # The namespace this pod runs in: one manifest serves the long-lived deployment and every e2e run
+            # namespace (docs/e2e.md), so it is never written out.
+            - name: PI_ORCH_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - { name: PI_ORCH_WARMPOOL, value: pi-env-pool }
             - { name: PI_ORCH_PORT, value: "8081" }
             - { name: PI_DURABLE_SCHEMA, value: durable }

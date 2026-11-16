@@ -16,7 +16,7 @@
 # allowlist has them next to the Codex models). All API calls run inside an ingest pod, so API tokens stay in the
 # cluster; nothing here reads or prints a secret value. Throwaway sessions are deleted on exit.
 #
-#   MODE=cluster (default)  the current kubectl context, namespace pi-durable-poc
+#   MODE=cluster (default)  the current kubectl context, namespace $NAMESPACE (an e2e run namespace)
 #   MODE=local              a local stack: API_BASE (ingest URL), PI_API_TOKENS or API_TOKEN, LOCAL_DB_URL (psql
 #                           URL), ORCH_LOG (the orchestrator's log file); the real-model test is not available
 #
@@ -25,7 +25,8 @@ set -euo pipefail
 
 mode=${MODE:-cluster}
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:-} # the e2e run namespace; tests/e2e/run.sh sets it in the Job
+[[ $mode == local || -n $ns ]] || { echo "NAMESPACE is not set (the e2e run namespace; tests/e2e/run.sh sets it in the Job)" >&2; exit 64; }
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 work=$(mktemp -d)

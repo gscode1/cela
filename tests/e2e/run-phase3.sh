@@ -16,14 +16,14 @@
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
 #                  KNOWN-FAIL into FAIL (use it after the migration); NETPOL_ENFORCED=0 forces KNOWN-FAIL.
 #
-# Touches only namespace pi-durable-poc. Needs the CNPG operator in postgres-system and the secret sandboxd-auth
+# Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the CNPG operator in postgres-system and the secret sandboxd-auth
 # (deploy/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
 # Run by hand from a Mac with your current kubectl context it works the same, but use tests/e2e/run.sh.
 # Exit code: 0 when every test passed (isolation may be KNOWN-FAIL while enforcement is absent), 1 otherwise.
 set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd) # the driver volume mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
 work=$(mktemp -d)
