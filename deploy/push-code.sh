@@ -16,10 +16,6 @@ root=$(cd "$here/.." && pwd)
 work=$(mktemp -d)
 deployments=("$@")
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
-if [[ ${#deployments[@]} -eq 0 ]]; then
-  while IFS= read -r d; do deployments+=("${d#deployment.apps/}"); done < <(k get deployment -l app.kubernetes.io/name=pi-orchestrator -o name)
-  [[ ${#deployments[@]} -gt 0 ]] || deployments=(pi-orchestrator)
-fi
 scaled=()   # deployments this run scaled to 0; the trap restores exactly these
 restore=()  # their replica counts, same order
 lock=orchestrator-code-push-lock
@@ -27,6 +23,18 @@ lock=orchestrator-code-push-lock
 . "$here/push-lock.sh"
 # shellcheck source=push-retry.sh
 . "$here/push-retry.sh"
+# Which shards to stop. A failed listing must abort: falling back to pi-orchestrator alone would replace the shared code
+# under shards that keep running. The fallback is only for a successful listing that came back empty.
+if [[ ${#deployments[@]} -eq 0 ]]; then
+  listing=$(push_retry k get deployment -l app.kubernetes.io/name=pi-orchestrator -o name) || {
+    rm -rf "$work"
+    echo "could not list the orchestrator Deployments; nothing was changed" >&2
+    exit 1
+  }
+  while IFS= read -r d; do [[ -z $d ]] || deployments+=("${d#deployment.apps/}"); done <<<"$listing"
+  [[ ${#deployments[@]} -gt 0 ]] || deployments=(pi-orchestrator)
+fi
+echo "orchestrator deployments: ${deployments[*]}" >&2
 locked=0 # 1 only when this run created the lock; the trap must never touch another run's lock or loader
 # Runs on every exit path: a failed wait, cp or extract must not leave the orchestrator at 0 replicas.
 cleanup() {

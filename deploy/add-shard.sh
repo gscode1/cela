@@ -18,6 +18,15 @@ ns=${NAMESPACE:-pi-durable-poc}
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 name=pi-orchestrator-$shard
 
+# Shards are numbered without gaps: ingest assigns sessions to every shard below PI_ORCH_SHARDS, and one without a
+# Deployment would strand them as `pending`. So every lower shard must already exist.
+for ((j = 1; j < shard; j++)); do
+  k get deployment "pi-orchestrator-$j" >/dev/null 2>&1 && k get service "pi-orchestrator-$j" >/dev/null 2>&1 || {
+    echo "cannot add shard $shard: shard $j (Deployment and Service pi-orchestrator-$j) does not exist; add shards in order" >&2
+    exit 1
+  }
+done
+
 service() { # name instance
   cat <<YAML
 apiVersion: v1
