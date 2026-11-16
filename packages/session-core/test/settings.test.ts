@@ -90,6 +90,41 @@ describe("validateSettings", () => {
   });
 });
 
+describe("seed validation", () => {
+  it("refuses an env seed the read path would reject, and persists nothing", async () => {
+    expect(() => settingsFromEnv({ PI_SESSION_TURN_BUDGET: "1000001" })).toThrow(/turnBudget/);
+    const db = new FakeSettingsDb();
+    await expect(seedSettings(db.asPool(), { ...base, turnBudget: 1_000_001 })).rejects.toThrow(
+      /invalid seed settings/,
+    );
+    expect(db.row).toBeUndefined();
+    expect(db.history).toHaveLength(0);
+  });
+});
+
+describe("allowlist size", () => {
+  const many = Array.from({ length: 100 }, (_, i) => `p/m${String(i)}`);
+  const full: Settings = { ...base, defaultModel: "p/m0", allowlist: many };
+
+  it("counts the default: a default outside a full list is a 400, not a row the reader rejects", async () => {
+    expect(validateSettings({ defaultModel: "x/y" }, full)).toMatch(/at most 100 distinct/);
+    expect(validateSettings({ defaultModel: "p/m5" }, full)).toMatchObject({
+      defaultModel: "p/m5",
+    });
+    // Duplicates do not count twice.
+    expect(validateSettings({ allowlist: [...many, "p/m1"] }, full)).toMatchObject({
+      turnBudget: 100,
+    });
+
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), full);
+    expect(await updateSettings(db.asPool(), { defaultModel: "x/y" }, "alice")).toMatch(
+      /at most 100/,
+    );
+    expect(db.history).toHaveLength(1);
+  });
+});
+
 describe("policyOf", () => {
   it("gives chooseModel what loadModelPolicy gave it", () => {
     const policy = policyOf({ ...base, reasoning: "low" });

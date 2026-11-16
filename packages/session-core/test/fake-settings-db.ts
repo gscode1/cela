@@ -141,6 +141,7 @@ export class FakeSettingsDb {
 /** One pooled client: transaction statements go to the db; `listen` registers it for notifications. */
 export class FakeListener extends EventEmitter {
   released = false;
+  /** Every client handed out, so a test can check each was released once. */
   constructor(private readonly db: FakeSettingsDb) {
     super();
   }
@@ -154,6 +155,9 @@ export class FakeListener extends EventEmitter {
   }
 
   release(): void {
+    // node-postgres throws on a second release; the fake must too.
+    if (this.released)
+      throw new Error("Release called on client which has already been released to the pool.");
     this.released = true;
     this.db.listeners.delete(this);
   }

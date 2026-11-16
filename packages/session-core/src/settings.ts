@@ -37,6 +37,8 @@ export interface SettingsHistoryEntry {
 const KEYS = ["defaultModel", "allowlist", "reasoning", "turnBudget"] as const;
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
+/** Bound on what is parsed; the real limit applies to the normalised list (default added, duplicates dropped). */
+const MAX_INPUT_ALLOWLIST = 1_000;
 const MAX_TURN_BUDGET = 1_000_000;
 const DEFAULT_TURN_BUDGET = 100;
 
@@ -47,12 +49,17 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
   if (!Number.isInteger(turnBudget) || turnBudget < 1) {
     throw new Error("PI_SESSION_TURN_BUDGET must be an integer of 1 or more");
   }
-  return {
+  // The same rules as stored settings, so an env that would never be readable back fails at start, before anything
+  // is written.
+  const settings = validateSettings({
     defaultModel: modelKey(policy.default),
     allowlist: policy.allowed.map(modelKey),
     reasoning: policy.reasoning ?? null,
     turnBudget,
-  };
+  });
+  if (typeof settings === "string")
+    throw new Error(`invalid model settings in the environment: ${settings}`);
+  return settings;
 }
 
 /** The model policy ingest checks `POST /sessions` against. */
@@ -87,7 +94,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   const listText = pick("allowlist");
   if (
     !Array.isArray(listText) ||
-    listText.length > MAX_ALLOWLIST ||
+    listText.length > MAX_INPUT_ALLOWLIST ||
     !listText.every((entry): entry is string => typeof entry === "string")
   ) {
     return `allowlist must be an array of at most ${String(MAX_ALLOWLIST)} provider/model strings`;
@@ -115,9 +122,13 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
       return `model "${entry.slice(0, 80)}" is not provider/model`;
     }
   }
+  const allowlist = [...new Set(keys)];
+  if (allowlist.length > MAX_ALLOWLIST) {
+    return `allowlist (with the default model) must have at most ${String(MAX_ALLOWLIST)} distinct provider/model entries`;
+  }
   return {
     defaultModel: keys[0] ?? defaultText,
-    allowlist: [...new Set(keys)],
+    allowlist,
     reasoning: reasoning as ThinkingLevel | null,
     turnBudget,
   };
@@ -193,7 +204,10 @@ async function writeHistoryAndNotify(
  * Seeds the row once. Race-safe: two replicas starting together both run this and exactly one inserts, so the
  * history has one seed entry. True if this call inserted.
  */
-export async function seedSettings(pool: pg.Pool, seed: Settings): Promise<boolean> {
+export async function seedSettings(pool: pg.Pool, input: Settings): Promise<boolean> {
+  // Never persist a row the read path would reject: that would block every start until someone fixed the table by hand.
+  const seed = validateSettings(input);
+  if (typeof seed === "string") throw new Error(`invalid seed settings: ${seed}`);
   return inTransaction(pool, async (client) => {
     const { rows } = await client.query(
       `insert into inbox.settings (default_model, allowlist, default_reasoning, turn_budget, updated_by)

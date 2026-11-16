@@ -123,4 +123,17 @@ describe("SettingsCache", () => {
     await expect(c.start()).resolves.toBeUndefined();
     expect(c.turnBudget()).toBe(11);
   });
+
+  it("releases the listener client once: stop() during the relisten delay does not throw", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    const c = cache(db, { relistenMs: 60_000, pollMs: 60_000 });
+    await c.start();
+    await vi.waitFor(() => expect(db.listeners.size).toBe(1));
+    const [client] = [...db.listeners];
+    client?.drop();
+    await vi.waitFor(() => expect(client?.released).toBe(true));
+    await expect(c.stop()).resolves.toBeUndefined();
+    await expect(c.stop()).resolves.toBeUndefined();
+  });
 });

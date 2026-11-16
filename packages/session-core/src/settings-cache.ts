@@ -52,10 +52,21 @@ export class SettingsCache {
   stop(): Promise<void> {
     this.#stopped = true;
     if (this.#timer !== undefined) clearInterval(this.#timer);
-    this.#listener?.removeAllListeners();
-    this.#listener?.release(true);
-    this.#listener = undefined;
+    this.#releaseListener();
     return Promise.resolve();
+  }
+
+  /** Releases the listener client once; a second call (stop during the relisten delay) is a no-op, and never throws. */
+  #releaseListener(): void {
+    const client = this.#listener;
+    this.#listener = undefined;
+    if (client === undefined) return;
+    try {
+      client.removeAllListeners();
+      client.release(true);
+    } catch {
+      // Already released or destroyed: nothing left to do.
+    }
   }
 
   /** Reads the row now. Reads are serialised, so the last one issued is the last one applied. */
@@ -128,8 +139,7 @@ export class SettingsCache {
             .then(() => this.refresh())
             .catch(() => resolve());
         });
-        client.removeAllListeners();
-        client.release(true);
+        this.#releaseListener();
       } catch (error) {
         this.#log("settings-listen-failed", { message: errorMessage(error) });
       }
