@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|all>
+# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>
 #   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call)
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
 #   phase4c optional repo workspace through OneCLI + a repo-scoped GitHub App token; needs REPO_A and REPO_B
 #           (owner/name, private, in the App installation), otherwise most tests SKIP. Not part of `all`.
+#   mcp     native remote MCP tools through the OneCLI gateway (issue #39): a scripted session calls tool_search and a
+#           DeepWiki tool. Needs the internet, PI_MCP_SERVERS with deepwiki on the orchestrator and the OneCLI host rule
+#           for mcp.deepwiki.com, otherwise its tests SKIP. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, namespace pi-durable-poc), so a
@@ -44,9 +47,10 @@ phase3) phases=(phase3) ;;
 phase4) phases=(phase4) ;;
 phase4b) phases=(phase4b) ;;
 phase4c) phases=(phase4c) ;;
+mcp) phases=(mcp) ;;
 all) phases=(phase1 phase3 phase4 phase4b) ;;
 *)
-  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|all>" >&2
+  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|all>" >&2
   exit 64
   ;;
 esac
@@ -85,7 +89,7 @@ kubectl ${ctx:+--context="$ctx"} apply -k "$here/driver" >/dev/null
 # A Job left by an earlier killed run would hold the code volume (ReadWriteOnce).
 k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=foreground --wait=true >/dev/null
 
-if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c; then
+if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp; then
   log "test overlay, api-auth secret, orchestrator and ingest code (build + push on the Mac)"
   "$root/deploy/gen-api-secret.sh" >/dev/null
   # CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
