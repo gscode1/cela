@@ -25,8 +25,33 @@ export class FakeInboxDb {
     return this as unknown as pg.Pool;
   }
 
+  /** Makes the next event insert throw, as a crash or connection loss between two statements would. */
+  failNextInsert = false;
+  #snapshot: { status: string; events: StoredEvent[] } | undefined;
+
+  /** One client, enough for a transaction: `begin` snapshots, `rollback` restores, `commit` keeps. */
+  connect(): Promise<{ query: FakeInboxDb["query"]; release: () => void }> {
+    return Promise.resolve({ query: (sql, params) => this.query(sql, params), release: () => {} });
+  }
+
   query(sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> {
     const done = (rows: unknown[] = []) => Promise.resolve({ rows, rowCount: rows.length });
+    if (sql === "begin") {
+      this.#snapshot = { status: this.status, events: this.events.map((e) => ({ ...e })) };
+      return done();
+    }
+    if (sql === "commit") {
+      this.#snapshot = undefined;
+      return done();
+    }
+    if (sql === "rollback") {
+      if (this.#snapshot !== undefined) {
+        this.status = this.#snapshot.status;
+        this.events.splice(0, this.events.length, ...this.#snapshot.events);
+      }
+      this.#snapshot = undefined;
+      return done();
+    }
     if (sql.includes("select * from inbox.sessions")) {
       return done([
         {
@@ -51,6 +76,10 @@ export class FakeInboxDb {
     }
     if (sql.includes("insert into inbox.events")) {
       this.beforeInsert?.();
+      if (this.failNextInsert) {
+        this.failNextInsert = false;
+        return Promise.reject(new Error("connection lost"));
+      }
       const [sessionId, source, sourceEventId, kind] = params as string[];
       if (sql.includes("status = 'active'") && this.status !== "active") return done();
       if (this.events.some((e) => e.source === source && e.sourceEventId === sourceEventId)) {

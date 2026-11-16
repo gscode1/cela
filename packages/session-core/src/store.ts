@@ -187,7 +187,7 @@ export type EnqueueResult =
  * returns the first event's id. The orchestrator is not involved: this works while it is down.
  */
 export async function enqueueEvent(
-  pool: pg.Pool,
+  pool: Pick<pg.Pool, "query">,
   event: {
     sessionId: string;
     source: string;
@@ -263,11 +263,42 @@ export async function requeueFailedDelete(pool: pg.Pool, sessionId: string): Pro
 }
 
 /** Marks an active session as being deleted, so no further events are accepted. Idempotent. */
-export async function requestDelete(pool: pg.Pool, sessionId: string): Promise<void> {
+export async function requestDelete(
+  pool: Pick<pg.Pool, "query">,
+  sessionId: string,
+): Promise<void> {
   await pool.query(
     "update inbox.sessions set status = 'deleting', last_activity_at = clock_timestamp() where id = $1 and status in ('active', 'failed')",
     [sessionId],
   );
+}
+
+/**
+ * DELETE's two writes as one transaction: the status change to `deleting` and the delete row. A crash or database
+ * error between two separate statements left a `deleting` session with no delete row, which nothing recovers
+ * (events are refused for it and the sweep treats `deleting` as live). Rolled back, the session stays as it was and the
+ * client's retry starts over; a session already stuck that way is healed by a repeated DELETE, which still inserts the
+ * (deduplicated) row.
+ */
+export async function beginDelete(pool: pg.Pool, sessionId: string): Promise<EnqueueResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await requestDelete(client, sessionId);
+    const result = await enqueueEvent(client, {
+      sessionId,
+      ...deleteEventKey(sessionId),
+      kind: "delete",
+      payload: {},
+    });
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export interface SessionSummary {

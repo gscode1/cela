@@ -55,6 +55,28 @@ describe("DELETE and client event ids", () => {
     expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
   });
 
+  it("a failure between the status change and the delete row leaves the session as it was", async () => {
+    const db = new FakeInboxDb();
+    const base = await start(db);
+    db.failNextInsert = true;
+    expect((await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" })).status).toBe(500);
+    // Without the transaction this was `deleting` with no delete row: stuck, since nothing else heals it.
+    expect(db.status).toBe("active");
+    expect(db.events).toHaveLength(0);
+    // The client's retry then completes both.
+    expect((await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" })).status).toBe(202);
+    expect(db.status).toBe("deleting");
+    expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
+  });
+
+  it("a repeated DELETE heals a session that is already deleting without a delete row", async () => {
+    const db = new FakeInboxDb();
+    db.status = "deleting";
+    const base = await start(db);
+    expect((await fetch(`${base}/sessions/${SESSION}`, { method: "DELETE" })).status).toBe(202);
+    expect(db.events.filter((e) => e.kind === "delete")).toHaveLength(1);
+  });
+
   it("a repeated DELETE puts a failed delete row back to pending", async () => {
     const db = new FakeInboxDb();
     const base = await start(db);
