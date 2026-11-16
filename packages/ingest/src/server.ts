@@ -18,8 +18,17 @@ import {
   listProfileVersions,
   listSettingsHistory,
   mcpServerNameError,
+  listSkillVersions,
   profileNameError,
   putMcpServer,
+  putSkillVersion,
+  readSkill,
+  readSkillBundle,
+  readSkills,
+  readSkillVersion,
+  SKILL_BODY_LIMIT,
+  skillNameError,
+  validateProfileDefinition,
   putProfile,
   readCapabilities,
   readMcpServers,
@@ -42,6 +51,7 @@ import type {
   ProfileSnapshot,
   SessionRow,
   Settings,
+  SkillVersionMeta,
   StoredMcpServer,
   StoredProfile,
 } from "@pi-durable-k8s/session-core";
@@ -140,6 +150,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       status: summary.status,
       model: modelOf(session, deps.settings.policy()),
       profile: session.profile === null ? LEGACY_PROFILE : profileRef(session.profile),
+      ...skillsOf(session),
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
       createdAt: session.createdAt.toISOString(),
@@ -190,6 +201,10 @@ async function handleAdmin(
   }
   if (parts[1] === "profiles") {
     await handleAdminProfiles(req, res, deps, principal, parts);
+    return;
+  }
+  if (parts[1] === "skills") {
+    await handleAdminSkills(req, res, deps, principal, url, parts);
     return;
   }
   if (
@@ -275,6 +290,156 @@ async function defaultProfileProblem(pool: pg.Pool, name: unknown): Promise<stri
 
 function profileRef(profile: { name: string; version: number }): { name: string; version: number } {
   return { name: profile.name, version: profile.version };
+}
+
+/** The skills a session was created with, as pinned in its profile snapshot (name, version, digest). */
+function skillsOf(session: SessionRow): { skills?: unknown[] } {
+  if (session.profile === null) return {};
+  const definition = validateProfileDefinition(session.profile.snapshot);
+  if (typeof definition === "string" || definition.skills === undefined) return {};
+  return { skills: definition.skills };
+}
+
+function skillVersionJson(meta: SkillVersionMeta) {
+  return {
+    name: meta.name,
+    version: meta.version,
+    digest: meta.digest,
+    description: meta.description,
+    size: meta.size,
+    files: meta.files,
+    createdAt: meta.createdAt.toISOString(),
+    createdBy: meta.createdBy,
+  };
+}
+
+/**
+ * `/admin/skills` (the caller is already known to be an admin): list, get one with its versions, publish a version
+ * (`POST /admin/skills/{name}/versions`) and read one (`GET .../versions/{v}`, with the file contents for
+ * `?content=true`, because a skill is reviewed like code). No update and no delete (docs/decisions/0011): a version a
+ * profile or session refers to never changes or goes away; publishing identical content to the current version writes
+ * nothing.
+ */
+async function handleAdminSkills(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: IngestDeps,
+  principal: Principal,
+  url: URL,
+  parts: string[],
+): Promise<void> {
+  const method = req.method ?? "GET";
+  const name = parts[2];
+  if (name === undefined) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const skills = await readSkills(deps.pool);
+    sendJson(res, 200, {
+      skills: skills.map((skill) => ({
+        name: skill.name,
+        currentVersion: skill.currentVersion,
+        digest: skill.digest,
+        description: skill.description,
+        createdAt: skill.createdAt.toISOString(),
+        createdBy: skill.createdBy,
+        updatedAt: skill.updatedAt.toISOString(),
+        updatedBy: skill.updatedBy,
+      })),
+    });
+    return;
+  }
+  const nameError = skillNameError(name);
+  if (nameError !== undefined) {
+    sendJson(res, 400, { error: nameError });
+    return;
+  }
+  if (parts.length === 3) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const skill = await readSkill(deps.pool, name);
+    if (skill === undefined) {
+      sendJson(res, 404, { error: "skill not found" });
+      return;
+    }
+    const versions = await listSkillVersions(deps.pool, name);
+    sendJson(res, 200, {
+      name,
+      currentVersion: skill.currentVersion,
+      versions: versions.map(skillVersionJson),
+    });
+    return;
+  }
+  if (parts[3] !== "versions" || parts.length > 5) {
+    sendJson(res, 404, { error: "not found" });
+    return;
+  }
+  if (parts.length === 4) {
+    if (method !== "POST") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req, SKILL_BODY_LIMIT);
+    } catch (error) {
+      if (error instanceof BodyError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    const result = await putSkillVersion(deps.pool, name, body, principal.owner);
+    if (!result.ok) {
+      sendJson(res, 400, { error: result.message });
+      return;
+    }
+    log("skill-published", {
+      skill: name,
+      version: result.version.version,
+      digest: result.version.digest,
+      by: principal.owner,
+      created: result.created,
+    });
+    sendJson(res, result.created ? 201 : 200, {
+      ...skillVersionJson(result.version),
+      versionCreated: result.created,
+    });
+    return;
+  }
+  if (method !== "GET") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  const version = Number(parts[4]);
+  if (!/^[1-9][0-9]{0,8}$/.test(parts[4] ?? "")) {
+    sendJson(res, 400, { error: "version must be a positive integer" });
+    return;
+  }
+  if (url.searchParams.get("content") === "true") {
+    const bundle = await readSkillBundle(deps.pool, name, version);
+    if (bundle === undefined) {
+      sendJson(res, 404, { error: "skill version not found" });
+      return;
+    }
+    sendJson(res, 200, {
+      ...skillVersionJson(bundle),
+      files: bundle.files.map((file) => ({
+        ...file,
+        contentBase64: bundle.contents.get(file.path)?.toString("base64") ?? null,
+      })),
+    });
+    return;
+  }
+  const meta = await readSkillVersion(deps.pool, name, version);
+  if (meta === undefined) {
+    sendJson(res, 404, { error: "skill version not found" });
+    return;
+  }
+  sendJson(res, 200, skillVersionJson(meta));
 }
 
 function profileJson(stored: StoredProfile) {
