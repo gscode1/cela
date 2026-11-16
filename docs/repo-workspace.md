@@ -63,6 +63,38 @@ path absent counts: a failing check (bridge or Pod error) is a transient error a
 (repo not in the installation) also fails the session; transient errors, GitHub rate limiting (429, or 403 with
 `x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (5 attempts).
 
+## Branch ruleset: agents may only touch `agent/**`
+
+A session token has `contents: write` on its repository, and GitHub cannot scope a token by ref. Without a guard the agent can
+push, force-push or delete `main`. `deploy/agent-ruleset.json` is a repository ruleset that closes this:
+
+- Target: branches, `include: ["~ALL"]`, `exclude: ["refs/heads/agent/**"]`. Every branch except `agent/**` is covered.
+- Rules `creation`, `update`, `deletion`, `non_fast_forward`: nobody without bypass can create, push to (including merging a PR
+  into), force-push or delete a covered branch. `update` also stops the App merging a pull request into `main`, which its
+  `pull_requests: write` would otherwise allow.
+- Bypass list: only the repository role Admin (`actor_type: RepositoryRole`, `actor_id: 5`, `bypass_mode: always`) so the human
+  owner can still push and merge `main`. The App's installation is **not** a bypass actor; adding it would void the whole control.
+  Admin bypass is a trade-off: it is the simplest way to keep the owner working and the App is not an admin role, but it also lets
+  admins skip the rule by accident. A stricter option is `bypass_mode: pull_request` (admins only via PR); change the JSON and re-apply.
+- Tags are not covered (the ruleset targets branches). The agent can still create tags. Add a second tag ruleset if that matters.
+- Agents keep working on `agent/**`: they can create, push, force-push and delete those branches, and open a PR from one.
+  `branch` in `POST /sessions` should therefore be an `agent/...` name for repository sessions that push.
+
+Apply to every repository the GitHub App is installed on (needs `gh` logged in as a repo admin, and `jq`):
+
+```
+deploy/agent-ruleset.sh owner/repo           # create, or update the ruleset named pi-agent-branches (idempotent)
+deploy/agent-ruleset.sh --check owner/repo   # read-only; exit 0 when present and matching, 1 when missing or different
+```
+
+Rulesets need a public repo, or a private one on a paid plan (GitHub Pro/Team/Enterprise). Run `--check` after every new installation.
+
+Live check (not automated yet): with a session token, `git push origin HEAD:refs/heads/agent/x` succeeds; `git push origin HEAD:main`,
+`git push --force origin HEAD:main` and `git push origin :main` are each rejected (`GH013: Repository rule violations`).
+
+Future work: the orchestrator could refuse a repo session when `--check` would fail (the App needs `administration: read` for that).
+It does not today; the ruleset is an operator step, and nothing at startup calls GitHub for it.
+
 ## Unverified
 
 - The OneCLI v2 generic-secret body (`type: "generic"`, `injectionConfig: {headerName, valueFormat}`), `PATCH /v1/secrets/{id}`, the
