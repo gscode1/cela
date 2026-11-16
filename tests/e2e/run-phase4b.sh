@@ -12,7 +12,7 @@
 #                 in the namespace; otherwise it says so and is reported as SKIPPED (never faked). Two real turns.
 #
 # ONLY="models,disallowed" runs just those tests (debugging aid). Prerequisite: the deployed ingest and orchestrator run
-# this branch's code and ConfigMap `pi-model-config` allows scripted/scripted-1 and scripted/scripted-2 (the committed
+# this branch's code and the stored allowlist (inbox.settings; seeded from ConfigMap `pi-model-config`) allows scripted/scripted-1 and scripted/scripted-2 (the committed
 # allowlist has them next to the Codex models). All API calls run inside an ingest pod, so API tokens stay in the
 # cluster; nothing here reads or prints a secret value. Throwaway sessions are deleted on exit.
 #
@@ -176,7 +176,7 @@ t_models() {
   a=$(new_session alice)
   b=$(new_session alice '{"provider":"scripted","model":"scripted-2"}')
   assert_jq "default session created on scripted/scripted-1" "$a" '.status==201 and .body.provider=="scripted" and .body.model=="scripted-1"'
-  assert_jq "explicit session created on scripted/scripted-2 (is it in PI_MODEL_ALLOWLIST?)" "$b" '.status==201 and .body.model=="scripted-2"'
+  assert_jq "explicit session created on scripted/scripted-2 (is it in the settings allowlist?)" "$b" '.status==201 and .body.model=="scripted-2"'
   ida=$(jq -r .body.sessionId <<<"$a")
   idb=$(jq -r .body.sessionId <<<"$b")
   assert_eq "database records the default model" "scripted/scripted-1" "$(sql "select model_provider||'/'||model_id from inbox.sessions where id='$ida'")"

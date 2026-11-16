@@ -34,7 +34,8 @@ spec:
           image: node:22-bookworm-slim
           workingDir: /code/app
           command: [node, dist/main.js]
-          # PI_MODEL_PROVIDER, PI_MODEL_ID, PI_MODEL_ALLOWLIST, PI_SESSION_TURN_BUDGET.
+          # PI_MODEL_ALLOWLIST (which providers to install), the fallback default model and turn budget until
+          # inbox.settings is seeded. The live default and turn budget come from Postgres (PUT /admin/settings).
           envFrom:
             - configMapRef: { name: pi-model-config }
           env:

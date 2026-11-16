@@ -33,6 +33,7 @@ root=$(cd "$here/../.." && pwd) # the driver volume mirrors the repo layout: tes
 work=$(mktemp -d)
 sessions_file=$work/sessions
 : >"$sessions_file"
+settings_before=$work/settings-before.json # the model settings found at start, restored on exit
 bg_pids=()
 extra_claims_file=$work/extra_claims # claims the lifecycle tests create by hand; removed on exit if the test did not
 : >"$extra_claims_file"
@@ -86,6 +87,10 @@ cleanup() {
   while read -r claim; do
     [[ -n "$claim" ]] && { k delete sandboxclaim "$claim" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
   done <"$extra_claims_file"
+  if [[ -s $settings_before ]]; then
+    [[ $(api alice PUT /admin/settings "$(cat "$settings_before")" 2>/dev/null | jq -r '.status // empty') == 200 ]] ||
+      note "WARNING: could not restore the model settings; check GET /admin/settings (saved: $(cat "$settings_before"))"
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -671,6 +676,14 @@ k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 k rollout status deployment/pi-ingest --timeout=240s >/dev/null
 fi
 wait_orch
+
+# The suite runs on the scripted default model (no OneCLI, no spend). The settings live in Postgres, so this is a call
+# to the admin API (alice is in PI_API_ADMINS); no restart. The previous values come back in cleanup.
+log "setup: scripted default model through PUT /admin/settings"
+before=$(api alice GET /admin/settings)
+assert_jq "alice can read the settings (is PI_API_ADMINS set on ingest?)" "$before" '.status==200'
+jq -c '.body | {defaultModel, allowlist, reasoning, turnBudget}' <<<"$before" >"$settings_before"
+assert_jq "the scripted default is set" "$(api alice PUT /admin/settings '{"defaultModel":"scripted/scripted-1","reasoning":null}')" '.status==200 and .body.defaultModel=="scripted/scripted-1"'
 
 # ---------------------------------------------------------------- run
 declare -a summary=()
