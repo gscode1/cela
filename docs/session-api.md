@@ -31,13 +31,17 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `POST /sessions` body `{ profile?, provider?, model?, reasoning?, repo?, branch? }` | `201 { sessionId, profile: { name, version }, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default profile and the default model. `profile` (optional) is the name of a session profile (see Session profiles): an unknown, malformed or disabled-for-new profile is `400`; omitted, the settings' `defaultProfile` applies (`coding` unless changed; if that profile is gone or disabled the answer is `503`, never another profile). The profile's definition is stored with the session as a snapshot. `provider` and `model` default to the profile's `defaultModel`, `reasoning` to its `reasoning`, and then to the settings; a request value always wins, and the result is checked against the allowlist and cap as below. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `reasoning` (optional) is the effort of the session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; anything else is `400 { "error": "reasoning must be one of ..." }`, and a level above the operator cap `maxReasoning` is `400 { "error": "reasoning <level> is above the allowed maximum <cap>" }` (see Models). Omitted, the session gets the settings default (none stored when there is none). `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
 | `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
-| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
+| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
 | `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, defaultProfile, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
 | `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, maxReasoning?, defaultProfile?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it, `maxReasoning: null` removes the cap, and `reasoning` above `maxReasoning` is `400`. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `defaultProfile` the name of an existing profile that is enabled for new sessions (else `400`), `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
 | `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
 | `GET /admin/profiles` | `200 { defaultProfile, profiles: [{ name, currentVersion, enabledForNew, definition, createdAt, createdBy, updatedAt, updatedBy }], invalid: [{ name, message }] }` | Admins only. Every profile at its current version. `invalid` lists profiles whose current version fails validation (edited by hand); they cannot be chosen. |
 | `GET /admin/profiles/{name}` | `200`, the profile as above plus `versions: [{ version, definition, createdAt, createdBy }]`, newest first | Admins only. `404` if there is none. |
 | `PUT /admin/profiles/{name}` body `{ definition?, enabledForNew? }` | `201` for a new profile, `200` after; the profile as in GET plus `versionCreated` | Admins only. A create needs `definition`. A `definition` that differs from the current one is written as the next version (versions are immutable); an identical one writes nothing. `enabledForNew` (default true on create) only decides whether new sessions may choose the profile; it never affects existing sessions and is not versioned. A bad definition, an unknown key, a tool that is not installed or an MCP server that is not in the catalog is `400` and changes nothing. There is no `DELETE` (`405`): disable a profile instead. |
+| `GET /admin/skills` | `200 { skills: [{ name, currentVersion, digest, description, disableModelInvocation, createdAt, createdBy, updatedAt, updatedBy }] }` | Admins only. Every skill at its current version. |
+| `GET /admin/skills/{name}` | `200 { name, currentVersion, versions: [{ name, version, digest, description, disableModelInvocation, size, files: [{ path, size, sha256, executable }], createdAt, createdBy }] }`, newest first | Admins only. `404` if there is none. |
+| `POST /admin/skills/{name}/versions` body `{ files: [{ path, content \| contentBase64, executable? }] }` | `201` for a new version, `200` when the content is identical to the current version (nothing written); the version as in GET plus `versionCreated` | Admins only; the body may be up to about 7 MiB. `files` must include `SKILL.md`, which starts with a YAML frontmatter block that gives the `description` (see Skills); there is no separate `description` field (sending one is `400`). A bad name, a frontmatter that is missing, malformed, without a non-empty `description` or with a `name` that differs from `{name}`, traversal or absolute path, duplicate path, field that is not `path`/`content`/`contentBase64`/`executable` (so no symlinks, devices or modes), NUL or unpaired surrogate in text, or a limit exceeded (see Skills) is `400` and writes nothing. |
+| `GET /admin/skills/{name}/versions/{v}` (`?content=true`) | `200`, the version as above; with `content=true` each file also has `contentBase64` | Admins only, so a skill can be reviewed like code. `404` if there is none. Versions cannot be updated or deleted (`405`). |
 | `GET /admin/mcp-servers` | `200 { servers: [...], invalid: [{ name, message }] }` | Admins only. Every server of the MCP catalog, by name. A server is `{ name, url, transport, enabled, readOnly, timeoutMs, maxOutputBytes, onecliSecret, reachability, createdAt, createdBy, updatedAt, updatedBy }`. `reachability` is always `"unknown"`: the API does not probe the network, and a host that is not allowed in the OneCLI rules fails only when the orchestrator connects (log `mcp-discovery-failed`). `invalid` lists rows edited by hand into something the validator rejects; the orchestrator skips them. |
 | `GET /admin/mcp-servers/{name}` | `200`, one server as above | Admins only. `404` if there is none. |
 | `PUT /admin/mcp-servers/{name}` body `{ url?, transport?, enabled?, readOnly?, timeoutMs?, maxOutputBytes?, onecliSecret? }` | `201` for a new server, `200` for an update, the server as in GET | Admins only; creates or updates. A create needs `url` (https, no credentials) and `readOnly` (your declaration that the server is stateless and read-only: one client serves every session); `transport` is `streamable-http` (the only one), `enabled` defaults to true, `timeoutMs` to 60000 (1000 to 300000), `maxOutputBytes` to 24576 (1024 to 24576: it can only tighten the cut of the text a call returns), `onecliSecret` (a reference, never a secret; unused until #42) to null. An update lays the body over the stored row, so `{"enabled": false}` disables a server. `name` matches `^[a-z][a-z0-9-]{0,31}$`, is immutable (`history` is reserved) and becomes the tool prefix `mcp__<name>__`. A bad value, an unknown key or a `name` that differs from the path is `400` and changes nothing. A change that alters nothing writes nothing. Writes a history entry and notifies the orchestrators. |
@@ -258,7 +262,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `009_reasoning_cap.sql`; `008_profiles.sql` adds the profile tables), applied
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `011_skill_model_invocation.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
@@ -318,6 +322,7 @@ with `profile` on `POST /sessions`. A definition is a JSON object whose fields a
 | `defaultModel`, `reasoning` | the model and effort when the request names none; checked against the allowlist and `maxReasoning` at creation | the settings' |
 | `turnBudget` | model turns the session may use in total; replaces the settings' budget for it | the settings' |
 | `mcpServers` | names of MCP catalog servers; the session gets `tool_search` and their tools | no MCP |
+| `skills` | `[{ name, version }]`: exact skill versions (at most 20); see Skills | none |
 
 - **Versions and snapshots.** Every changed `PUT` is the next version of the profile. A session stores the name, the
   version and the resolved definition when it is created (`inbox.sessions.profile_*`); the orchestrator uses that
@@ -333,3 +338,46 @@ with `profile` on `POST /sessions`. A definition is a JSON object whose fields a
   A stored profile whose tool later stops existing is logged by the orchestrator at start (`profile-unresolved`); its
   sessions have fewer tools, never more.
 - **Not deleted.** Profiles are disabled, not deleted: their versions record what sessions ran with.
+
+## Skills
+
+A skill (ADR 0011) is an Agent-Skills-style folder: a `SKILL.md` plus optional scripts and resources, which the model
+loads on demand. Skills are stored in Postgres as immutable, numbered versions and are selected only by profiles
+(`skills: [{ name, version }]`); nothing about a skill reaches a session whose profile does not name it.
+
+- **A version** is a `SKILL.md` (at most 32 KiB, UTF-8) whose frontmatter gives the description, up to 128 files and
+  5 MiB (all sizes in bytes), and a SHA-256 `digest` of its name, description and files (path, content hash, executable bit). A path is relative with
+  plain segments (`[A-Za-z0-9_][A-Za-z0-9._-]*`, at most 200 characters): no `..`, no absolute path, no hidden file, no
+  duplicates (also by case). Only regular files can be published. Names match `[a-z][a-z0-9-]{0,63}`. A profile names
+  at most 20 skills, and the catalog they add must fit in 32 KiB. A profile that names skills must keep the `read` tool
+  (in `tools` and `modelTools` when given): the admin write is `400` otherwise, and tools are never widened silently.
+- **Frontmatter.** The admin store reads `SKILL.md` as a repo would (#71 reuses the same parser), so a skill folder is
+  the same in both. `SKILL.md` starts with a block between two `---` lines of flat `key: value` lines; values are plain
+  or quoted (`"..."` with `\n \t \" \\ \uXXXX`, `'...'` with `''`) single-line strings, and `#` starts a comment. Not
+  supported, and `400`: nesting, lists, `|` and `>` blocks, anchors and tags, a repeated key, a block over 100 lines or
+  8 KiB. Keys: `description` (required, non-empty, one line, at most 1024 characters, no control characters),
+  `name` (optional; when present it must equal `{name}` of the URL, else `400`; absent, the URL's is used) and
+  `disable-model-invocation` (`true` or `false`; with `true` the version is kept out of the catalog, though it can still
+  be pinned and is still written to the sandbox). Other keys are ignored but still must parse. The digest covers the
+  whole file, so what the model sees is in it.
+- **Pinning.** A profile write checks that every named version exists and stores its `digest` next to `name` and
+  `version`. A session snapshots that definition, so publishing v2 of a skill changes neither the profile (still v1)
+  nor any session; to adopt v2, write a new profile version naming it, which only new sessions use.
+- **In the prompt.** At creation the orchestrator appends a catalog to the conversation's instructions (after the
+  profile's own `instructions`) in Pi's wording: the model is told to use the read tool to load a skill's file when a
+  task matches its description and to resolve relative paths against the skill's directory, followed by an
+  `<available_skills>` block with, per skill, `<name>`, `<description>` and `<location>` (the absolute sandbox path
+  `/workspace/.skills/<name>/<digest>/SKILL.md`), XML-escaped. Skills with `disable-model-invocation: true` are not
+  listed, and a profile whose skills are all of that kind adds no catalog. Bodies are never in the prompt. The text is stored with the conversation, so it never changes.
+- **In the sandbox.** When a session's sandbox env opens (the first tool call, and again after a suspend, a Pod recycle,
+  an eviction or an orchestrator restart), the orchestrator writes the pinned files to
+  `/workspace/.skills/<name>/<digest>/` before the env serves its first operation; concurrent first calls wait for it.
+  Files are staged in `/workspace/.skills/.staging` and renamed into place, so a skill directory exists only complete
+  and a repeat attach writes nothing. Postgres is the source of truth and the workspace a cache. The bytes are verified
+  against their hashes and the pinned digest first; a corrupt, missing or changed bundle fails the tool call (closed),
+  and a session whose conversation cannot be created that way fails its input for good. A session that never calls a
+  tool never opens a sandbox. Files marked `executable` are `chmod 755`; others run through their interpreter.
+- **Security.** Only admins publish (and every publish is logged `skill-published` with the author and digest). A
+  skill's description and body are model input: review them like code (`?content=true`). The workspace volume is
+  writable by the agent, so it is a cache and not an immutable boundary; the next attach does not repair a directory
+  that already exists.

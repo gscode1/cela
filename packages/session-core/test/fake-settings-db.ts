@@ -63,6 +63,34 @@ export interface ProfileVersionRowF {
   created_by: string;
 }
 
+export interface SkillRowF {
+  name: string;
+  current_version: number;
+  created_at: Date;
+  created_by: string;
+  updated_at: Date;
+  updated_by: string;
+}
+
+export interface SkillVersionRowF {
+  name: string;
+  version: number;
+  description: string;
+  disable_model_invocation: boolean;
+  digest: string;
+  size_bytes: number;
+  manifest: unknown;
+  created_at: Date;
+  created_by: string;
+}
+
+export interface SkillFileRowF {
+  name: string;
+  version: number;
+  path: string;
+  content: Buffer;
+}
+
 /**
  * An in-memory stand-in for inbox.settings, inbox.settings_history, inbox.mcp_servers and its history that answers only
  * the statements settings.ts and mcp-servers.ts issue (the same approach as the ingest FakeInboxDb). `begin` snapshots and `rollback` restores;
@@ -99,6 +127,10 @@ export class FakeSettingsDb {
   versions: ProfileVersionRowF[] = [
     { name: "coding", version: 1, definition: {}, created_at: new Date(0), created_by: "seed" },
   ];
+  /** inbox.skills, inbox.skill_versions and inbox.skill_version_files (migration 010). */
+  skills = new Map<string, SkillRowF>();
+  skillVersions: SkillVersionRowF[] = [];
+  skillFiles: SkillFileRowF[] = [];
   /** inbox.orchestrator_capabilities (one row) once an orchestrator published. */
   capabilities: { tools: unknown; extensions: unknown; instance: string } | undefined;
   /** inbox.sessions rows by id, as the columns the profile code writes and reads. */
@@ -112,6 +144,9 @@ export class FakeSettingsDb {
         mcpHistory: McpHistoryRow[];
         profiles: Map<string, ProfileRowF>;
         versions: ProfileVersionRowF[];
+        skills: Map<string, SkillRowF>;
+        skillVersions: SkillVersionRowF[];
+        skillFiles: SkillFileRowF[];
       }
     | undefined;
 
@@ -157,6 +192,9 @@ export class FakeSettingsDb {
         mcpHistory: [...this.mcpHistory],
         profiles: new Map([...this.profiles].map(([name, row]) => [name, { ...row }])),
         versions: this.versions.map((row) => ({ ...row })),
+        skills: new Map([...this.skills].map(([name, row]) => [name, { ...row }])),
+        skillVersions: this.skillVersions.map((row) => ({ ...row })),
+        skillFiles: [...this.skillFiles],
       };
       return done();
     }
@@ -175,6 +213,9 @@ export class FakeSettingsDb {
         this.mcpHistory.splice(0, this.mcpHistory.length, ...this.#snapshot.mcpHistory);
         this.profiles = this.#snapshot.profiles;
         this.versions = this.#snapshot.versions;
+        this.skills = this.#snapshot.skills;
+        this.skillVersions = this.#snapshot.skillVersions;
+        this.skillFiles = this.#snapshot.skillFiles;
       }
       this.#snapshot = undefined;
       this.#pending = [];
@@ -182,6 +223,7 @@ export class FakeSettingsDb {
     }
     if (text.includes("from inbox.events where session_id")) return done([]);
     if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
+    if (/inbox\.skill/.test(text)) return this.#skillQuery(text, params, done);
     if (/inbox\.(profiles|profile_versions|orchestrator_capabilities|sessions)\b/.test(text)) {
       return this.#profileQuery(text, params, done);
     }
@@ -247,6 +289,102 @@ export class FakeSettingsDb {
         );
         return version === undefined ? [] : [{ ...profile, definition: version.definition }];
       });
+  }
+
+  /** The statements of skills.ts. */
+  #skillQuery(
+    text: string,
+    params: unknown[],
+    done: (rows?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>,
+  ) {
+    if (this.failReads && text.startsWith("select")) {
+      return Promise.reject(new Error("connection lost"));
+    }
+    if (text.startsWith("select s.name")) {
+      const rows = [...this.skills.values()]
+        .sort((a, b) => (a.name < b.name ? -1 : 1))
+        .filter((skill) => !text.includes("where s.name = $1") || skill.name === params[0])
+        .flatMap((skill) => {
+          const v = this.skillVersions.find(
+            (row) => row.name === skill.name && row.version === skill.current_version,
+          );
+          return v === undefined
+            ? []
+            : [
+                {
+                  ...v,
+                  current_version: skill.current_version,
+                  s_created_at: skill.created_at,
+                  s_created_by: skill.created_by,
+                  s_updated_at: skill.updated_at,
+                  s_updated_by: skill.updated_by,
+                },
+              ];
+        });
+      return done(rows);
+    }
+    if (text.startsWith("select name, version, description")) {
+      const rows = this.skillVersions
+        .filter((v) => v.name === params[0] && (params[1] === undefined || v.version === params[1]))
+        .sort((a, b) => b.version - a.version)
+        .map((v) => ({ ...v }));
+      return done(rows);
+    }
+    if (text.startsWith("select path, content")) {
+      return done(
+        this.skillFiles
+          .filter((f) => f.name === params[0] && f.version === params[1])
+          .map((f) => ({ path: f.path, content: f.content })),
+      );
+    }
+    if (text.startsWith("insert into inbox.skills (")) {
+      const [name, by] = params as [string, string];
+      if (this.skills.has(name)) throw new Error("duplicate key value (skills)");
+      const now = new Date();
+      this.skills.set(name, {
+        name,
+        current_version: 1,
+        created_at: now,
+        created_by: by,
+        updated_at: now,
+        updated_by: by,
+      });
+      return done();
+    }
+    if (text.startsWith("insert into inbox.skill_versions")) {
+      const [name, version, description, disableModelInvocation, digest, size, manifest, by] =
+        params as [string, number, string, boolean, string, number, string, string];
+      if (!this.skills.has(name)) throw new Error("foreign key violation (skill_versions)");
+      if (this.skillVersions.some((v) => v.name === name && v.version === version)) {
+        throw new Error("duplicate key value (skill_versions)");
+      }
+      this.skillVersions.push({
+        name,
+        version,
+        description,
+        disable_model_invocation: disableModelInvocation,
+        digest,
+        size_bytes: size,
+        manifest: JSON.parse(manifest) as unknown,
+        created_at: new Date(),
+        created_by: by,
+      });
+      return done();
+    }
+    if (text.startsWith("insert into inbox.skill_version_files")) {
+      const [name, version, path, content] = params as [string, number, string, Buffer];
+      this.skillFiles.push({ name, version, path, content });
+      return done();
+    }
+    if (text.startsWith("update inbox.skills set")) {
+      const [name, version, by] = params as [string, number, string];
+      const row = this.skills.get(name);
+      if (row !== undefined) {
+        Object.assign(row, { current_version: version, updated_at: new Date(), updated_by: by });
+      }
+      return done();
+    }
+    throw new Error(`FakeSettingsDb: unexpected skill statement ${text.slice(0, 60)}`);
   }
 
   /** The statements of profiles.ts and the session insert and select that carry the profile snapshot. */
@@ -351,6 +489,13 @@ export class FakeSettingsDb {
         last_activity_at: new Date(),
       });
       return done();
+    }
+    if (text.startsWith("select profile_snapshot from inbox.sessions where conversation_id")) {
+      return done(
+        [...this.sessions.values()]
+          .filter((row) => row.conversation_id === params[0])
+          .map((row) => ({ profile_snapshot: row.profile_snapshot })),
+      );
     }
     if (text.startsWith("select * from inbox.sessions")) {
       const row = this.sessions.get(String(params[0]));

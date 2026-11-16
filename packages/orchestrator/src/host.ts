@@ -173,7 +173,7 @@ export class Host {
    * extension per server, taken from the catalog's installed ones; a server that is missing or disabled now is stored by
    * name anyway (an empty stand-in), so its tools are `tool_unavailable` and appear if it is enabled later.
    */
-  #agentFor(definition: ProfileDefinition): AgentChange {
+  #agentFor(definition: ProfileDefinition, catalog?: string): AgentChange {
     const coding: readonly ToolRegistration[] = this.#coding.tools ?? [];
     for (const name of [...(definition.tools ?? []), ...(definition.modelTools ?? [])]) {
       if (!coding.some((tool) => tool.name === name)) {
@@ -181,9 +181,13 @@ export class Host {
       }
     }
     const servers = definition.mcpServers ?? [];
+    // The skill catalog follows the profile's own instructions; it is stored with the conversation like them.
+    const instructions = [definition.instructions, catalog].filter(
+      (part): part is string => part !== undefined && part !== "",
+    );
     return {
       ...toolFilters(coding, definition),
-      ...(definition.instructions === undefined ? {} : { instructions: definition.instructions }),
+      ...(instructions.length === 0 ? {} : { instructions: instructions.join("\n\n") }),
       ...(servers.length === 0
         ? {}
         : {
@@ -347,10 +351,12 @@ export class Host {
    * Pi Durable stores the model in the conversation's `pi.agent` document, in the creating commit. It survives
    * restarts, so it is set once here and not on every turn; only the provider must be installed again at each start.
    * `definition` is the session's validated profile snapshot (`{}`: every coding tool, no instructions, no MCP).
+   * `skillCatalog` is the text listing the snapshot's skills (`SkillLibrary.catalogFor`), added to the instructions.
    */
   async createConversation(
     model: ModelChoice,
     definition: ProfileDefinition = {},
+    skillCatalog?: string,
   ): Promise<number> {
     const conversation = await this.#harness.createConversation(
       {
@@ -359,7 +365,7 @@ export class Host {
           model: { provider: model.provider, modelId: model.model },
           ...(model.reasoning === undefined ? {} : { thinkingLevel: model.reasoning }),
           cwd: WORKSPACE,
-          ...this.#agentFor(definition),
+          ...this.#agentFor(definition, skillCatalog),
         },
       },
       context,

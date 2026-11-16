@@ -22,6 +22,8 @@ import { log } from "./log.js";
 import { RepoUnavailableError } from "./repo-access.js";
 import type { RepoAccess } from "./repo-access.js";
 import { WorkspaceLostError } from "./workspace.js";
+import { SkillIntegrityError } from "./skills.js";
+import type { SkillLibrary } from "./skills.js";
 import { RunWatcher } from "./watcher.js";
 import type { Watched } from "./watcher.js";
 
@@ -81,6 +83,8 @@ export interface SessionServiceOptions {
   turnBudget: () => number;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
+  /** Where a new conversation's skill catalog comes from. Without it a profile that names skills is refused. */
+  skills?: Pick<SkillLibrary, "catalogFor">;
 }
 
 /**
@@ -208,9 +212,11 @@ export class SessionService {
     const current = await getSession(this.#pool, sessionId);
     if (current?.conversationId != null) return current.conversationId;
     // The profile snapshot of the session row, never the live profile: edits and deletes do not reach this session.
+    const definition = current === undefined ? {} : definitionOf(current);
     const conversationId = await this.#host.createConversation(
       current?.model ?? this.#options.defaultModel,
-      current === undefined ? {} : definitionOf(current),
+      definition,
+      await this.#skillCatalog(definition),
     );
     await this.#pool.query(
       "update inbox.sessions set conversation_id = $1 where id = $2 and conversation_id is null",
@@ -218,6 +224,22 @@ export class SessionService {
     );
     log("conversation-created", { session: sessionId, conversation: conversationId });
     return conversationId;
+  }
+
+  /**
+   * The catalog of the snapshot's skills, read by their pinned versions and digests. A skill that is gone or changed
+   * can never be fixed by a retry (versions are immutable): the input fails for good, and no conversation is created
+   * with a catalog that promises files the sandbox will not have.
+   */
+  async #skillCatalog(definition: ProfileDefinition): Promise<string | undefined> {
+    if (definition.skills === undefined || definition.skills.length === 0) return undefined;
+    if (this.#options.skills === undefined) throw new PermanentError("skills are not configured");
+    try {
+      return await this.#options.skills.catalogFor(definition);
+    } catch (error) {
+      if (error instanceof SkillIntegrityError) throw new PermanentError(error.message);
+      throw error;
+    }
   }
 
   /** Applies one inbox event. Resolves when it is durably handed over; throws PermanentError if it never can be. */
