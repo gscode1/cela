@@ -55,3 +55,15 @@ the cost. No ADR requires the separate process.
   `sandbox-to-exec`, `bridge-rss` (now the relay) and orchestrator RSS at 12 and 50 sessions with
   [docs/metrics.md](../metrics.md).
 - The relay's exit code is 0 or 1 by whether the data socket errored; pi-env only needs the exit.
+
+## Measured (2026-11-16, c2, throwaway e2e namespaces, same four phase 4 tests, 5 cold + 1 resumed turn)
+
+| | before (per-session bridge) | after (relay + broker) |
+| --- | --- | --- |
+| `bridge` span, cold p50 / p90 | 1.8 s / 2.3 s | 0.26 s / 0.9 s |
+| per-session process RSS | about 126 MiB | about 44 MiB (bare Node in the container) |
+| orchestrator main process RSS, idle | 175 MiB (main) | 160 MiB |
+
+`claim` (Pod ready, about 16–20 s) still dominates `sandbox-to-exec`, so time to first command barely moves. The
+memory under load (12 and 50 open sessions, main process RSS per in-process handle) is not measured yet; do that
+before raising `PI_MAX_OPEN_BRIDGES`.
