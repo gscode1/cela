@@ -272,3 +272,171 @@ describe("credentials replaced under an open env", () => {
     sandboxes.stop();
   });
 });
+
+describe("bridge cap", () => {
+  /** Records which claim each env belongs to, in open order, and which were closed. */
+  const opened: string[] = [];
+  const closedClaims: string[] = [];
+  beforeEach(() => {
+    opened.length = 0;
+    closedClaims.length = 0;
+    sandboxEnv.connectSandboxEnv.mockImplementation((options: { claimName: string }) => {
+      opened.push(options.claimName);
+      return {
+        env: {
+          exec: () => Promise.resolve(execResults.shift() ?? { ok: true, value: { exitCode: 0 } }),
+        },
+        close: () => closedClaims.push(options.claimName),
+      };
+    });
+  });
+
+  /** An exec held open until `finish` runs. */
+  const held = () => {
+    let finish: () => void = () => undefined;
+    execResults.push(new Promise<unknown>((resolve) => (finish = () => resolve({ ok: true }))));
+    return () => finish();
+  };
+  const execWith = (sandboxes: Sandboxes, id: number, abortSignal?: AbortSignal) =>
+    (
+      sandboxes.lazyEnv(id) as unknown as {
+        exec: (
+          c: string,
+          o: undefined,
+          ctx: { abortSignal: AbortSignal | undefined },
+        ) => Promise<unknown>;
+      }
+    ).exec("true", undefined, { abortSignal });
+
+  it("defaults to 12 and refuses a value below 1", () => {
+    expect(config().sandbox.maxOpenBridges).toBe(12);
+    expect(config({ PI_MAX_OPEN_BRIDGES: "3" }).sandbox.maxOpenBridges).toBe(3);
+    for (const bad of ["0", "-1", "1.5", "many"])
+      expect(() => config({ PI_MAX_OPEN_BRIDGES: bad })).toThrow(/PI_MAX_OPEN_BRIDGES/);
+  });
+
+  it("evicts the least recently used idle env to make room", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "2" });
+    for (const id of [1, 2, 1]) {
+      await exec(sandboxes, id);
+      vi.setSystemTime(Date.now() + 1000);
+    }
+    expect(opened).toEqual(["pi-conv-1", "pi-conv-2"]);
+    await exec(sandboxes, 3);
+    await flush();
+    expect(opened).toEqual(["pi-conv-1", "pi-conv-2", "pi-conv-3"]);
+    expect(closedClaims).toEqual(["pi-conv-2"]);
+    sandboxes.stop();
+  });
+
+  it("makes a call wait while every env is in use, serves waiters in order, and never evicts a busy env", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+    const finishOne = held();
+    const one = exec(sandboxes, 1);
+    await flush();
+    const finishTwo = held();
+    const two = exec(sandboxes, 2);
+    const three = exec(sandboxes, 3);
+    await flush();
+    expect(opened).toEqual(["pi-conv-1"]);
+    expect(closedClaims).toEqual([]);
+
+    finishOne();
+    await one;
+    await flush();
+    expect(opened).toEqual(["pi-conv-1", "pi-conv-2"]); // 3 arrived after 2
+    expect(closedClaims).toEqual(["pi-conv-1"]);
+
+    finishTwo();
+    await two;
+    await three;
+    expect(opened).toEqual(["pi-conv-1", "pi-conv-2", "pi-conv-3"]);
+    sandboxes.stop();
+  });
+
+  it("drops a waiter whose signal aborts, without opening for it or blocking the next one", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+    const finishOne = held();
+    const one = exec(sandboxes, 1);
+    await flush();
+    const abort = new AbortController();
+    const two = execWith(sandboxes, 2, abort.signal);
+    const three = exec(sandboxes, 3);
+    await flush();
+    abort.abort();
+    await expect(two).rejects.toThrow("aborted while waiting");
+    await expect(execWith(sandboxes, 4, AbortSignal.abort())).rejects.toThrow("aborted while");
+
+    finishOne();
+    await one;
+    await three;
+    expect(opened).toEqual(["pi-conv-1", "pi-conv-3"]);
+    sandboxes.stop();
+  });
+
+  it("frees the slot when an open fails, and the next waiter gets it", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+    let fail: (error: Error) => void = () => undefined;
+    sandboxEnv.ensureClaim.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => (fail = reject)),
+    );
+    const one = exec(sandboxes, 1);
+    await flush();
+    const two = exec(sandboxes, 2);
+    await flush();
+    expect(opened).toEqual([]);
+    fail(new Error("claim never ready"));
+    await expect(one).rejects.toThrow("claim never ready");
+    await two;
+    expect(opened).toEqual(["pi-conv-2"]);
+    sandboxes.stop();
+  });
+
+  it("does not evict an env whose open is still under way, and a failed open then raises nothing unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+      let fail: (error: Error) => void = () => undefined;
+      sandboxEnv.ensureClaim.mockImplementationOnce(
+        () => new Promise<void>((_resolve, reject) => (fail = reject)),
+      );
+      const one = sandboxes.ensure(1); // direct caller: no call in flight, so inUse is 0
+      one.catch(() => undefined);
+      await flush();
+      const two = sandboxes.ensure(2);
+      await flush();
+      expect(opened).toEqual([]); // 2 waits; 1 was not evicted
+      fail(new Error("claim never ready"));
+      await expect(one).rejects.toThrow("claim never ready");
+      await two;
+      await flush();
+      expect(opened).toEqual(["pi-conv-2"]);
+      expect(unhandled).toEqual([]);
+      sandboxes.stop();
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
+  it("removes a waiter's abort listener once it is served", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "1" });
+    const finishOne = held();
+    const one = exec(sandboxes, 1);
+    await flush();
+    const abort = new AbortController();
+    const add = vi.spyOn(abort.signal, "addEventListener");
+    const remove = vi.spyOn(abort.signal, "removeEventListener");
+    const two = execWith(sandboxes, 2, abort.signal);
+    await flush();
+    expect(add).toHaveBeenCalledWith("abort", expect.any(Function), { once: true });
+    expect(remove).not.toHaveBeenCalled();
+    finishOne();
+    await one;
+    await two;
+    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
+    sandboxes.stop();
+  });
+});
