@@ -54,7 +54,7 @@ The CA is public; the orchestrator writes it into the workspace from its ConfigM
 
 ## Clone
 
-Before the session's first turn (`SessionService.apply`): provision, then `prepareWorkspace` through the session's env.
+Before the session's first turn (`SessionService.prepare`, run by the inbox *before* it claims the row, with no transaction or pool client held; ADR 0005): provision, then `prepareWorkspace` through the session's env. It is idempotent, so a crash or retry runs it again.
 Skipped when `/workspace/repo/.git` exists. Otherwise `git clone [--branch b] -- <url> /workspace/.clone-tmp`, then rename to
 `/workspace/repo`, so `.git` exists only for a complete clone. A leftover `.clone-tmp` is removed first. Then
 `/workspace/.pi-workspace.json` is written and `workspace_ready_at` set. A session that was ready but whose marker or
@@ -94,6 +94,12 @@ Live check (not automated yet): with a session token, `git push origin HEAD:refs
 
 Future work: the orchestrator could refuse a repo session when `--check` would fail (the App needs `administration: read` for that).
 It does not today; the ruleset is an operator step, and nothing at startup calls GitHub for it.
+
+## OneCLI call bounds
+
+Every management API call has a timeout and a bounded retry on network errors, timeouts and 5xx (never 4xx; a `POST` only on
+502/503/504). Environment: `PI_ONECLI_TIMEOUT_SECONDS` (default 15, per attempt), `PI_ONECLI_RETRIES` (default 3),
+`PI_ONECLI_BACKOFF_MS` (default 500, doubling, capped at 5 s).
 
 ## Unverified
 

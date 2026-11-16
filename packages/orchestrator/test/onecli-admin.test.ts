@@ -17,7 +17,11 @@ function scripted(steps: Step[]): { fetch: FetchLike; calls: string[] } {
         init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
       });
     }
-    return Promise.resolve({ status: step, text: () => Promise.resolve("[]") });
+    return Promise.resolve({
+      status: step,
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve("[]"),
+    });
   };
   return { fetch, calls };
 }
