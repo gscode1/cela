@@ -39,6 +39,24 @@ export interface CatalogEntry {
   location: string;
 }
 
+/** The context file names, in Pi 1.5.2's order (`loadContextFileFromDir`): the first regular file found is the one. */
+export const CONTEXT_FILES = [
+  "AGENTS.override.md",
+  "AGENTS.md",
+  "AGENTS.MD",
+  "CLAUDE.md",
+  "CLAUDE.MD",
+] as const;
+/** Bytes of a context file that reach the prompt; the rest is cut with a note. */
+export const CONTEXT_LIMIT = 32 * 1024;
+/** A context file over this is not read at all (and skipped with a log line): it is not a context file. */
+const CONTEXT_READ_LIMIT = 1024 * 1024;
+
+export interface ProjectContext {
+  path: string;
+  content: string;
+}
+
 /** Non-empty parts joined by a blank line; undefined when there are none. */
 export function joinInstructions(parts: readonly (string | undefined)[]): string | undefined {
   const kept = parts.filter((part): part is string => part !== undefined && part !== "");
@@ -209,4 +227,58 @@ export function mergeCatalog(
     merged.push(entry);
   }
   return merged;
+}
+
+/**
+ * The repo's context file, as Pi's `loadContextFileFromDir` picks it, for the checkout root only: the first of
+ * `CONTEXT_FILES` that is a regular file (a symlink is not followed), read through the sandbox env. One directory
+ * listing, so a repo without one costs a single call. A file over 1 MiB is skipped and one over 32 KiB is cut at a
+ * character boundary with a note, both logged. Throws when the sandbox cannot be listed at all.
+ */
+export async function readProjectContext(
+  env: WorkspaceEnv,
+  repoDir: string = REPO_DIR,
+): Promise<ProjectContext | undefined> {
+  const listed = await env.listDir(repoDir, context);
+  if (!listed.ok) {
+    if (listed.error.code === "not_found" || listed.error.code === "not_directory")
+      return undefined;
+    throw listed.error;
+  }
+  for (const name of CONTEXT_FILES) {
+    const entry = listed.value.find((item) => item.name === name && item.kind === "file");
+    if (entry === undefined) continue;
+    const path = `${repoDir}/${name}`;
+    if (entry.size > CONTEXT_READ_LIMIT) {
+      log("repo-context-skipped", { path, why: `larger than ${String(CONTEXT_READ_LIMIT)} bytes` });
+      continue;
+    }
+    const read = await env.readTextFile(path, context);
+    if (!read.ok) {
+      log("repo-context-skipped", { path, why: `unreadable: ${read.error.message}` });
+      continue;
+    }
+    const text = read.value.startsWith("\uFEFF") ? read.value.slice(1) : read.value;
+    const bytes = Buffer.from(text);
+    if (bytes.length <= CONTEXT_LIMIT) return { path, content: text };
+    log("repo-context-truncated", { path, bytes: bytes.length, limit: CONTEXT_LIMIT });
+    // Cut at a character boundary: decoding a split sequence ends in U+FFFD, which is dropped.
+    const cut = bytes
+      .subarray(0, CONTEXT_LIMIT)
+      .toString("utf8")
+      .replace(/\uFFFD+$/u, "");
+    return {
+      path,
+      content: `${cut}\n\n[truncated: ${name} is ${String(bytes.length)} bytes, only the first ${String(CONTEXT_LIMIT)} are shown]`,
+    };
+  }
+  return undefined;
+}
+
+/** Pi's `renderProjectContext` (core/system-prompt.ts) for one file: the same header and `<project_instructions>` element. */
+export function renderProjectContext(file: ProjectContext): string {
+  return [
+    "Project-specific instructions and guidelines:",
+    `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>`,
+  ].join("\n\n");
 }

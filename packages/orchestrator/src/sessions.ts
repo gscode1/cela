@@ -21,7 +21,13 @@ import { GithubDeniedError } from "./github-app.js";
 import type { Host } from "./host.js";
 import { log } from "./log.js";
 import { RepoUnavailableError } from "./repo-access.js";
-import { joinInstructions, mergeCatalog, scanRepoSkills } from "./repo-context.js";
+import {
+  joinInstructions,
+  mergeCatalog,
+  readProjectContext,
+  renderProjectContext,
+  scanRepoSkills,
+} from "./repo-context.js";
 import type { RepoAccess } from "./repo-access.js";
 import { WorkspaceLostError } from "./workspace.js";
 import { SkillIntegrityError } from "./skills.js";
@@ -262,23 +268,33 @@ export class SessionService {
   }
 
   /**
-   * Reads what the cloned repo adds to the instructions (repo skills, ADR 0014) and applies it with `configure`. Runs
-   * for every new user message, after `#prepareRepo`, and only while the session's sandbox env is already open: a
-   * message to a suspended or evicted sandbox keeps the instructions of the last scan rather than resume it. (After a
-   * restart `#prepareRepo` opens the env again, so the first message rescans.) Never throws: a scan that fails is
+   * Reads what the cloned repo adds to the instructions (repo skills, ADR 0014; the repo's context file, ADR 0015) and
+   * applies it with `configure`. Runs for every new user message, after `#prepareRepo`, and only while the session's
+   * sandbox env is already open: a message to a suspended or evicted sandbox keeps the instructions of the last scan
+   * rather than resume it. (After a restart `#prepareRepo` opens the env again, so the first message rescans.) The
+   * order is Pi's: profile instructions, project instructions, skills catalog. Never throws: a scan that fails is
    * logged and the instructions stay as they were, so it cannot block a turn.
    */
   async #refreshRepoContext(session: SessionRow, conversationId: number): Promise<void> {
     try {
       const definition = definitionOf(session);
-      if (definition.repoSkills !== true) return;
+      if (definition.repoSkills !== true && definition.repoContext !== true) return;
       if (!this.#host.sandboxOpen(conversationId)) return;
-      const repo = await scanRepoSkills(await this.#host.workspaceEnv(conversationId));
+      const env = await this.#host.workspaceEnv(conversationId);
+      const project = definition.repoContext === true ? await readProjectContext(env) : undefined;
+      const repo = definition.repoSkills === true ? await scanRepoSkills(env) : [];
       const admin = (await this.#options.skills?.entriesFor(definition)) ?? [];
-      const catalog = buildSkillCatalog(mergeCatalog(admin, repo));
-      const text = joinInstructions([definition.instructions, catalog]);
+      const text = joinInstructions([
+        definition.instructions,
+        project === undefined ? undefined : renderProjectContext(project),
+        buildSkillCatalog(mergeCatalog(admin, repo)),
+      ]);
       if (await this.#host.setInstructions(conversationId, text)) {
-        log("repo-context-applied", { session: session.id, skills: repo.length });
+        log("repo-context-applied", {
+          session: session.id,
+          skills: repo.length,
+          projectInstructions: project?.path,
+        });
       }
     } catch (error) {
       log("repo-context-failed", { session: session.id, message: errorMessage(error) });
