@@ -38,6 +38,10 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 now() { date +%s; }
+# shellcheck source=fns.sh
+. "$here/fns.sh"
+E2E_TEST_PREFIX=""
+E2E_ERR_TRAP=1
 
 ingest_pod() {
   k get pods -l app.kubernetes.io/name=pi-ingest -o json |
@@ -268,41 +272,13 @@ t_delete() {
 }
 
 # ---------------------------------------------------------------- driver
-pass=0 fail=0 skip=0
-summary=()
-run() { # name function
-  local name=$1 rc
-  [[ -z ${ONLY:-} || ",$ONLY," == *",$name,"* ]] || return 0
-  log "$name"
-  set +e
-  (
-    set -eE
-    trap 'note "ERROR: command failed at line $LINENO (exit $?): $BASH_COMMAND"' ERR
-    "$2"
-  )
-  rc=$?
-  set -e
-  case $rc in
-    0)
-      pass=$((pass + 1))
-      summary+=("PASS  $name")
-      ;;
-    3)
-      skip=$((skip + 1))
-      summary+=("SKIP  $name")
-      ;;
-    *)
-      fail=$((fail + 1))
-      summary+=("FAIL  $name")
-      ;;
-  esac
-}
-
-run no-repo t_no_repo
-run clone-push t_clone_push
-run restart-skip t_restart_skip
-run scope t_scope
-run delete t_delete
+# no-repo and clone-push use their own sessions and run side by side. The rest is one chain on the shared repo session
+# that clone-push creates (restart-skip, then scope, then delete, which ends it), and restart-skip scales the
+# orchestrator: serial, in this order, after them.
+e2e_parallel no-repo:t_no_repo clone-push:t_clone_push
+e2e_serial restart-skip t_restart_skip
+e2e_serial scope t_scope
+e2e_serial delete t_delete
 
 log "summary"
 for line in "${summary[@]}"; do note "$line"; done
