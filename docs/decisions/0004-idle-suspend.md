@@ -87,3 +87,10 @@ start) caps envs that are open or opening.
 The 15 s above is Pod Ready only. The orchestrator now logs `turn-timing` per turn (claim, Pod Ready, bridge ready, first
 exec) and `bridge-rss` per open bridge; how to read them, the measurement procedure and the readinessProbe-period
 experiment are in [docs/metrics.md](../metrics.md). Results go there once measured.
+
+## Addendum: the cap counts relays since ADR 0016 (issue #59)
+
+With [0016](0016-in-process-broker.md) a slot is still an entry in `#envs`, but what it holds is a small relay process
+and an in-process broker, not a 100 MiB bridge. The rules above (LRU eviction, FIFO queue, abort while waiting, slot
+released by close, eviction, teardown and failed open) and `PI_MAX_OPEN_BRIDGES` = 12 are unchanged; the cap is to be
+re-measured, not changed, until the #58 numbers say what an open env costs now.
