@@ -186,6 +186,43 @@ describe("planSweep: OneCLI agents", () => {
     expect(actions).toEqual([]);
   });
 
+  it("never judges an agent or secret of another stack's prefix (a shared OneCLI workspace)", () => {
+    const other = "pi-e2e-ab12cd-";
+    const foreign = {
+      agents: [{ id: "fa", identifier: `${other}${UNKNOWN}` }],
+      secrets: [
+        { id: "fs1", name: `${other}${UNKNOWN}-git` },
+        { id: "fs2", name: `${other}${UNKNOWN}-api` },
+      ],
+    };
+    // The default prefix does not match a name made with the e2e prefix, in either direction.
+    expect(plan(foreign)).toEqual([]);
+    const own = { agents: [agent(UNKNOWN)], secrets: secrets(UNKNOWN) };
+    expect(plan({ ...own, namePrefix: other })).toEqual([]);
+    // A prefix that merely extends another does not match either.
+    expect(
+      plan({
+        agents: [{ id: "x", identifier: `pi-session-ab12cd-${UNKNOWN}` }],
+        secrets: [{ id: "y", name: `pi-session-ab12cd-${UNKNOWN}-git` }],
+      }),
+    ).toEqual([]);
+    // With its own prefix the e2e stack judges its own, and only its own.
+    const actions = plan({
+      agents: [...foreign.agents, agent(UNKNOWN)],
+      secrets: [...foreign.secrets, ...secrets(UNKNOWN)],
+      namePrefix: other,
+    });
+    expect(actions).toEqual([
+      {
+        kind: "revoke-agent",
+        sessionId: UNKNOWN,
+        agentIds: ["fa"],
+        secretIds: ["fs1", "fs2"],
+        reason: "session-unknown",
+      },
+    ]);
+  });
+
   it("judges no agent when OneCLI is not configured", () => {
     expect(plan({ agents: undefined, secrets: secrets(UNKNOWN) })).toEqual([]);
   });

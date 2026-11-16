@@ -25,6 +25,22 @@ describe("config timers", () => {
   });
 });
 
+describe("config: OneCLI name prefix", () => {
+  it("defaults to pi-session- and accepts a short lowercase prefix ending in a dash", () => {
+    expect(loadConfig(env).repos.namePrefix).toBe("pi-session-");
+    expect(loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: "pi-e2e-ab12cd-" }).repos.namePrefix).toBe(
+      "pi-e2e-ab12cd-",
+    );
+  });
+
+  it("rejects anything else", () => {
+    for (const bad of ["", "pi-session", "Pi-", "pi_e2e-", "pi e2e-", "-", `${"a".repeat(40)}-`])
+      expect(() => loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: bad })).toThrow(
+        /PI_ONECLI_NAME_PREFIX/,
+      );
+  });
+});
+
 describe("config", () => {
   it("requires the database URL and API tokens and defaults the rest", () => {
     expect(() => loadConfig({})).toThrow(/PI_DURABLE_DATABASE_URL/);

@@ -6,10 +6,19 @@ import { loadGithubApp, mintInstallationToken } from "./github-app.js";
 import type { FetchLike } from "./github-app.js";
 import { log } from "./log.js";
 import type { Redacted } from "./onecli.js";
+import {
+  agentIdentifier,
+  DEFAULT_ONECLI_NAME_PREFIX,
+  secretName,
+  validateNamePrefix,
+} from "./onecli-names.js";
 import { OneCliError } from "./onecli-admin.js";
 import type { OneCliAdmin, OneCliGrant } from "./onecli-admin.js";
 import { buildShellEnv, prepareWorkspace } from "./workspace.js";
 import type { WorkspaceEnv } from "./workspace.js";
+
+// Re-exported: the names are built here and in the sweep from the same module.
+export { agentIdentifier } from "./onecli-names.js";
 
 /** A repo session that cannot be served and never will be without an operator: not configured, repo not installed. */
 export class RepoUnavailableError extends Error {}
@@ -31,6 +40,8 @@ export interface RepoAccessDeps {
   /** File holding the OneCLI CA PEM (the mounted ConfigMap). */
   caFile: string;
   fetch: FetchLike;
+  /** Prefix of every agent and secret name (`PI_ONECLI_NAME_PREFIX`); the sweep of this orchestrator judges only these. */
+  namePrefix?: string | undefined;
   now?: () => number;
   /** Only tests change these. */
   githubApi?: string;
@@ -47,18 +58,15 @@ interface Access {
 }
 
 /** Names are derived from the session id, so a crash between creating an object and storing its id leaves it findable. */
-export const agentIdentifier = (sessionId: string): string => `pi-session-${sessionId}`;
 const SECRET_SUFFIXES = [
   { suffix: "git", host: "github.com", header: "Authorization", format: "Basic {value}" },
   { suffix: "api", host: "api.github.com", header: "Authorization", format: "Bearer {value}" },
 ] as const;
-const secretName = (sessionId: string, suffix: string): string =>
-  `${agentIdentifier(sessionId)}-${suffix}`;
 
 /**
  * Everything a repo session needs from GitHub and OneCLI, kept per session and rebuilt from OneCLI after a restart:
  *
- *  - a OneCLI agent `pi-session-<uuid>` whose only grants are this session's two GitHub secrets;
+ *  - a OneCLI agent `<prefix><uuid>` (prefix `pi-session-` unless `PI_ONECLI_NAME_PREFIX` says otherwise) whose only grants are this session's two GitHub secrets;
  *  - those secrets (host `github.com`: `Authorization: Basic base64("x-access-token:<token>")`, host `api.github.com`:
  *    `Bearer <token>`), holding a one-hour installation token for exactly this repository, minted by our own GitHub
  *    App (OneCLI v2 cannot scope a GitHub connection to a repository);
@@ -68,6 +76,7 @@ const secretName = (sessionId: string, suffix: string): string =>
  */
 export class RepoAccess {
   readonly #deps: RepoAccessDeps;
+  readonly #prefix: string;
   readonly #access = new Map<string, Access>();
   readonly #byConversation = new Map<number, SessionRow>();
   readonly #inFlight = new Map<string, Promise<Access>>();
@@ -77,6 +86,7 @@ export class RepoAccess {
 
   constructor(deps: RepoAccessDeps) {
     this.#deps = deps;
+    this.#prefix = validateNamePrefix(deps.namePrefix ?? DEFAULT_ONECLI_NAME_PREFIX);
   }
 
   #now(): number {
@@ -141,12 +151,12 @@ export class RepoAccess {
     const valueOf = (suffix: string): string =>
       suffix === "git" ? gitValue : minted.token.reveal();
 
-    const identifier = agentIdentifier(session.id);
+    const identifier = agentIdentifier(session.id, this.#prefix);
     const { agent, created } = await onecli.ensureAgent(identifier);
     const existing = new Map((await onecli.listSecrets()).map((s) => [s.name, s.id]));
     const secretIds: string[] = [];
     for (const spec of SECRET_SUFFIXES) {
-      const name = secretName(session.id, spec.suffix);
+      const name = secretName(session.id, spec.suffix, this.#prefix);
       const known = existing.get(name);
       if (known !== undefined) {
         await onecli.updateSecretValue(known, valueOf(spec.suffix));
@@ -296,12 +306,14 @@ export class RepoAccess {
     const { onecli } = this.#deps;
     if (onecli === undefined) return;
     const agents = (await onecli.listAgents())
-      .filter((a) => a.identifier === agentIdentifier(sessionId))
+      .filter((a) => a.identifier === agentIdentifier(sessionId, this.#prefix))
       .map((a) => a.id);
     for (const id of new Set([...(agentId === undefined ? [] : [agentId]), ...agents])) {
       await onecli.deleteAgent(id);
     }
-    const names = new Set(SECRET_SUFFIXES.map((s) => secretName(sessionId, s.suffix)));
+    const names = new Set(
+      SECRET_SUFFIXES.map((s) => secretName(sessionId, s.suffix, this.#prefix)),
+    );
     const named = (await onecli.listSecrets()).filter((s) => names.has(s.name)).map((s) => s.id);
     for (const id of new Set([...secretIds, ...named])) {
       try {
