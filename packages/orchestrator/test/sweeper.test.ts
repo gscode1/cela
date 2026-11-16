@@ -68,9 +68,55 @@ describe("OrphanSweeper", () => {
     await new OrphanSweeper(without.value).run();
     expect(without.calls.some((c) => c.startsWith("revoke"))).toBe(false);
 
-    const broken = deps({ listPvcs: () => Promise.reject(new Error("api down")) });
+    const broken = deps({
+      listPvcs: () => Promise.reject(new Error("api down")),
+      listOneCli: undefined,
+    });
     expect(await new OrphanSweeper(broken.value).run()).toEqual([]);
     expect(broken.calls).toEqual([]);
+  });
+
+  it("a OneCLI listing failure does not block the Kubernetes cleanup, and the other way round", async () => {
+    const oneCliDown = deps({ listOneCli: () => Promise.reject(new Error("onecli down")) });
+    await new OrphanSweeper(oneCliDown.value).run();
+    expect(oneCliDown.calls).toEqual([
+      `destroy pi-conv-1 ${UNKNOWN}`,
+      `destroy pi-conv-2 ${UNKNOWN}`,
+      "destroy pi-conv-9 orphan-pvc-sweep",
+    ]);
+
+    const kubeDown = deps({ listClaims: () => Promise.reject(new Error("api down")) });
+    await new OrphanSweeper(kubeDown.value).run();
+    expect(kubeDown.calls).toEqual([`revoke ${UNKNOWN}`]);
+  });
+
+  it("reads the session snapshot after listing the resources, so a session created in between is not unknown", async () => {
+    const order: string[] = [];
+    const { value, calls } = deps({
+      listClaims: () => {
+        order.push("claims");
+        return Promise.resolve([]);
+      },
+      listPvcs: () => Promise.resolve([]),
+      listOneCli: () => {
+        order.push("onecli");
+        return Promise.resolve({
+          agents: [{ id: "a1", identifier: `pi-session-${UNKNOWN}` }],
+          secrets: [],
+        });
+      },
+      // The session row is inserted while OneCLI is being listed; a snapshot taken before would miss it.
+      listSessions: () => {
+        order.push("sessions");
+        const created = order.includes("onecli");
+        return Promise.resolve(
+          created ? [{ id: UNKNOWN, status: "active", conversationId: 1 }] : [],
+        );
+      },
+    });
+    await new OrphanSweeper(value).run();
+    expect(order.at(-1)).toBe("sessions");
+    expect(calls).toEqual([]);
   });
 
   it("runs one sweep at a time", async () => {
