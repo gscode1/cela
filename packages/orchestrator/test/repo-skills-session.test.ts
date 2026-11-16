@@ -59,9 +59,9 @@ function sandboxEnv(): WorkspaceEnv {
       if (failScan) return Promise.reject(new Error("bridge is gone"));
       return real.listDir(at(path), context);
     },
-    readTextFile: (path: string, context: never) => {
-      calls.push("readTextFile");
-      return real.readTextFile(at(path), context);
+    openBinaryReader: (path: string, options: never, context: never) => {
+      calls.push("openBinaryReader");
+      return real.openBinaryReader(at(path), options, context);
     },
   } as unknown as WorkspaceEnv;
 }

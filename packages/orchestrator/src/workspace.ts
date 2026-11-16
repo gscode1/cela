@@ -29,6 +29,7 @@ export type WorkspaceEnv = Pick<
   | "writeFile"
   | "readTextFile"
   | "listDir"
+  | "openBinaryReader"
 >;
 
 /** The workspace was ready once, but its marker or repository is gone (PVC replaced, files removed). Not re-cloned. */

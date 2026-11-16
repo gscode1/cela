@@ -105,6 +105,50 @@ describe("scanRepoSkills", () => {
   });
 });
 
+describe("scanRepoSkills bounds and symlinks", () => {
+  it("does not enter .pi, .agents, .pi/skills or .agents/skills when they are symlinks", async () => {
+    await put("outside/skills/evil/SKILL.md", skillMd("Evil"));
+    await put("outside2/evil2/SKILL.md", skillMd("Evil2"));
+    await symlink(join(root, "outside"), join(root, ".pi"));
+    await symlink(join(root, "outside"), join(root, ".agents"));
+    expect(await scan()).toEqual([]);
+    await rm(join(root, ".pi"));
+    await rm(join(root, ".agents"));
+    await mkdir(join(root, ".pi"));
+    await mkdir(join(root, ".agents"));
+    await symlink(join(root, "outside2"), join(root, ".pi/skills"));
+    await symlink(join(root, "outside2"), join(root, ".agents/skills"));
+    expect(await scan()).toEqual([]);
+  });
+
+  it("never opens a SKILL.md the listing says is over the limit, and reads at most limit + 1 bytes of one that grew", async () => {
+    await put(".pi/skills/big/SKILL.md", skillMd("Big", "x".repeat(SKILL_LIMITS.skillMd)));
+    await put(".pi/skills/ok/SKILL.md", skillMd("Ok"));
+    const opened: string[] = [];
+    const reads: number[] = [];
+    const spy = async (
+      path: string,
+      options: Parameters<typeof env.openBinaryReader>[1],
+      context: Parameters<typeof env.openBinaryReader>[2],
+    ) => {
+      opened.push(path);
+      const reader = await env.openBinaryReader(path, options, context);
+      if (reader.ok) {
+        const original = reader.value.read.bind(reader.value);
+        reader.value.read = (offset, length, c) => {
+          reads.push(length);
+          return original(offset, length, c);
+        };
+      }
+      return reader;
+    };
+    const wrapped = { listDir: env.listDir.bind(env), openBinaryReader: spy };
+    expect((await scanRepoSkills(wrapped as never, root)).map((s) => s.name)).toEqual(["ok"]);
+    expect(opened.some((p) => p.includes("/big/"))).toBe(false);
+    expect(reads).toEqual([SKILL_LIMITS.skillMd + 1]);
+  });
+});
+
 describe("mergeCatalog", () => {
   const admin = (name: string) => ({
     name,
