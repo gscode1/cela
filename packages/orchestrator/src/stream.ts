@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
+import type { ConversationView, ConversationWatch, EntryRecord } from "@earendil-works/pi-durable";
 import { errorMessage } from "@pi-durable-k8s/session-core";
 import type { Host } from "./host.js";
 import { toEvent } from "./host.js";
@@ -117,14 +117,60 @@ export async function serveStream(
   streams: StreamRegistry,
   sessionId: string,
   conversationId: number,
+  /** Re-checked once the stream is registered: a deletion that ran before registration closed nothing. */
+  stillOpen: () => Promise<boolean> = () => Promise.resolve(true),
 ): Promise<void> {
+  let watch: ConversationWatch | undefined;
+  let keepalive: NodeJS.Timeout | undefined;
+  let ended = false;
+  const finish = (reason?: string): void => {
+    if (ended) return;
+    ended = true;
+    if (keepalive !== undefined) clearInterval(keepalive);
+    unregister();
+    void watch?.stop();
+    if (res.writableEnded || res.destroyed) return;
+    if (!res.headersSent) {
+      // Closed before the SSE head went out (deletion or disconnect while the watch was being created).
+      if (reason === "deleted") {
+        res.writeHead(410, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "session deleted" }));
+      } else {
+        res.end();
+      }
+      return;
+    }
+    if (reason !== undefined) res.write(`event: ${reason}\ndata: {}\n\n`);
+    res.end();
+  };
+  // Register and listen for the disconnect before the first await: a `close` that fires while the watch is being
+  // created would never be seen by a later listener, and a deletion that ran in that window would miss the stream.
+  const unregister = streams.add(sessionId, finish);
+  res.on("close", () => finish());
+
   const watched = await host.watch(conversationId);
   if (watched === undefined) {
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "conversation not found" }));
+    if (!ended) {
+      ended = true;
+      unregister();
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "conversation not found" }));
+    }
     return;
   }
-  const { conversation, watch } = watched;
+  const { conversation } = watched;
+  watch = watched.watch;
+  if (ended) {
+    // The client left or the session was deleted while the watch was being created.
+    void watch.stop();
+    return;
+  }
+  // Deletion marks the session before it closes streams, so a stream registered after that close sees the mark here.
+  if (!(await stillOpen())) {
+    finish("deleted");
+    return;
+  }
+  const liveWatch = watch;
   let cursor = parseLastEventId(req.headers["last-event-id"]);
 
   res.writeHead(200, {
@@ -136,19 +182,9 @@ export async function serveStream(
   res.write("retry: 2000\n\n");
 
   let lastLive = "";
-  const finish = (reason?: string): void => {
-    clearInterval(keepalive);
-    unregister();
-    void watch.stop();
-    if (res.writableEnded || res.destroyed) return;
-    if (reason !== undefined) res.write(`event: ${reason}\ndata: {}\n\n`);
-    res.end();
-  };
-  const keepalive = setInterval(() => {
+  keepalive = setInterval(() => {
     if (!res.destroyed) res.write(": keepalive\n\n");
   }, KEEPALIVE_MS);
-  const unregister = streams.add(sessionId, finish);
-  res.on("close", () => finish());
 
   const sendEntry = async (entry: EntryRecord): Promise<void> => {
     if (entry.id <= cursor) return;
@@ -189,18 +225,18 @@ export async function serveStream(
   };
 
   try {
-    await emit(watch.value);
+    await emit(liveWatch.value);
   } catch (error) {
     log("stream-failed", { session: sessionId, message: errorMessage(error) });
     finish();
     return;
   }
-  watch.start(async (call) => {
+  liveWatch.start(async (call) => {
     if (call.kind !== "value") return;
     await emit(call.value);
   });
   // The watch ends when the Harness closes (orchestrator shutdown) or fails: end the response so the client reconnects.
-  void watch.closed.then(() => {
+  void liveWatch.closed.then(() => {
     finish();
   });
 }
