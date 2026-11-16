@@ -5,6 +5,7 @@ interface Row {
   default_model: string;
   allowlist: unknown;
   default_reasoning: string | null;
+  max_reasoning: string | null;
   turn_budget: number;
   updated_at: Date;
   updated_by: string;
@@ -44,6 +45,7 @@ export class FakeSettingsDb {
       default_model: "scripted/scripted-1",
       allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
       default_reasoning: null,
+      max_reasoning: null,
       turn_budget: 100,
       updated_at: new Date(0),
       updated_by: "seed",
@@ -93,9 +95,10 @@ export class FakeSettingsDb {
       return done(this.row === undefined ? [] : [{ ...this.row }]);
     }
     if (text.startsWith("insert into inbox.settings (")) {
-      const [model, list, reasoning, budget, by] = params as [
+      const [model, list, reasoning, maxReasoning, budget, by] = params as [
         string,
         string,
+        string | null,
         string | null,
         number,
         string | undefined,
@@ -104,6 +107,7 @@ export class FakeSettingsDb {
         default_model: model,
         allowlist: JSON.parse(list) as unknown,
         default_reasoning: reasoning,
+        max_reasoning: maxReasoning,
         turn_budget: budget,
         updated_at: new Date(),
         updated_by: by ?? "seed",

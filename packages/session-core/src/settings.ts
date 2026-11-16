@@ -1,5 +1,12 @@
 import type pg from "pg";
-import { loadModelPolicy, modelKey, parseModelKey, THINKING_LEVELS } from "./models.js";
+import {
+  exceedsReasoning,
+  loadModelPolicy,
+  modelKey,
+  parseModelKey,
+  parseThinkingLevel,
+  THINKING_LEVELS,
+} from "./models.js";
 import type { ModelPolicy, ThinkingLevel } from "./models.js";
 
 /** Notification channel a writer signals on, in the same transaction as the write. */
@@ -16,6 +23,8 @@ export interface Settings {
   allowlist: string[];
   /** Reasoning effort applied to every new session; null for none (Pi's default, `off`). */
   reasoning: ThinkingLevel | null;
+  /** Highest reasoning effort a session request may ask for; null for no cap. */
+  maxReasoning: ThinkingLevel | null;
   /** Model turns one session may use in total. */
   turnBudget: number;
 }
@@ -34,7 +43,7 @@ export interface SettingsHistoryEntry {
   new: Settings;
 }
 
-const KEYS = ["defaultModel", "allowlist", "reasoning", "turnBudget"] as const;
+const KEYS = ["defaultModel", "allowlist", "reasoning", "maxReasoning", "turnBudget"] as const;
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
 /** Bound on what is parsed; the real limit applies to the normalised list (default added, duplicates dropped). */
@@ -55,6 +64,7 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
     defaultModel: modelKey(policy.default),
     allowlist: policy.allowed.map(modelKey),
     reasoning: policy.reasoning ?? null,
+    maxReasoning: null,
     turnBudget,
   });
   if (typeof settings === "string")
@@ -66,7 +76,9 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
 export function policyOf(settings: Settings): ModelPolicy {
   const reasoning = settings.reasoning ?? undefined;
   const withReasoning = reasoning === undefined ? {} : { reasoning };
+  const maxReasoning = settings.maxReasoning ?? undefined;
   return {
+    ...(maxReasoning === undefined ? {} : { maxReasoning }),
     default: { ...parseModelKey(settings.defaultModel), ...withReasoning },
     allowed: settings.allowlist.map(parseModelKey),
     ...withReasoning,
@@ -85,7 +97,16 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   for (const key of Object.keys(body)) {
     if (!(KEYS as readonly string[]).includes(key)) return `unknown setting "${key.slice(0, 50)}"`;
   }
-  const pick = (key: (typeof KEYS)[number]): unknown => (key in body ? body[key] : current?.[key]);
+  // A missing cap is no cap: older clients and rows predate the field.
+  const pick = (key: (typeof KEYS)[number]): unknown => {
+    const value = key in body ? body[key] : current?.[key];
+    return key === "maxReasoning" && value === undefined ? null : value;
+  };
+  const pickLevel = (key: "reasoning" | "maxReasoning"): ThinkingLevel | null | "invalid" => {
+    const value = pick(key);
+    if (value === null) return null;
+    return parseThinkingLevel(value) ?? "invalid";
+  };
   const missing = KEYS.find((key) => pick(key) === undefined);
   if (missing !== undefined) return `${missing} is required`;
 
@@ -99,9 +120,15 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   ) {
     return `allowlist must be an array of at most ${String(MAX_ALLOWLIST)} provider/model strings`;
   }
-  const reasoning = pick("reasoning");
-  if (reasoning !== null && !THINKING_LEVELS.some((level) => level === reasoning)) {
+  const reasoning = pickLevel("reasoning");
+  if (reasoning === "invalid")
     return `reasoning must be null or one of ${THINKING_LEVELS.join(", ")}`;
+  const maxReasoning = pickLevel("maxReasoning");
+  if (maxReasoning === "invalid") {
+    return `maxReasoning must be null or one of ${THINKING_LEVELS.join(", ")}`;
+  }
+  if (reasoning !== null && maxReasoning !== null && exceedsReasoning(reasoning, maxReasoning)) {
+    return `reasoning ${reasoning} is above maxReasoning ${maxReasoning}`;
   }
   const turnBudget = pick("turnBudget");
   if (
@@ -129,7 +156,8 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   return {
     defaultModel: keys[0] ?? defaultText,
     allowlist,
-    reasoning: reasoning as ThinkingLevel | null,
+    reasoning,
+    maxReasoning,
     turnBudget,
   };
 }
@@ -142,6 +170,7 @@ interface SettingsRow {
   default_model: string;
   allowlist: unknown;
   default_reasoning: string | null;
+  max_reasoning: string | null;
   turn_budget: number;
   updated_at: Date;
   updated_by: string;
@@ -153,13 +182,15 @@ function fromRow(row: SettingsRow): StoredSettings {
     defaultModel: row.default_model,
     allowlist: row.allowlist,
     reasoning: row.default_reasoning,
+    maxReasoning: row.max_reasoning,
     turnBudget: row.turn_budget,
   });
   if (typeof settings === "string") throw new Error(`stored settings are invalid: ${settings}`);
   return { settings, updatedAt: row.updated_at, updatedBy: row.updated_by };
 }
 
-const COLUMNS = "default_model, allowlist, default_reasoning, turn_budget, updated_at, updated_by";
+const COLUMNS =
+  "default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_at, updated_by";
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -210,11 +241,17 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
   if (typeof seed === "string") throw new Error(`invalid seed settings: ${seed}`);
   return inTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, turn_budget, updated_by)
-       values ($1, $2, $3, $4, 'seed')
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_by)
+       values ($1, $2, $3, $4, $5, 'seed')
        on conflict (id) do nothing
        returning default_model`,
-      [seed.defaultModel, JSON.stringify(seed.allowlist), seed.reasoning, seed.turnBudget],
+      [
+        seed.defaultModel,
+        JSON.stringify(seed.allowlist),
+        seed.reasoning,
+        seed.maxReasoning,
+        seed.turnBudget,
+      ],
     );
     if (rows.length === 0) return false;
     await writeHistoryAndNotify(client, "seed", null, seed);
@@ -241,14 +278,22 @@ export async function updateSettings(
     if (typeof next === "string") return next;
     if (current !== undefined && settingsEqual(current.settings, next)) return current;
     const { rows: written } = await client.query<SettingsRow>(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, turn_budget, updated_by)
-       values ($1, $2, $3, $4, $5)
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, turn_budget, updated_by)
+       values ($1, $2, $3, $4, $5, $6)
        on conflict (id) do update set
          default_model = excluded.default_model, allowlist = excluded.allowlist,
-         default_reasoning = excluded.default_reasoning, turn_budget = excluded.turn_budget,
+         default_reasoning = excluded.default_reasoning, max_reasoning = excluded.max_reasoning,
+         turn_budget = excluded.turn_budget,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
-      [next.defaultModel, JSON.stringify(next.allowlist), next.reasoning, next.turnBudget, by],
+      [
+        next.defaultModel,
+        JSON.stringify(next.allowlist),
+        next.reasoning,
+        next.maxReasoning,
+        next.turnBudget,
+        by,
+      ],
     );
     await writeHistoryAndNotify(client, by, current?.settings ?? null, next);
     return written[0] === undefined
