@@ -10,6 +10,7 @@ const seed: Settings = {
   defaultModel: "scripted/scripted-1",
   allowlist: ["scripted/scripted-1", "scripted/scripted-2"],
   reasoning: null,
+  maxReasoning: null,
   turnBudget: 100,
 };
 
@@ -183,5 +184,59 @@ describe("admin settings", () => {
       (await call(base, "bob", "POST", "/sessions", { provider: "scripted", model: "scripted-1" }))
         .status,
     ).toBe(400);
+  });
+
+  it("takes a per-request reasoning level, refuses an invalid one and uses the settings default when omitted", async () => {
+    const { base, sessions } = await start();
+    const post = async (body: unknown) => call(base, "bob", "POST", "/sessions", body);
+    const high = await post({ reasoning: "high" });
+    expect(high.status).toBe(201);
+    expect(await high.json()).toMatchObject({ reasoning: "high" });
+    expect(sessions[0]?.[5]).toBe("high");
+
+    for (const reasoning of ["ultra", 3, null]) {
+      const bad = await post({ reasoning });
+      expect(bad.status, String(reasoning)).toBe(400);
+      expect(((await bad.json()) as { error: string }).error).toMatch(/reasoning must be one of/);
+    }
+    expect(sessions).toHaveLength(1);
+
+    // Omitted: none stored while the settings have no default, the settings default once they do.
+    expect(((await (await post({})).json()) as Record<string, unknown>).reasoning).toBeUndefined();
+    await call(base, "alice", "PUT", "/admin/settings", { reasoning: "low" });
+    expect(await (await post({})).json()).toMatchObject({ reasoning: "low" });
+    expect(await (await post({ reasoning: "off" })).json()).toMatchObject({ reasoning: "off" });
+  });
+
+  it("refuses a level above the operator cap and takes one at it; a null cap lifts it", async () => {
+    const { base } = await start();
+    const post = async (reasoning: string) => call(base, "bob", "POST", "/sessions", { reasoning });
+    expect((await post("max")).status).toBe(201);
+
+    const put = await call(base, "alice", "PUT", "/admin/settings", { maxReasoning: "medium" });
+    expect(await put.json()).toMatchObject({ maxReasoning: "medium" });
+    expect((await post("medium")).status).toBe(201);
+    const over = await post("high");
+    expect(over.status).toBe(400);
+    expect(((await over.json()) as { error: string }).error).toMatch(
+      /above the allowed maximum medium/,
+    );
+
+    await call(base, "alice", "PUT", "/admin/settings", { maxReasoning: null });
+    expect((await post("high")).status).toBe(201);
+  });
+
+  it("refuses a cap below the default reasoning and a default above the cap, changing nothing", async () => {
+    const { base, db } = await start();
+    await call(base, "alice", "PUT", "/admin/settings", { reasoning: "high" });
+    const before = db.history.length;
+    for (const body of [{ maxReasoning: "low" }, { maxReasoning: "ultra" }]) {
+      expect((await call(base, "alice", "PUT", "/admin/settings", body)).status).toBe(400);
+    }
+    await call(base, "alice", "PUT", "/admin/settings", { reasoning: null, maxReasoning: "low" });
+    expect(
+      (await call(base, "alice", "PUT", "/admin/settings", { reasoning: "high" })).status,
+    ).toBe(400);
+    expect(db.history).toHaveLength(before + 1);
   });
 });
