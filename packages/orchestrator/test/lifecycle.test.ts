@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { conversationOfName, interruptedExec, planSuspend } from "../src/lifecycle.ts";
+import {
+  claimNameFor,
+  conversationOfName,
+  interruptedExec,
+  planSuspend,
+} from "../src/lifecycle.ts";
 
 describe("interruptedExec", () => {
   it("is true for an aborted or timed-out command and for a call that threw", () => {
@@ -28,9 +33,40 @@ describe("interruptedExec", () => {
 
 describe("conversationOfName", () => {
   it("reads pi-conv-<n> and nothing else", () => {
-    expect(conversationOfName("pi-conv-5858")).toBe(5858);
+    expect(conversationOfName(0, "pi-conv-5858")).toBe(5858);
     for (const name of ["e2e-phase1", "pi-conv-", "pi-conv-1a", "xpi-conv-1", "pi-conv-1-x"]) {
-      expect(conversationOfName(name)).toBeUndefined();
+      expect(conversationOfName(0, name)).toBeUndefined();
+    }
+  });
+
+  it("reads only the names of its own shard", () => {
+    expect(conversationOfName(1, "pi-s1-conv-5")).toBe(5);
+    expect(conversationOfName(0, "pi-s1-conv-5")).toBeUndefined();
+    expect(conversationOfName(1, "pi-conv-5")).toBeUndefined();
+    expect(conversationOfName(1, "pi-s11-conv-5")).toBeUndefined();
+    expect(conversationOfName(2, "pi-s1-conv-5")).toBeUndefined();
+  });
+});
+
+describe("claimNameFor", () => {
+  it("keeps shard 0's name and gives every other shard its own", () => {
+    expect(claimNameFor(0, 42)).toBe("pi-conv-42");
+    expect(claimNameFor(1, 42)).toBe("pi-s1-conv-42");
+    expect(claimNameFor(12, 42)).toBe("pi-s12-conv-42");
+  });
+
+  it("never gives two shards the same name for the same conversation id", () => {
+    const names = new Set<string>();
+    for (let shard = 0; shard < 30; shard++)
+      for (const id of [2, 3, 42]) names.add(claimNameFor(shard, id));
+    expect(names.size).toBe(30 * 3);
+  });
+
+  it("round-trips through conversationOfName and is a valid object name", () => {
+    for (const shard of [0, 1, 9, 10]) {
+      const name = claimNameFor(shard, 7);
+      expect(conversationOfName(shard, name)).toBe(7);
+      expect(name).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
     }
   });
 });
@@ -38,7 +74,7 @@ describe("conversationOfName", () => {
 describe("planSuspend", () => {
   const MIN = 60_000;
   const now = 1_000_000_000;
-  const base = { now, afterMs: 30 * MIN, busy: new Set<number>() };
+  const base = { shard: 0, now, afterMs: 30 * MIN, busy: new Set<number>() };
 
   it("suspends a sandbox idle for at least the threshold, not a younger one", () => {
     const plan = planSuspend({
@@ -85,5 +121,34 @@ describe("planSuspend", () => {
       lastUsed: new Map([[1, 0]]),
     });
     expect(plan).toEqual({ seen: [], suspend: [] });
+  });
+});
+
+describe("planSuspend: shards", () => {
+  it("ignores the sandboxes of another shard", () => {
+    const plan = planSuspend({
+      shard: 0,
+      now: 1_000_000,
+      afterMs: 1,
+      busy: new Set(),
+      running: ["pi-s1-conv-5", "pi-conv-6"],
+      lastUsed: new Map([
+        [5, 0],
+        [6, 0],
+      ]),
+    });
+    expect(plan.suspend).toEqual([6]);
+    const other = planSuspend({
+      shard: 1,
+      now: 1_000_000,
+      afterMs: 1,
+      busy: new Set(),
+      running: ["pi-s1-conv-5", "pi-conv-6"],
+      lastUsed: new Map([
+        [5, 0],
+        [6, 0],
+      ]),
+    });
+    expect(other.suspend).toEqual([5]);
   });
 });

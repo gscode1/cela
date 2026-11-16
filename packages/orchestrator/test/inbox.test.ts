@@ -41,7 +41,7 @@ class FakeInbox {
       else if (this.#sessionLocked) this.blocked.push(sql);
     }
     if (sql === "commit" || sql === "rollback") this.#sessionLocked = false;
-    if (sql.includes("select distinct session_id")) {
+    if (sql.includes("select distinct e.session_id")) {
       const any = this.rows.some((r) => r.status === "pending");
       return { rows: any ? [{ session_id: SESSION }] : [] };
     }
@@ -107,7 +107,7 @@ describe("a failing delete", () => {
       if (calls <= 8) return Promise.reject(new Error("kubernetes unavailable"));
       return Promise.resolve();
     };
-    const loop = new InboxLoop(inbox.pool(), apply);
+    const loop = new InboxLoop(inbox.pool(), 0, apply);
 
     loop.wake();
     await flush();
@@ -131,7 +131,7 @@ describe("a failing delete", () => {
     const { PermanentError } = await import("../src/sessions.ts");
     const inbox = new FakeInbox();
     const row = inbox.add("delete");
-    const loop = new InboxLoop(inbox.pool(), () => Promise.reject(new PermanentError("gone")));
+    const loop = new InboxLoop(inbox.pool(), 0, () => Promise.reject(new PermanentError("gone")));
     loop.wake();
     await flush();
     expect(row.status).toBe("failed");
@@ -140,7 +140,7 @@ describe("a failing delete", () => {
   it("other events still fail after five attempts", async () => {
     const inbox = new FakeInbox();
     const row = inbox.add("message");
-    const loop = new InboxLoop(inbox.pool(), () => Promise.reject(new Error("boom")));
+    const loop = new InboxLoop(inbox.pool(), 0, () => Promise.reject(new Error("boom")));
     for (let i = 0; i < 6; i++) {
       loop.wake();
       await flush();
@@ -162,7 +162,7 @@ describe("a batch with a message followed by a delete", () => {
         await pool.query("update inbox.sessions set status = 'deleted' where id = $1", [SESSION]);
       }
     };
-    const loop = new InboxLoop(pool, apply);
+    const loop = new InboxLoop(pool, 0, apply);
     loop.wake();
     await flush();
 

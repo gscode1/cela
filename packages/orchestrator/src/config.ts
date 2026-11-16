@@ -8,11 +8,25 @@ import { parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
 const LOCAL_PROVIDERS = new Set(["scripted", "faux"]);
 
+const SCHEMA_NAME = /^[a-z_][a-z0-9_]*$/;
+
+/** The Postgres schema of a shard: the configured one for shard 0 (today's name), `<schema>_s<k>` for the others. */
+export function shardSchema(base: string, shard: number): string {
+  if (!SCHEMA_NAME.test(base)) throw new Error("PI_DURABLE_SCHEMA must match ^[a-z_][a-z0-9_]*$");
+  if (!Number.isInteger(shard) || shard < 0)
+    throw new Error("PI_ORCH_SHARD must be an integer of 0 or more");
+  const name = shard === 0 ? base : `${base}_s${String(shard)}`;
+  if (name.length > 63) throw new Error("the shard schema name is longer than 63 characters");
+  return name;
+}
+
 /** Environment contract of the orchestrator. Secrets (database URL, sandboxd token, API tokens) are env-only. */
 export interface OrchestratorConfig {
   databaseUrl: string;
-  /** Dedicated schema holding the adapter's tables; it must exist. Also the scope of the ownership lock. */
+  /** Dedicated schema holding the adapter's tables (created at start). Also the scope of the ownership lock. */
   schema: string;
+  /** Which shard this orchestrator is; it owns the schema of that shard and the sessions assigned to it (ADR 0017). */
+  shard: number;
   namespace: string;
   /** SandboxWarmPool every session's claim references. */
   warmPool: string;
@@ -151,6 +165,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
   const maxActions = Number(env.PI_SWEEP_MAX_ACTIONS ?? "10");
   if (!Number.isInteger(maxActions) || maxActions < 1)
     throw new Error("PI_SWEEP_MAX_ACTIONS must be an integer of 1 or more");
+  const shard = Number(env.PI_ORCH_SHARD ?? "0");
   const models = loadModelPolicy(env);
   const remote = models.allowed.find((choice) => !LOCAL_PROVIDERS.has(choice.provider));
   const token = env.ONECLI_AGENT_TOKEN;
@@ -159,7 +174,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
   }
   return {
     databaseUrl,
-    schema: env.PI_DURABLE_SCHEMA ?? "public",
+    schema: shardSchema(env.PI_DURABLE_SCHEMA ?? "public", shard),
+    shard,
     namespace: env.PI_ORCH_NAMESPACE ?? "pi-durable-poc",
     warmPool: env.PI_ORCH_WARMPOOL ?? "pi-env-pool",
     port,

@@ -92,6 +92,8 @@ export interface SessionServiceOptions {
   turnBudget: () => number;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
+  /** The orchestrator shard: this service touches only the sessions assigned to it (docs/decisions/0017). */
+  shard: number;
   /** Where a new conversation's skill catalog comes from. Without it a profile that names skills is refused. */
   skills?: Pick<SkillLibrary, "catalogFor" | "entriesFor">;
   /** Starts the timing clock of each input (docs/metrics.md). Without it nothing is timed. */
@@ -100,7 +102,7 @@ export interface SessionServiceOptions {
 
 /**
  * Maps API sessions onto Pi Durable and applies inbox events. One session = one conversation = one
- * SandboxClaim `pi-conv-<conversation id>` = one PVC; the claim is created lazily by the Harness at the first
+ * SandboxClaim `pi-conv-<conversation id>` (`pi-s<k>-conv-<id>` on shard k) = one PVC; the claim is created lazily by the Harness at the first
  * tool call, never here.
  */
 export class SessionService {
@@ -141,9 +143,10 @@ export class SessionService {
       `select e.id, e.session_id, s.conversation_id
          from inbox.events e join inbox.sessions s on s.id = e.session_id
         where e.kind in ('message', 'steer') and e.status = 'submitted'
-          and s.status = 'active' and s.conversation_id is not null
+          and s.status = 'active' and s.shard = $1 and s.conversation_id is not null
           and e.submitted_at > clock_timestamp() - interval '24 hours'
         order by e.submitted_at desc limit 1000`,
+      [this.#options.shard],
     );
     for (const row of rows) {
       this.#watcher.add({
@@ -164,9 +167,10 @@ export class SessionService {
   async #recoverFailedAborts(): Promise<void> {
     const { rows } = await this.#pool.query<{ id: string; conversation_id: string }>(
       `select id, conversation_id from inbox.sessions
-        where status = 'failed' and conversation_id is not null
+        where status = 'failed' and shard = $1 and conversation_id is not null
           and last_activity_at > clock_timestamp() - interval '24 hours'
         order by last_activity_at desc limit 1000`,
+      [this.#options.shard],
     );
     for (const row of rows) {
       try {
@@ -230,8 +234,8 @@ export class SessionService {
       await this.#skillCatalog(definition),
     );
     await this.#pool.query(
-      "update inbox.sessions set conversation_id = $1 where id = $2 and conversation_id is null",
-      [conversationId, sessionId],
+      "update inbox.sessions set conversation_id = $1 where id = $2 and shard = $3 and conversation_id is null",
+      [conversationId, sessionId, this.#options.shard],
     );
     log("conversation-created", { session: sessionId, conversation: conversationId });
     return conversationId;

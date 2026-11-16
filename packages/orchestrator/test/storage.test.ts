@@ -25,6 +25,7 @@ async function run(schemaPresent: boolean): Promise<string[]> {
       return attempts === 1 ? Promise.reject(new Error(LOCK_ERROR)) : Promise.resolve(storage);
     },
     schemaExists: () => Promise.resolve(schemaPresent),
+    ensureSchema: () => Promise.resolve(),
   });
   return lines.map((line) => (JSON.parse(line) as { event: string }).event);
 }
@@ -38,5 +39,24 @@ describe("openStorageWhenFree", () => {
 
   it("still reports a held lock when the schema exists", async () => {
     expect(await run(true)).toEqual(["waiting-for-lock"]);
+  }, 5_000);
+
+  it("creates the schema once, before the first open, and not again on a retry", async () => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const order: string[] = [];
+    await openStorageWhenFree(config, new AbortController().signal, 1, {
+      ensureSchema: () => {
+        order.push("ensure");
+        return Promise.resolve();
+      },
+      open: () => {
+        order.push("open");
+        return order.length === 2
+          ? Promise.reject(new Error(LOCK_ERROR))
+          : Promise.resolve(storage);
+      },
+      schemaExists: () => Promise.resolve(true),
+    });
+    expect(order).toEqual(["ensure", "open", "open"]);
   }, 5_000);
 });

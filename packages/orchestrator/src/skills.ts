@@ -8,6 +8,7 @@ import {
   readSkillVersion,
   skillDir,
   verifySkillBundle,
+  sessionByConversation,
 } from "@pi-durable-k8s/session-core";
 import type { ProfileDefinition, SkillBundle, SkillRef } from "@pi-durable-k8s/session-core";
 import type { WorkspaceEnv } from "./workspace.js";
@@ -36,9 +37,11 @@ function pinned(ref: SkillRef): SkillRef & { digest: string } {
 /** Reads skill content from Postgres, always by exact (name, version) and checked against the pinned digest. */
 export class SkillLibrary {
   readonly #pool: pg.Pool;
+  readonly #shard: number;
 
-  constructor(pool: pg.Pool) {
+  constructor(pool: pg.Pool, shard: number) {
     this.#pool = pool;
+    this.#shard = shard;
   }
 
   /**
@@ -79,11 +82,8 @@ export class SkillLibrary {
 
   /** The verified bundles of a conversation's session (none for a session without skills or one the inbox does not know). */
   async bundlesFor(conversationId: number): Promise<SkillBundle[]> {
-    const { rows } = await this.#pool.query<{ profile_snapshot: unknown }>(
-      "select profile_snapshot from inbox.sessions where conversation_id = $1",
-      [conversationId],
-    );
-    const snapshot = rows[0]?.profile_snapshot;
+    const session = await sessionByConversation(this.#pool, this.#shard, conversationId);
+    const snapshot = session?.profile?.snapshot;
     const skills =
       typeof snapshot === "object" && snapshot !== null && "skills" in snapshot
         ? snapshot.skills

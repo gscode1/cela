@@ -9,6 +9,7 @@ const UNKNOWN = "33333333-3333-4333-8333-333333333333";
 function deps(overrides: Partial<SweeperDeps> = {}) {
   const calls: string[] = [];
   const value: SweeperDeps = {
+    shard: 0,
     listSessions: () => Promise.resolve([]),
     listClaims: () =>
       Promise.resolve([
@@ -110,7 +111,7 @@ describe("OrphanSweeper", () => {
         order.push("sessions");
         const created = order.includes("onecli");
         return Promise.resolve(
-          created ? [{ id: UNKNOWN, status: "active", conversationId: 1 }] : [],
+          created ? [{ id: UNKNOWN, status: "active", shard: 0, conversationId: 1 }] : [],
         );
       },
     });

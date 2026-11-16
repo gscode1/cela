@@ -94,6 +94,7 @@ describe("SessionService creates the conversation with the catalog", () => {
     owner: "alice",
     ownerSubject: "static:alice",
     status: "active",
+    shard: 0,
     conversationId: null,
     model: MODEL,
     failure: null,
@@ -138,6 +139,7 @@ describe("SessionService creates the conversation with the catalog", () => {
 
   const service = (host: Host, catalog?: { catalogFor: () => Promise<string | undefined> }) =>
     new SessionService(fakePool(), host, {
+      shard: 0,
       testFaults: false,
       defaultModel: config.models.default,
       turnBudget: () => 100,

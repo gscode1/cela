@@ -12,14 +12,15 @@ const GONE = "22222222-2222-4222-8222-222222222222";
 const UNKNOWN = "33333333-3333-4333-8333-333333333333";
 
 const sessions: SessionRef[] = [
-  { id: LIVE, status: "active", conversationId: 10 },
-  { id: GONE, status: "deleted", conversationId: 20 },
-  { id: "44444444-4444-4444-8444-444444444444", status: "deleting", conversationId: 30 },
-  { id: "55555555-5555-4555-8555-555555555555", status: "failed", conversationId: 40 },
+  { id: LIVE, status: "active", shard: 0, conversationId: 10 },
+  { id: GONE, status: "deleted", shard: 0, conversationId: 20 },
+  { id: "44444444-4444-4444-8444-444444444444", status: "deleting", shard: 0, conversationId: 30 },
+  { id: "55555555-5555-4555-8555-555555555555", status: "failed", shard: 0, conversationId: 40 },
 ];
 
 function plan(overrides: Partial<SweepInput>) {
   return planSweep({
+    shard: 0,
     sessions,
     claims: [],
     pvcs: [],
@@ -255,5 +256,68 @@ describe("planSweep: bounds", () => {
         maxActions: 0,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("planSweep: shards", () => {
+  const S1 = "66666666-6666-4666-8666-666666666666";
+  const S1_GONE = "77777777-7777-4777-8777-777777777777";
+  const mixed: SessionRef[] = [
+    ...sessions,
+    // Conversation ids repeat across shards: shard 1's conversation 10 is not shard 0's.
+    { id: S1, status: "active", shard: 1, conversationId: 10 },
+    { id: S1_GONE, status: "deleted", shard: 1, conversationId: 20 },
+  ];
+
+  it("judges only the claims and PVCs under its own name prefix", () => {
+    const claims = [
+      { name: "pi-conv-20", sessionLabel: GONE, createdAt: ago(60) },
+      { name: "pi-s1-conv-20", sessionLabel: S1_GONE, createdAt: ago(60) },
+    ];
+    expect(
+      plan({ shard: 0, sessions: mixed, claims }).map((a) => a.kind === "delete-claim" && a.claim),
+    ).toEqual(["pi-conv-20"]);
+    expect(
+      plan({ shard: 1, sessions: mixed, claims }).map((a) => a.kind === "delete-claim" && a.claim),
+    ).toEqual(["pi-s1-conv-20"]);
+  });
+
+  it("matches a lone PVC to the session of the same shard, not to another shard's conversation id", () => {
+    // Shard 1's `pi-s1-conv-10` PVC: conversation 10 of shard 1 is live; shard 0's conversation 10 is live too, but
+    // so would the wrong match be for 20 (deleted on both). Use 10: live on both, never an orphan.
+    const pvcs = [
+      { name: "workspace-pi-s1-conv-10", createdAt: ago(60) },
+      { name: "workspace-pi-s1-conv-20", createdAt: ago(60) },
+      { name: "workspace-pi-conv-20", createdAt: ago(60) },
+    ];
+    expect(plan({ shard: 1, sessions: mixed, pvcs })).toEqual([
+      { kind: "delete-pvc", claim: "pi-s1-conv-20", reason: "session-deleted" },
+    ]);
+    expect(plan({ shard: 0, sessions: mixed, pvcs })).toEqual([
+      { kind: "delete-pvc", claim: "pi-conv-20", reason: "session-deleted" },
+    ]);
+  });
+
+  it("does not take another shard's conversation id for its own PVC's session", () => {
+    // `workspace-pi-s1-conv-30` on shard 1: shard 1 has no conversation 30 (shard 0 has, and it is live). Unknown.
+    const pvcs = [{ name: "workspace-pi-s1-conv-30", createdAt: ago(60) }];
+    expect(plan({ shard: 1, sessions: mixed, pvcs })).toEqual([
+      { kind: "delete-pvc", claim: "pi-s1-conv-30", reason: "session-unknown" },
+    ]);
+  });
+
+  it("revokes an agent when its session is deleted and on this shard, or unknown and this is shard 0", () => {
+    const agents = [
+      { id: "a-gone", identifier: `pi-session-${GONE}`, createdAt: ago(60) },
+      { id: "a-s1-gone", identifier: `pi-session-${S1_GONE}`, createdAt: ago(60) },
+      { id: "a-unknown", identifier: `pi-session-${UNKNOWN}`, createdAt: ago(60) },
+    ];
+    const ids = (shard: number) =>
+      plan({ shard, sessions: mixed, agents }).flatMap((a) =>
+        a.kind === "revoke-agent" ? a.agentIds : [],
+      );
+    expect(ids(0)).toEqual(["a-gone", "a-unknown"]);
+    expect(ids(1)).toEqual(["a-s1-gone"]);
+    expect(ids(2)).toEqual([]);
   });
 });

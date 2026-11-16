@@ -11,6 +11,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   owner: "alice",
   ownerSubject: "static:alice",
   status,
+  shard: 0,
   conversationId: 7,
   model: null,
   failure: null,
@@ -71,6 +72,7 @@ function setup(options: { dbStatus: string; failRows: number; abortFailures?: nu
     },
   } as unknown as Host;
   const service = new SessionService(pool, host, {
+    shard: 0,
     testFaults: false,
     defaultModel: { provider: "p", model: "m" },
     turnBudget: () => 5,

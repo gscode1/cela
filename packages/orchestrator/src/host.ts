@@ -22,7 +22,7 @@ import { httpTransportFactory, McpTools } from "./mcp.js";
 import type { McpTimings, McpTransportFactory } from "./mcp.js";
 import { buildGatewayFetch, buildModels } from "./providers.js";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import { claimNameFor, Sandboxes, WORKSPACE } from "./sandboxes.js";
+import { Sandboxes, WORKSPACE } from "./sandboxes.js";
 import type { SandboxHooks, SessionKeyOf } from "./sandboxes.js";
 import type { TurnTimings } from "./timing.js";
 import type { SubmissionState } from "./watcher.js";
@@ -306,8 +306,8 @@ export class Host {
       });
       throw error;
     }
-    log("session-started", { id, claim: claimNameFor(id) });
-    return { id, claim: claimNameFor(id) };
+    log("session-started", { id, claim: this.#sandboxes.claimOf(id) });
+    return { id, claim: this.#sandboxes.claimOf(id) };
   }
 
   /** A further input to an existing session; the model follows the newest script. False if unknown. */
@@ -336,7 +336,7 @@ export class Host {
     const answered = last?.role === "assistant" && last.calls === undefined;
     return {
       id,
-      claim: claimNameFor(id),
+      claim: this.#sandboxes.claimOf(id),
       state: answered ? "done" : "running",
       events: events.length,
       results,

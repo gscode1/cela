@@ -136,6 +136,7 @@ describe("turn budget", () => {
     owner: "alice",
     ownerSubject: "static:alice",
     status,
+    shard: 0,
     conversationId: null,
     model: { provider: "scripted", model: "scripted-1" },
     failure: null,
@@ -170,6 +171,7 @@ describe("turn budget", () => {
       },
     } as unknown as pg.Pool;
     const service = new SessionService(pool, host, {
+      shard: 0,
       testFaults: false,
       defaultModel: config.models.default,
       turnBudget: () => config.turnBudget,

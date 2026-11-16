@@ -177,7 +177,7 @@ describe("SkillLibrary", () => {
     const db = new FakeSettingsDb();
     const v1 = await published(db);
     await session(db, 7);
-    const library = new SkillLibrary(db.asPool());
+    const library = new SkillLibrary(db.asPool(), 0);
     const stored = await readProfile(db.asPool(), "docs");
     const catalog = await library.catalogFor(stored?.definition ?? {});
     expect(catalog).toContain("<name>pdf</name>");
@@ -208,7 +208,7 @@ describe("SkillLibrary", () => {
       { name: "secret", version: 1 },
     ]);
     const stored = await readProfile(pool, "docs");
-    const library = new SkillLibrary(pool);
+    const library = new SkillLibrary(pool, 0);
     const catalog = await library.catalogFor(stored?.definition ?? {});
     expect(catalog).toContain("<name>pdf</name>");
     expect(catalog).not.toContain("secret");
@@ -220,7 +220,7 @@ describe("SkillLibrary", () => {
     const db = new FakeSettingsDb();
     const v1 = await published(db);
     await session(db, 7);
-    const library = new SkillLibrary(db.asPool());
+    const library = new SkillLibrary(db.asPool(), 0);
     const bundles = await library.bundlesFor(7);
     expect(bundles.map((b) => [b.name, b.digest])).toEqual([["pdf", v1.digest]]);
     expect(await library.bundlesFor(8)).toEqual([]);
@@ -231,7 +231,7 @@ describe("SkillLibrary", () => {
     const v1 = await published(db);
     await session(db, 7);
     await published(db, { ...PDF, files: [{ path: "SKILL.md", content: skillMd("changed") }] });
-    const library = new SkillLibrary(db.asPool());
+    const library = new SkillLibrary(db.asPool(), 0);
     expect((await library.bundlesFor(7))[0]?.digest).toBe(v1.digest);
     const stored = await readProfile(db.asPool(), "docs");
     expect(await library.catalogFor(stored?.definition ?? {})).toContain("Summarise a PDF");
@@ -241,7 +241,7 @@ describe("SkillLibrary", () => {
     const db = new FakeSettingsDb();
     await published(db);
     await session(db, 7);
-    const library = new SkillLibrary(db.asPool());
+    const library = new SkillLibrary(db.asPool(), 0);
     const stored = await readProfile(db.asPool(), "docs");
     const definition = stored?.definition ?? {};
 
@@ -260,7 +260,7 @@ describe("SkillLibrary", () => {
   });
 
   it("refuses a snapshot without a pinned digest", async () => {
-    const library = new SkillLibrary(new FakeSettingsDb().asPool());
+    const library = new SkillLibrary(new FakeSettingsDb().asPool(), 0);
     await expect(library.catalogFor({ skills: [{ name: "pdf", version: 1 }] })).rejects.toThrow(
       "does not pin a digest",
     );
