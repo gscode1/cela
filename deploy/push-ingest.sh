@@ -32,8 +32,15 @@ if [[ $current == "$sum" ]]; then
   echo "ingest bundle unchanged"
   exit 0
 fi
+# replace (create when missing), never apply: apply copies the whole object, bundle included, into the
+# last-applied-configuration annotation, which is capped at 256 KiB, far below the 1 MiB ConfigMap limit.
 k create configmap ingest-code --from-file=app.tgz="$work/app.tgz" --dry-run=client -o yaml |
-  k annotate --local -f - "bundle-sha256=$sum" -o yaml | k apply -f - >/dev/null
+  k annotate --local -f - "bundle-sha256=$sum" -o yaml >"$work/cm.yaml"
+if k get configmap ingest-code >/dev/null 2>&1; then
+  k replace -f "$work/cm.yaml" >/dev/null
+else
+  k create -f "$work/cm.yaml" >/dev/null
+fi
 # Only "NotFound" means there is nothing to restart; any other failure must not look like a pushed bundle.
 if err=$(k get deployment pi-ingest -o name 2>&1 >/dev/null); then
   k rollout restart deployment/pi-ingest >/dev/null
