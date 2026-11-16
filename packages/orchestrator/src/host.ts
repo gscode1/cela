@@ -24,6 +24,7 @@ import { buildGatewayFetch, buildModels } from "./providers.js";
 import type { McpFetch } from "@earendil-works/pi-mcp";
 import { claimNameFor, Sandboxes, WORKSPACE } from "./sandboxes.js";
 import type { SandboxHooks, SessionKeyOf } from "./sandboxes.js";
+import type { TurnTimings } from "./timing.js";
 import type { SubmissionState } from "./watcher.js";
 import type { WorkspaceEnv } from "./workspace.js";
 
@@ -498,6 +499,11 @@ export class Host {
    * It is the same tracked env the tools get: the raw env would hide a running clone from idle eviction and suspension
    * (a Pod deleted mid-clone) and would never be evicted itself.
    */
+  /** Turn timing bookkeeping (docs/metrics.md); the session service starts each turn on it. */
+  get timings(): TurnTimings {
+    return this.#sandboxes.timings;
+  }
+
   workspaceEnv(id: number): Promise<WorkspaceEnv> {
     return Promise.resolve(this.#sandboxes.lazyEnv(id));
   }

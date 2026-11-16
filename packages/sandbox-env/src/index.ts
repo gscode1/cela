@@ -42,6 +42,11 @@ export interface SandboxEnvOptions {
    * through the pi-env protocol to the daemon, not through the bridge's own environment.
    */
   shellEnv?: Record<string, string>;
+  /**
+   * Timing hook (docs/metrics.md): `bridge-started` when the start gate let this connection spawn its bridge,
+   * `bridge-ready` when the bridge reported ready. Fires again for every respawn; must not throw.
+   */
+  onPhase?: (phase: "bridge-started" | "bridge-ready") => void;
 }
 
 export interface SandboxEnv {
@@ -69,9 +74,20 @@ export function connectSandboxEnv(options: SandboxEnvOptions): SandboxEnv {
     options.namespace,
     ...(options.connectivity ? ["--connectivity", options.connectivity] : []),
   ]);
+  const onPhase = options.onPhase;
   const connection = new Connection({
-    command: start.command,
-    onLog: (text) => freeGateOnBridgeLog(start, text),
+    command:
+      onPhase === undefined
+        ? start.command
+        : async () => {
+            const argv = await start.command();
+            onPhase("bridge-started");
+            return argv;
+          },
+    onLog: (text) => {
+      freeGateOnBridgeLog(start, text);
+      if (text.includes(BRIDGE_READY)) onPhase?.("bridge-ready");
+    },
   });
   const env = new RemoteExecutionEnv({
     connection,
