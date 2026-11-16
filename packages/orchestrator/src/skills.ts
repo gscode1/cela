@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type pg from "pg";
 import {
   buildSkillCatalog,
+  skillLocation,
   isSkillDigest,
   readSkillBundle,
   readSkillVersion,
@@ -47,7 +48,7 @@ export class SkillLibrary {
   async catalogFor(definition: ProfileDefinition): Promise<string | undefined> {
     const refs = (definition.skills ?? []).map(pinned);
     if (refs.length === 0) return undefined;
-    const entries: { name: string; description: string; digest: string }[] = [];
+    const entries: { name: string; description: string; location: string }[] = [];
     for (const ref of refs) {
       const meta = await readSkillVersion(this.#pool, ref.name, ref.version);
       if (meta === undefined) {
@@ -58,9 +59,15 @@ export class SkillLibrary {
           `skill ${ref.name} v${String(ref.version)} has digest ${meta.digest}, the snapshot pinned ${ref.digest}`,
         );
       }
-      entries.push({ name: ref.name, description: meta.description, digest: meta.digest });
+      if (!meta.disableModelInvocation) {
+        entries.push({
+          name: ref.name,
+          description: meta.description,
+          location: skillLocation(ref.name, meta.digest, SKILLS_DIR),
+        });
+      }
     }
-    return buildSkillCatalog(entries, SKILLS_DIR);
+    return entries.length === 0 ? undefined : buildSkillCatalog(entries);
   }
 
   /** The verified bundles of a conversation's session (none for a session without skills or one the inbox does not know). */

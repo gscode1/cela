@@ -16,7 +16,11 @@ const config = loadConfig({
 const MODEL = { provider: "scripted", model: "scripted-1" } as const;
 const DIGEST = "a".repeat(64);
 const CATALOG = buildSkillCatalog([
-  { name: "pdf", description: "Summarise a PDF", digest: DIGEST },
+  {
+    name: "pdf",
+    description: "Summarise a PDF",
+    location: `/workspace/.skills/pdf/${DIGEST}/SKILL.md`,
+  },
 ]);
 
 const hosts: Host[] = [];
@@ -50,7 +54,7 @@ describe("the skill catalog in a conversation's instructions", () => {
     };
     const id = await host.createConversation(MODEL, definition, CATALOG);
     const text = (await host.instructionsOf(id)) ?? "";
-    expect(text.startsWith("Be brief.\n\n## Skills")).toBe(true);
+    expect(text.startsWith("Be brief.\n\nThe following skills provide")).toBe(true);
     expect(text).toContain("Summarise a PDF");
     expect(text).toContain(`/workspace/.skills/pdf/${DIGEST}/SKILL.md`);
   });
@@ -68,7 +72,11 @@ describe("the skill catalog in a conversation's instructions", () => {
   it("two conversations of different profiles do not see each other's skills", async () => {
     const host = await openHost();
     const other = buildSkillCatalog([
-      { name: "csv", description: "Edit CSV", digest: "b".repeat(64) },
+      {
+        name: "csv",
+        description: "Edit CSV",
+        location: `/workspace/.skills/csv/${"b".repeat(64)}/SKILL.md`,
+      },
     ]);
     const a = await host.createConversation(MODEL, {}, CATALOG);
     const b = await host.createConversation(MODEL, {}, other);

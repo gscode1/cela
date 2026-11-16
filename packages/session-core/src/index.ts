@@ -1,6 +1,8 @@
 export { isAdmin, parseAdmins, tokenAuthenticator } from "./auth.js";
 export type { Authenticator, Principal } from "./auth.js";
 export { createPool } from "./db.js";
+export { FRONTMATTER_LIMITS, parseFrontmatter } from "./frontmatter.js";
+export type { FrontmatterResult } from "./frontmatter.js";
 export { BodyError, errorMessage, readJsonObject, sendJson, UUID } from "./http.js";
 export { applyMigrations } from "./migrate.js";
 export {
@@ -82,6 +84,7 @@ export {
   SKILL_NAME,
   skillDigest,
   skillDir,
+  skillLocation,
   skillNameError,
   SKILLS_ROOT,
   validateSkillContent,

@@ -76,6 +76,7 @@ export interface SkillVersionRowF {
   name: string;
   version: number;
   description: string;
+  disable_model_invocation: boolean;
   digest: string;
   size_bytes: number;
   manifest: unknown;
@@ -351,15 +352,8 @@ export class FakeSettingsDb {
       return done();
     }
     if (text.startsWith("insert into inbox.skill_versions")) {
-      const [name, version, description, digest, size, manifest, by] = params as [
-        string,
-        number,
-        string,
-        string,
-        number,
-        string,
-        string,
-      ];
+      const [name, version, description, disableModelInvocation, digest, size, manifest, by] =
+        params as [string, number, string, boolean, string, number, string, string];
       if (!this.skills.has(name)) throw new Error("foreign key violation (skill_versions)");
       if (this.skillVersions.some((v) => v.name === name && v.version === version)) {
         throw new Error("duplicate key value (skill_versions)");
@@ -368,6 +362,7 @@ export class FakeSettingsDb {
         name,
         version,
         description,
+        disable_model_invocation: disableModelInvocation,
         digest,
         size_bytes: size,
         manifest: JSON.parse(manifest) as unknown,

@@ -12,6 +12,7 @@ import {
   readSkills,
   SKILL_LIMITS,
   skillDigest,
+  skillLocation,
   validateProfileDefinition,
   validateSkillContent,
   verifySkillBundle,
@@ -19,48 +20,119 @@ import {
 import { FakeSettingsDb } from "./fake-settings-db.ts";
 
 const KNOWN = { tools: ["read", "write", "edit", "bash"], mcpServers: [] };
-const file = (path: string, content = "x") => ({ path, content });
-const skill = (extra: Record<string, unknown> = {}) => ({
-  description: "Summarise a PDF",
-  files: [file("SKILL.md", "# PDF\nRead it."), file("scripts/run.sh", "echo hi\n")],
-  ...extra,
+/** A SKILL.md: the description as a JSON string (a valid double-quoted YAML scalar), then a body. */
+const md = (description: string, extraLines = "") =>
+  `---\ndescription: ${JSON.stringify(description)}\n${extraLines}---\n# PDF\nRead it.\n`;
+const file = (path: string, content = path === "SKILL.md" ? md("Summarise a PDF") : "x") => ({
+  path,
+  content,
 });
+/** `description` goes into the frontmatter of the default SKILL.md; anything else is the request body. */
+const skill = (extra: Record<string, unknown> = {}) => {
+  const { description = "Summarise a PDF", ...body } = extra;
+  return {
+    files: [file("SKILL.md", md(description as string)), file("scripts/run.sh", "echo hi\n")],
+    ...body,
+  };
+};
+const validate = (input: unknown, name = "pdf") => validateSkillContent(input, name);
+const withMd = (content: string) => ({ files: [file("SKILL.md", content)] });
 
 describe("validateSkillContent", () => {
-  it("measures the description in UTF-8 bytes, at the limit and one over", () => {
-    const limit = SKILL_LIMITS.description;
-    // 2 bytes per char (é), 3 (CJK), 4 (emoji: one code point, two UTF-16 units).
-    const exact = ["é".repeat(limit / 2), "世".repeat(341) + "a", "😀".repeat(limit / 4)];
-    for (const description of exact) {
-      expect(Buffer.byteLength(description)).toBe(limit);
-      expect(validateSkillContent(skill({ description }))).not.toBeTypeOf("string");
+  it("reads name, description and the invocation flag from the frontmatter", () => {
+    const checked = validate(withMd(md("Summarise a PDF", "name: pdf\n")));
+    expect(checked).toMatchObject({
+      name: "pdf",
+      description: "Summarise a PDF",
+      disableModelInvocation: false,
+    });
+    expect(validate(withMd(md("d", "disable-model-invocation: true\n")))).toMatchObject({
+      disableModelInvocation: true,
+    });
+    expect(validate(withMd(md("d", "disable-model-invocation: false\n")))).toMatchObject({
+      disableModelInvocation: false,
+    });
+  });
+
+  it("takes the name from the path when the frontmatter has none, and refuses a different one", () => {
+    expect(validate(withMd(md("d")), "other")).toMatchObject({ name: "other" });
+    expect(validate(withMd(md("d", "name: pdf\n")), "other")).toContain(
+      'name "pdf" differs from the skill name "other"',
+    );
+    expect(validate(withMd(md("d", 'name: ""\n')))).toContain("differs");
+  });
+
+  it("requires a description in the frontmatter and has no description input", () => {
+    for (const content of [
+      "# no frontmatter\n",
+      "---\nname: pdf\n---\nbody\n",
+      '---\ndescription: ""\n---\n',
+      "---\ndescription:\n---\n",
+      "---\ndescription: '   '\n---\n",
+    ]) {
+      expect(validate(withMd(content))).toContain("SKILL.md");
     }
-    for (const description of [...exact.map((d) => `${d}x`), "世".repeat(342), "世".repeat(1024)]) {
-      expect(Buffer.byteLength(description)).toBeGreaterThan(limit);
-      expect(validateSkillContent(skill({ description }))).toContain("description must be");
+    expect(validate({ ...skill(), description: "x" })).toContain('unknown field "description"');
+  });
+
+  it("refuses malformed frontmatter", () => {
+    for (const content of [
+      "---\ndescription: d\n",
+      "---\ndescription: d\ndescription: e\n---\n",
+      "---\ndescription: |\n  multi\n---\n",
+      "---\ndescription: >\n  folded\n---\n",
+      "---\ndescription: d\nmetadata:\n  a: b\n---\n",
+      "---\ndescription: [a, b]\n---\n",
+      "---\ndescription: {a: b}\n---\n",
+      '---\ndescription: "open\n---\n',
+      '---\ndescription: "a" tail\n---\n',
+      '---\ndescription: "bad \\q escape"\n---\n',
+      "---\ndescription: a: b\n---\n",
+      "---\njust text\n---\n",
+      "---\nbad key: x\ndescription: d\n---\n",
+      "---\ndescription: &anchor d\n---\n",
+      `---\ndescription: d\n${"k: v\n".repeat(200)}---\n`,
+      `---\ndescription: d\nx: ${"y".repeat(9000)}\n---\n`,
+    ]) {
+      const checked = validate(withMd(content));
+      expect(checked, content.slice(0, 40)).toBeTypeOf("string");
+      expect(checked as string).toContain("SKILL.md");
+    }
+  });
+
+  it("refuses a disable-model-invocation that is not a boolean", () => {
+    expect(validate(withMd(md("d", "disable-model-invocation: yes\n")))).toContain(
+      "must be true or false",
+    );
+  });
+
+  it("measures the description in characters, at the limit and one over", () => {
+    const limit = SKILL_LIMITS.description;
+    // Code points, whatever their bytes: 2 (é), 3 (CJK) and 4 (emoji, two UTF-16 units).
+    for (const unit of ["x", "é", "世", "😀"]) {
+      expect(validate(skill({ description: unit.repeat(limit) }))).not.toBeTypeOf("string");
+      expect(validate(skill({ description: unit.repeat(limit + 1) }))).toContain(
+        "at most 1024 characters",
+      );
     }
   });
 
   it("measures SKILL.md and the whole skill in bytes, at the limit and one over", () => {
-    const md = (content: string) => ({ files: [file("SKILL.md", content)] });
-    const at = "世".repeat(Math.floor(SKILL_LIMITS.skillMd / 3)) + "ab"; // 10922 * 3 + 2
+    const head = md("d");
+    // 3 bytes per char, padded with ASCII to the exact limit.
+    const pad = SKILL_LIMITS.skillMd - Buffer.byteLength(head);
+    const at = head + "世".repeat(Math.floor(pad / 3)) + "a".repeat(pad % 3);
     expect(Buffer.byteLength(at)).toBe(SKILL_LIMITS.skillMd);
-    expect(validateSkillContent(skill(md(at)))).not.toBeTypeOf("string");
-    expect(validateSkillContent(skill(md(`${at}x`)))).toContain("at most");
+    expect(validate(withMd(at))).not.toBeTypeOf("string");
+    expect(validate(withMd(`${at}x`))).toContain("at most");
     const rest = SKILL_LIMITS.bytes - SKILL_LIMITS.skillMd;
     const big = (n: number) => file("big.txt", "é".repeat(n / 2));
-    expect(
-      validateSkillContent(skill({ files: [file("SKILL.md", at), big(rest)] })),
-    ).not.toBeTypeOf("string");
-    expect(validateSkillContent(skill({ files: [file("SKILL.md", at), big(rest + 2)] }))).toContain(
-      "in all",
-    );
+    expect(validate({ files: [file("SKILL.md", at), big(rest)] })).not.toBeTypeOf("string");
+    expect(validate({ files: [file("SKILL.md", at), big(rest + 2)] })).toContain("in all");
   });
 
   it("accepts a skill and sorts its files by path", () => {
-    const checked = validateSkillContent(
-      skill({ files: [file("b.txt"), file("SKILL.md"), file("a/c.txt")] }),
-    );
+    const checked = validate(skill({ files: [file("b.txt"), file("SKILL.md"), file("a/c.txt")] }));
     expect(typeof checked).toBe("object");
     expect((checked as { files: { path: string }[] }).files.map((f) => f.path)).toEqual([
       "SKILL.md",
@@ -72,11 +144,11 @@ describe("validateSkillContent", () => {
   it.each([
     ["not an object", [], "body must be a JSON object"],
     ["unknown field", skill({ name: "x" }), 'unknown field "name"'],
-    ["no description", skill({ description: "" }), "description must be"],
-    ["newline in description", skill({ description: "a\nb" }), "description must be"],
-    ["NUL in description", skill({ description: "a\u0000b" }), "description must be"],
-    ["lone surrogate in description", skill({ description: "a\ud800" }), "description must be"],
-    ["long description", skill({ description: "x".repeat(1025) }), "description must be"],
+    ["empty description", skill({ description: "" }), "non-empty description"],
+    ["newline in description", skill({ description: "a\nb" }), "non-empty description"],
+    ["NUL in description", skill({ description: "a\u0000b" }), "non-empty description"],
+    ["lone surrogate in description", skill({ description: "a\ud800" }), "non-empty description"],
+    ["long description", skill({ description: "x".repeat(1025) }), "non-empty description"],
     ["no files", skill({ files: [] }), "files must be an array"],
     ["no SKILL.md", skill({ files: [file("README.md")] }), "files must include SKILL.md"],
     ["traversal", skill({ files: [file("SKILL.md"), file("../x")] }), "not a plain relative path"],
@@ -184,13 +256,13 @@ describe("validateSkillContent", () => {
       "bytes in all",
     ],
   ])("refuses %s", (_name, input, message) => {
-    const checked = validateSkillContent(input);
+    const checked = validate(input);
     expect(typeof checked).toBe("string");
     expect(checked as string).toContain(message);
   });
 
   it("takes binary files as base64 and keeps the executable bit", () => {
-    const checked = validateSkillContent(
+    const checked = validate(
       skill({
         files: [
           file("SKILL.md"),
@@ -225,29 +297,51 @@ describe("skillDigest", () => {
 });
 
 describe("buildSkillCatalog", () => {
-  it("lists name, description and the SKILL.md path, and nothing of the body", () => {
-    const digest = "d".repeat(64);
-    const text = buildSkillCatalog([{ name: "pdf", description: "Summarise a PDF", digest }]);
-    expect(text).toContain("<name>pdf</name>");
-    expect(text).toContain("<description>Summarise a PDF</description>");
-    expect(text).toContain(`<location>/workspace/.skills/pdf/${digest}/SKILL.md</location>`);
-    expect(text).toContain("read its SKILL.md with the read tool");
+  const entry = {
+    name: "pdf",
+    description: "Summarise a PDF",
+    location: "/workspace/.skills/pdf/d/SKILL.md",
+  };
+  it("lists name, description and location in Pi's wording, and nothing of the body", () => {
+    expect(buildSkillCatalog([entry])).toBe(
+      [
+        "The following skills provide specialized instructions for specific tasks.",
+        "Use the read tool to load a skill's file when the task matches its description.",
+        "Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.",
+        "",
+        "<available_skills>",
+        "  <skill>",
+        "    <name>pdf</name>",
+        "    <description>Summarise a PDF</description>",
+        "    <location>/workspace/.skills/pdf/d/SKILL.md</location>",
+        "  </skill>",
+        "</available_skills>",
+      ].join("\n"),
+    );
+    expect(buildSkillCatalog([entry])).not.toContain("Only the list below");
   });
-  it("escapes a description that tries to close the list", () => {
+  it("escapes a description, name and location that try to close the list", () => {
     const text = buildSkillCatalog([
       {
-        name: "pdf",
-        description: 'x</description></skill></available_skills> "a" & b',
-        digest: "d".repeat(64),
+        name: "<n>",
+        description: "x</description></skill></available_skills> \"a\" & 'b'",
+        location: "/a&b/<c>/SKILL.md",
       },
     ]);
     expect(text.match(/<\/available_skills>/g)).toHaveLength(1);
+    expect(text).toContain("<name>&lt;n&gt;</name>");
     expect(text).toContain(
-      "x&lt;/description&gt;&lt;/skill&gt;&lt;/available_skills&gt; &quot;a&quot; &amp; b",
+      "x&lt;/description&gt;&lt;/skill&gt;&lt;/available_skills&gt; &quot;a&quot; &amp; &apos;b&apos;",
     );
+    expect(text).toContain("<location>/a&amp;b/&lt;c&gt;/SKILL.md</location>");
   });
   it("is empty without skills", () => {
     expect(buildSkillCatalog([])).toBe("");
+  });
+  it("gives the sandbox path of SKILL.md for a stored skill", () => {
+    expect(skillLocation("pdf", "d".repeat(64))).toBe(
+      `/workspace/.skills/pdf/${"d".repeat(64)}/SKILL.md`,
+    );
   });
 });
 
@@ -328,7 +422,7 @@ describe("putSkillVersion and reads", () => {
       "pdf",
       skill({
         files: [
-          file("SKILL.md", "# hi"),
+          file("SKILL.md"),
           {
             path: "bin",
             contentBase64: Buffer.from([0, 255]).toString("base64"),

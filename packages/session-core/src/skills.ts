@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
+import { parseFrontmatter } from "./frontmatter.js";
 
 /**
- * Skills (docs/decisions/0011-skills-in-postgres.md): immutable, numbered versions of a description, a SKILL.md and
- * optional files, identified by a content digest. This module is the one place that validates a skill (admin input and
+ * Skills (docs/decisions/0011-skills-in-postgres.md): immutable, numbered versions of a SKILL.md (whose frontmatter
+ * gives the description) and optional files, identified by a content digest. This module is the one place that validates a skill (admin input and
  * stored rows alike), the only reader and writer of `inbox.skills`, `inbox.skill_versions` and
  * `inbox.skill_version_files`, and the one that builds the catalog the model sees.
  */
@@ -14,6 +15,7 @@ export const SKILL_ENTRY = "SKILL.md";
 export const SKILLS_ROOT = "/workspace/.skills";
 
 export const SKILL_LIMITS = {
+  /** Characters (code points) of the frontmatter `description`, as in the Agent Skills format. */
   description: 1024,
   skillMd: 32 * 1024,
   files: 128,
@@ -54,7 +56,11 @@ export interface SkillFileEntry {
 
 /** A validated skill, ready to store. */
 export interface SkillContent {
+  /** From the SKILL.md frontmatter (`name` there, when present, equals the one in the URL). */
+  name: string;
   description: string;
+  /** `disable-model-invocation: true`: published and pinnable, but not in the catalog the model sees. */
+  disableModelInvocation: boolean;
   files: { path: string; content: Buffer; executable: boolean }[];
 }
 
@@ -119,28 +125,24 @@ function decodeFileBytes(entry: Record<string, unknown>, path: string): Buffer |
 }
 
 /**
- * The one validator for admin input: `{ description, files: [{ path, content | contentBase64, executable? }] }`. Only
- * regular files can be said, so symlinks, devices and modes other than the executable bit cannot be expressed; any
- * other field is refused. Traversal, absolute paths, duplicates (also differing only in case, or a file that is also a
- * directory) and every limit of `SKILL_LIMITS` are refused. Returns the content or the message for a 400.
+ * The one validator for admin input: `{ files: [{ path, content | contentBase64, executable? }] }`. The description
+ * (required) and optionally the name come from the YAML frontmatter of SKILL.md, so a skill folder is the same in a repo
+ * and here; `name` must equal `name` (the URL's) when present. Only regular files can be said, so symlinks, devices and
+ * modes other than the executable bit cannot be expressed; any other field, `description` included, is refused.
+ * Traversal, absolute paths, duplicates (also differing only in case, or a file that is also a directory) and every
+ * limit of `SKILL_LIMITS` are refused. Sizes are bytes (`skillMd`, `bytes`) except the description, which is characters
+ * like the format says. Returns the content or the message for a 400.
  */
-export function validateSkillContent(input: unknown): SkillContent | string {
+export function validateSkillContent(input: unknown, name: string): SkillContent | string {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return "body must be a JSON object";
   }
   const body = input as Record<string, unknown>;
   for (const key of Object.keys(body)) {
-    if (key !== "description" && key !== "files") return `unknown field "${key.slice(0, 50)}"`;
-  }
-  const { description } = body;
-  if (
-    typeof description !== "string" ||
-    description.trim() === "" ||
-    Buffer.byteLength(description, "utf8") > SKILL_LIMITS.description ||
-    unstorable(description) ||
-    CONTROL.test(description)
-  ) {
-    return `description must be a one-line string of 1 to ${String(SKILL_LIMITS.description)} bytes of UTF-8, without control characters, NUL or unpaired surrogates`;
+    if (key === "description") {
+      return `unknown field "description": it is read from the ${SKILL_ENTRY} frontmatter`;
+    }
+    if (key !== "files") return `unknown field "${key.slice(0, 50)}"`;
   }
   const { files } = body;
   if (!Array.isArray(files) || files.length === 0 || files.length > SKILL_LIMITS.files) {
@@ -187,14 +189,48 @@ export function validateSkillContent(input: unknown): SkillContent | string {
   if (entryFile.content.length > SKILL_LIMITS.skillMd) {
     return `${SKILL_ENTRY} may hold at most ${String(SKILL_LIMITS.skillMd)} bytes`;
   }
+  let text: string;
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(entryFile.content);
-    if (text.includes("\u0000")) return `${SKILL_ENTRY} must not contain NUL`;
+    text = new TextDecoder("utf-8", { fatal: true }).decode(entryFile.content);
   } catch {
     return `${SKILL_ENTRY} must be valid UTF-8`;
   }
+  if (text.includes("\u0000")) return `${SKILL_ENTRY} must not contain NUL`;
+  const meta = skillMetaFromFrontmatter(text, name);
+  if (typeof meta === "string") return meta;
   out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { description, files: out };
+  return { name, ...meta, files: out };
+}
+
+/** The name, description and model-invocation flag of a SKILL.md, or the message for a 400. */
+function skillMetaFromFrontmatter(
+  text: string,
+  name: string,
+): Pick<SkillContent, "description" | "disableModelInvocation"> | string {
+  const parsed = parseFrontmatter(text);
+  if (parsed.kind === "none") {
+    return `${SKILL_ENTRY} must start with a YAML frontmatter block (--- lines) that has a description`;
+  }
+  if (parsed.kind === "error") return `${SKILL_ENTRY}: ${parsed.message}`;
+  const declared = parsed.fields.get("name");
+  if (declared !== undefined && declared !== name) {
+    return `${SKILL_ENTRY} frontmatter name "${declared.slice(0, 80)}" differs from the skill name "${name}" in the path`;
+  }
+  const description = parsed.fields.get("description");
+  if (
+    description === undefined ||
+    description.trim() === "" ||
+    Array.from(description).length > SKILL_LIMITS.description ||
+    unstorable(description) ||
+    CONTROL.test(description)
+  ) {
+    return `${SKILL_ENTRY} frontmatter must have a non-empty description of at most ${String(SKILL_LIMITS.description)} characters, on one line, without control characters, NUL or unpaired surrogates`;
+  }
+  const flag = parsed.fields.get("disable-model-invocation");
+  if (flag !== undefined && flag !== "true" && flag !== "false") {
+    return `${SKILL_ENTRY} frontmatter disable-model-invocation must be true or false`;
+  }
+  return { description, disableModelInvocation: flag === "true" };
 }
 
 export function manifestOf(content: SkillContent): SkillFileEntry[] {
@@ -218,41 +254,55 @@ export function skillDir(name: string, digest: string, root: string = SKILLS_ROO
   return `${root}/${name}/${digest}`;
 }
 
+/** The sandbox path of a skill's SKILL.md: what the catalog gives the model to read. */
+export function skillLocation(name: string, digest: string, root: string = SKILLS_ROOT): string {
+  return `${skillDir(name, digest, root)}/${SKILL_ENTRY}`;
+}
+
+/** As Pi's `escapeXml` (earendil-works/pi, packages/coding-agent/src/core/skills.ts). */
 const escapeXml = (text: string): string =>
-  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 
 /**
- * The catalog appended to a session's instructions: name, description and the path of the SKILL.md of each selected
- * skill, escaped (a description is model input from an operator, reviewed like code; the escaping only keeps one
- * from closing the list). The bodies are never in the prompt: the model reads them from the sandbox. A new session
- * stores this text with its conversation, so a later version changes no session.
+ * The catalog appended to a session's instructions, in the wording and `<available_skills>` shape of Pi's
+ * `formatSkillsForPrompt` (Pi 1.5.2): name, description and the absolute path of the SKILL.md of each entry, escaped
+ * (a description is model input from an operator, reviewed like code; the escaping only keeps one from closing the
+ * list). The caller leaves out skills that disable model invocation. The bodies are never in the prompt: the model
+ * reads them with the read tool. A new session stores this text with its conversation, so a later version changes no
+ * session. `location` is any absolute path, so a repo skill (#71) fits.
  */
 export function buildSkillCatalog(
-  skills: readonly { name: string; description: string; digest: string }[],
-  root: string = SKILLS_ROOT,
+  skills: readonly { name: string; description: string; location: string }[],
 ): string {
   if (skills.length === 0) return "";
-  const entries = skills.map(
-    (skill) =>
-      `<skill>\n<name>${escapeXml(skill.name)}</name>\n<description>${escapeXml(skill.description)}</description>\n<location>${escapeXml(
-        `${skillDir(skill.name, skill.digest, root)}/${SKILL_ENTRY}`,
-      )}</location>\n</skill>`,
-  );
-  return [
-    "## Skills",
-    "",
-    `A skill is a folder with a ${SKILL_ENTRY} (instructions) and optional scripts and resources. When a task matches a skill's description, read its ${SKILL_ENTRY} with the read tool before you act, and follow it. Paths inside a skill are relative to its folder. Only the list below is available.`,
+  const lines = [
+    "The following skills provide specialized instructions for specific tasks.",
+    "Use the read tool to load a skill's file when the task matches its description.",
+    "Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.",
     "",
     "<available_skills>",
-    ...entries,
-    "</available_skills>",
-  ].join("\n");
+  ];
+  for (const skill of skills) {
+    lines.push("  <skill>");
+    lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+    lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+    lines.push(`    <location>${escapeXml(skill.location)}</location>`);
+    lines.push("  </skill>");
+  }
+  lines.push("</available_skills>");
+  return lines.join("\n");
 }
 
 export interface SkillVersionMeta {
   name: string;
   version: number;
   description: string;
+  disableModelInvocation: boolean;
   digest: string;
   size: number;
   files: SkillFileEntry[];
@@ -269,6 +319,7 @@ export interface StoredSkill {
   name: string;
   currentVersion: number;
   description: string;
+  disableModelInvocation: boolean;
   digest: string;
   createdAt: Date;
   createdBy: string;
@@ -282,6 +333,7 @@ interface VersionRow {
   name: string;
   version: number;
   description: string;
+  disable_model_invocation: boolean;
   digest: string;
   size_bytes: number;
   manifest: unknown;
@@ -319,6 +371,7 @@ function metaFromRow(row: VersionRow): SkillVersionMeta {
     name: row.name,
     version: row.version,
     description: row.description,
+    disableModelInvocation: row.disable_model_invocation,
     digest: row.digest,
     size: row.size_bytes,
     files: manifestFromRow(row),
@@ -328,7 +381,7 @@ function metaFromRow(row: VersionRow): SkillVersionMeta {
 }
 
 const VERSION_COLUMNS =
-  "name, version, description, digest, size_bytes, manifest, created_at, created_by";
+  "name, version, description, disable_model_invocation, digest, size_bytes, manifest, created_at, created_by";
 
 /** One version's metadata (no bytes); undefined if there is none. A manifest that does not parse is thrown. */
 export async function readSkillVersion(
@@ -419,6 +472,7 @@ function storedFromRow(row: SkillRow): StoredSkill {
     name: row.name,
     currentVersion: row.current_version,
     description: row.description,
+    disableModelInvocation: row.disable_model_invocation,
     digest: row.digest,
     createdAt: row.s_created_at,
     createdBy: row.s_created_by,
@@ -429,7 +483,7 @@ function storedFromRow(row: SkillRow): StoredSkill {
 
 const SKILL_SELECT = `select s.name, s.current_version, s.created_at as s_created_at, s.created_by as s_created_by,
        s.updated_at as s_updated_at, s.updated_by as s_updated_by,
-       v.version, v.description, v.digest, v.size_bytes, v.manifest, v.created_at, v.created_by
+       v.version, v.description, v.disable_model_invocation, v.digest, v.size_bytes, v.manifest, v.created_at, v.created_by
   from inbox.skills s join inbox.skill_versions v on v.name = s.name and v.version = s.current_version`;
 
 /** Every skill at its current version. */
@@ -479,7 +533,7 @@ export async function putSkillVersion(
 ): Promise<PutSkillResult> {
   const nameError = skillNameError(name);
   if (nameError !== undefined) return { ok: false, message: nameError };
-  const content = validateSkillContent(input);
+  const content = validateSkillContent(input, name);
   if (typeof content === "string") return { ok: false, message: content };
   const files = manifestOf(content);
   const digest = skillDigest(name, content.description, files);
@@ -500,9 +554,18 @@ export async function putSkillVersion(
       );
     }
     await client.query(
-      `insert into inbox.skill_versions (name, version, description, digest, size_bytes, manifest, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7)`,
-      [name, version, content.description, digest, size, JSON.stringify(files), by],
+      `insert into inbox.skill_versions (name, version, description, disable_model_invocation, digest, size_bytes, manifest, created_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        name,
+        version,
+        content.description,
+        content.disableModelInvocation,
+        digest,
+        size,
+        JSON.stringify(files),
+        by,
+      ],
     );
     for (const file of content.files) {
       await client.query(
@@ -527,14 +590,15 @@ export async function putSkillVersion(
 /**
  * Resolves the skills a profile names against what is published: each exact version must exist, a digest that was
  * given must match, and the catalog the set adds to the instructions must fit. Returns the refs with the digests filled
- * in (what the profile stores and a session snapshots) and the descriptions, or the message for a 400.
+ * in (what the profile stores and a session snapshots), or the message for a 400. Skills that disable model invocation
+ * are not in the catalog, so they do not count against its size.
  */
 export async function pinSkillRefs(
   db: Db,
   refs: readonly SkillRef[],
-): Promise<{ refs: (SkillRef & { digest: string })[]; descriptions: string[] } | string> {
+): Promise<{ refs: (SkillRef & { digest: string })[] } | string> {
   const pinned: (SkillRef & { digest: string })[] = [];
-  const catalog: { name: string; description: string; digest: string }[] = [];
+  const catalog: { name: string; description: string; location: string }[] = [];
   for (const ref of refs) {
     const meta = await readSkillVersion(db, ref.name, ref.version);
     if (meta === undefined)
@@ -543,10 +607,16 @@ export async function pinSkillRefs(
       return `skills: "${ref.name}" version ${String(ref.version)} has digest ${meta.digest}, not ${ref.digest}`;
     }
     pinned.push({ name: ref.name, version: ref.version, digest: meta.digest });
-    catalog.push({ name: ref.name, description: meta.description, digest: meta.digest });
+    if (!meta.disableModelInvocation) {
+      catalog.push({
+        name: ref.name,
+        description: meta.description,
+        location: skillLocation(ref.name, meta.digest),
+      });
+    }
   }
   if (Buffer.byteLength(buildSkillCatalog(catalog)) > SKILL_LIMITS.catalog) {
     return `skills: the catalog of these skills is larger than ${String(SKILL_LIMITS.catalog)} bytes`;
   }
-  return { refs: pinned, descriptions: catalog.map((entry) => entry.description) };
+  return { refs: pinned };
 }

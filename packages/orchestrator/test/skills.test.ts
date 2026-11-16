@@ -16,10 +16,11 @@ import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { materializeSkills, SkillIntegrityError, SkillLibrary } from "../src/skills.ts";
 
 const KNOWN = { tools: ["read", "write", "edit", "bash"], mcpServers: [] };
+const skillMd = (description: string, extra = "", name = "pdf") =>
+  `---\nname: ${name}\ndescription: ${description}\n${extra}---\n# PDF\nRun scripts/run.sh\n`;
 const PDF = {
-  description: "Summarise a PDF",
   files: [
-    { path: "SKILL.md", content: "# PDF\nRun scripts/run.sh\n" },
+    { path: "SKILL.md", content: skillMd("Summarise a PDF") },
     { path: "scripts/run.sh", content: "#!/bin/sh\necho skill-ran\n", executable: true },
     { path: "data/blob.bin", contentBase64: Buffer.from([0, 1, 254, 255]).toString("base64") },
   ],
@@ -69,7 +70,10 @@ describe("materializeSkills", () => {
   it("writes a new version beside the old one and keeps both", async () => {
     const db = new FakeSettingsDb();
     const v1 = await published(db);
-    const v2 = await published(db, { ...PDF, description: "changed" });
+    const v2 = await published(db, {
+      ...PDF,
+      files: [{ path: "SKILL.md", content: skillMd("changed") }],
+    });
     expect(v1.digest).not.toBe(v2.digest);
     await materializeSkills(env, [v1], skillsDir());
     await materializeSkills(env, [v2], skillsDir());
@@ -150,14 +154,12 @@ describe("materializeSkills", () => {
 });
 
 describe("SkillLibrary", () => {
-  async function session(db: FakeSettingsDb, conversationId: number) {
-    await putProfile(
-      db.asPool(),
-      "docs",
-      { definition: { skills: [{ name: "pdf", version: 1 }] } },
-      "alice",
-      KNOWN,
-    );
+  async function session(
+    db: FakeSettingsDb,
+    conversationId: number,
+    skills: { name: string; version: number }[] = [{ name: "pdf", version: 1 }],
+  ) {
+    await putProfile(db.asPool(), "docs", { definition: { skills } }, "alice", KNOWN);
     const stored = await readProfile(db.asPool(), "docs");
     const id = await createSession(
       db.asPool(),
@@ -185,6 +187,35 @@ describe("SkillLibrary", () => {
     expect(await library.catalogFor({})).toBeUndefined();
   });
 
+  it("leaves a skill that disables model invocation out of the catalog, but still writes it", async () => {
+    const db = new FakeSettingsDb();
+    await published(db);
+    const hidden = await published(
+      db,
+      {
+        files: [
+          {
+            path: "SKILL.md",
+            content: skillMd("Hidden", "disable-model-invocation: true\n", "secret"),
+          },
+        ],
+      },
+      "secret",
+    );
+    const pool = db.asPool();
+    await session(db, 9, [
+      { name: "pdf", version: 1 },
+      { name: "secret", version: 1 },
+    ]);
+    const stored = await readProfile(pool, "docs");
+    const library = new SkillLibrary(pool);
+    const catalog = await library.catalogFor(stored?.definition ?? {});
+    expect(catalog).toContain("<name>pdf</name>");
+    expect(catalog).not.toContain("secret");
+    expect((await library.bundlesFor(9)).map((b) => b.name).sort()).toEqual(["pdf", "secret"]);
+    expect(hidden.disableModelInvocation).toBe(true);
+  });
+
   it("returns the verified bundles of a conversation's session, and none for another or a plain one", async () => {
     const db = new FakeSettingsDb();
     const v1 = await published(db);
@@ -199,7 +230,7 @@ describe("SkillLibrary", () => {
     const db = new FakeSettingsDb();
     const v1 = await published(db);
     await session(db, 7);
-    await published(db, { ...PDF, description: "changed" });
+    await published(db, { ...PDF, files: [{ path: "SKILL.md", content: skillMd("changed") }] });
     const library = new SkillLibrary(db.asPool());
     expect((await library.bundlesFor(7))[0]?.digest).toBe(v1.digest);
     const stored = await readProfile(db.asPool(), "docs");

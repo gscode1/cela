@@ -63,10 +63,14 @@ const call = (
   });
 const json = async (response: Response) => (await response.json()) as Record<string, unknown>;
 
+const skillMd = (description: string, extra = "") =>
+  `---\ndescription: ${description}\n${extra}---\n# PDF\nRun scripts/run.sh\n`;
+const withDescription = (description: string) => ({
+  files: [{ path: "SKILL.md", content: skillMd(description) }, ...PDF.files.slice(1)],
+});
 const PDF = {
-  description: "Summarise a PDF",
   files: [
-    { path: "SKILL.md", content: "# PDF\nRun scripts/run.sh" },
+    { path: "SKILL.md", content: skillMd("Summarise a PDF") },
     { path: "scripts/run.sh", content: "echo hi\n", executable: true },
   ],
 };
@@ -114,10 +118,13 @@ describe("admin skills", () => {
     const again = await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF);
     expect(again.status).toBe(200);
     expect(await json(again)).toMatchObject({ version: 1, versionCreated: false });
-    const second = await call(base, "alice", "POST", "/admin/skills/pdf/versions", {
-      ...PDF,
-      description: "Summarise PDFs",
-    });
+    const second = await call(
+      base,
+      "alice",
+      "POST",
+      "/admin/skills/pdf/versions",
+      withDescription("Summarise PDFs"),
+    );
     expect(second.status).toBe(201);
     expect(await json(second)).toMatchObject({ version: 2 });
     expect(db.skillVersions).toHaveLength(2);
@@ -152,22 +159,50 @@ describe("admin skills", () => {
     const { base, db } = await start();
     const publish = (body: unknown) =>
       call(base, "alice", "POST", "/admin/skills/pdf/versions", body);
-    const skillMd = { path: "SKILL.md", content: "x" };
+    const skillMdText = "---\ndescription: d\n---\n";
+    const skillMd = { path: "SKILL.md", content: skillMdText };
     for (const files of [
       [skillMd, { path: "../escape", content: "x" }],
       [skillMd, { path: "/abs", content: "x" }],
       [skillMd, { path: "link", content: "x", symlink: "/etc/passwd" }],
       [skillMd, { path: "a", content: "x" }, { path: "a", content: "y" }],
-      [{ path: "SKILL.md", content: "x".repeat(32 * 1024 + 1) }],
+      [{ path: "SKILL.md", content: skillMdText + "x".repeat(32 * 1024) }],
       [skillMd, { path: "big", content: "x".repeat(5 * 1024 * 1024 + 1) }],
     ]) {
-      const response = await publish({ description: "d", files });
+      const response = await publish({ files });
       expect(response.status, JSON.stringify(files).slice(0, 60)).toBe(400);
     }
-    expect((await publish({ description: "d" })).status).toBe(400);
-    expect((await publish({ description: "d\u0000", files: [skillMd] })).status).toBe(400);
+    expect((await publish({})).status).toBe(400);
+    expect((await publish({ description: "d", files: [skillMd] })).status).toBe(400);
     expect(db.skills.size).toBe(0);
     expect(db.skillFiles).toHaveLength(0);
+  });
+
+  it("derives name and description from the SKILL.md frontmatter and answers 400 for what it cannot", async () => {
+    const { base, db } = await start();
+    const publish = (path: string, content: string) =>
+      call(base, "alice", "POST", `/admin/skills/${path}/versions`, {
+        files: [{ path: "SKILL.md", content }],
+      });
+    const ok = await publish("pdf", skillMd("From the file", "name: pdf\n"));
+    expect(ok.status).toBe(201);
+    expect(await json(ok)).toMatchObject({
+      name: "pdf",
+      description: "From the file",
+      disableModelInvocation: false,
+    });
+    const hidden = await publish("quiet", skillMd("Quiet", "disable-model-invocation: true\n"));
+    expect(await json(hidden)).toMatchObject({ name: "quiet", disableModelInvocation: true });
+    for (const [path, content] of [
+      ["other", skillMd("d", "name: pdf\n")],
+      ["nodesc", "---\nname: nodesc\n---\n"],
+      ["nofm", "# just a body\n"],
+      ["bad", "---\ndescription: |\n  block\n---\n"],
+    ] as const) {
+      const response = await publish(path, content);
+      expect(response.status, path).toBe(400);
+    }
+    expect([...db.skills.keys()].sort()).toEqual(["pdf", "quiet"]);
   });
 
   it("has no delete and no update of a version", async () => {
@@ -194,7 +229,7 @@ describe("profiles with skills and sessions", () => {
     expect((await json(put)).definition).toEqual({ skills: [{ name: "pdf", version: 1, digest }] });
 
     const created = await json(await call(base, "bob", "POST", "/sessions", { profile: "docs" }));
-    await call(base, "alice", "POST", "/admin/skills/pdf/versions", { ...PDF, description: "new" });
+    await call(base, "alice", "POST", "/admin/skills/pdf/versions", withDescription("new"));
     const got = await json(
       await call(base, "bob", "GET", `/sessions/${String(created.sessionId)}`),
     );
