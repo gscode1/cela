@@ -77,7 +77,7 @@ the conversation and so survives restarts unchanged) and the sandbox env for the
 - Importing from git or an image (the issue: later; sources resolve into immutable content first).
 - A `load_skill({name})` tool for profiles without `read`, and a read-only mount instead of the writable workspace.
   Until then a skill directory that already exists is not re-verified on disk, because the PVC is writable by the agent.
-- Repo skills (#71), which will reuse the frontmatter parser and the catalog builder.
+- Repo skills: done in [0014](0014-repo-skills.md), which reuses the frontmatter parser and the catalog builder.
 - A per-principal rule for who may publish beyond "admin", and a UI.
 - Garbage collection of old digests on the PVC (the PVC goes with the session).
 

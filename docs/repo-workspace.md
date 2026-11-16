@@ -65,6 +65,14 @@ path absent counts: a failing check (bridge or Pod error) is a transient error a
 (repo not in the installation) also fails the session; transient errors, GitHub rate limiting (429, or 403 with
 `x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (5 attempts).
 
+## Repo skills
+
+With the profile switch `repoSkills` (ADR 0014; `docs/session-api.md`, Repo skills), `SessionService.prepare` scans the
+clone for `SKILL.md` files under `.pi/skills` and `.agents/skills` right after the clone step and again before each new
+message, but only while the session's sandbox is already open (it never resumes a suspended one for this). The scan
+runs through the session's env (`listDir`, `readTextFile`) and writes nothing to the workspace; the result goes into the
+conversation's instructions.
+
 ## Branch ruleset: agents may only touch `agent/**`
 
 A session token has `contents: write` on its repository, and GitHub cannot scope a token by ref. Without a guard the agent can

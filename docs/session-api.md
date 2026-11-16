@@ -31,7 +31,7 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `POST /sessions` body `{ profile?, provider?, model?, reasoning?, repo?, branch? }` | `201 { sessionId, profile: { name, version }, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default profile and the default model. `profile` (optional) is the name of a session profile (see Session profiles): an unknown, malformed or disabled-for-new profile is `400`; omitted, the settings' `defaultProfile` applies (`coding` unless changed; if that profile is gone or disabled the answer is `503`, never another profile). The profile's definition is stored with the session as a snapshot. `provider` and `model` default to the profile's `defaultModel`, `reasoning` to its `reasoning`, and then to the settings; a request value always wins, and the result is checked against the allowlist and cap as below. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `reasoning` (optional) is the effort of the session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; anything else is `400 { "error": "reasoning must be one of ..." }`, and a level above the operator cap `maxReasoning` is `400 { "error": "reasoning <level> is above the allowed maximum <cap>" }` (see Models). Omitted, the session gets the settings default (none stored when there is none). `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
 | `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
-| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
+| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], repoSkills?: true, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `repoSkills: true` is present only when the snapshot turned repo skills on and the session has a repo. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
 | `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, defaultProfile, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
 | `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, maxReasoning?, defaultProfile?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it, `maxReasoning: null` removes the cap, and `reasoning` above `maxReasoning` is `400`. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `defaultProfile` the name of an existing profile that is enabled for new sessions (else `400`), `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
 | `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
@@ -262,7 +262,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `011_skill_model_invocation.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `012_coding_repo_skills.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
@@ -323,12 +323,13 @@ with `profile` on `POST /sessions`. A definition is a JSON object whose fields a
 | `turnBudget` | model turns the session may use in total; replaces the settings' budget for it | the settings' |
 | `mcpServers` | names of MCP catalog servers; the session gets `tool_search` and their tools | no MCP |
 | `skills` | `[{ name, version }]`: exact skill versions (at most 20); see Skills | none |
+| `repoSkills` | `true`: add the skills found in the session's cloned repo to its catalog; see Repo skills (needs `read`; ignored without a repo) | off |
 
 - **Versions and snapshots.** Every changed `PUT` is the next version of the profile. A session stores the name, the
   version and the resolved definition when it is created (`inbox.sessions.profile_*`); the orchestrator uses that
   snapshot only, so editing or disabling a profile never changes a session that exists, running or resumed. A session
   created before profiles runs as `coding` version 1.
-- **`coding` version 1** is seeded by migration `008_profiles.sql` with the empty definition: every coding tool, no extra
+- **`coding` version 1** is seeded by migration `008_profiles.sql` (and, only while it is still that seed, migration `012` writes version 2: `{ "repoSkills": true }`) with the empty definition: every coding tool, no extra
   instructions, the settings' model, reasoning and turn budget, **and no MCP server**. (Before profiles a new session got
   every enabled server; to restore that, add the servers to `coding`.)
 - **Two states.** `enabledForNew` is whether a new session may choose the profile; a stored snapshot stays valid either
@@ -381,3 +382,19 @@ loads on demand. Skills are stored in Postgres as immutable, numbered versions a
   skill's description and body are model input: review them like code (`?content=true`). The workspace volume is
   writable by the agent, so it is a cache and not an immutable boundary; the next attach does not repair a directory
   that already exists.
+
+### Repo skills
+
+With `repoSkills: true` (ADR 0014; on in `coding` from version 2) a repo session also gets the skills of its clone:
+`/workspace/repo/.pi/skills/**/SKILL.md` and `/workspace/repo/.agents/skills/**/SKILL.md`, read through the sandbox,
+with the frontmatter rules above (`description` required, `name` defaults to the directory, `disable-model-invocation`
+honoured; an invalid file is skipped and logged as `repo-skill-skipped`). Their `<location>` is the path in the repo.
+
+- **One catalog.** The instructions become the profile's `instructions` followed by one `<available_skills>` block: the
+  pinned (admin) skills first, which win a name collision, then the repo's. Together at most 20 skills and 32 KiB.
+- **When.** After the clone, and again for each new message or steer of the session, but only while its sandbox is
+  already open: a suspended sandbox is never resumed for this, and a message to it keeps the last catalog. A restart
+  rescans at the next message. A skill added to the checkout shows up at the next message while the sandbox is open.
+  No watcher, no per-request scan. Unchanged text writes nothing; a scan that fails is logged and leaves the
+  instructions as they were.
+- **Not pinned.** The repo's skills are whatever the checkout holds, unlike a pinned skill. They are not copied.
