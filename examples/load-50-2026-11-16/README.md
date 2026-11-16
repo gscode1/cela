@@ -77,20 +77,44 @@ Same pattern as the five-session hunt, only stronger:
 
 Medium findings after verification:
 
-| #       | Finding                                                                                  | Verdict   | Location                                          |
-| ------- | ---------------------------------------------------------------------------------------- | --------- | ------------------------------------------------- |
-| 08      | A failed grant check replaces the OneCLI agent, but the open sandbox keeps the old token | confirmed | `packages/orchestrator/src/repo-access.ts:156`    |
-| 11      | Credential-leak checks in the repo e2e test do not assert their results                  | confirmed | `tests/e2e/run-phase4c.sh:177`                    |
-| 12      | Unknown grant categories are silently ignored                                            | plausible | `packages/orchestrator/src/onecli-admin.ts:97`    |
-| 14      | Log polling can keep the e2e entry point from returning a verdict                        | confirmed | `tests/e2e/run.sh:156`                            |
-| 17      | Filesystem errors are treated as a lost workspace                                        | confirmed | `packages/orchestrator/src/workspace.ts:64`       |
-| 22 / 29 | A stale session snapshot in the sweep can revoke a live session's credentials            | plausible | `packages/orchestrator/src/sweep.ts:128`          |
-| 23      | A GitHub rate limit (403) permanently fails a session                                    | confirmed | `packages/orchestrator/src/github-app.ts:104`     |
-| 30      | A lost DELETE response can leave the OneCLI gateway without its block rule               | plausible | `deploy/onecli-host-rules.sh:84`                  |
-| 32      | A bridge could read the launcher's master key through `/proc`                            | plausible | `packages/orchestrator/src/bridge-launcher.ts:72` |
-| 34      | Two concurrent code pushes interfere                                                     | confirmed | `deploy/push-code.sh:21`                          |
-| 37      | A failed bridge start delays unrelated sandboxes                                         | confirmed | `packages/sandbox-env/src/index.ts:51`            |
-| 38      | Removing a provider from the allowlist breaks existing conversations                     | confirmed | `packages/orchestrator/src/providers.ts:44`       |
+| #       | Finding                                                                                  | Verdict   | Location                                          | Fixed in  |
+| ------- | ---------------------------------------------------------------------------------------- | --------- | ------------------------------------------------- | --------- |
+| 08      | A failed grant check replaces the OneCLI agent, but the open sandbox keeps the old token | confirmed | `packages/orchestrator/src/repo-access.ts:156`    | #33       |
+| 11      | Credential-leak checks in the repo e2e test do not assert their results                  | confirmed | `tests/e2e/run-phase4c.sh:177`                    | #31       |
+| 12      | Unknown grant categories are silently ignored                                            | plausible | `packages/orchestrator/src/onecli-admin.ts:97`    | not fixed |
+| 14      | Log polling can keep the e2e entry point from returning a verdict                        | confirmed | `tests/e2e/run.sh:156`                            | #31       |
+| 17      | Filesystem errors are treated as a lost workspace                                        | confirmed | `packages/orchestrator/src/workspace.ts:64`       | #33       |
+| 22 / 29 | A stale session snapshot in the sweep can revoke a live session's credentials            | plausible | `packages/orchestrator/src/sweep.ts:128`          | #33       |
+| 23      | A GitHub rate limit (403) permanently fails a session                                    | confirmed | `packages/orchestrator/src/github-app.ts:104`     | #33       |
+| 30      | A lost DELETE response can leave the OneCLI gateway without its block rule               | plausible | `deploy/onecli-host-rules.sh:84`                  | not fixed |
+| 32      | A bridge could read the launcher's master key through `/proc`                            | plausible | `packages/orchestrator/src/bridge-launcher.ts:72` | #34       |
+| 34      | Two concurrent code pushes interfere                                                     | confirmed | `deploy/push-code.sh:21`                          | #31       |
+| 37      | A failed bridge start delays unrelated sandboxes                                         | confirmed | `packages/sandbox-env/src/index.ts:51`            | #34       |
+| 38      | Removing a provider from the allowlist breaks existing conversations                     | confirmed | `packages/orchestrator/src/providers.ts:44`       | #34       |
+
+## Fixes
+
+All 46 confirmed findings were fixed the same day, plus the plausible ones whose fix was small (for example the
+`/proc` master-key read and the sweep's stale snapshot). Each fix in code has a unit test that failed before it.
+
+| PR                                                       | Area                                                                                                                                         |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#31](https://github.com/gscode1/pi-durable-k8s/pull/31) | e2e tests and deploy scripts: assertions that never asserted, cleanup traps, a lock against concurrent code pushes, reproducible ingest tars |
+| [#32](https://github.com/gscode1/pi-durable-k8s/pull/32) | Input validation: model pairs, `.lock` branch names, tokens with whitespace, NUL characters, ingest config                                   |
+| [#33](https://github.com/gscode1/pi-durable-k8s/pull/33) | Lifecycle: atomic delete start, OneCLI agent kept on transient errors, sweep order, GitHub rate limits retried instead of failing a session  |
+| [#34](https://github.com/gscode1/pi-durable-k8s/pull/34) | Orchestrator and bridge: streams during delete, no launcher process holding the master key, start gate freed on bridge failure               |
+
+The four PRs were merged into one branch and run on the lab cluster before merging: phase 4 (15 tests), phase 4b with
+the real model, phase 4c (repo sessions) and phase 3 (sandbox loss, isolation, restart, double owner, long command)
+all passed. Then three checks by hand on a live session:
+
+- The bridge process's environment holds only its own sandbox token, derived from the claim name. No master key,
+  database URL or API tokens.
+- Neither that token nor the master key appears in the orchestrator log.
+- A stream open during `DELETE` got `event: deleted` and closed after 0.3 s. A new stream on the session got `410`.
+
+The two medium findings left open are plausible, not confirmed: an unknown OneCLI grant category (12) and a lost
+`DELETE` response in the host-rules script (30).
 
 ## Reproduce
 
