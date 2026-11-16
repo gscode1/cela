@@ -106,7 +106,7 @@ t_call() {
   assert_jq "the session answered" "$res" '.found==true'
   assert_jq "two tool results" "$res" '.results|length==2'
   # "Loaded" is only in tool_search's own output, never in the script.
-  assert_jq "tool_search loaded the deepwiki tool" "$res" '.results[0] | (.isError|not) and (.text|test("Loaded .*mcp__deepwiki__read_wiki_structure"))'
+  assert_jq "tool_search loaded the deepwiki tool" "$res" '.results[0] | (.isError|not) and (.text|test("Loaded [0-9]+ tools[\\s\\S]*mcp__deepwiki__read_wiki_structure"))'
   assert_jq "the DeepWiki call returned a real result" "$res" '.results[1] | (.isError|not) and (.text|length>50)'
   note "result excerpt: $(jq -r '.results[1].text' <<<"$res" | head -c 200 | tr '\n' ' ')"
   # ADR 0007 / 0003: no sandbox was needed, so no claim exists for this session and no exec marker was set.
