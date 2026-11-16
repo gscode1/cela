@@ -6,7 +6,7 @@ export function parseVmRssBytes(status: string): number | undefined {
   return match?.[1] === undefined ? undefined : Number(match[1]) * 1024;
 }
 
-/** The value after `--claim` in a `/proc/<pid>/cmdline` (NUL-separated), which is how a bridge names its sandbox. */
+/** The value after `--claim` in a `/proc/<pid>/cmdline` (NUL-separated), which is how a relay (since ADR 0016, the process pi-env spawns per env) names its sandbox. */
 export function claimOfCmdline(cmdline: string): string | undefined {
   const args = cmdline.split("\0");
   const at = args.indexOf("--claim");
@@ -21,9 +21,9 @@ export function parentPidOf(status: string): number | undefined {
 }
 
 /**
- * RSS in bytes of every bridge process that is a child of `parent`, by claim name. Linux only: elsewhere `/proc` is
- * missing and the result is empty. pi-env does not expose the child's pid, so bridges are found by their command line;
- * `bridgeCommand` execs the bridge directly, so the child is the bridge itself.
+ * RSS in bytes of every relay process that is a child of `parent`, by claim name. Linux only: elsewhere `/proc` is
+ * missing and the result is empty. pi-env does not expose the child's pid, so relays are found by their command line;
+ * `bridgeCommand` execs the relay directly, so the child is the relay itself.
  */
 export async function bridgeRssByClaim(
   parent: number = process.pid,

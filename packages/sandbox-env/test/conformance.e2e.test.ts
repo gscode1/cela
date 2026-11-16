@@ -1,7 +1,7 @@
 // Runs in the cluster only: PI_SANDBOX_E2E=1 plus the bridge env contract (see src/config.ts):
 //   PI_SANDBOX_CLAIM, PI_SANDBOX_NAMESPACE, PI_SANDBOX_AUTH_TOKEN (if sandboxd needs one),
 //   PI_SANDBOX_CONNECTIVITY (default in-cluster-service).
-// Build first (`pnpm --filter @pi-durable-k8s/sandbox-env build`): the bridge runs from dist/.
+// Build first (`pnpm --filter @pi-durable-k8s/sandbox-env build`): the relay runs from dist/.
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -17,7 +17,9 @@ describe.skipIf(!enabled)("sandbox-env e2e", () => {
     namespace: process.env.PI_SANDBOX_NAMESPACE ?? "",
     cwd: "/workspace",
     id: "pi-env:e2e",
-    bridgeCommand: [process.execPath, resolve(import.meta.dirname, "../dist/cli.js")],
+    // The broker runs in this process and needs the token; the relay child gets none.
+    ...(process.env.PI_SANDBOX_AUTH_TOKEN ? { authToken: process.env.PI_SANDBOX_AUTH_TOKEN } : {}),
+    relayCommand: [process.execPath, resolve(import.meta.dirname, "../dist/relay.js")],
   });
   afterAll(() => sandbox.close());
 

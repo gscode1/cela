@@ -56,8 +56,14 @@ export interface GatedStart {
   release: () => void;
 }
 
-/** Wires one connection's bridge launches through `gate`; every respawn takes a new turn. */
-export function gatedStart(gate: StartGate, argv: readonly string[]): GatedStart {
+/**
+ * Wires one connection's bridge launches through `gate`; every respawn takes a new turn. `argv` may be a function,
+ * called once per launch after the turn is taken (the broker's relay needs a fresh nonce each time).
+ */
+export function gatedStart(
+  gate: StartGate,
+  argv: readonly string[] | (() => readonly string[] | Promise<readonly string[]>),
+): GatedStart {
   let release: (() => void) | undefined;
   let waiting: AbortController | undefined;
   const free = (): void => {
@@ -74,7 +80,7 @@ export function gatedStart(gate: StartGate, argv: readonly string[]): GatedStart
       } finally {
         if (waiting === mine) waiting = undefined;
       }
-      return argv;
+      return typeof argv === "function" ? await argv() : argv;
     },
     onLog: (text) => {
       if (text.includes(BRIDGE_READY)) free();

@@ -16,8 +16,8 @@ asks for the sandbox, the claim and bridge come up, the first command is dispatc
 | `tool-requested`   | The first tool call reaches the sandbox layer, before anything it may wait for.                   |
 | `claim-requested`  | `Sandboxes#open` starts: the SandboxClaim is about to be created, adopted or resumed.             |
 | `claim-ready`      | The claim is bound and its Pod is Ready (the SDK's wait ended).                                   |
-| `bridge-started`   | The start gate let this env spawn its bridge process (bridges start one at a time).               |
-| `bridge-ready`     | The bridge wrote `bridge: ready` (its Kubernetes and gRPC clients are loaded).                    |
+| `bridge-started`   | The start gate let this env spawn its relay process (starts go one at a time; since ADR 0016 the relay is a thin `node:net` process and the bridge runs in the orchestrator). |
+| `bridge-ready`     | The broker wrote `bridge: ready` on the relay's log connection (the sandbox process is running).  |
 | `first-exec-start` | The first `exec` of the turn is dispatched into the env. The bridge is spawned lazily by the first request, so on a cold turn this comes before `bridge-started`. |
 | `first-exec-sent`  | The first exec request leaves for a ready bridge: at `bridge-ready` after the dispatch, or at the dispatch when the bridge was already up. Ends the turn. |
 
@@ -47,7 +47,7 @@ reopened after an idle eviction, see the `bridge-*` phases). `spans` are interva
 | `model`           | `input-submitted`, `tool-requested`   | Model time before the first tool call. Not the platform's.                                                                |
 | `cap-wait`        | `tool-requested`, `claim-requested`   | Waiting before the claim is requested: a bridge slot at `PI_MAX_OPEN_BRIDGES`, a recycle under way, credential renewal.  |
 | `claim`           | `claim-requested`, `claim-ready`      | Claim create or resume until Pod Ready. Cold start and resume latency.                                                    |
-| `bridge`          | `bridge-started`, `bridge-ready`      | Bridge cold start, about 12 s on 250m CPU (plan.md).                                                                      |
+| `bridge`          | `bridge-started`, `bridge-ready`      | Relay start plus the broker's sandbox connect. Before ADR 0016 it was the bridge's Node cold start, about 12 s on 250m CPU (plan.md); compare against that.                                                                      |
 | `sandbox-to-exec` | `tool-requested`, `first-exec-sent`   | Time to first instruction: everything the platform adds between the first tool call and the first command being sent, bridge start included. |
 
 `turn` is the inbox event id, which is also the Pi Durable `requestId`, so it ties a turn to `event-submitted` and
@@ -65,8 +65,10 @@ or swept, after an hour, or when more than 1000 are pending.
 
 ## Bridge memory
 
-Every `PI_BRIDGE_RSS_INTERVAL_SECONDS` (default 60, 0 = off) the orchestrator logs one line per open bridge. The RSS is
-`VmRSS` of `/proc/<pid>/status`, found by the bridge's `--claim` argument among the orchestrator's children. On a system
+Every `PI_BRIDGE_RSS_INTERVAL_SECONDS` (default 60, 0 = off) the orchestrator logs one line per open env. Since ADR 0016 the
+RSS is that of the **relay** (a small `node:net` process), not of the bridge: the SDK and Kubernetes clients now live in
+the orchestrator, so their cost shows in the orchestrator's own RSS, which is the number to compare at 12 and 50 sessions.
+The RSS is `VmRSS` of `/proc/<pid>/status`, found by the relay's `--claim` argument among the orchestrator's children. On a system
 without `/proc` (a Mac) nothing is logged; a failed read never affects a session.
 
 ```json

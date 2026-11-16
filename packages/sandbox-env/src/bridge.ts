@@ -31,6 +31,8 @@ export interface BridgeOptions {
   stdin: Readable;
   stdout: Writable;
   stderr: Writable;
+  /** Ends the bridge as a fatal loss (the in-process broker uses it when the relay's socket is gone). */
+  signal?: AbortSignal;
 }
 
 type Outcome =
@@ -95,10 +97,15 @@ export async function runBridge(options: BridgeOptions): Promise<number> {
     }
   })();
 
-  let outcome = await Promise.race([exited, pumped, outputFailed]);
+  const aborted = new Promise<Outcome>((resolve) => {
+    const abort = (): void => resolve({ kind: "fatal", reason: "connection closed" });
+    if (options.signal?.aborted === true) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+  });
+  let outcome = await Promise.race([exited, pumped, outputFailed, aborted]);
   if (outcome.kind === "stdin-done") {
     // Stdin ended cleanly: pi-env exits on EOF, so wait for it.
-    outcome = await Promise.race([exited, outputFailed]);
+    outcome = await Promise.race([exited, outputFailed, aborted]);
   }
   try {
     if (outcome.kind === "fatal") {

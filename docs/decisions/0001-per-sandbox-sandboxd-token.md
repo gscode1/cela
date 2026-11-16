@@ -18,13 +18,13 @@ policy is wrong or a sandbox is reached another way.
   `SANDBOXD_AUTH_TOKEN_SHA256`. The hash does not reveal the token, and it is the hash of one claim's token only.
 - **Where the master lives.** Secret `sandboxd-auth`, key `master` (`deploy/gen-secret.sh`, idempotent, `ROTATE=1`
   to replace). It reaches the orchestrator (`PI_SANDBOX_MASTER_KEY`) and the e2e driver and runner. It never reaches a
-  sandbox or a bridge. The orchestrator derives the token of the bridge's own claim and starts the
-  bridge through `env -i NAME=value... node cli.js` (`bridgeCommand`, `bridge-launcher.ts`): the allow-listed variables
-  plus `PI_SANDBOX_AUTH_TOKEN`, nothing else. There is no intermediate launcher process. (An earlier launcher
-  inherited the orchestrator's whole environment from pi-env's spawn, master key included, and only trimmed its
-  child's: a same-uid bridge could read the launcher's `/proc/<pid>/environ`, which keeps the initial environment.
-  Deleting the variable at runtime would not have helped.) The token is an argument of that command, visible to
-  same-uid processes in the pod, exactly as it is in the bridge's own environment; it opens one sandbox only.
+  sandbox or a bridge. Since [0016](0016-in-process-broker.md) the derived token is no longer in a child process at all:
+  the env's broker, inside the orchestrator, holds the token of its own claim and talks to sandboxd. The process pi-env
+  spawns is a relay (`env -i NAME=value... node relay.js`, `bridgeCommand` in `bridge-launcher.ts`) with only `PATH`,
+  `HOME` and a few locale and Node variables, and no token in argv or environment. (Before 0016 the bridge was a child
+  process that got `PI_SANDBOX_AUTH_TOKEN` through `env -i`, because an earlier launcher inherited the orchestrator's whole
+  environment, master key included, and a same-uid child could read its `/proc/<pid>/environ`; the `env -i` start stays
+  for the same reason.) The token is no longer visible to same-uid processes in the pod through a command line.
 - **Re-derived, not stored.** The orchestrator derives the token whenever it opens a session's env, so a restart needs
   no state.
 

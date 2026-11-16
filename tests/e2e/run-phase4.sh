@@ -238,13 +238,13 @@ restart_count() { k get pod "$1" -o jsonpath='{.status.containerStatuses[0].rest
 restarted_beyond() { [[ $(restart_count "$1") -gt $2 ]]; }
 conv_set() { [[ -n $(conv_of "$1") ]]; }
 row_submitted() { [[ $(pg -c "select status from inbox.events where id=$1") == submitted ]]; }
-bridge_env_clean() { # at least one bridge (cli.js) runs, and none has the orchestrator's secrets (or the sandbox master) in /proc/<pid>/environ
+bridge_env_clean() { # at least one relay (relay.js) runs, and none has the orchestrator's secrets, the sandbox master or any sandboxd token in /proc/<pid>/environ
   k exec "$(orch_pods | head -1)" -c orchestrator -- node -e '
     const fs=require("fs");let bridges=0,leaks=0,sandboxd=0;
     for(const pid of fs.readdirSync("/proc").filter(p=>/^\d+$/.test(p))){
       try{
         const cmd=fs.readFileSync(`/proc/${pid}/cmdline`,"utf8");
-        if(!/sandbox-env\/dist\/cli\.js/.test(cmd))continue;
+        if(!/sandbox-env\/dist\/relay\.js/.test(cmd))continue;
         bridges++;
         const env=fs.readFileSync(`/proc/${pid}/environ`,"utf8");
         if(/PI_DURABLE_DATABASE_URL=|PI_API_TOKENS=|PI_SANDBOX_MASTER_KEY=/.test(env))leaks++;
@@ -252,7 +252,7 @@ bridge_env_clean() { # at least one bridge (cli.js) runs, and none has the orche
       }catch{}
     }
     console.log(JSON.stringify({bridges,leaks,sandboxd}));
-    process.exit(bridges>0&&leaks===0&&sandboxd===bridges?0:1)'
+    process.exit(bridges>0&&leaks===0&&sandboxd===0?0:1)'
 }
 orch_probe() { # both orchestrator probes answer 200
   k exec "$(orch_pods | head -1)" -c orchestrator -- node -e 'Promise.all(["healthz","readyz"].map(p=>fetch("http://127.0.0.1:8081/"+p))).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(2))'

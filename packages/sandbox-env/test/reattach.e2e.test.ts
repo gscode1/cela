@@ -22,7 +22,9 @@ describe.skipIf(!enabled)("sandbox-env reattach", () => {
     namespace: process.env.PI_SANDBOX_NAMESPACE ?? "",
     cwd: "/workspace",
     id: "pi-env:reattach",
-    bridgeCommand: [process.execPath, resolve(import.meta.dirname, "../dist/cli.js")],
+    // The broker runs in this process and needs the token; the relay child gets none.
+    ...(process.env.PI_SANDBOX_AUTH_TOKEN ? { authToken: process.env.PI_SANDBOX_AUTH_TOKEN } : {}),
+    relayCommand: [process.execPath, resolve(import.meta.dirname, "../dist/relay.js")],
   });
   afterAll(() => sandbox.close());
 

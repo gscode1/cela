@@ -152,7 +152,7 @@ Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQD
   - A digest-pinned orchestrator image (the liveness probe is in `deploy/orchestrator.yaml`).
   - Sandbox sizing per session, with ephemeral-storage limits.
   - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
-- **Capacity:** one Node bridge per session (about 12 s start, serialized) limits recovery time and memory. Move to an in-process broker before real use.
+- **Capacity:** each session had its own Node bridge (about 12 s start, serialized, about 95 MiB). Since [ADR 0016](docs/decisions/0016-in-process-broker.md) (issue #59, slice 1) the bridge runs in an in-process broker and pi-env spawns only a thin `node:net` relay; the numbers still have to be re-measured with the #58 events.
 
 **Enforcement result (2026-11-16):**
 - Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all pi-durable-poc endpoints enforce in both directions.
