@@ -160,7 +160,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   1.5.2 type of `Conversation.submit()`, and its README documents that a repeated `requestId` returns the existing
   submission. Test 4 exercises it.
 - Idle bridges are closed after 2 minutes (`PI_SANDBOX_IDLE_EVICT_SECONDS`) and reopened by the next tool call (the
-  orchestrator was OOM-killed at 512 Mi with about ten bridges otherwise; its limit is now 1 Gi).
+  orchestrator was OOM-killed at 512 Mi with about ten bridges otherwise; its limit is now 2 Gi: 1 Gi was also OOM-killed by the parallel lifecycle e2e tests).
 - **Idle suspend.** A sandbox with no call for 30 minutes (`PI_SANDBOX_IDLE_SUSPEND_SECONDS`, 0 = never; not below the
   eviction age) is suspended: `Sandbox.spec.operatingMode: Suspended` deletes the Pod and keeps the Sandbox, the claim
   and the PVC. The next tool call resumes it (about 15 s) and sees the old workspace. `docs/decisions/0004-idle-suspend.md`.
