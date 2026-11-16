@@ -14,7 +14,12 @@ trap 'rm -rf "$work"' EXIT
 
 (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter @pi-durable-k8s/session-core --filter @pi-durable-k8s/ingest build >/dev/null)
 (cd "$root" && pnpm --filter @pi-durable-k8s/ingest deploy --prod "$work/app" >/dev/null)
-COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/app.tgz" -C "$work/app" .
+# Deterministic archive (sorted names, fixed mtime and owner, no gzip timestamp): unchanged code must hash the
+# same, or every push would restart the pods.
+find "$work/app" -exec touch -h -t 200001010000 {} +
+(cd "$work/app" && find . | LC_ALL=C sort >"$work/files.txt")
+if tar --version 2>/dev/null | grep -q bsdtar; then owner=(--uid 0 --gid 0 --uname '' --gname ''); else owner=(--owner=0 --group=0); fi
+COPYFILE_DISABLE=1 tar --no-xattrs --no-recursion --numeric-owner "${owner[@]}" -cf - -C "$work/app" -T "$work/files.txt" | gzip -n >"$work/app.tgz"
 size=$(wc -c <"$work/app.tgz" | tr -d ' ')
 if [[ $size -gt 900000 ]]; then
   echo "ingest bundle is $size bytes; a ConfigMap holds 1 MiB. Switch to a code PVC (see deploy/ingest.yaml)." >&2
@@ -29,7 +34,15 @@ if [[ $current == "$sum" ]]; then
 fi
 k create configmap ingest-code --from-file=app.tgz="$work/app.tgz" --dry-run=client -o yaml |
   k annotate --local -f - "bundle-sha256=$sum" -o yaml | k apply -f - >/dev/null
-if k get deployment pi-ingest >/dev/null 2>&1; then
+# Only "NotFound" means there is nothing to restart; any other failure must not look like a pushed bundle.
+if err=$(k get deployment pi-ingest -o name 2>&1 >/dev/null); then
   k rollout restart deployment/pi-ingest >/dev/null
+elif [[ $err == *NotFound* ]]; then
+  echo "deployment pi-ingest not found; nothing to restart" >&2
+else
+  # Clear the annotation so a re-run does not report "unchanged" and skip the restart.
+  k annotate configmap ingest-code bundle-sha256- >/dev/null 2>&1 || true
+  echo "could not look up deployment pi-ingest: $err" >&2
+  exit 1
 fi
 echo "ingest bundle pushed ($size bytes)"
