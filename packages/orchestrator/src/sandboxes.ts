@@ -49,6 +49,20 @@ interface Usage {
   recorded: boolean;
 }
 
+/** A call waiting for a bridge slot. FIFO: the head is served first. */
+interface SlotWaiter {
+  conversationId: number;
+  resolve: (env: Promise<SandboxEnv>) => void;
+  reject: (error: Error) => void;
+}
+
+/** The abort signal of a call on the env: the last argument of every `ExecutionEnv` method is a chord `Context`. */
+function abortSignalOf(args: readonly unknown[]): AbortSignal | undefined {
+  const last = args[args.length - 1];
+  if (typeof last !== "object" || last === null || !("abortSignal" in last)) return undefined;
+  return last.abortSignal instanceof AbortSignal ? last.abortSignal : undefined;
+}
+
 /** One conversation maps to one SandboxClaim, named from the conversation id (and so to one PVC). */
 export function claimNameFor(conversationId: number): string {
   return `pi-conv-${String(conversationId)}`;
@@ -65,6 +79,8 @@ export class Sandboxes {
   /** Per open env. Drives idle eviction. */
   readonly #usage = new Map<number, Usage>();
   readonly #timers: NodeJS.Timeout[] = [];
+  /** Calls that need a new env while `maxOpenBridges` are open or opening and none can be evicted. */
+  readonly #slotQueue: SlotWaiter[] = [];
 
   /**
    * Last use of each conversation's sandbox as this process saw it. Unlike `#usage` it outlives an evicted env: it is
@@ -111,13 +127,64 @@ export class Sandboxes {
     const now = Date.now();
     for (const [conversationId, usage] of this.#usage) {
       if (usage.inUse > 0 || now - usage.lastUsed < idleMs) continue;
-      const opened = this.#envs.get(conversationId);
-      this.#usage.delete(conversationId);
-      this.#envs.delete(conversationId);
-      void opened?.then((env) => {
-        env.close();
-        log("sandbox-env-evicted", { claim: claimNameFor(conversationId) });
-      });
+      this.#evict(conversationId, "sandbox-env-evicted");
+    }
+    this.#serveQueue();
+  }
+
+  /** Closes an env nothing is using and frees its slot at once; the bridge process stops when its open settles. */
+  #evict(conversationId: number, event: string): void {
+    const opened = this.#envs.get(conversationId);
+    this.#usage.delete(conversationId);
+    // Not `#dropEnv`: callers that serve the queue are mid-loop, and serving from here would re-enter them.
+    this.#envs.delete(conversationId);
+    const counts = {
+      claim: claimNameFor(conversationId),
+      open: this.#envs.size,
+      max: this.#config.sandbox.maxOpenBridges,
+      waiting: this.#slotQueue.length,
+    };
+    void opened?.then((env) => {
+      env.close();
+      log(event, counts);
+    });
+  }
+
+  /** Evicts the least recently used env with no call in flight. False when every env is in use. */
+  #evictLeastRecentlyUsed(): boolean {
+    let victim: number | undefined;
+    let oldest = Infinity;
+    for (const conversationId of this.#envs.keys()) {
+      const usage = this.#usage.get(conversationId);
+      // Never touch a conversation with a call in flight (its in-flight record, ADR 0003, stays as it is) or one whose
+      // Pod is being replaced (its env is closed by that work).
+      if (usage === undefined || usage.inUse > 0 || this.#replacing.has(conversationId)) continue;
+      if (usage.lastUsed < oldest) {
+        oldest = usage.lastUsed;
+        victim = conversationId;
+      }
+    }
+    if (victim === undefined) return false;
+    this.#evict(victim, "bridge-cap-evict");
+    return true;
+  }
+
+  /** Removes an env from the map, which frees its slot, and hands freed slots to waiting calls. */
+  #dropEnv(conversationId: number): void {
+    this.#envs.delete(conversationId);
+    this.#serveQueue();
+  }
+
+  /** Serves waiting calls in arrival order for as long as a slot is free or can be made by eviction. */
+  #serveQueue(): void {
+    for (let head = this.#slotQueue[0]; head !== undefined; head = this.#slotQueue[0]) {
+      const existing = this.#envs.get(head.conversationId);
+      if (existing === undefined) {
+        const { maxOpenBridges } = this.#config.sandbox;
+        if (this.#envs.size >= maxOpenBridges && !this.#evictLeastRecentlyUsed()) return;
+      }
+      this.#slotQueue.shift();
+      head.resolve(existing ?? this.#start(head.conversationId));
     }
   }
 
@@ -158,10 +225,8 @@ export class Sandboxes {
               await this.#closeEnv(conversationId);
               this.#usage.set(conversationId, usage);
             }
-            const real = (await this.ensure(conversationId)).env as unknown as Record<
-              string,
-              (...a: unknown[]) => unknown
-            >;
+            const real = (await this.ensure(conversationId, abortSignalOf(args)))
+              .env as unknown as Record<string, (...a: unknown[]) => unknown>;
             // Only commands can leave processes behind. Record that one may be running before it starts, so a
             // crash in the middle is still known after the restart.
             if (property === "exec" && !usage.recorded) {
@@ -183,7 +248,11 @@ export class Sandboxes {
             if (property === "exec" && outcome !== undefined && interruptedExec(outcome)) {
               this.#interrupted.add(conversationId);
             }
-            if (usage.inUse === 0) this.#settle(conversationId, usage);
+            if (usage.inUse === 0) {
+              this.#settle(conversationId, usage);
+              // This env may now be the one a waiting call can evict.
+              this.#serveQueue();
+            }
           }
         };
       },
@@ -280,7 +349,7 @@ export class Sandboxes {
   async #closeEnv(conversationId: number): Promise<void> {
     const opened = this.#envs.get(conversationId);
     if (this.#usage.get(conversationId)?.inUse === 0) this.#usage.delete(conversationId);
-    this.#envs.delete(conversationId);
+    this.#dropEnv(conversationId);
     if (opened !== undefined) (await opened.catch(() => undefined))?.close();
   }
 
@@ -316,15 +385,57 @@ export class Sandboxes {
     }
   }
 
-  /** Creates or adopts the claim and waits for its Sandbox; safe to call on every start. */
-  async ensure(conversationId: number): Promise<SandboxEnv> {
-    let env = this.#envs.get(conversationId);
-    if (env === undefined) {
-      env = this.#open(conversationId);
-      this.#envs.set(conversationId, env);
-      // A failed open must not be cached: the next tool call tries again.
-      env.catch(() => this.#envs.delete(conversationId));
-    }
+  /**
+   * Creates or adopts the claim and waits for its Sandbox; safe to call on every start. At `maxOpenBridges` open or
+   * opening envs, a new one first evicts the least recently used env with nothing in use; if every env is in use the
+   * call waits in a FIFO queue until a slot frees. `signal` ends that wait (and only the wait).
+   */
+  async ensure(conversationId: number, signal?: AbortSignal): Promise<SandboxEnv> {
+    const existing = this.#envs.get(conversationId);
+    if (existing !== undefined) return existing;
+    const { maxOpenBridges } = this.#config.sandbox;
+    // An earlier waiter goes first even when a slot happens to be free right now.
+    if (
+      this.#slotQueue.length === 0 &&
+      (this.#envs.size < maxOpenBridges || this.#evictLeastRecentlyUsed())
+    )
+      return this.#start(conversationId);
+    if (signal?.aborted === true) throw new Error("aborted while waiting for a bridge slot");
+    const waiter = new Promise<SandboxEnv>((resolve, reject) => {
+      const entry: SlotWaiter = { conversationId, resolve, reject };
+      this.#slotQueue.push(entry);
+      signal?.addEventListener(
+        "abort",
+        () => {
+          const at = this.#slotQueue.indexOf(entry);
+          if (at < 0) return; // already served: the open goes on
+          this.#slotQueue.splice(at, 1);
+          reject(new Error("aborted while waiting for a bridge slot"));
+          // The head may have been the one that could not be served.
+          this.#serveQueue();
+        },
+        { once: true },
+      );
+    });
+    log("bridge-cap-wait", {
+      claim: claimNameFor(conversationId),
+      open: this.#envs.size,
+      max: maxOpenBridges,
+      waiting: this.#slotQueue.length,
+    });
+    return await waiter;
+  }
+
+  /** Registers a new env, which takes a slot until it is dropped (closed, evicted or failed to open). */
+  #start(conversationId: number): Promise<SandboxEnv> {
+    const env = this.#open(conversationId);
+    this.#envs.set(conversationId, env);
+    if (!this.#usage.has(conversationId))
+      this.#usage.set(conversationId, { inUse: 0, lastUsed: Date.now(), recorded: false });
+    // A failed open must not be cached: the next tool call tries again. Its slot goes to the next waiter.
+    env.catch(() => {
+      if (this.#envs.get(conversationId) === env) this.#dropEnv(conversationId);
+    });
     return env;
   }
 
@@ -399,7 +510,7 @@ export class Sandboxes {
     this.#lastUsed.delete(conversationId);
     const opened = this.#envs.get(conversationId);
     this.#usage.delete(conversationId);
-    this.#envs.delete(conversationId);
+    this.#dropEnv(conversationId);
     if (opened !== undefined) {
       const env = await opened.catch(() => undefined);
       env?.close();

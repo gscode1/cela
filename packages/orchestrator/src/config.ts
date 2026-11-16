@@ -33,6 +33,11 @@ export interface OrchestratorConfig {
     idleEvictMs: number;
     /** A sandbox idle this long is suspended (Pod deleted, PVC kept) and resumed by the next tool call. 0 = never. */
     idleSuspendMs: number;
+    /**
+     * Most envs open or opening at once. Each is a Node bridge process of about 100 MiB, so this is what keeps the
+     * orchestrator under its memory limit; see docs/decisions/0004-idle-suspend.md.
+     */
+    maxOpenBridges: number;
   };
   /** Periodic removal of resources whose session is deleted or unknown; see docs/decisions/0002-orphan-sweep.md. */
   sweep: {
@@ -117,6 +122,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
     throw new Error(
       "PI_SANDBOX_IDLE_SUSPEND_SECONDS must not be below PI_SANDBOX_IDLE_EVICT_SECONDS",
     );
+  const maxOpenBridges = Number(env.PI_MAX_OPEN_BRIDGES ?? "12");
+  if (!Number.isInteger(maxOpenBridges) || maxOpenBridges < 1)
+    throw new Error("PI_MAX_OPEN_BRIDGES must be an integer of 1 or more");
   const maxActions = Number(env.PI_SWEEP_MAX_ACTIONS ?? "10");
   if (!Number.isInteger(maxActions) || maxActions < 1)
     throw new Error("PI_SWEEP_MAX_ACTIONS must be an integer of 1 or more");
@@ -138,7 +146,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
     testFaults: env.PI_ORCH_TEST_FAULTS === "1",
     models,
     turnBudget,
-    sandbox: { idleEvictMs, idleSuspendMs },
+    sandbox: { idleEvictMs, idleSuspendMs, maxOpenBridges },
     sweep: {
       intervalMs: seconds(env, "PI_SWEEP_INTERVAL_SECONDS", 300),
       graceMs: seconds(env, "PI_SWEEP_GRACE_SECONDS", 600),
