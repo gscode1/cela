@@ -60,13 +60,16 @@ spec:
           image: node:22-bookworm-slim
           workingDir: /app/code
           command: [node, dist/main.js]
-          # The default model and allowlist POST /sessions is checked against (the orchestrator reads the same).
+          # SEED ONLY: ingest writes these values to inbox.settings once, when the row is absent. After that the table
+          # wins (change it with PUT /admin/settings) and a differing value only logs `settings-env-ignored`.
           envFrom:
             - configMapRef: { name: pi-model-config }
           env:
             - { name: HOME, value: /tmp }
             - { name: PI_INGEST_PORT, value: "8080" }
             - { name: PI_ORCH_URL, value: "http://pi-orchestrator:8081" }
+            # Owners (names from api-auth, not secrets) who may call /admin/*. Empty: nobody.
+            - { name: PI_API_ADMINS, value: "alice" }
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             # The CNPG -rw service, straight: no transaction-pooled proxy.

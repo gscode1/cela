@@ -61,3 +61,21 @@ export function tokenAuthenticator(spec: string): Authenticator {
     );
   };
 }
+
+/**
+ * `PI_API_ADMINS`: comma- or newline-separated owner names (not secrets) that may call `/admin/*`. Empty or unset
+ * means nobody: the admin API answers 403 to everyone.
+ */
+export function parseAdmins(spec: string | undefined): string[] {
+  const names = (spec ?? "")
+    .split(/[\n,]/)
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+  for (const name of names) {
+    if (!OWNER.test(name)) throw new Error("PI_API_ADMINS entries must be owner names");
+  }
+  return names;
+}
+
+export const isAdmin = (principal: Principal, admins: readonly string[]): boolean =>
+  admins.includes(principal.owner);

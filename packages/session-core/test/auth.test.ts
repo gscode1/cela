@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tokenAuthenticator } from "../src/auth.ts";
+import { isAdmin, parseAdmins, tokenAuthenticator } from "../src/auth.ts";
 
 const spec = "alice:aaaaaaaaaaaaaaaaaaaa\nbob:bbbbbbbbbbbbbbbbbbbb";
 const auth = tokenAuthenticator(spec);
@@ -47,5 +47,18 @@ describe("tokenAuthenticator", () => {
     } catch (error) {
       expect(String(error)).not.toContain("short");
     }
+  });
+});
+
+describe("parseAdmins", () => {
+  it("splits on commas and newlines, and means nobody when empty", () => {
+    expect(parseAdmins("alice, bob\ncarol")).toEqual(["alice", "bob", "carol"]);
+    expect(parseAdmins(undefined)).toEqual([]);
+    expect(parseAdmins("")).toEqual([]);
+  });
+  it("rejects a name that is not an owner name, and matches by owner", () => {
+    expect(() => parseAdmins("Alice Smith")).toThrow(/PI_API_ADMINS/);
+    expect(isAdmin({ owner: "alice", subject: "static:alice" }, ["alice"])).toBe(true);
+    expect(isAdmin({ owner: "bob", subject: "static:bob" }, ["alice"])).toBe(false);
   });
 });

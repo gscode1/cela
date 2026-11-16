@@ -32,10 +32,13 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
 | `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model. |
+| `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
+| `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
+| `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
 | `DELETE /sessions/{id}` | `202 { sessionId, status }` | Idempotent. See Deletion. |
 | `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when migrations succeeded and the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
 
-Status codes for authentication: `401` for a missing or wrong token. `404` when the session does not exist **or
+Status codes for authentication: `401` for a missing or wrong token. `/admin/*` answers `403` to an authenticated caller whose owner is not listed in `PI_API_ADMINS` on ingest (comma-separated owner names from `PI_API_TOKENS`; empty or unset means nobody). `404` when the session does not exist **or
 belongs to another owner**: the two look the same, so the API does not reveal that a session exists.
 
 `DELETE` is also an inbox row (kind `delete`). `POST .../events` with `kind: "delete"` is refused; use `DELETE`.
@@ -123,17 +126,25 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 
 ## Models and failure
 
-- **Selection.** `PI_MODEL_PROVIDER`, `PI_MODEL_ID` and `PI_MODEL_ALLOWLIST` (comma-separated `provider/model` pairs;
-  the model id may contain slashes) come from ConfigMap `pi-model-config`, which ingest and the orchestrator both
-  read. The default is always allowed. The committed default is OpenAI Codex `gpt-6.1-terra` (`gpt-6.1-sol` is
-  allowlisted too, and the scripted models, which the e2e suites use: `tests/e2e/deploy` patches the default back to
-  scripted). `PI_MODEL_REASONING` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`) is the reasoning effort of every new
-  session.
+- **Selection.** The default model, the allowlist (`provider/model` pairs; the model id may contain slashes; the
+  default is always allowed), the default reasoning effort (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or none)
+  and the turn budget are stored in Postgres (`inbox.settings`, one row; `inbox.settings_history` is the append-only
+  log of changes with who, when, old and new; migration `006_settings.sql`, `docs/decisions/0008-settings-in-postgres.md`).
+  Ingest and the orchestrator read them through a `SettingsCache` that loads at start, refreshes on `LISTEN pi_settings`
+  (the writer sends `pg_notify` in the same transaction) and on a 30 s poll; an unreadable or invalid row keeps the last
+  good value and logs. A change is therefore live in seconds on every replica, no restart. The write path is
+  `PUT /admin/settings` (above). **Seeding:** the first ingest to start inserts the row from the environment
+  (`PI_MODEL_PROVIDER`, `PI_MODEL_ID`, `PI_MODEL_ALLOWLIST`, `PI_MODEL_REASONING`, `PI_SESSION_TURN_BUDGET`, ConfigMap
+  `pi-model-config`; `insert ... on conflict do nothing`, so two replicas are safe). After that the table wins and a
+  differing environment logs `settings-env-ignored` once at ingest start. The committed seed is OpenAI Codex
+  `gpt-6.1-terra` (`gpt-6.1-sol` is allowlisted too, and the scripted models, which the e2e suites select through
+  `PUT /admin/settings` and restore afterwards). The orchestrator still reads `PI_MODEL_ALLOWLIST` at start to install
+  providers, so adding a new provider needs an orchestrator restart.
 - **Storage.** The chosen model is stored with the session (`inbox.sessions.model_provider`, `model_id`, `model_reasoning`; migrations
   `002_models.sql`, `003_reasoning.sql`), so changing the default later does not change existing sessions. The orchestrator creates the Pi
   conversation with it; Pi Durable keeps it in the conversation across restarts (`docs/model-credentials.md`).
 - **`failed` is terminal.** A model error that reads as rejected credentials (401, 403 or 407 from the provider or
-  the OneCLI gateway), or a session that used up its turn budget (`PI_SESSION_TURN_BUDGET`, model turns in total),
+  the OneCLI gateway), or a session that used up its turn budget (the `turnBudget` setting, model turns in total, read before every input),
   sets `status: "failed"` and `failure` to a fixed message such as "model credentials were rejected (401/403): the
   OneCLI agent token or its grant for this provider is missing or revoked". From then on `POST .../events` returns
   `409 session is failed`, queued events end `failed`, and nothing more is sent to the provider. The transcript and
@@ -233,7 +244,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `005_exec_in_flight.sql`), applied
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `006_settings.sql`), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
@@ -243,7 +254,8 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
 - Probes: ingest serves `/healthz` as soon as the process is up and `503`s `/readyz` and the API until migrations
   succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
   owner-only.
-- `deploy/model-config.yaml` (ConfigMap `pi-model-config`) feeds both Deployments; the orchestrator also takes the
+- `deploy/model-config.yaml` (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
+  list and fallback; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 
 ## Known limits

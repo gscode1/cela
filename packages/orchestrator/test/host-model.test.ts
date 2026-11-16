@@ -171,7 +171,7 @@ describe("turn budget", () => {
     const service = new SessionService(pool, host, {
       testFaults: false,
       defaultModel: config.models.default,
-      turnBudget: config.turnBudget,
+      turnBudget: () => config.turnBudget,
     });
     const conversationId = await host.createConversation(config.models.default);
     const active = { ...session(), conversationId };

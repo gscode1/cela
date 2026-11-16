@@ -1,8 +1,8 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ModelPolicy } from "@pi-durable-k8s/session-core";
 import { createIngestServer } from "../src/server.ts";
+import type { SettingsView } from "../src/server.ts";
 import { FakeInboxDb, SESSION } from "./fake-db.ts";
 
 let server: Server | undefined;
@@ -16,7 +16,8 @@ async function start(db: FakeInboxDb): Promise<string> {
     pool: db.asPool(),
     authenticate: () => Promise.resolve({ owner: "alice", subject: "static:alice" }),
     orchestratorUrl: "http://unused",
-    models: {} as ModelPolicy,
+    settings: {} as SettingsView,
+    admins: [],
     schemaReady: () => true,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));

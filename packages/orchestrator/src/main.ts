@@ -6,6 +6,8 @@ import {
   getSession,
   listSessionRefs,
   setExecInFlight,
+  SettingsCache,
+  settingsFromEnv,
   tokenAuthenticator,
 } from "@pi-durable-k8s/session-core";
 import { loadConfig } from "./config.js";
@@ -62,6 +64,12 @@ async function main(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
   }
+
+  // Settings live in Postgres and ingest seeds them; until the row exists (or if it cannot be read) the environment's
+  // values apply. The orchestrator reads only the turn budget from them: a session's model comes from its row.
+  const settings = new SettingsCache(pool, { fallback: settingsFromEnv(process.env), log });
+  running.settings = settings;
+  await settings.start();
 
   const storage = await openStorageWhenFree(config, stop.signal);
   log("lock-acquired", { instance: config.instance });
@@ -125,7 +133,7 @@ async function main(): Promise<void> {
   const service = new SessionService(pool, host, {
     testFaults: config.testFaults,
     defaultModel: config.models.default,
-    turnBudget: config.turnBudget,
+    turnBudget: () => settings.turnBudget(),
     repos,
   });
   running.service = service;

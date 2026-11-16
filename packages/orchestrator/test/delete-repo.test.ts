@@ -95,7 +95,7 @@ async function setup(repo: SessionRow["repo"]) {
   const service = new SessionService(pool, host, {
     testFaults: false,
     defaultModel: config.models.default,
-    turnBudget: 10,
+    turnBudget: () => 10,
     repos,
   });
   cleanups.push(async () => {

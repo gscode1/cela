@@ -1,4 +1,5 @@
-# Test overlay: the base plus the orchestrator's test-only switches.
+# Test overlay: the base plus the orchestrator's test-only switches. The suites pick the scripted default model
+# through PUT /admin/settings (model settings live in Postgres), not through the ConfigMap.
 # Applied by tests/e2e/run-phase3.sh and run-phase4.sh during setup.
 #   kubectl apply -k tests/e2e/deploy
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -6,15 +7,6 @@ kind: Kustomization
 resources:
   - ../../../deploy
 patches:
-  # The suites run on the scripted model: no OneCLI, no spend. Re-apply `kubectl apply -k deploy` to get Codex back.
-  - target: { kind: ConfigMap, name: pi-model-config }
-    patch: |-
-      - op: replace
-        path: /data/PI_MODEL_PROVIDER
-        value: scripted
-      - op: replace
-        path: /data/PI_MODEL_ID
-        value: scripted-1
   - target: { kind: Deployment, name: pi-orchestrator }
     patch: |-
       - op: add

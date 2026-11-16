@@ -10,7 +10,11 @@ import {
   enqueueEvent,
   errorMessage,
   getSession,
+  isAdmin,
+  listSettingsHistory,
   readJsonObject,
+  readSettings,
+  updateSettings,
   beginDelete,
   requeueFailedDelete,
   sendJson,
@@ -23,6 +27,7 @@ import type {
   ModelPolicy,
   Principal,
   SessionRow,
+  Settings,
 } from "@pi-durable-k8s/session-core";
 import { parseEventBody } from "./events.js";
 import { log } from "./log.js";
@@ -31,9 +36,19 @@ export interface IngestDeps {
   pool: pg.Pool;
   authenticate: Authenticator;
   orchestratorUrl: string;
-  models: ModelPolicy;
+  /** The settings cache: the model policy for POST /sessions and GET, refreshed after an admin write. */
+  settings: SettingsView;
+  /** Owner names allowed to call `/admin/*`. */
+  admins: readonly string[];
   /** False until the inbox schema is migrated; liveness does not wait for it, readiness and the API do. */
   schemaReady: () => boolean;
+}
+
+export interface SettingsView {
+  get(): Settings;
+  policy(): ModelPolicy;
+  /** Re-reads the row now, so a write is visible to the next request on this replica. */
+  refresh(): Promise<void>;
 }
 
 export function createIngestServer(deps: IngestDeps): Server {
@@ -83,6 +98,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
     return;
   }
 
+  if (parts[0] === "admin") {
+    await handleAdmin(req, res, deps, principal, url, parts);
+    return;
+  }
   if (method === "POST" && url.pathname === "/sessions") {
     await postSession(req, res, deps, principal);
     return;
@@ -103,7 +122,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
     sendJson(res, 200, {
       sessionId: session.id,
       status: summary.status,
-      model: modelOf(session, deps.models),
+      model: modelOf(session, deps.settings.policy()),
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
       createdAt: session.createdAt.toISOString(),
@@ -131,6 +150,81 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   sendJson(res, 404, { error: "not found" });
 }
 
+const HISTORY_DEFAULT = 50;
+const HISTORY_MAX = 500;
+
+/** `/admin/settings`: only the owners in `PI_API_ADMINS` (403 for any other authenticated caller). */
+async function handleAdmin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: IngestDeps,
+  principal: Principal,
+  url: URL,
+  parts: string[],
+): Promise<void> {
+  if (!isAdmin(principal, deps.admins)) {
+    sendJson(res, 403, { error: "forbidden" });
+    return;
+  }
+  const method = req.method ?? "GET";
+  if (
+    parts[1] !== "settings" ||
+    parts.length > 3 ||
+    (parts[2] !== undefined && parts[2] !== "history")
+  ) {
+    sendJson(res, 404, { error: "not found" });
+    return;
+  }
+  if (parts[2] === "history" && method === "GET") {
+    const asked = Number(url.searchParams.get("limit") ?? HISTORY_DEFAULT);
+    const limit =
+      Number.isInteger(asked) && asked >= 1 ? Math.min(asked, HISTORY_MAX) : HISTORY_DEFAULT;
+    const history = await listSettingsHistory(deps.pool, limit);
+    sendJson(res, 200, {
+      history: history.map((entry) => ({ ...entry, changedAt: entry.changedAt.toISOString() })),
+    });
+    return;
+  }
+  if (parts[2] === undefined && method === "GET") {
+    const stored = await readSettings(deps.pool);
+    if (stored === undefined) {
+      sendJson(res, 404, { error: "settings are not seeded" });
+      return;
+    }
+    sendJson(res, 200, {
+      ...stored.settings,
+      updatedAt: stored.updatedAt.toISOString(),
+      updatedBy: stored.updatedBy,
+    });
+    return;
+  }
+  if (parts[2] === undefined && method === "PUT") {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+    } catch (error) {
+      if (error instanceof BodyError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    const stored = await updateSettings(deps.pool, body, principal.owner);
+    if (typeof stored === "string") {
+      sendJson(res, 400, { error: stored });
+      return;
+    }
+    await deps.settings.refresh();
+    sendJson(res, 200, {
+      ...stored.settings,
+      updatedAt: stored.updatedAt.toISOString(),
+      updatedBy: stored.updatedBy,
+    });
+    return;
+  }
+  sendJson(res, 405, { error: "method not allowed" });
+}
+
 /** Sessions that predate migration 002 have no stored model: they run the default. */
 function modelOf(session: SessionRow, policy: ModelPolicy): ModelChoice {
   return session.model ?? policy.default;
@@ -152,7 +246,7 @@ async function postSession(
     }
     throw error;
   }
-  const model = chooseModel(deps.models, body);
+  const model = chooseModel(deps.settings.policy(), body);
   if (typeof model === "string") {
     sendJson(res, 400, { error: model });
     return;
