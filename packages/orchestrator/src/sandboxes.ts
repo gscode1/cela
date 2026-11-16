@@ -560,14 +560,16 @@ export class Sandboxes {
     this.timings.mark(conversationId, "claim-ready");
     log("claim-ready", { ...this.timings.fields(conversationId), claim: claimName });
     // Credentials for a repo session's commands only; plain sessions get nothing here. The token travels through the
-    // pi-env protocol to the daemon, never through the bridge process environment (bridgeCommand starts the bridge with a trimmed environment and its own claim's token).
+    // pi-env protocol to the daemon. The sandboxd token stays in this process (the env's broker uses it); the relay
+    // child that bridgeCommand starts has a trimmed environment and no token.
     const shellEnv = await this.#hooks.shellEnv?.(conversationId);
     const opened = connectSandboxEnv({
       claimName,
       namespace,
       cwd: WORKSPACE,
       id: `pi-env:${claimName}`,
-      bridgeCommand: bridgeCommand(process.env, token),
+      authToken: token,
+      relayCommand: bridgeCommand(process.env),
       ...(shellEnv === undefined ? {} : { shellEnv }),
       onPhase: (phase) => {
         if (phase === "bridge-ready") this.#bridgeUp.add(conversationId);
