@@ -38,9 +38,9 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `GET /admin/profiles` | `200 { defaultProfile, profiles: [{ name, currentVersion, enabledForNew, definition, createdAt, createdBy, updatedAt, updatedBy }], invalid: [{ name, message }] }` | Admins only. Every profile at its current version. `invalid` lists profiles whose current version fails validation (edited by hand); they cannot be chosen. |
 | `GET /admin/profiles/{name}` | `200`, the profile as above plus `versions: [{ version, definition, createdAt, createdBy }]`, newest first | Admins only. `404` if there is none. |
 | `PUT /admin/profiles/{name}` body `{ definition?, enabledForNew? }` | `201` for a new profile, `200` after; the profile as in GET plus `versionCreated` | Admins only. A create needs `definition`. A `definition` that differs from the current one is written as the next version (versions are immutable); an identical one writes nothing. `enabledForNew` (default true on create) only decides whether new sessions may choose the profile; it never affects existing sessions and is not versioned. A bad definition, an unknown key, a tool that is not installed or an MCP server that is not in the catalog is `400` and changes nothing. There is no `DELETE` (`405`): disable a profile instead. |
-| `GET /admin/skills` | `200 { skills: [{ name, currentVersion, digest, description, createdAt, createdBy, updatedAt, updatedBy }] }` | Admins only. Every skill at its current version. |
-| `GET /admin/skills/{name}` | `200 { name, currentVersion, versions: [{ name, version, digest, description, size, files: [{ path, size, sha256, executable }], createdAt, createdBy }] }`, newest first | Admins only. `404` if there is none. |
-| `POST /admin/skills/{name}/versions` body `{ description, files: [{ path, content \| contentBase64, executable? }] }` | `201` for a new version, `200` when the content is identical to the current version (nothing written); the version as in GET plus `versionCreated` | Admins only; the body may be up to about 7 MiB. `files` must include `SKILL.md`. A bad name, traversal or absolute path, duplicate path, field that is not `path`/`content`/`contentBase64`/`executable` (so no symlinks, devices or modes), NUL or unpaired surrogate in text, or a limit exceeded (see Skills) is `400` and writes nothing. |
+| `GET /admin/skills` | `200 { skills: [{ name, currentVersion, digest, description, disableModelInvocation, createdAt, createdBy, updatedAt, updatedBy }] }` | Admins only. Every skill at its current version. |
+| `GET /admin/skills/{name}` | `200 { name, currentVersion, versions: [{ name, version, digest, description, disableModelInvocation, size, files: [{ path, size, sha256, executable }], createdAt, createdBy }] }`, newest first | Admins only. `404` if there is none. |
+| `POST /admin/skills/{name}/versions` body `{ files: [{ path, content \| contentBase64, executable? }] }` | `201` for a new version, `200` when the content is identical to the current version (nothing written); the version as in GET plus `versionCreated` | Admins only; the body may be up to about 7 MiB. `files` must include `SKILL.md`, which starts with a YAML frontmatter block that gives the `description` (see Skills); there is no separate `description` field (sending one is `400`). A bad name, a frontmatter that is missing, malformed, without a non-empty `description` or with a `name` that differs from `{name}`, traversal or absolute path, duplicate path, field that is not `path`/`content`/`contentBase64`/`executable` (so no symlinks, devices or modes), NUL or unpaired surrogate in text, or a limit exceeded (see Skills) is `400` and writes nothing. |
 | `GET /admin/skills/{name}/versions/{v}` (`?content=true`) | `200`, the version as above; with `content=true` each file also has `contentBase64` | Admins only, so a skill can be reviewed like code. `404` if there is none. Versions cannot be updated or deleted (`405`). |
 | `GET /admin/mcp-servers` | `200 { servers: [...], invalid: [{ name, message }] }` | Admins only. Every server of the MCP catalog, by name. A server is `{ name, url, transport, enabled, readOnly, timeoutMs, maxOutputBytes, onecliSecret, reachability, createdAt, createdBy, updatedAt, updatedBy }`. `reachability` is always `"unknown"`: the API does not probe the network, and a host that is not allowed in the OneCLI rules fails only when the orchestrator connects (log `mcp-discovery-failed`). `invalid` lists rows edited by hand into something the validator rejects; the orchestrator skips them. |
 | `GET /admin/mcp-servers/{name}` | `200`, one server as above | Admins only. `404` if there is none. |
@@ -262,7 +262,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `010_skills.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `011_skill_model_invocation.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
@@ -345,19 +345,30 @@ A skill (ADR 0011) is an Agent-Skills-style folder: a `SKILL.md` plus optional s
 loads on demand. Skills are stored in Postgres as immutable, numbered versions and are selected only by profiles
 (`skills: [{ name, version }]`); nothing about a skill reaches a session whose profile does not name it.
 
-- **A version** is a description (one line, at most 1 KiB), up to 128 files and 5 MiB, `SKILL.md` at most 32 KiB, and a
-  SHA-256 `digest` of its name, description and files (path, content hash, executable bit). A path is relative with
+- **A version** is a `SKILL.md` (at most 32 KiB, UTF-8) whose frontmatter gives the description, up to 128 files and
+  5 MiB (all sizes in bytes), and a SHA-256 `digest` of its name, description and files (path, content hash, executable bit). A path is relative with
   plain segments (`[A-Za-z0-9_][A-Za-z0-9._-]*`, at most 200 characters): no `..`, no absolute path, no hidden file, no
   duplicates (also by case). Only regular files can be published. Names match `[a-z][a-z0-9-]{0,63}`. A profile names
   at most 20 skills, and the catalog they add must fit in 32 KiB. A profile that names skills must keep the `read` tool
   (in `tools` and `modelTools` when given): the admin write is `400` otherwise, and tools are never widened silently.
+- **Frontmatter.** The admin store reads `SKILL.md` as a repo would (#71 reuses the same parser), so a skill folder is
+  the same in both. `SKILL.md` starts with a block between two `---` lines of flat `key: value` lines; values are plain
+  or quoted (`"..."` with `\n \t \" \\ \uXXXX`, `'...'` with `''`) single-line strings, and `#` starts a comment. Not
+  supported, and `400`: nesting, lists, `|` and `>` blocks, anchors and tags, a repeated key, a block over 100 lines or
+  8 KiB. Keys: `description` (required, non-empty, one line, at most 1024 characters, no control characters),
+  `name` (optional; when present it must equal `{name}` of the URL, else `400`; absent, the URL's is used) and
+  `disable-model-invocation` (`true` or `false`; with `true` the version is kept out of the catalog, though it can still
+  be pinned and is still written to the sandbox). Other keys are ignored but still must parse. The digest covers the
+  whole file, so what the model sees is in it.
 - **Pinning.** A profile write checks that every named version exists and stores its `digest` next to `name` and
   `version`. A session snapshots that definition, so publishing v2 of a skill changes neither the profile (still v1)
   nor any session; to adopt v2, write a new profile version naming it, which only new sessions use.
 - **In the prompt.** At creation the orchestrator appends a catalog to the conversation's instructions (after the
-  profile's own `instructions`): for each skill its name, description and the path
-  `/workspace/.skills/<name>/<digest>/SKILL.md`, XML-escaped, and a line telling the model to read that file when a task
-  matches. Bodies are never in the prompt. The text is stored with the conversation, so it never changes.
+  profile's own `instructions`) in Pi's wording: the model is told to use the read tool to load a skill's file when a
+  task matches its description and to resolve relative paths against the skill's directory, followed by an
+  `<available_skills>` block with, per skill, `<name>`, `<description>` and `<location>` (the absolute sandbox path
+  `/workspace/.skills/<name>/<digest>/SKILL.md`), XML-escaped. Skills with `disable-model-invocation: true` are not
+  listed, and a profile whose skills are all of that kind adds no catalog. Bodies are never in the prompt. The text is stored with the conversation, so it never changes.
 - **In the sandbox.** When a session's sandbox env opens (the first tool call, and again after a suspend, a Pod recycle,
   an eviction or an orchestrator restart), the orchestrator writes the pinned files to
   `/workspace/.skills/<name>/<digest>/` before the env serves its first operation; concurrent first calls wait for it.
