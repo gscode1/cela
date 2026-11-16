@@ -16,6 +16,9 @@ export class OneCliError extends Error {
   }
 }
 
+/** The request did not complete (connection error or timeout): nothing is known about whether it was applied. */
+export class OneCliTransportError extends Error {}
+
 export interface OneCliAgent {
   id: string;
   name: string;
@@ -110,40 +113,122 @@ export function parseGrants(value: unknown): OneCliGrant[] {
   return grants;
 }
 
+/** Bounds on one management API call; see docs/decisions/0005-migrations-without-ddl-locks.md. */
+export interface OneCliCallPolicy {
+  /** Each attempt is aborted after this long. */
+  timeoutMs: number;
+  /** Tries after the first one. 0 disables the retry. */
+  retries: number;
+  /** Wait before the first retry; doubles per retry, capped at `maxBackoffMs`. */
+  backoffMs: number;
+  maxBackoffMs: number;
+  /** Only tests replace this. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export const DEFAULT_CALL_POLICY: OneCliCallPolicy = {
+  timeoutMs: 15_000,
+  retries: 3,
+  backoffMs: 500,
+  maxBackoffMs: 5_000,
+};
+
+/**
+ * A POST may have been applied when its answer was lost, so it is retried only on statuses a proxy sends when it did
+ * not deliver the request. The caller's own retry (the inbox) re-runs an idempotent prepare that finds objects by name.
+ */
+const POST_RETRY_STATUSES: readonly number[] = [502, 503, 504];
+
 export class OneCliAdmin {
   readonly #base: string;
   readonly #key: Redacted;
   readonly #fetch: FetchLike;
+  readonly #policy: OneCliCallPolicy;
 
-  constructor(baseUrl: string, apiKey: Redacted, fetchImpl: FetchLike) {
+  constructor(
+    baseUrl: string,
+    apiKey: Redacted,
+    fetchImpl: FetchLike,
+    policy: OneCliCallPolicy = DEFAULT_CALL_POLICY,
+  ) {
     this.#base = baseUrl.replace(/\/+$/, "");
     this.#key = apiKey;
     this.#fetch = fetchImpl;
+    this.#policy = policy;
   }
 
+  /**
+   * One call with a per-attempt timeout and bounded backoff. A network error, a timeout and a 5xx are retried; a 4xx
+   * (and a 2xx the caller does not accept) never is, because asking again cannot change the answer.
+   */
   async #call(
     method: string,
     path: string,
     body?: unknown,
     accept: readonly number[] = [200, 201, 204],
   ): Promise<{ status: number; body: unknown }> {
-    const response = await this.#fetch(`${this.#base}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.#key.reveal()}`,
-        accept: "application/json",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    const { retries, backoffMs, maxBackoffMs } = this.#policy;
+    const sleep = this.#policy.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.#attempt(method, path, body, accept);
+      } catch (error) {
+        if (attempt >= retries || !this.#retryable(method, error)) throw error;
+        await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** attempt));
+      }
+    }
+  }
+
+  #retryable(method: string, error: unknown): boolean {
+    if (error instanceof OneCliError) {
+      if (error.status < 500) return false;
+      return method !== "POST" || POST_RETRY_STATUSES.includes(error.status);
+    }
+    // Only transport failures reach here: a malformed body is a plain Error from parsing, not worth asking again.
+    return error instanceof OneCliTransportError && method !== "POST";
+  }
+
+  async #attempt(
+    method: string,
+    path: string,
+    body: unknown,
+    accept: readonly number[],
+  ): Promise<{ status: number; body: unknown }> {
+    const shown = path.replace(/[0-9a-f-]{20,}/g, ":id");
+    const timeout = AbortSignal.timeout(this.#policy.timeoutMs);
+    let response: Awaited<ReturnType<FetchLike>>;
+    try {
+      response = await this.#fetch(`${this.#base}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.#key.reveal()}`,
+          accept: "application/json",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: timeout,
+      });
+    } catch (error) {
+      // Never the cause's text: it may carry the URL, and nothing here needs more than the path.
+      throw new OneCliTransportError(
+        timeout.aborted
+          ? `OneCLI ${method} ${shown} timed out after ${String(this.#policy.timeoutMs)} ms`
+          : `OneCLI ${method} ${shown} failed: ${error instanceof Error ? error.name : "network error"}`,
+      );
+    }
     if (!accept.includes(response.status)) {
       throw new OneCliError(
-        `OneCLI ${method} ${path.replace(/[0-9a-f-]{20,}/g, ":id")} answered HTTP ${String(response.status)}`,
+        `OneCLI ${method} ${shown} answered HTTP ${String(response.status)}`,
         response.status,
       );
     }
     if (response.status === 204) return { status: 204, body: undefined };
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new OneCliTransportError(`OneCLI ${method} ${shown} broke off while answering`);
+    }
     return {
       status: response.status,
       body: text === "" ? undefined : (JSON.parse(text) as unknown),

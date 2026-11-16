@@ -26,7 +26,13 @@ export interface InstallationToken {
 
 export type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body?: string },
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+    /** Set by callers that bound the call (OneCLI admin); a real fetch honours it. */
+    signal?: AbortSignal;
+  },
 ) => Promise<{
   status: number;
   /** Optional: a real fetch Response has it. Read only to tell GitHub's rate limiting from a refusal. */

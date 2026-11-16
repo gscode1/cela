@@ -95,7 +95,12 @@ async function main(): Promise<void> {
   const onecli =
     config.repos.onecliApiKey === undefined
       ? undefined
-      : new OneCliAdmin(config.repos.onecliApi, config.repos.onecliApiKey, callApi);
+      : new OneCliAdmin(
+          config.repos.onecliApi,
+          config.repos.onecliApiKey,
+          callApi,
+          config.repos.onecliCalls,
+        );
   const repos = new RepoAccess({
     pool,
     onecli,
