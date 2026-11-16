@@ -1,6 +1,6 @@
-# 0005: Migrations take no DDL locks when the schema is current; the drain transaction stays (for now)
+# 0005: Migrations take no DDL locks when the schema is current; repo preparation runs outside the drain transaction
 
-Status: accepted, 2026-11-16 (issue #3).
+Status: accepted, 2026-11-16 (issue #3). The drain-transaction section was superseded the same day by issue #62; the original assessment is kept below as history.
 
 ## Context
 
@@ -29,29 +29,66 @@ On 2026-11-16 ingest pods crash-looped while repo sessions were starting:
   orchestrator already listened before migrating, so its code is unchanged. It gets the same liveness probe on
   `/healthz` (period 10 s, timeout 3 s, six failures), which answers without touching Postgres.
 
-## The long drain transaction (assessed, not changed)
+## Repo preparation runs outside the drain transaction (issue #62)
 
-Holding a transaction across the workspace preparation is a cost, but it is also what makes `crash-before-mark`
-(`tests/e2e/run-phase4.sh`) hold: the row locks mean a crash between submit and mark rolls the row back to `pending`,
-and Pi Durable's idempotent `requestId` keeps the retry from double-submitting.
+The drain used to hold its transaction (and one pool connection) across `SessionService.apply`, so across the OneCLI
+provisioning and the clone: 96 s observed, eight sessions nearly exhausting the pool of 10, and a hung OneCLI holding
+row locks for ever. Now each drain step has two phases:
 
-Shortening it means splitting `SessionService.apply` into an idempotent prepare phase (ensure conversation, budget,
-`#prepareRepo`) that runs before the claim, and the claim + submit + mark that stays transactional. The submit/mark
-window and its guarantee would be untouched. It is not done here because it is not small: prepare failures currently
-become row outcomes (`PermanentError` fails the row, a transient error bumps `attempts` and stops the batch, a lost
-workspace fails the session), so prepare outside the transaction needs its own claim-free way to record those, plus
-care that two orchestrators or a drain and a delete do not prepare concurrently. With migrations no longer taking
-locks, the remaining harm of the long transaction is bounded: row locks on that session's pending events only (other
-sessions' rows are skipped, ingest inserts do not conflict with them).
+1. **Prepare** (`InboxLoop.#prepareHead` -> `SessionService.prepare`): no transaction, no checked-out client, only
+   `pool.query`. It reads the session's pending rows without locking and prepares for the first `message`/`steer`
+   that comes before any `delete`: ensure the conversation, then for a repo session the GitHub token, the OneCLI agent
+   and secrets, the grant check and the clone. Prepare is per session, so one run covers the whole batch.
+2. **Claim** (unchanged shape, now short): `begin`, `FOR UPDATE SKIP LOCKED`, per row `apply` (budget, submit to Pi
+   Durable, mark `submitted`), `commit`. `apply` no longer prepares the repo.
 
-Related risk, to be handled in that follow-up: each busy session holds one pool connection for the whole preparation.
-The orchestrator inbox pool has `max 10` (`main.ts`), `MAX_PARALLEL_SESSIONS` is 8 and the LISTEN connection takes
-one, so eight concurrent repo sessions leave a single connection for `getSession`, `setExecInFlight`, the watcher and
-the HTTP owner check, each waiting at most `connectionTimeoutMillis` (5 s). Until then the pool should be sized as
-`MAX_PARALLEL_SESSIONS + listener + headroom`, or the parallelism lowered for repo sessions.
+What keeps `crash-before-mark` (`tests/e2e/run-phase4.sh`) true: the submit and the mark are still in one
+transaction with the row locks, so a crash between them rolls the row back to `pending` and Pi Durable's idempotent
+`requestId` absorbs the second submit. Prepare writes nothing the claim depends on and is idempotent, so a crash at
+any point of it leaves the rows `pending` and the retry runs it again: the agent and secrets are found by their
+names and reused (the GitHub token is re-minted and the secret value rotated), `/workspace/repo/.git` present skips
+the clone, `markWorkspaceReady` is an upsert of one column.
+
+Outcomes are as before, recorded by the same code (`#recordFailure`) on the pool instead of the claim's client:
+`PermanentError` (refused access, lost workspace, repo not configured) ends the row `failed` (the lost-workspace and
+refused-access cases fail the session too); anything else bumps `attempts`, leaves the row `pending` with the error,
+and stops that session's batch so later rows cannot overtake it (the claim still applies rows that precede the failed
+input, such as a `cancel`). The fifth failed attempt ends the row.
+
+Not guarded: two orchestrators preparing the same session at once. The orchestrator is a single replica holding a
+storage lock (`lock-acquired`), a session is drained by one loop at a time, and a `delete` is a row of the same
+session's queue, so it never runs in parallel with that session's prepare. If that ever changes, prepare is still
+safe to run twice (above); the cost would be extra OneCLI calls, and two clones racing on `/workspace/.clone-tmp`
+would fail one of them into the normal retry.
+
+Rejected: recording intent in a first transaction (a status such as `preparing`) and committing before prepare. It
+needs a new row state, a way to recover rows stuck in it after a crash, and a schema change, to protect against
+something the idempotent prepare already makes harmless.
+
+### OneCLI admin calls
+
+Each attempt has an `AbortSignal.timeout` (default 15 s, `PI_ONECLI_TIMEOUT_SECONDS`). A network error, a timeout or a
+5xx is retried up to `PI_ONECLI_RETRIES` times (default 3) with doubling backoff from `PI_ONECLI_BACKOFF_MS` (default
+500 ms, capped at 5 s); a 4xx never is. A `POST` (create agent, create secret) is never re-sent by the
+retry, because a lost answer may hide an applied create. Each create is find-or-create instead: after an ambiguous
+failure (5xx, timeout, network) and the backoff, the next round looks the object up by name and creates it only if
+it is still absent, so it is never created twice. The worst case for one call is about 4 x 15 s + 6.5 s of backoff, with no transaction held.
+
+### The pool
+
+The prepare phase uses a pool connection only for single statements, so a busy session no longer pins one. The pool of
+10 now serves eight concurrent claims (each short) plus the listener and other users; sizing it as
+`MAX_PARALLEL_SESSIONS + listener + headroom` is no longer needed for repo starts.
+
+## Earlier assessment (kept for history)
+
+Before #62 the transaction was left alone: it is also what makes `crash-before-mark` hold, and shortening it means
+splitting `SessionService.apply` into an idempotent prepare phase and the transactional claim + submit + mark. Prepare
+failures then needed their own claim-free way to record row outcomes. That is what #62 did.
 
 ## Consequences
 
 - A restart of any process on a current schema issues no DDL and cannot be stalled by, or stall, running traffic.
 - A new migration file is applied by the first process that starts with it, under the lock; it can still wait for
-  running drains (fail fast, retry), but never queues ahead of traffic for longer than 3 s per attempt.
+  running drains (fail fast, retry), but never queues ahead of traffic for longer than 3 s per attempt. Since #62 a
+  drain holds row locks only for the short claim, so that wait is short too.

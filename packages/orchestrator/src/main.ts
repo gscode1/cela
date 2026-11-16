@@ -95,7 +95,12 @@ async function main(): Promise<void> {
   const onecli =
     config.repos.onecliApiKey === undefined
       ? undefined
-      : new OneCliAdmin(config.repos.onecliApi, config.repos.onecliApiKey, callApi);
+      : new OneCliAdmin(
+          config.repos.onecliApi,
+          config.repos.onecliApiKey,
+          callApi,
+          config.repos.onecliCalls,
+        );
   const repos = new RepoAccess({
     pool,
     onecli,
@@ -189,7 +194,11 @@ async function main(): Promise<void> {
   sweeper.start(config.sweep.intervalMs);
 
   // Only the owner consumes the inbox. Rows that arrived while no orchestrator ran are waiting.
-  const inbox = new InboxLoop(pool, (event, session) => service.apply(event, session));
+  const inbox = new InboxLoop(
+    pool,
+    (event, session) => service.apply(event, session),
+    (event, session) => service.prepare(event, session),
+  );
   running.inbox = inbox;
   inbox.start();
 }

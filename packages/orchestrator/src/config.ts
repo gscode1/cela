@@ -1,6 +1,7 @@
 import { loadModelPolicy } from "@pi-durable-k8s/session-core";
 import type { ModelPolicy } from "@pi-durable-k8s/session-core";
 import { GITHUB_APP_DIR } from "./github-app.js";
+import type { OneCliCallPolicy } from "./onecli-admin.js";
 import { parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
 
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
@@ -67,6 +68,8 @@ export interface OrchestratorConfig {
     /** `ONECLI_API_KEY` (`oc_...`). Undefined: sessions that ask for a repo are refused. */
     onecliApiKey: Redacted | undefined;
     githubAppDir: string;
+    /** Per-call bounds on the OneCLI management API (PI_ONECLI_TIMEOUT_SECONDS, _RETRIES, _BACKOFF_MS). */
+    onecliCalls: OneCliCallPolicy;
   };
 }
 
@@ -91,6 +94,18 @@ export const DEFAULT_NO_PROXY = [
 const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 
 /** A non-negative whole number of seconds from the environment, as milliseconds. */
+function count(
+  env: Readonly<Record<string, string | undefined>>,
+  name: string,
+  fallback: number,
+  max: number,
+): number {
+  const value = Number(env[name] ?? String(fallback));
+  if (!Number.isInteger(value) || value < 0 || value > max)
+    throw new Error(`${name} must be a whole number from 0 to ${String(max)}`);
+  return value;
+}
+
 function seconds(
   env: Readonly<Record<string, string | undefined>>,
   name: string,
@@ -163,6 +178,12 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
       onecliApi: env.PI_ONECLI_API ?? "http://onecli.onecli:10256",
       onecliApiKey: env.ONECLI_API_KEY ? new Redacted(env.ONECLI_API_KEY) : undefined,
       githubAppDir: env.PI_GITHUB_APP_DIR ?? GITHUB_APP_DIR,
+      onecliCalls: {
+        timeoutMs: Math.max(1_000, seconds(env, "PI_ONECLI_TIMEOUT_SECONDS", 15)),
+        retries: count(env, "PI_ONECLI_RETRIES", 3, 10),
+        backoffMs: count(env, "PI_ONECLI_BACKOFF_MS", 500, 60_000),
+        maxBackoffMs: 5_000,
+      },
     },
   };
 }

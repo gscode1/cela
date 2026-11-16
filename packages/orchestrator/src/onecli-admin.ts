@@ -16,6 +16,9 @@ export class OneCliError extends Error {
   }
 }
 
+/** The request did not complete (connection error or timeout): nothing is known about whether it was applied. */
+export class OneCliTransportError extends Error {}
+
 export interface OneCliAgent {
   id: string;
   name: string;
@@ -110,40 +113,150 @@ export function parseGrants(value: unknown): OneCliGrant[] {
   return grants;
 }
 
+/** Bounds on one management API call; see docs/decisions/0005-migrations-without-ddl-locks.md. */
+export interface OneCliCallPolicy {
+  /** Each attempt is aborted after this long. */
+  timeoutMs: number;
+  /** Tries after the first one. 0 disables the retry. */
+  retries: number;
+  /** Wait before the first retry; doubles per retry, capped at `maxBackoffMs`. */
+  backoffMs: number;
+  maxBackoffMs: number;
+  /** Only tests replace this. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export const DEFAULT_CALL_POLICY: OneCliCallPolicy = {
+  timeoutMs: 15_000,
+  retries: 3,
+  backoffMs: 500,
+  maxBackoffMs: 5_000,
+};
+
 export class OneCliAdmin {
   readonly #base: string;
   readonly #key: Redacted;
   readonly #fetch: FetchLike;
+  readonly #policy: OneCliCallPolicy;
 
-  constructor(baseUrl: string, apiKey: Redacted, fetchImpl: FetchLike) {
+  constructor(
+    baseUrl: string,
+    apiKey: Redacted,
+    fetchImpl: FetchLike,
+    policy: OneCliCallPolicy = DEFAULT_CALL_POLICY,
+  ) {
     this.#base = baseUrl.replace(/\/+$/, "");
     this.#key = apiKey;
     this.#fetch = fetchImpl;
+    this.#policy = policy;
   }
 
+  /**
+   * One call with a per-attempt timeout and bounded backoff. A network error, a timeout and a 5xx are retried; a 4xx
+   * (and a 2xx the caller does not accept) never is, because asking again cannot change the answer. A POST is never
+   * retried here: whatever fails after it was sent may hide an applied create (a gateway timing out after OneCLI
+   * committed), so `#createReconciled` decides what to do, by looking the object up again.
+   */
   async #call(
     method: string,
     path: string,
     body?: unknown,
     accept: readonly number[] = [200, 201, 204],
   ): Promise<{ status: number; body: unknown }> {
-    const response = await this.#fetch(`${this.#base}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.#key.reveal()}`,
-        accept: "application/json",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    const { retries, backoffMs, maxBackoffMs } = this.#policy;
+    const sleep = this.#policy.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.#attempt(method, path, body, accept);
+      } catch (error) {
+        if (attempt >= retries || !this.#retryable(method, error)) throw error;
+        await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** attempt));
+      }
+    }
+  }
+
+  #retryable(method: string, error: unknown): boolean {
+    if (method === "POST") return false;
+    if (error instanceof OneCliError) return error.status >= 500;
+    // Only transport failures reach here: a malformed body is a plain Error from parsing, not worth asking again.
+    return error instanceof OneCliTransportError;
+  }
+
+  /** Whether a failed POST may have been applied: anything but a 4xx, which OneCLI answers before it writes. */
+  #ambiguous(error: unknown): boolean {
+    if (error instanceof OneCliError) return error.status >= 500;
+    return error instanceof OneCliTransportError;
+  }
+
+  /**
+   * Find-or-create with the retry policy applied to the whole step, never to the raw POST. Each round first looks
+   * the object up by name; only if it is absent does it POST. A POST that fails in an ambiguous way (5xx, timeout,
+   * network) is followed, after the backoff, by the next round's lookup, which finds the object if OneCLI applied the
+   * create and so never creates it twice. A definite refusal (4xx) and the last round's failure are thrown.
+   */
+  async #createReconciled<T>(
+    find: () => Promise<T | undefined>,
+    create: () => Promise<void>,
+  ): Promise<T> {
+    const { retries, backoffMs, maxBackoffMs } = this.#policy;
+    const sleep = this.#policy.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt++) {
+      const existing = await find();
+      if (existing !== undefined) return existing;
+      try {
+        await create();
+      } catch (error) {
+        if (attempt >= retries || !this.#ambiguous(error)) throw error;
+        await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** attempt));
+        continue;
+      }
+      const created = await find();
+      if (created === undefined) throw new Error("OneCLI accepted the create but does not list it");
+      return created;
+    }
+  }
+
+  async #attempt(
+    method: string,
+    path: string,
+    body: unknown,
+    accept: readonly number[],
+  ): Promise<{ status: number; body: unknown }> {
+    const shown = path.replace(/[0-9a-f-]{20,}/g, ":id");
+    const timeout = AbortSignal.timeout(this.#policy.timeoutMs);
+    let response: Awaited<ReturnType<FetchLike>>;
+    try {
+      response = await this.#fetch(`${this.#base}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.#key.reveal()}`,
+          accept: "application/json",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: timeout,
+      });
+    } catch (error) {
+      // Never the cause's text: it may carry the URL, and nothing here needs more than the path.
+      throw new OneCliTransportError(
+        timeout.aborted
+          ? `OneCLI ${method} ${shown} timed out after ${String(this.#policy.timeoutMs)} ms`
+          : `OneCLI ${method} ${shown} failed: ${error instanceof Error ? error.name : "network error"}`,
+      );
+    }
     if (!accept.includes(response.status)) {
       throw new OneCliError(
-        `OneCLI ${method} ${path.replace(/[0-9a-f-]{20,}/g, ":id")} answered HTTP ${String(response.status)}`,
+        `OneCLI ${method} ${shown} answered HTTP ${String(response.status)}`,
         response.status,
       );
     }
     if (response.status === 204) return { status: 204, body: undefined };
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new OneCliTransportError(`OneCLI ${method} ${shown} broke off while answering`);
+    }
     return {
       status: response.status,
       body: text === "" ? undefined : (JSON.parse(text) as unknown),
@@ -167,9 +280,20 @@ export class OneCliAdmin {
     });
   }
 
-  /** The create answer has no token (v2.20 recheck); read it back with `listAgents`. */
-  async createAgent(name: string, identifier: string): Promise<void> {
-    await this.#call("POST", "/v1/agents", { name, identifier });
+  /**
+   * The agent with this identifier, created if absent. The create answer has no token (v2.20 recheck), so the agent
+   * is read back with `listAgents`. Reconciles by identifier rather than retrying the POST (see `#createReconciled`).
+   */
+  async ensureAgent(identifier: string): Promise<{ agent: OneCliAgent; created: boolean }> {
+    let created = false;
+    const agent = await this.#createReconciled(
+      async () => (await this.listAgents()).find((a) => a.identifier === identifier),
+      async () => {
+        created = true;
+        await this.#call("POST", "/v1/agents", { name: identifier, identifier });
+      },
+    );
+    return { agent, created };
   }
 
   /** Deleting an agent makes its token fail at once (spike Q5). Already gone is fine. */
@@ -188,8 +312,22 @@ export class OneCliAdmin {
     });
   }
 
+  /**
+   * Creates the secret unless one of that name exists, and returns its id. Reconciles by name rather than retrying the
+   * POST. A secret found here (a lost create that was applied) already holds the value just posted.
+   */
+  async ensureSecret(input: SecretInput): Promise<string> {
+    const found = await this.#createReconciled(
+      async () => (await this.listSecrets()).find((s) => s.name === input.name),
+      async () => {
+        await this.#createSecret(input);
+      },
+    );
+    return found.id;
+  }
+
   /** UNVERIFIED on v2: the field names of a generic secret (`injectionConfig`) are those of v1.45. */
-  async createSecret(input: SecretInput): Promise<string> {
+  async #createSecret(input: SecretInput): Promise<string> {
     const { body } = await this.#call("POST", "/v1/secrets", {
       name: input.name,
       type: "generic",
