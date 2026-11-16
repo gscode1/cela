@@ -1,6 +1,6 @@
 # Egress proxy (issue #51). Build context: packages/egress-proxy.
 #   docker buildx build --platform linux/arm64,linux/amd64 -f images/egress-proxy/Dockerfile packages/egress-proxy
-# Not built or pushed by the spike. Keep the Go version equal to go.mod's toolchain line (ADR 0011).
+# Not built or pushed by the spike. Keep the Go version equal to go.mod's toolchain line (ADR 0012).
 FROM --platform=$BUILDPLATFORM golang:1.27.3 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src

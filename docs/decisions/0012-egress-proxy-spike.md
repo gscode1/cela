@@ -1,4 +1,4 @@
-# 0011: Egress proxy spike, Smokescreen chained to OneCLI
+# 0012: Egress proxy spike, Smokescreen chained to OneCLI
 
 Status: proposed, 2026-11-16 (issue #51, slice 1 of epic #50). The local part is done and tested; the live cluster test
 is **pending** (see "Not yet proven").
@@ -70,7 +70,10 @@ Smokescreen's `BuildProxy` gives the CONNECT handling, ACL hook, resolve-classif
   upstream tunnel into a direct one).
 - **Tunnel registry** (`Registry`): every outbound connection is wrapped when dialled and registered by session.
   `CloseSession(session)` closes them all and returns the count; closing the upstream side ends the tunnel, goproxy then
-  closes the client side. A maximum age (`EGRESS_MAX_TUNNEL_AGE`, default 1 h) closes each tunnel with a timer. An admin
+  closes the client side. The CONNECT handshake with the upstream has a deadline (`EGRESS_UPSTREAM_HANDSHAKE_TIMEOUT`,
+  default 10 s) that is cleared once the response header has been read, so a silent upstream cannot hold a tunnel. Each
+  tracked connection's timer is installed before it is published, and a connection that is already closed is never
+  registered, so expiry and close cannot race or leak. A maximum age (`EGRESS_MAX_TUNNEL_AGE`, default 1 h) closes each tunnel with a timer. An admin
   endpoint `POST /admin/sessions/{session}/close-tunnels` (bearer token `EGRESS_ADMIN_TOKEN`, separate listener, default
   `127.0.0.1:3129`) calls it. Slice 7 calls the function from the revocation path.
 
