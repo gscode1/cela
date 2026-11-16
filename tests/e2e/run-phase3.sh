@@ -201,6 +201,9 @@ t_restart() {
 
 t_double_owner() {
   local a b id seq0 seq1 rc0 s
+  # Runs in the test's own subshell, so it fires on a failed assert too: B must not outlive this test and
+  # distort the tests that follow (the script-level cleanup only runs at the very end).
+  trap 'k delete deployment pi-orchestrator-b --ignore-not-found --wait=true >/dev/null 2>&1 || true' EXIT
   a=$(owner_pod)
   note "first orchestrator: $a"
   rc0=$(restart_count "$a")
@@ -422,13 +425,15 @@ t_isolation() {
   reach=$(count_denied REACHABLE "$out")
   blocked=$(count_denied BLOCKED "$out")
   control=$(printf '%s\n' "$out" | sed -n 's/^onecli-gateway //p')
+  # The gateway is allowed with or without enforcement, so check it before the known-fail exit: a dead gateway
+  # must not be hidden behind "NetworkPolicy is not enforced".
+  assert "the probe works: the OneCLI gateway :10255 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
   if [[ $reach -gt 0 && $blocked -eq 0 && ${NETPOL_ENFORCED:-auto} != 1 ]] || [[ ${NETPOL_ENFORCED:-auto} == 0 ]]; then
     note "no enforcement observed: all $reach denied targets reachable ($hint)"
     exit 3 # KNOWN-FAIL: NetworkPolicy is not enforced yet
   fi
   assert "every denied in-cluster target is unreachable from a sandbox ($reach reachable, $blocked blocked)" test "$reach" -eq 0
   assert "direct public internet is reachable (sandbox-allow-internet-egress)" grep -q '^internet-direct REACHABLE' <<<"$out"
-  assert "the probe works: the OneCLI gateway :10255 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
 }
 
 # ---------------------------------------------------------------- setup
