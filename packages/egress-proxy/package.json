@@ -1,0 +1,12 @@
+{
+  "name": "@pi-durable-k8s/egress-proxy",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Session egress proxy: Stripe Smokescreen chained to OneCLI. A Go module, wired into pnpm check by these scripts.",
+  "scripts": {
+    "build": "go build -trimpath -o dist/egress-proxy ./cmd/egress-proxy",
+    "typecheck": "./scripts/gofmt-check.sh && go vet ./...",
+    "test": "go test -race -count=1 -timeout 180s ./..."
+  },
+  "license": "MIT"
+}
