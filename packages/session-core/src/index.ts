@@ -65,6 +65,37 @@ export type {
   PutProfileResult,
   StoredProfile,
 } from "./profiles.js";
+export {
+  buildSkillCatalog,
+  isSkillDigest,
+  listSkillVersions,
+  manifestOf,
+  pinSkillRefs,
+  putSkillVersion,
+  readSkill,
+  readSkillBundle,
+  readSkills,
+  readSkillVersion,
+  SKILL_BODY_LIMIT,
+  SKILL_ENTRY,
+  SKILL_LIMITS,
+  SKILL_NAME,
+  skillDigest,
+  skillDir,
+  skillNameError,
+  SKILLS_ROOT,
+  validateSkillContent,
+  verifySkillBundle,
+} from "./skills.js";
+export type {
+  PutSkillResult,
+  SkillBundle,
+  SkillContent,
+  SkillFileEntry,
+  SkillRef,
+  SkillVersionMeta,
+  StoredSkill,
+} from "./skills.js";
 export { SettingsCache } from "./settings-cache.js";
 export type { SettingsCacheOptions } from "./settings-cache.js";
 export {

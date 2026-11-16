@@ -2,6 +2,8 @@ import type pg from "pg";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
+import { isSkillDigest, pinSkillRefs, SKILL_LIMITS, SKILL_NAME } from "./skills.js";
+import type { SkillRef } from "./skills.js";
 
 /**
  * Session profiles (docs/decisions/0010-session-profiles.md): named, versioned definitions of what a session gets.
@@ -36,6 +38,7 @@ const KEYS = [
   "reasoning",
   "turnBudget",
   "mcpServers",
+  "skills",
 ] as const;
 
 /**
@@ -58,6 +61,12 @@ export interface ProfileDefinition {
   turnBudget?: number;
   /** Names of MCP catalog servers the session gets (`mcp-<name>` extensions plus `tool_search`); absent: none. */
   mcpServers?: string[];
+  /**
+   * Skills the session gets (docs/decisions/0011-skills-in-postgres.md), each an exact version. An admin write fills in
+   * `digest` (what the version's content hashes to), so a stored definition and a session's snapshot pin the content,
+   * not just a number. A session's catalog lists them and its sandbox gets their files; absent: none.
+   */
+  skills?: SkillRef[];
 }
 
 export interface ProfileRef {
@@ -160,10 +169,64 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     if (typeof servers === "string") return servers;
     definition.mcpServers = servers;
   }
-  // Fixed key order, so equal definitions serialise equally whatever order the body had.
+  if (body.skills !== undefined) {
+    const skills = skillRefs(body.skills);
+    if (typeof skills === "string") return skills;
+    if (skills.length > 0) {
+      // The model loads a skill by reading its SKILL.md, so a profile that offers skills must offer `read`.
+      for (const field of ["tools", "modelTools"] as const) {
+        if (definition[field] !== undefined && !definition[field].includes("read")) {
+          return `skills need the read tool, but ${field} does not include it`;
+        }
+      }
+      definition.skills = skills;
+    }
+  }
+  return ordered(definition);
+}
+
+/** Fixed key order, so equal definitions serialise equally whatever order the body had. */
+function ordered(definition: ProfileDefinition): ProfileDefinition {
   return Object.fromEntries(
     KEYS.flatMap((key) => (definition[key] === undefined ? [] : [[key, definition[key]]])),
   );
+}
+
+function skillRefs(value: unknown): SkillRef[] | string {
+  if (!Array.isArray(value) || value.length > SKILL_LIMITS.perProfile) {
+    return `skills must be an array of at most ${String(SKILL_LIMITS.perProfile)} { name, version } entries`;
+  }
+  const refs: SkillRef[] = [];
+  for (const raw of value as unknown[]) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return "every skills entry must be an object { name, version }";
+    }
+    const entry = raw as Record<string, unknown>;
+    for (const key of Object.keys(entry)) {
+      if (key !== "name" && key !== "version" && key !== "digest") {
+        return `unknown skills field "${key.slice(0, 50)}"`;
+      }
+    }
+    const { name, version, digest } = entry;
+    if (typeof name !== "string" || !SKILL_NAME.test(name)) {
+      return `skills names must match ${SKILL_NAME.source}`;
+    }
+    if (
+      typeof version !== "number" ||
+      !Number.isInteger(version) ||
+      version < 1 ||
+      version > 1_000_000
+    ) {
+      return `skills "${name}": version must be a positive integer`;
+    }
+    if (digest !== undefined && !isSkillDigest(digest)) {
+      return `skills "${name}": digest must be 64 lowercase hex characters`;
+    }
+    if (refs.some((ref) => ref.name === name))
+      return `skills names "${name}" twice: one version per skill`;
+    refs.push(digest === undefined ? { name, version } : { name, version, digest });
+  }
+  return refs;
 }
 
 export function profileDefinitionsEqual(a: ProfileDefinition, b: ProfileDefinition): boolean {
@@ -362,6 +425,12 @@ export async function putProfile(
   return inTransaction(pool, async (client): Promise<PutProfileResult> => {
     // Serialises writers per name, also for a create (no row to lock yet).
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`profile:${name}`]);
+    if (definition?.skills !== undefined) {
+      // Skill versions are immutable, so the digests filled in here stay true: the stored definition pins content.
+      const pinned = await pinSkillRefs(client, definition.skills);
+      if (typeof pinned === "string") return { ok: false, message: pinned };
+      definition = ordered({ ...definition, skills: pinned.refs });
+    }
     const { rows } = await client.query<ProfileRow>(
       `select ${PROFILE_COLUMNS} ${PROFILE_FROM} where p.name = $1`,
       [name],
