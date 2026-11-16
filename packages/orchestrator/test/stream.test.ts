@@ -1,5 +1,7 @@
+import type { ServerResponse } from "node:http";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { liveEvent, parseLastEventId } from "../src/stream.ts";
+import { liveEvent, parseLastEventId, write } from "../src/stream.ts";
 
 describe("parseLastEventId", () => {
   it("reads a positive integer and treats everything else as no cursor", () => {
@@ -47,4 +49,24 @@ describe("liveEvent", () => {
       runFailure: "aborted",
     });
   });
+});
+
+describe("write", () => {
+  it("leaves no listeners behind after a drain or a close", async () => {
+    const res = new PassThrough({ highWaterMark: 1 }) as unknown as ServerResponse;
+    const stream = res as unknown as PassThrough;
+    for (let i = 0; i < 20; i += 1) {
+      const pending = write(res, "chunk");
+      stream.read(); // empties the buffer, which emits drain
+      await pending;
+    }
+    expect(stream.listenerCount("close")).toBe(0);
+    expect(stream.listenerCount("drain")).toBe(0);
+
+    const closing = write(res, "chunk");
+    stream.destroy();
+    await closing;
+    expect(stream.listenerCount("close")).toBe(0);
+    expect(stream.listenerCount("drain")).toBe(0);
+  }, 5_000);
 });

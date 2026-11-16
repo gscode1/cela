@@ -77,11 +77,24 @@ export function parseLastEventId(header: string | string[] | undefined): number 
   return raw !== undefined && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
-/** Writes a chunk and waits for the socket to drain, or for the client to go away. */
-async function write(res: ServerResponse, chunk: string): Promise<void> {
+/**
+ * Writes a chunk and waits for the socket to drain, or for the client to go away. Whichever event loses the race must
+ * drop its listener: a slow client under backpressure would otherwise pile up one `close` listener per write.
+ */
+export async function write(res: ServerResponse, chunk: string): Promise<void> {
   if (res.destroyed || res.writableEnded) return;
   if (!res.write(chunk)) {
-    await Promise.race([once(res, "drain"), once(res, "close")]).catch(() => undefined);
+    const done = new AbortController();
+    try {
+      await Promise.race([
+        once(res, "drain", { signal: done.signal }),
+        once(res, "close", { signal: done.signal }),
+      ]);
+    } catch {
+      // the stream failed or was aborted; the caller sees the closed response on its next write
+    } finally {
+      done.abort();
+    }
   }
 }
 
