@@ -136,12 +136,14 @@ describe("SessionService creates the conversation with the catalog", () => {
     return fake.asPool();
   }
 
-  const service = (host: Host, skills?: { catalogFor: () => Promise<string | undefined> }) =>
+  const service = (host: Host, catalog?: { catalogFor: () => Promise<string | undefined> }) =>
     new SessionService(fakePool(), host, {
       testFaults: false,
       defaultModel: config.models.default,
       turnBudget: () => 100,
-      ...(skills === undefined ? {} : { skills }),
+      ...(catalog === undefined
+        ? {}
+        : { skills: { ...catalog, entriesFor: () => Promise.resolve([]) } }),
     });
 
   it("passes the snapshot's catalog to the host, so the instructions pin the digest of the session's version", async () => {

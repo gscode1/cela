@@ -16,6 +16,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
+import { joinInstructions } from "./repo-context.js";
 import type { Script } from "./model.js";
 import { httpTransportFactory, McpTools } from "./mcp.js";
 import type { McpTimings, McpTransportFactory } from "./mcp.js";
@@ -182,12 +183,10 @@ export class Host {
     }
     const servers = definition.mcpServers ?? [];
     // The skill catalog follows the profile's own instructions; it is stored with the conversation like them.
-    const instructions = [definition.instructions, catalog].filter(
-      (part): part is string => part !== undefined && part !== "",
-    );
+    const instructions = joinInstructions([definition.instructions, catalog]);
     return {
       ...toolFilters(coding, definition),
-      ...(instructions.length === 0 ? {} : { instructions: instructions.join("\n\n") }),
+      ...(instructions === undefined ? {} : { instructions }),
       ...(servers.length === 0
         ? {}
         : {
@@ -398,6 +397,23 @@ export class Host {
   /** The profile's instructions as Pi resolved them for the conversation; undefined when it has none. */
   async instructionsOf(id: number): Promise<string | undefined> {
     return (await (await this.#conversation(id)).agent(context)).instructions;
+  }
+
+  /**
+   * Replaces the conversation's instructions with `text` (undefined: none) when they differ from what is stored, and
+   * says whether it wrote. Equal text writes nothing, so a rescan that finds the same repo content adds no entry.
+   */
+  async setInstructions(id: number, text: string | undefined): Promise<boolean> {
+    const conversation = await this.#conversation(id);
+    const current = (await conversation.agent(context)).instructions ?? undefined;
+    if (current === text) return false;
+    await conversation.configure({ instructions: text ?? null }, context);
+    return true;
+  }
+
+  /** True while the session's sandbox env is open; never opens or resumes it (see `Sandboxes.isOpen`). */
+  sandboxOpen(id: number): boolean {
+    return this.#sandboxes.isOpen(id);
   }
 
   /** Model turns (assistant responses) in the conversation's transcript so far. */

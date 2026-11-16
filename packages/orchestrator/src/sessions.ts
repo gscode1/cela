@@ -1,6 +1,7 @@
 import { writeSync } from "node:fs";
 import type pg from "pg";
 import {
+  buildSkillCatalog,
   completeTombstone,
   errorMessage,
   failSession,
@@ -20,6 +21,7 @@ import { GithubDeniedError } from "./github-app.js";
 import type { Host } from "./host.js";
 import { log } from "./log.js";
 import { RepoUnavailableError } from "./repo-access.js";
+import { joinInstructions, mergeCatalog, scanRepoSkills } from "./repo-context.js";
 import type { RepoAccess } from "./repo-access.js";
 import { WorkspaceLostError } from "./workspace.js";
 import { SkillIntegrityError } from "./skills.js";
@@ -84,7 +86,7 @@ export interface SessionServiceOptions {
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
   /** Where a new conversation's skill catalog comes from. Without it a profile that names skills is refused. */
-  skills?: Pick<SkillLibrary, "catalogFor">;
+  skills?: Pick<SkillLibrary, "catalogFor" | "entriesFor">;
 }
 
 /**
@@ -254,7 +256,33 @@ export class SessionService {
     if (session.status === "failed" || session.status === "deleted" || session.repo === null)
       return;
     if (typeof event.payload.text !== "string" || event.payload.text === "") return;
-    await this.#prepareRepo(session, await this.ensureConversation(session));
+    const conversationId = await this.ensureConversation(session);
+    await this.#prepareRepo(session, conversationId);
+    await this.#refreshRepoContext(session, conversationId);
+  }
+
+  /**
+   * Reads what the cloned repo adds to the instructions (repo skills, ADR 0014) and applies it with `configure`. Runs
+   * for every new user message, after `#prepareRepo`, and only while the session's sandbox env is already open: a
+   * message to a suspended or evicted sandbox keeps the instructions of the last scan rather than resume it. (After a
+   * restart `#prepareRepo` opens the env again, so the first message rescans.) Never throws: a scan that fails is
+   * logged and the instructions stay as they were, so it cannot block a turn.
+   */
+  async #refreshRepoContext(session: SessionRow, conversationId: number): Promise<void> {
+    try {
+      const definition = definitionOf(session);
+      if (definition.repoSkills !== true) return;
+      if (!this.#host.sandboxOpen(conversationId)) return;
+      const repo = await scanRepoSkills(await this.#host.workspaceEnv(conversationId));
+      const admin = (await this.#options.skills?.entriesFor(definition)) ?? [];
+      const catalog = buildSkillCatalog(mergeCatalog(admin, repo));
+      const text = joinInstructions([definition.instructions, catalog]);
+      if (await this.#host.setInstructions(conversationId, text)) {
+        log("repo-context-applied", { session: session.id, skills: repo.length });
+      }
+    } catch (error) {
+      log("repo-context-failed", { session: session.id, message: errorMessage(error) });
+    }
   }
 
   /** Applies one inbox event. Resolves when it is durably handed over; throws PermanentError if it never can be. */
