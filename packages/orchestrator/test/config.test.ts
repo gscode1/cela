@@ -9,6 +9,22 @@ const env = {
   POD_NAME: "pi-orchestrator-abc",
 };
 
+describe("config timers", () => {
+  it("rejects a seconds setting that overflows a timer delay", () => {
+    for (const name of [
+      "PI_SWEEP_INTERVAL_SECONDS",
+      "PI_SWEEP_GRACE_SECONDS",
+      "PI_SANDBOX_IDLE_EVICT_SECONDS",
+      "PI_SANDBOX_IDLE_SUSPEND_SECONDS",
+    ]) {
+      expect(() => loadConfig({ ...env, [name]: "2592000" })).toThrow(new RegExp(name));
+    }
+    expect(loadConfig({ ...env, PI_SWEEP_INTERVAL_SECONDS: "2147483" }).sweep.intervalMs).toBe(
+      2_147_483_000,
+    );
+  });
+});
+
 describe("config", () => {
   it("requires the database URL and API tokens and defaults the rest", () => {
     expect(() => loadConfig({})).toThrow(/PI_DURABLE_DATABASE_URL/);

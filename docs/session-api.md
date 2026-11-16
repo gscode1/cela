@@ -209,7 +209,7 @@ retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per sessi
 ### Orphan sweep
 
 What deletion missed is removed by a periodic sweep in the orchestrator (`docs/decisions/0002-orphan-sweep.md`): every
-`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off) it removes SandboxClaims `pi-conv-<n>` labelled with a session UUID, workspace
+`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off; every seconds setting is at most 2147483, a larger one is refused at start) it removes SandboxClaims `pi-conv-<n>` labelled with a session UUID, workspace
 PVCs `workspace-pi-conv-<n>` without a claim, and OneCLI agents `pi-session-<uuid>` with their secrets, when the session
 is `deleted` or has no row, and the object is older than `PI_SWEEP_GRACE_SECONDS` (600). At most `PI_SWEEP_MAX_ACTIONS`
 (10) per run; each action is one `sweep-action` log line. Unlabelled claims, `control-<n>` labels and every other name are

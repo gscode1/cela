@@ -82,6 +82,9 @@ export const DEFAULT_NO_PROXY = [
   "192.168.0.0/16",
 ];
 
+/** Node clamps a timer delay above 2^31-1 ms to 1 ms, which would turn a long interval into a busy loop. */
+const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
 /** A non-negative whole number of seconds from the environment, as milliseconds. */
 function seconds(
   env: Readonly<Record<string, string | undefined>>,
@@ -91,6 +94,8 @@ function seconds(
   const value = Number(env[name] ?? String(fallback));
   if (!Number.isInteger(value) || value < 0)
     throw new Error(`${name} must be a whole number of seconds, 0 or more`);
+  if (value > MAX_TIMER_SECONDS)
+    throw new Error(`${name} must be at most ${String(MAX_TIMER_SECONDS)} seconds (about 24 days)`);
   return value * 1000;
 }
 
