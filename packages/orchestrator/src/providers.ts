@@ -12,14 +12,13 @@ import {
   withFetch,
 } from "./onecli.js";
 
-const LOCAL = new Set(["scripted", "faux"]);
-
 /**
  * The `Models` of the orchestrator.
  *
  * Pi Durable stores a conversation's model as `{ provider, modelId }` names and resolves them against this `Models`
- * at every request, so every provider a stored conversation may name must be installed at every start: the
- * allowlist's providers, the scripted ones, and `faux` for the Phase 3 /control sessions.
+ * at every request, so every provider a stored conversation may name must be installed at every start: all builtin
+ * providers when the OneCLI token is set (the allowlist only limits new sessions), the scripted ones, and `faux` for
+ * the Phase 3 /control sessions.
  *
  * Real providers resolve their API key to a placeholder (`placeholderAuthContext`) and send their requests through
  * the OneCLI gateway, which replaces the placeholder with the credential it holds. Throws when an allowlisted model
@@ -41,16 +40,15 @@ export async function buildModels(
     }).provider,
   );
 
-  const remote = config.models.allowed.filter((choice) => !LOCAL.has(choice.provider));
   const token = config.onecli.token;
-  if (remote.length === 0 || token === undefined) {
+  if (token === undefined) {
     assertInstalled(models, config);
     return models;
   }
-  const wanted = new Set(remote.map((choice) => choice.provider));
-  for (const provider of builtinProviders()) {
-    if (wanted.has(provider.id)) models.setProvider(provider);
-  }
+  // Every builtin provider, not only the allowlisted ones: the allowlist governs new sessions (ingest checks it), but
+  // an existing conversation keeps the model stored with it, so a provider whose last model was removed from the
+  // allowlist must still resolve (docs/model-credentials.md). Without a token nothing can reach a provider anyway.
+  for (const provider of builtinProviders()) models.setProvider(provider);
   assertInstalled(models, config);
   const ca = await readCa(config.onecli.caFile);
   return withFetch(

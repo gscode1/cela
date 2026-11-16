@@ -78,6 +78,17 @@ describe("buildModels", () => {
     }
   });
 
+  it("still resolves a provider whose last model left the allowlist, for conversations that stored it", async () => {
+    const config = loadConfig({
+      ...base,
+      ONECLI_AGENT_TOKEN: TOKEN,
+      PI_MODEL_ALLOWLIST: "scripted/scripted-2",
+    });
+    const models = await buildModels(config, readCa);
+    expect(models.getModel("openrouter", "openai/gpt-4.1-nano")).toBeDefined();
+    expect(models.getModel("openai-codex", "gpt-6.1-terra")).toBeDefined();
+  });
+
   it("fails at start for an allowlisted model pi-ai does not know", async () => {
     const config = loadConfig({
       ...base,
