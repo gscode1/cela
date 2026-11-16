@@ -34,6 +34,12 @@ for phases 4, 4b, 4c and 3), live sessions were disturbed, and a failed run left
 - Two runs from two branches run at the same time; `pi-durable-poc` is not restarted by any run.
 - A run costs about three minutes more for the stack (CNPG start, volumes) and the tear-down than a run in a warm namespace.
 - Runs share one OneCLI identity (agent token, management key) with production, the global host rules and the node. Per-session
-  agents are `pi-session-<uuid>` and cannot collide. A suite that changes OneCLI-global state would break this independence; none does today.
+  agents are named with a per-stack prefix (`PI_ONECLI_NAME_PREFIX`: `pi-session-` for the long-lived stack, `pi-e2e-<run id>-` for a run).
+  Without it the collision is real, not hypothetical: each orchestrator's orphan sweep (ADR 0002) revoked the other stack's agents
+  as "unknown", sessions failed with `CONNECT rejected: invalid agent token` (407) and phase 4c failed in both stacks. The sweep's
+  patterns are anchored at the start, so it judges only its own prefix. A suite that changes OneCLI-global state would still break
+  the independence; none does today.
+- OneCLI agents and secrets outlive the namespace. A killed or swept run leaves its `pi-e2e-<run id>-*` objects behind, and no later
+  stack can sweep them (another prefix). `tests/e2e/sweep.sh` does not remove them (it has no OneCLI key); remove them by hand.
 - Until the argo-c2 ingress change is merged, suites that call OneCLI from a run namespace fail (docs/e2e.md).
 - Cluster-wide pieces (CNPG operator, agent-sandbox controller, ESO) are shared by all runs. The CNPG operator reconciles up to 10 clusters at once.

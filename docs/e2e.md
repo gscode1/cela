@@ -66,8 +66,20 @@ SKIP (phase4b real model) or fail (phase4c, mcp). The two Secrets made by the sc
 never through argv or stdout.
 
 The OneCLI agent token and management key are the same ones production uses, so e2e runs share one OneCLI identity with
-production. Per-session OneCLI agents and secrets are named `pi-session-<session uuid>` (`agentIdentifier`), so runs never
-collide, and every suite deletes what it created.
+production. They also share one OneCLI **workspace**, and every orchestrator's orphan sweep revokes the OneCLI agents it does
+not know (`docs/decisions/0002-orphan-sweep.md`). So each stack names its agents and secrets with its own prefix
+(`PI_ONECLI_NAME_PREFIX`): `pi-session-` for the long-lived stack (the default, unchanged), `pi-e2e-<run id>-` for a run, so a
+run's agent is `pi-e2e-<run id>-<session uuid>` and its secrets end in `-git` and `-api`. The sweep matches names anchored at the
+start, so it judges only its own prefix: `pi-session-` does not match `pi-e2e-ab12cd-<uuid>`, nor the reverse. `run.sh` sets the
+variable in the run's overlay (next to the namespace) and in the Job (`PI_ONECLI_NAME_PREFIX`); `run-phase4c.sh` finds the
+session's agent and secrets by it, for "the OneCLI agent is gone" and "its secrets are gone" too. No other suite looks up OneCLI
+objects. Every suite deletes what it created.
+
+Leak: OneCLI objects live outside the namespace, so deleting a namespace does not delete them. Agents of a run that was killed,
+kept (`KEEP_NS`) or swept by `tests/e2e/sweep.sh` stay in OneCLI under `pi-e2e-<run id>-`, and no later stack can sweep them,
+because their prefix is not its own. They are a few small objects each. Remove them by hand from the OneCLI admin API (agents
+whose identifier starts with `pi-e2e-` and the secrets with the same prefix). `sweep.sh` does not do it: it runs on the Mac, which
+holds no OneCLI management key (only the orchestrator pods do).
 
 ## What is cluster-scoped or lives outside the namespace
 
@@ -153,7 +165,7 @@ the production ones. Storage: three 1 Gi Longhorn volumes (database, orchestrato
 Every deploy script reads `NAMESPACE` (default `pi-durable-poc`, the long-lived deployment) and `KUBE_CONTEXT`:
 `push-code.sh`, `push-ingest.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The manifests carry no namespace
 except `deploy/kustomization.yaml` and `deploy/cilium/kustomization.yaml`, which set the long-lived one and are overridden by
-the run's overlay; the orchestrator gets `PI_ORCH_NAMESPACE` from the downward API. The `run-*.sh` suites require
+the run's overlay; the orchestrator gets `PI_ORCH_NAMESPACE` from the downward API and `PI_ONECLI_NAME_PREFIX` (`pi-e2e-<run id>-`) from the overlay. The `run-*.sh` suites require
 `NAMESPACE` (the Job sets it). `packages/orchestrator/test/e2e-namespace.test.ts` fails if a new hard-coded `pi-durable-poc`
 appears outside comments and those defaults.
 

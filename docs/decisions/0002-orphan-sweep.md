@@ -24,7 +24,7 @@ reads the world, executes the list and logs every action.
 |---|---|---|
 | SandboxClaim | name `pi-conv-<n>` and label `pi-durable-k8s/session-id` is a UUID | the label's session is deleted or unknown |
 | PVC | `workspace-pi-conv-<n>` | no claim of that name exists (labelled or not) and the session that owns conversation `<n>` is deleted or unknown |
-| OneCLI agent and secrets | agent `pi-session-<uuid>`, secrets `pi-session-<uuid>-git` and `-api` | that session is deleted or unknown |
+| OneCLI agent and secrets | agent `<prefix><uuid>`, secrets `<prefix><uuid>-git` and `-api` (prefix `pi-session-` by default) | that session is deleted or unknown |
 
 Everything else is left alone: unlabelled claims (the e2e Phase 1 claim `e2e-phase1`), `control-<n>` labels of the
 test-only control sessions, other names, other namespaces. A claim whose PVC is still wanted by another claim name is
@@ -64,6 +64,8 @@ leftover test sessions on c2, among them the owners of `pi-conv-5858` and `pi-co
 
 - The sweep needs `list` on PVCs, in addition to the claim verbs the orchestrator already has (`deploy/orchestrator-rbac.yaml`).
 - A OneCLI shared with another environment that also creates `pi-session-<uuid>` agents would see those agents swept
-  as "unknown". c2's OneCLI serves this project only. Do not share one OneCLI between two session databases.
+  as "unknown". The sweep judges only names with this orchestrator's prefix (`PI_ONECLI_NAME_PREFIX`, default `pi-session-`), so
+  stacks that share one OneCLI must each have their own prefix (the e2e runs do, ADR 0013). Do not share one prefix between two
+  session databases.
 - A conversation whose session row is hard-deleted by hand (as the e2e cleanup does after deleting through the API) has
   any leftover claim swept as `session-unknown`, which is the intent.

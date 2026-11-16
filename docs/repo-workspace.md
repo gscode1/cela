@@ -18,10 +18,12 @@ Stored in `inbox.sessions` (`repo`, `repo_branch`; migration `004_repo.sql`).
 orchestrator --JWT(App key)--> api.github.com  POST /app/installations/{id}/access_tokens
                {"repositories":["<name>"],"permissions":{"contents":"write","pull_requests":"write","metadata":"read"}}
            <-- 1 h token for that one repository (checked: the answer must list exactly owner/name)
-orchestrator --admin API--> OneCLI: agent pi-session-<uuid>, secrets pi-session-<uuid>-git / -api, grants
+orchestrator --admin API--> OneCLI: agent <prefix><uuid>, secrets <prefix><uuid>-git / -api, grants
 sandbox command --HTTPS_PROXY=http://x:<agent token>@onecli.onecli:10255--> gateway injects the token
 ```
 
+- `<prefix>` is `PI_ONECLI_NAME_PREFIX` (default `pi-session-`; lowercase `[a-z0-9-]`, ending in `-`). Stacks that share a OneCLI
+  workspace need different ones: the orphan sweep judges only names with its own prefix (`docs/e2e.md`).
 - The GitHub App id and installation id are in the Secret. The private key is Secret `pi-github-app` (`private-key.pem`, `app-id`,
   `installation-id`), delivered by ExternalSecret to the orchestrator only and mounted at `/etc/pi-github-app`.
 - Secrets: `…-git` for `github.com` injects `Authorization: Basic base64("x-access-token:<token>")`, `…-api` for `api.github.com`
