@@ -65,7 +65,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-kubectl config get-contexts "$ctx" >/dev/null
+# Empty KUBE_CONTEXT means the current context; fail early if there is none.
+kubectl config get-contexts ${ctx:-"$(kubectl config current-context)"} >/dev/null
 
 # Per-sandbox sandboxd tokens (docs/decisions/0001-per-sandbox-sandboxd-token.md): every suite creates claims that
 # carry a token hash, which the template accepts only with envVarsInjectionPolicy Allowed.
