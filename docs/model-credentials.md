@@ -79,7 +79,7 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 2. **Secret in the store:**
    `kubectl -n secret-store create secret generic pi-onecli --from-literal=agent-token=<token>`.
 3. `kubectl apply -k deploy` (adds `pi-model-config` and the ExternalSecret), then
-   `deploy/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready.
+   `deploy/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
 4. **Gateway egress.** OneCLI v2 still relays any public host by default. Add org rules that allow the model hosts and
    block the rest (`docs/research/onecli-v2-recheck.md`, section 2).
 5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).
