@@ -152,6 +152,22 @@ describe("repoSkills", () => {
   });
 });
 
+describe("repoContext", () => {
+  it("is a boolean, absent means off, and it needs no read tool (the file goes into the prompt as text)", () => {
+    expect(validateProfileDefinition({ repoContext: true, repoSkills: true })).toEqual({
+      repoSkills: true,
+      repoContext: true,
+    });
+    expect(validateProfileDefinition({ tools: ["bash"], repoContext: true })).toEqual({
+      tools: ["bash"],
+      repoContext: true,
+    });
+    expect(validateProfileDefinition({ repoContext: 1 })).toMatch(
+      /repoContext must be true or false/,
+    );
+  });
+});
+
 describe("checkProfileNames", () => {
   it("checks tools and modelTools against the installed tools and MCP servers against the catalog", () => {
     expect(checkProfileNames({ tools: ["read"], mcpServers: ["demo"] }, KNOWN)).toBeUndefined();

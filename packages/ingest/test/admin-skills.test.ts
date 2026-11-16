@@ -245,7 +245,7 @@ describe("profiles with skills and sessions", () => {
   it("GET /sessions/{id} shows repoSkills only when the snapshot turned it on and the session has a repo", async () => {
     const { base } = await start();
     const put = await call(base, "alice", "PUT", "/admin/profiles/repo-docs", {
-      definition: { repoSkills: true },
+      definition: { repoSkills: true, repoContext: true },
     });
     expect(put.status).toBe(201);
     const withRepo = await json(
@@ -255,6 +255,7 @@ describe("profiles with skills and sessions", () => {
       await call(base, "bob", "GET", `/sessions/${String(withRepo.sessionId)}`),
     );
     expect(got.repoSkills).toBe(true);
+    expect(got.repoContext).toBe(true);
     const noRepo = await json(
       await call(base, "bob", "POST", "/sessions", { profile: "repo-docs" }),
     );
@@ -262,6 +263,7 @@ describe("profiles with skills and sessions", () => {
       await call(base, "bob", "GET", `/sessions/${String(noRepo.sessionId)}`),
     );
     expect(gotPlain.repoSkills).toBeUndefined();
+    expect(gotPlain.repoContext).toBeUndefined();
     const noRead = await call(base, "alice", "PUT", "/admin/profiles/bad", {
       definition: { tools: ["bash"], repoSkills: true },
     });

@@ -40,6 +40,7 @@ const KEYS = [
   "mcpServers",
   "skills",
   "repoSkills",
+  "repoContext",
 ] as const;
 
 /**
@@ -73,6 +74,12 @@ export interface ProfileDefinition {
    * (docs/decisions/0014-repo-skills.md). Absent: off. Ignored for a session without a repo. Needs `read`.
    */
   repoSkills?: boolean;
+  /**
+   * Add the repo's own context file (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` or `CLAUDE.MD`, the
+   * first found, at the checkout root) to the session's instructions as project instructions
+   * (docs/decisions/0015-repo-context.md). Absent: off. Ignored for a session without a repo.
+   */
+  repoContext?: boolean;
 }
 
 export interface ProfileRef {
@@ -199,6 +206,10 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
       }
     }
     definition.repoSkills = body.repoSkills;
+  }
+  if (body.repoContext !== undefined) {
+    if (typeof body.repoContext !== "boolean") return "repoContext must be true or false";
+    definition.repoContext = body.repoContext;
   }
   return ordered(definition);
 }
