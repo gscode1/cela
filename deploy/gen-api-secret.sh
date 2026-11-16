@@ -10,8 +10,12 @@ if [[ ${ROTATE:-0} != 1 ]] && kubectl ${ctx:+--context="$ctx"} -n "$ns" get secr
   echo "secret api-auth already exists (ROTATE=1 to replace)"
   exit 0
 fi
-tokens=$(printf 'alice:%s\nbob:%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)")
+# The value goes to kubectl through a file in a private temp dir, not argv (visible in `ps`).
+umask 077
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+printf 'alice:%s\nbob:%s' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" >"$tmp/tokens"
 kubectl ${ctx:+--context="$ctx"} -n "$ns" create secret generic api-auth \
-  --from-literal=tokens="$tokens" \
+  --from-file=tokens="$tmp/tokens" \
   --dry-run=client -o yaml | kubectl ${ctx:+--context="$ctx"} -n "$ns" apply -f - >/dev/null
 echo "secret api-auth created"
