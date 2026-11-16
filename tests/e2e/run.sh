@@ -153,7 +153,11 @@ run_phase() { # phase1|phase3|phase4
 
   # Live view only. Best effort: if this stream dies the run is unaffected; the final logs fill the gap.
   (
-    until k logs "job/$job" --tail=1 >/dev/null 2>&1; do sleep 2; done
+    # The stop file ends the wait when the verdict is in and the pod never produced logs (or is gone).
+    until k logs "job/$job" --tail=1 >/dev/null 2>&1; do
+      [[ -e $work/$name.stop ]] && exit 0
+      sleep 2
+    done
     k logs -f "job/$job" 2>&1 | tee "$work/$name.follow"
   ) &
   follow_pid=$!
@@ -171,7 +175,9 @@ run_phase() { # phase1|phase3|phase4
 
   # Let the stream flush its tail, then print whatever it did not show from the final logs.
   for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$follow_pid" 2>/dev/null || break; sleep 1; done
+  touch "$work/$name.stop"
   pkill -f "logs -f job/$job" 2>/dev/null || true
+  kill "$follow_pid" 2>/dev/null || true # no-op when it already ended; stops a follower stuck in its wait loop
   wait "$follow_pid" 2>/dev/null || true
   if k logs "job/$job" >"$work/$name.full" 2>&1; then
     printed=$(wc -l <"$work/$name.follow" 2>/dev/null || echo 0)
@@ -206,7 +212,15 @@ run_phase() { # phase1|phase3|phase4
   job=""
 }
 
-for phase in "${phases[@]}"; do run_phase "$phase"; done
+for phase in "${phases[@]}"; do
+  run_phase "$phase"
+  # An unfinished Job may still use the driver volume and cluster resources; do not start the next phase on top.
+  if [[ $keep_job -eq 1 ]]; then
+    echo "stopping: the previous Job is unfinished, so the remaining phases were not run" >&2
+    verdicts+=("remaining phases: NOT RUN")
+    break
+  fi
+done
 
 log "SUMMARY"
 printf '%s\n' "${verdicts[@]}"
