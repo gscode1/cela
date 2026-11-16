@@ -10,8 +10,13 @@ import {
   enqueueEvent,
   errorMessage,
   getSession,
+  deleteMcpServer,
   isAdmin,
+  listMcpServerHistory,
   listSettingsHistory,
+  mcpServerNameError,
+  putMcpServer,
+  readMcpServers,
   readJsonObject,
   readSettings,
   updateSettings,
@@ -28,6 +33,7 @@ import type {
   Principal,
   SessionRow,
   Settings,
+  StoredMcpServer,
 } from "@pi-durable-k8s/session-core";
 import { parseEventBody } from "./events.js";
 import { log } from "./log.js";
@@ -153,7 +159,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
 const HISTORY_DEFAULT = 50;
 const HISTORY_MAX = 500;
 
-/** `/admin/settings`: only the owners in `PI_API_ADMINS` (403 for any other authenticated caller). */
+/** `/admin/*`: only the owners in `PI_API_ADMINS` (403 for any other authenticated caller). */
 async function handleAdmin(
   req: IncomingMessage,
   res: ServerResponse,
@@ -167,6 +173,10 @@ async function handleAdmin(
     return;
   }
   const method = req.method ?? "GET";
+  if (parts[1] === "mcp-servers") {
+    await handleAdminMcpServers(req, res, deps, principal, url, parts);
+    return;
+  }
   if (
     parts[1] !== "settings" ||
     parts.length > 3 ||
@@ -220,6 +230,109 @@ async function handleAdmin(
       updatedAt: stored.updatedAt.toISOString(),
       updatedBy: stored.updatedBy,
     });
+    return;
+  }
+  sendJson(res, 405, { error: "method not allowed" });
+}
+
+function mcpServerJson(stored: StoredMcpServer) {
+  return {
+    ...stored.server,
+    // The admin API never probes the network (ADR 0009): whether the host is also allowed in the OneCLI rules and the
+    // egress policy is only seen when the orchestrator connects.
+    reachability: "unknown",
+    createdAt: stored.createdAt.toISOString(),
+    createdBy: stored.createdBy,
+    updatedAt: stored.updatedAt.toISOString(),
+    updatedBy: stored.updatedBy,
+  };
+}
+
+/**
+ * `/admin/mcp-servers` (the caller is already known to be an admin): list, history, get, put (create or update) and
+ * delete. The orchestrators pick a change up through the notification the write sends.
+ */
+async function handleAdminMcpServers(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: IngestDeps,
+  principal: Principal,
+  url: URL,
+  parts: string[],
+): Promise<void> {
+  const method = req.method ?? "GET";
+  if (parts.length > 3) {
+    sendJson(res, 404, { error: "not found" });
+    return;
+  }
+  const name = parts[2];
+  if (name === undefined) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const catalog = await readMcpServers(deps.pool);
+    sendJson(res, 200, {
+      servers: catalog.servers.map(mcpServerJson),
+      invalid: catalog.invalid,
+    });
+    return;
+  }
+  if (name === "history") {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const asked = Number(url.searchParams.get("limit") ?? HISTORY_DEFAULT);
+    const limit =
+      Number.isInteger(asked) && asked >= 1 ? Math.min(asked, HISTORY_MAX) : HISTORY_DEFAULT;
+    const only = url.searchParams.get("name") ?? undefined;
+    const history = await listMcpServerHistory(deps.pool, limit, only);
+    sendJson(res, 200, {
+      history: history.map((entry) => ({ ...entry, changedAt: entry.changedAt.toISOString() })),
+    });
+    return;
+  }
+  const nameError = mcpServerNameError(name);
+  if (nameError !== undefined) {
+    sendJson(res, 400, { error: nameError });
+    return;
+  }
+  if (method === "GET") {
+    const catalog = await readMcpServers(deps.pool);
+    const found = catalog.servers.find((stored) => stored.server.name === name);
+    if (found === undefined) {
+      sendJson(res, 404, { error: "server not found" });
+      return;
+    }
+    sendJson(res, 200, mcpServerJson(found));
+    return;
+  }
+  if (method === "PUT") {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+    } catch (error) {
+      if (error instanceof BodyError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    const result = await putMcpServer(deps.pool, name, body, principal.owner);
+    if (typeof result === "string") {
+      sendJson(res, 400, { error: result });
+      return;
+    }
+    sendJson(res, result.created ? 201 : 200, mcpServerJson(result.stored));
+    return;
+  }
+  if (method === "DELETE") {
+    if (!(await deleteMcpServer(deps.pool, name, principal.owner))) {
+      sendJson(res, 404, { error: "server not found" });
+      return;
+    }
+    sendJson(res, 200, { name, deleted: true });
     return;
   }
   sendJson(res, 405, { error: "method not allowed" });

@@ -6,6 +6,7 @@ import {
   getSession,
   listSessionRefs,
   setExecInFlight,
+  McpCatalogCache,
   SettingsCache,
   settingsFromEnv,
   tokenAuthenticator,
@@ -71,6 +72,12 @@ async function main(): Promise<void> {
   running.settings = settings;
   await settings.start();
 
+  // The MCP catalog, read the same way. Empty (MCP off) until the table says otherwise; a change installs or removes
+  // the servers' extensions at runtime.
+  const mcpCatalog = new McpCatalogCache(pool, { log });
+  running.mcpCatalog = mcpCatalog;
+  await mcpCatalog.start();
+
   const storage = await openStorageWhenFree(config, stop.signal);
   log("lock-acquired", { instance: config.instance });
   const sessionKeyOf = async (conversationId: number): Promise<string> => {
@@ -124,6 +131,7 @@ async function main(): Promise<void> {
     sessionKeyOf,
     hooks,
     recycleAtStart,
+    { catalog: mcpCatalog },
   );
   // Visible to the signal handler before Host.open settles, so a shutdown in that window still closes the host.
   running.opening = opening;

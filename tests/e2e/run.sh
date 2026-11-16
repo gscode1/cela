@@ -5,9 +5,10 @@
 #           OpenAI Codex turns through OneCLI (spend)
 #   phase4c optional repo workspace through OneCLI + a repo-scoped GitHub App token; needs REPO_A and REPO_B
 #           (owner/name, private, in the App installation), otherwise most tests SKIP. Not part of `all`.
-#   mcp     native remote MCP tools through the OneCLI gateway (issue #39): a scripted session calls tool_search and a
-#           DeepWiki tool. Needs the internet, PI_MCP_SERVERS with deepwiki on the orchestrator and the OneCLI host rule
-#           for mcp.deepwiki.com, otherwise its tests SKIP. Not part of `all`.
+#   mcp     native remote MCP tools through the OneCLI gateway (issues #39, #40): the suite adds DeepWiki to the catalog
+#           through the admin API (no restart), a scripted session calls tool_search and a DeepWiki tool, and disabling
+#           the server makes a new call return tool_unavailable. Needs the internet and the OneCLI host rule for
+#           mcp.deepwiki.com. The suite removes the server again at the end. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, namespace pi-durable-poc), so a
@@ -59,13 +60,7 @@ has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0;
 work=$(mktemp -d)
 job=""
 keep_job=0
-mcp_env_set=0
 cleanup() {
-  # The mcp suite sets PI_MCP_SERVERS on the Deployment for its run; put the base (empty) value back.
-  if [[ $mcp_env_set -eq 1 ]]; then
-    k set env deploy/pi-orchestrator PI_MCP_SERVERS= >/dev/null 2>&1 || true
-    k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null 2>&1 || echo "could not restore PI_MCP_SERVERS=; run: kubectl -n $ns set env deploy/pi-orchestrator PI_MCP_SERVERS=" >&2
-  fi
   pkill -f "logs -f job/e2e-driver" 2>/dev/null || true
   if [[ -n $job && $keep_job -eq 0 ]]; then
     k delete job "$job" --ignore-not-found --cascade=foreground --wait=true >/dev/null 2>&1 || true
@@ -103,17 +98,6 @@ if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4
   kubectl ${ctx:+--context="$ctx"} apply -k "$here/deploy" >/dev/null
   "$root/deploy/push-code.sh" >/dev/null
   "$root/deploy/push-ingest.sh" >/dev/null
-fi
-
-# The overlay above applies the base Deployment, which has PI_MCP_SERVERS empty, so the mcp suite sets it here, after
-# the overlay. MCP_SERVERS overrides the JSON (default: DeepWiki); MCP_SERVERS=off leaves it empty and the suite SKIPs.
-if has_phase mcp && [[ ${MCP_SERVERS:-} != off ]]; then
-  log "PI_MCP_SERVERS on the orchestrator for this run (restored empty at the end)"
-  mcp_env_set=1
-  # A variable, not an inline default: the first `}` of the JSON would end the ${...:-...} expansion.
-  mcp_default='[{"name":"deepwiki","url":"https://mcp.deepwiki.com/mcp"}]'
-  k set env deploy/pi-orchestrator "PI_MCP_SERVERS=${MCP_SERVERS:-$mcp_default}" >/dev/null
-  k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
 fi
 
 log "stage the driver scripts (and the Phase 1 bundle for phase1)"

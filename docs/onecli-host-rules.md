@@ -29,7 +29,7 @@ Rule shape (recheck doc): `{"name", "action": "allow|block", "targets": [{"kind"
 | 10 | allow | `registry.npmjs.org` | npm |
 | 11 | allow | `pypi.org` | pip index |
 | 12 | allow | `files.pythonhosted.org` | pip files |
-| 13 | allow | `mcp.deepwiki.com` | remote MCP server (DeepWiki, no auth), only used when `PI_MCP_SERVERS` lists it |
+| 13 | allow | `mcp.deepwiki.com` | remote MCP server (DeepWiki, no auth), only used when the MCP catalog (`/admin/mcp-servers`) has it enabled |
 | 14 | block | `*` | everything else, **created last** |
 
 Order is the point: rule 14 must be created after rules 1 to 13. The script keeps that invariant (see below).
@@ -93,3 +93,12 @@ needs on this list. It is not done; revisit before real use with untrusted code.
 
 List rules with `GET /v1/org/policy/rules` and delete `pi-block-all` first (restores relaying of public hosts as in
 v2.20.0 defaults), then the `pi-allow-*` rules if wanted. Deleting only the block rule is enough to undo the restriction.
+
+## MCP servers: a catalog row does not open egress
+
+An MCP server in the catalog (`inbox.mcp_servers`, managed through `/admin/mcp-servers`, ADR 0009) is only a name and a
+URL. Adding a row never allows its host: the orchestrator reaches it through the OneCLI gateway, so the host must also
+be allowed here (a rule in `deploy/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's
+egress policy (`deploy/onecli-policies/egress.yaml`). Until both allow it, the server fails to connect: the orchestrator
+logs `mcp-discovery-failed` with the retry delay, and calls to its tools settle `tool_unavailable`. The admin API does
+not probe the network, so it reports reachability as `unknown`; the log is the signal. Add the rule first, then the row.

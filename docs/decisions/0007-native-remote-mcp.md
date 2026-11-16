@@ -1,7 +1,7 @@
 # 0007: Native remote MCP tools, called from the orchestrator
 
 Status: accepted, 2026-11-16 (issue #39, first slice). Credentials are #42, per-session selection is #41, the server
-catalog beyond static config is #40.
+catalog beyond static config is #40 (done: see [0009](0009-mcp-catalog-in-postgres.md), which replaces `PI_MCP_SERVERS`).
 
 ## Context
 
@@ -37,6 +37,9 @@ in the sandbox would need sandbox egress and, later, would put the server's cred
   `outputLimits`), and the abort signal of the conversation reaches `callTool`.
 - **Credentials are out of scope.** Only servers that need none (DeepWiki). #42 decides how a credential reaches the
   gateway; the orchestrator never puts a secret in a tool call.
+
+> Amended by 0009: the server list is the catalog in Postgres, not `PI_MCP_SERVERS`, and the host default is pinned
+> always, not only "with the flag on".
 
 ## Which conversations get MCP
 
