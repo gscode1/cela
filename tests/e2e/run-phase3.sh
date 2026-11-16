@@ -131,6 +131,7 @@ sandbox_ps() { k exec "$1" -c sandboxd -- ps -eo pid=,pgid=,sid=,args=; }
 sandbox_has() { sandbox_ps "$1" | sed 's/^ *[0-9]* *[0-9]* *[0-9]* *//' | grep -qx -- "$2"; }
 sandbox_lacks() { ! sandbox_has "$1" "$2"; }
 sandbox_uid() { k get pod "$1" -o jsonpath='{.metadata.uid}'; }
+pod_ready() { [[ $(k get pod "$1" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; }
 pod_replaced() { [[ -n $(sandbox_uid "$1" 2>/dev/null) && $(sandbox_uid "$1") != "$2" ]]; } # claim old-uid
 file_lines() { k exec "$1" -c sandboxd -- sh -c "wc -l < $2" | tr -d ' '; }
 pg() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 "$@"; }
@@ -261,7 +262,7 @@ t_double_owner() {
 }
 
 t_long_command() {
-  local pod0 id claim s t0 t_seen n
+  local pod0 id claim s t0 t_seen n uid0 uid1
   pod0=$(owner_pod)
   # sleep 60 is the command. 61 is a background grandchild in the same process group; 62 runs under setsid,
   # so it has its own session and group. What survives the SIGKILL answers the process-group question.
@@ -272,6 +273,7 @@ t_long_command() {
   wait_for "background grandchildren running" 30 sandbox_has "$claim" 'sleep 62'
   note "process table before the kill (pid pgid sid args):"
   sandbox_ps "$claim" | grep -E 'sleep 6[0-2]$|pi-env' | sed 's/^/     /'
+  uid0=$(sandbox_uid "$claim")
   note "killing orchestrator pod $pod0 (force, grace 0) during the 1 minute command"
   t0=$(now)
   k delete pod "$pod0" --grace-period=0 --force >/dev/null 2>&1
@@ -281,7 +283,12 @@ t_long_command() {
   s=$(status "$id")
   assert_jq "tool result reads as interrupted" "$s" '.results[0].isError and (.results[0].text|test("interrupt";"i"))'
   assert_jq "one tool call only" "$s" '(.results|length)==1 and .answer=="long-done"'
-  # sandboxd kills the process group of pi-env when the stream dies; allow time for it to notice.
+  # The sandbox Pod can be replaced around the restart: once (2026-11-16) it was stopped and recreated during this
+  # test, cause not identified (control sessions are not recycled at restart). Inspect the sandbox only once it is
+  # Ready again, and say whether it was replaced: while the Pod is gone, sandbox_lacks would pass for the wrong reason.
+  wait_for "sandbox pod $claim is Ready again" 180 pod_ready "$claim"
+  uid1=$(sandbox_uid "$claim")
+  if [[ $uid1 != "$uid0" ]]; then note "ANSWER the sandbox Pod was recycled at restart ($uid0 -> $uid1)"; else note "ANSWER the sandbox Pod was kept"; fi
   wait_for "sleep 60 is gone from the sandbox" 240 sandbox_lacks "$claim" 'sleep 60'
   note "ANSWER sleep 60 (the command) gone $(($(now) - t0)) s after the kill"
   # Gone because the kill reaped it, not because it ended by itself: it still had time left on its 60 s.
