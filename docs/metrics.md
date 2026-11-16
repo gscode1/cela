@@ -121,7 +121,7 @@ What it says: the claim (Pod ready) dominates; the bridge cold start is about 2 
 of plan.md, so #59 (shared bridge) is mainly a memory change. `model` and `cap-wait` were near zero (scripted model, no
 bridge-cap contention).
 
-readinessProbe `periodSeconds` 10 against 1:
+readinessProbe `periodSeconds` 10 against 1 (not measured yet, see #82: run.sh re-applies the template, so it needs an override first):
 
 | probe period | state   | n | claim p50 | claim p90 |
 | ------------ | ------- | - | --------- | --------- |
