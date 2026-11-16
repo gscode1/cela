@@ -53,6 +53,8 @@ describe("branchError", () => {
       "a/",
       "a.",
       "a.lock",
+      "feature.lock/foo",
+      "a/b.lock/c",
       "a/.hidden",
       "a b",
       "a~1",
