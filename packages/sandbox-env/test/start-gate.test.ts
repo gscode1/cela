@@ -80,6 +80,25 @@ describe("gatedStart", () => {
     expect(bSpawned).toBe(true);
   });
 
+  it("does not take the gate after its connection closed while waiting for a turn", async () => {
+    const gate = new StartGate(5_000);
+    const a = gatedStart(gate, ["a"]);
+    const b = gatedStart(gate, ["b"]);
+    const c = gatedStart(gate, ["c"]);
+    await a.command();
+    const bResult = b.command().then(
+      () => "spawned",
+      () => "cancelled",
+    );
+    let cSpawned = false;
+    void c.command().then(() => (cSpawned = true));
+    b.release(); // the connection closed while queued behind a
+    expect(await bResult).toBe("cancelled");
+    a.onLog(`${BRIDGE_READY}\n`);
+    await tick();
+    expect(cSpawned).toBe(true); // b did not take the turn and sit on it
+  });
+
   it("lets a connection respawn without deadlocking on its own earlier turn", async () => {
     const gate = new StartGate(5_000);
     const a = gatedStart(gate, ["a"]);

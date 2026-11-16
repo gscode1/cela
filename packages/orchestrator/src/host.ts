@@ -275,9 +275,11 @@ export class Host {
   /**
    * The session's sandbox env, opening it (claim, bridge) if needed. Only repo sessions call this directly, to clone
    * before the first turn; every other session opens its sandbox lazily at the first tool call.
+   * It is the same tracked env the tools get: the raw env would hide a running clone from idle eviction and suspension
+   * (a Pod deleted mid-clone) and would never be evicted itself.
    */
-  async workspaceEnv(id: number): Promise<WorkspaceEnv> {
-    return (await this.#sandboxes.ensure(id)).env;
+  workspaceEnv(id: number): Promise<WorkspaceEnv> {
+    return Promise.resolve(this.#sandboxes.lazyEnv(id));
   }
 
   /** Stops the session's bridge and deletes its SandboxClaim and PVC. */

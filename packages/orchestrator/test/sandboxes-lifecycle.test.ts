@@ -144,6 +144,35 @@ describe("recycle on interrupt", () => {
     sandboxes.stop();
   });
 
+  it("retries a failed recycle before the next call and then runs it in the new Pod", async () => {
+    const sandboxes = make();
+    kube.recyclePod.mockRejectedValueOnce(new Error("api down"));
+    execResults.push({ ok: false, error: { code: "aborted" } });
+    await exec(sandboxes);
+    await flush();
+    expect(kube.recyclePod).toHaveBeenCalledTimes(1);
+    await exec(sandboxes);
+    expect(kube.recyclePod).toHaveBeenCalledTimes(2);
+    expect(sandboxEnv.connectSandboxEnv).toHaveBeenCalledTimes(2); // the retry closed the old env
+    expect(ledger.calls).toEqual(["5:true", "5:false", "5:true", "5:false"]);
+    sandboxes.stop();
+  });
+
+  it("fails the call instead of running it in the old Pod while the recycle keeps failing", async () => {
+    const sandboxes = make();
+    kube.recyclePod.mockRejectedValue(new Error("api down"));
+    execResults.push({ ok: false, error: { code: "aborted" } });
+    await exec(sandboxes);
+    await flush();
+    execResults.push({ ok: true, value: { exitCode: 0 } });
+    await expect(exec(sandboxes)).rejects.toThrow("could not be recycled");
+    expect(execResults).toHaveLength(1); // never reached an env
+    kube.recyclePod.mockResolvedValue(true);
+    await exec(sandboxes); // the next call retries, succeeds and proceeds
+    expect(execResults).toHaveLength(0);
+    sandboxes.stop();
+  });
+
   it("recycles at start the sandboxes that had a command in flight, before any call proceeds", async () => {
     const sandboxes = make();
     let release: () => void = () => undefined;

@@ -26,6 +26,12 @@ meanwhile wait for it, so none reaches a dying Pod. `recyclePod` deletes the Pod
 runs there is what we are getting rid of) and returns when a Pod with another uid is Ready. The next call opens a new
 env: the SDK waits for the Sandbox, the bridge connects to the new Pod.
 
+**A failed recycle blocks calls; it is never skipped.** If `recyclePod` fails, the owed recycle is kept (with the work to
+run again) and the next call of that conversation retries it before it does anything. If the retry fails too, that call
+throws, which the inbox treats as retryable; no call ever runs in a Pod that was not recycled. The alternative, letting
+waiters proceed after a logged failure, would run the next command beside the escapee this ADR exists to remove. The
+same holds for the recycle at start. The in-flight record stays set until a recycle succeeds.
+
 **Across an orchestrator restart.** The dead process cannot tell us. So the orchestrator records "a command may be
 running" in Postgres before the first command of a burst (`inbox.sessions.exec_in_flight_at`, migration 005) and clears
 it when the last call ended without interruption, or once a recycle has finished. A record still set at start means the
