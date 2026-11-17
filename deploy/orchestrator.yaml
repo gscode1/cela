@@ -68,9 +68,9 @@ spec:
             # Phase 4c: management API key for per-session OneCLI agents (repo sessions only; optional).
             - name: ONECLI_API_KEY
               valueFrom: { secretKeyRef: { name: pi-onecli-admin, key: api-key, optional: true } }
-            # Cap on open sandbox bridges. Each is a ~100 MiB Node process; the 2Gi limit below holds about 18 in
-            # the worst case, so 12 leaves room for the orchestrator itself. Raise it only with the memory limit.
-            - { name: PI_MAX_OPEN_BRIDGES, value: "12" }
+            # PI_MAX_OPEN_BRIDGES is not set: the cap on open sandbox bridges is derived from the memory limit below
+            # ((limit - 256 MiB) / 24 MiB, 74 at 2Gi), so changing the limit changes the cap. Keep the request equal
+            # to the limit. docs/decisions/0018-derived-bridge-cap.md, docs/scaling.md.
             - { name: PI_ONECLI_API, value: "http://onecli.onecli:10256" }
             - { name: PI_ONECLI_GATEWAY, value: "http://onecli.onecli:10255" }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
@@ -97,7 +97,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 6
           resources:
-            requests: { cpu: 100m, memory: 256Mi }
+            requests: { cpu: 100m, memory: 2Gi }
             limits: { cpu: "1", memory: 2Gi }
           securityContext:
             allowPrivilegeEscalation: false
