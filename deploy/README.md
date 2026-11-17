@@ -99,3 +99,18 @@ E2e uses the same base, not `local/`. `STORAGE_CLASS` overrides database and wor
 `SANDBOX_STORAGE_CLASS` overrides workspace storage alone. Set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and
 `SANDBOX_IMAGE` to pushed image digests before running. Other customizations belong in `deploy/` or
 `tests/e2e/deploy/`. See [e2e](../docs/e2e.md).
+
+## agent-sandbox controller and CRDs
+
+The controller and its CRDs are cluster-wide and a prerequisite of this stack. `hack/agent-sandbox.sh` (`KUBE_CONTEXT`
+as above) handles them in one of two modes and never upgrades, adopts, patches or deletes an existing controller or CRD:
+
+- `hack/agent-sandbox.sh bundled`: if none of the four CRDs (`sandboxes.agents.x-k8s.io`, and `sandboxclaims`,
+  `sandboxtemplates`, `sandboxwarmpools` under `extensions.agents.x-k8s.io`) exist, downloads the pinned v1.0.11
+  `sandbox-with-extensions.yaml` release asset, verifies its sha256, applies it server-side and waits for the CRDs and the
+  controller Deployment (`agent-sandbox-system`). If any of the CRDs exist it refuses and changes nothing.
+- `hack/agent-sandbox.sh external`: read-only. Checks that `v1beta1` is served for Sandbox, SandboxClaim,
+  SandboxTemplate and SandboxWarmPool and that a controller Deployment, if one is detectable, has available replicas.
+
+The version matches the vendored SDK (`packages/vendor/agent-sandbox-client/VENDORED.md`). Move it on purpose: change the
+version, URL and sha256 at the top of the script.
