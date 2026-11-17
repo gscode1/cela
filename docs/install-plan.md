@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126) and slice 11a (database TLS; issue #132). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -268,7 +268,8 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
       protected credentials), and a second bootstrap run changes nothing.
 11. **DB TLS and cleanup.**
     - 11a (done, issue #132): TLS with verification for both `pg` pools; `database.tls` values; `pi-postgres` can serve
-      TLS. Open: the e2e run against a Postgres that requires TLS (needs the e2e driver, issue #132 follow-up).
+      TLS. `DB_TLS=1 tests/e2e/run.sh <suite>` runs the e2e against a `pi-postgres` that requires TLS (throwaway CA; the run first
+      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Open: a green `DB_TLS=1` run on a cluster.
     - 11b: Remove the `deploy/` scripts and manifests that
       the chart replaced; update README, `deploy/README.md`, `docs/e2e.md`, `docs/model-credentials.md` and plan.md.
     - Done when: e2e passes against an external Postgres that requires TLS; no doc points at a removed script.

@@ -35,6 +35,7 @@ for `mcp.deepwiki.com`.
 | `NS_DELETE_WAIT_SECONDS` | how long the end of a run waits for the namespace to be gone (default 300)                           |
 | `E2E_PARALLEL`      | independent tests of a suite that run side by side (default 4; 1 = one by one). Tests that restart or kill the orchestrator run alone afterwards (`tests/e2e/fns.sh`) |
 | `ONLY`              | `ONLY="a,b"` runs just those tests of the phase                                                           |
+| `DB_TLS=1`          | the run's Postgres requires TLS and pi-durable verifies it ([Database TLS](#database-tls)); unset or `0`: plain, as before |
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
 | `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
 
@@ -243,6 +244,29 @@ The local phase4b adapter still uses `LOCAL_DB_URL`. Test-only client policies a
 plus ingress from the `pi-postgres` release, which run.sh opens for that client label with `networkPolicy.clientSelectors`; a different
 backend must admit it too. The runtime guard reads the real template; an insecure test stack (not what `run.sh` installs: its cluster has gVisor) sets
 `sandbox.runtimeClassName` and `security.allowInsecureRuntime`, which the chart turns into `PI_ALLOW_INSECURE_RUNTIME=1`.
+
+### Database TLS
+
+`DB_TLS=1 tests/e2e/run.sh smoke` runs a suite against a Postgres that requires TLS (install slice 11a,
+[ADR 0021](decisions/0021-database-tls.md); issue #132). Without it nothing changes. With it, `run.sh`, before it installs the
+database:
+
+1. makes a throwaway CA and a server certificate with `openssl` in its private temp dir (EC P-256, 7 days). The SANs are
+   `pi-postgres`, `pi-postgres.<ns>`, `pi-postgres.<ns>.svc` and `pi-postgres.<ns>.svc.cluster.local`, so the URI host
+   `pi-postgres.<ns>.svc` matches;
+2. creates the Secret `pi-postgres-tls` (`kubernetes.io/tls`: `tls.crt`, `tls.key`; the server's) and `pi-db-tls-ca` (`ca.crt` only; the
+   clients'). Then it deletes the temp dir with the CA key. No key is printed or put in an argument. A reused namespace keeps both
+   Secrets, so a retained database and its certificate stay a pair;
+3. installs `charts/pi-postgres` with `tls.existingSecret=pi-postgres-tls` and `tls.requireTls=true` (`pg_hba`: `hostssl` only);
+4. checks, from a short-lived Pod `e2e-tls-probe` (label `e2e-db-client`, so the network policy admits it), that a
+   connection to `pi-postgres.<ns>.svc` with `sslmode=disable` is rejected with the server's own `pg_hba.conf ... no encryption`
+   error (a refused connection would not count) and that `sslmode=verify-full` with the CA works (positive control). Either one
+   failing stops the run;
+5. gives pi-durable `database.tls` with `verify-full`, `existingSecret: pi-db-tls-ca`, `caKey: ca.crt` (`tests/e2e/chart-values.py`).
+
+The e2e psql client (`e2e_db_start` in `tests/e2e/fns.sh`) mounts `pi-db-tls-ca` (optional) and, when it is there, sets `PGSSLMODE=verify-full` and
+`PGSSLROOTCERT`, so the SQL helpers keep working. The orchestrator and ingest are the real clients of the TLS path:
+a suite that passes proves both pools connect and verify. Phase 4's `postgres-restart` (in `smoke`) covers a reconnect over TLS.
 
 ### Install-name configuration
 
