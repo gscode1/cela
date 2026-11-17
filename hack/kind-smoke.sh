@@ -2,7 +2,7 @@
 # Smoke test of an installed pi-durable (docs/install-plan.md section 7, step 5), made for the kind cluster of
 # hack/kind-up.sh and run by the kind CI job:
 #
-#   hack/kind-smoke.sh [--name pi-durable] [--namespace pi-durable] [--status]
+#   hack/kind-smoke.sh [--name pi-durable] [--namespace pi-durable] [--status] [--onecli]
 #
 #   1. GET /admin/status: print the runtime and the isolation probe. With NETPOL_ENFORCED=1 anything but `enforced` fails.
 #      Without it the run fails when the probe finds any target reachable except the Kubernetes API, which kindnet cannot
@@ -14,6 +14,13 @@
 #      the workspace PVC
 #   6. delete the session; the SandboxClaim and the workspace PVC are gone
 #
+# --onecli (for hack/kind-up.sh --onecli, the bundled OneCLI) adds, without any model call or credential:
+#   1b. the orchestrator's way through the gateway (hack/kind-gateway-check.mjs, inside the orchestrator pod): a CONNECT
+#       without a token is refused (407); with the agent token it is accepted, the TLS handshake verifies against the CA
+#       ConfigMap, and a host that is not allowed gets the gateway's own 403. The gateway log must show that agent
+#   1c. the management API (:10256) answers the orchestrator and not the ingest pod (NetworkPolicy)
+#   4b. in the sandbox: the gateway port is open and the API port is closed
+#
 # --status runs step 1 only (kind-up.sh uses it). The API is called from inside an ingest pod (hack/kind-client.mjs): no
 # port-forward, and the API token never leaves the cluster or reaches a log. Only kind contexts are used.
 set -euo pipefail
@@ -22,10 +29,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 name=${KIND_CLUSTER_NAME:-pi-durable}
 namespace=pi-durable
 status_only=0
+onecli=0
 owner=${PI_SMOKE_OWNER:-admin}
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--status]   (NETPOL_ENFORCED=1: fail unless the probe says enforced)" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--status] [--onecli]   (NETPOL_ENFORCED=1: fail unless the probe says enforced)" >&2
   exit 64
 }
 die() {
@@ -39,6 +47,7 @@ while [[ $# -gt 0 ]]; do
   --name) [[ $# -ge 2 ]] || usage; name=$2; shift 2 ;;
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --status) status_only=1; shift ;;
+  --onecli) onecli=1; shift ;;
   *) usage ;;
   esac
 done
@@ -90,6 +99,33 @@ if ! grep -q '^isolation-probe state=enforced ' <<<"$status"; then
 fi
 [[ $status_only -eq 0 ]] || exit 0
 
+# ------------------------------------------------------------------ 1b-1c. bundled OneCLI
+if [[ $onecli -eq 1 ]]; then
+  log "the orchestrator routes through the OneCLI gateway (no model call)"
+  gateway_js=$(cat "$root/hack/kind-gateway-check.mjs")
+  out=$(k exec deploy/pi-orchestrator -c orchestrator -- node --input-type=module -e "$gateway_js" 2>&1) || {
+    printf '%s\n' "$out" >&2
+    die "the gateway check failed"
+  }
+  printf '%s\n' "$out"
+  check "the gateway refuses a CONNECT without the agent token" "$out" "connect-without-token=407"
+  check "the gateway accepts the orchestrator's agent token" "$out" "connect-with-token=200"
+  check "the gateway certificate verifies against the CA ConfigMap (issued by OneCLI)" "$out" "tls-verified=true issuer=OneCLI"
+  check "the gateway answered for a host that is not allowed (policy block, nothing left the cluster)" "$out" "answer-status=403"
+  echo "-- gateway log (agent and rule only):"
+  logs=$(k logs deploy/onecli-gateway --tail=200 2>&1 | grep -E 'agent="pi-orchestrator"|BLOCKED' | tail -5) || true
+  printf '%s\n' "$logs"
+  check "the gateway logged the orchestrator's agent" "$logs" 'agent="pi-orchestrator"|BLOCKED'
+
+  log "the OneCLI management API is closed to everything but the orchestrator"
+  probe='fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then((r) => console.log("reachable " + r.status), (e) => console.log("closed " + (e.cause?.code ?? e.name)))'
+  api_url="http://onecli-api.$namespace.svc:10256/v1/health"
+  from_orchestrator=$(k exec deploy/pi-orchestrator -c orchestrator -- node -e "$probe" "$api_url")
+  from_ingest=$(k exec deploy/pi-ingest -c ingest -- node -e "$probe" "$api_url")
+  check "the orchestrator reaches the API" "$from_orchestrator" "^reachable 200"
+  check "ingest does not reach the API" "$from_ingest" "^closed"
+fi
+
 # ------------------------------------------------------------------ 2-3. session and a plain message
 marker=kind-marker-$(openssl rand -hex 6)
 log "create a session (scripted model)"
@@ -118,6 +154,15 @@ runtime=$(k get pod "$pod" -o jsonpath='{.spec.runtimeClassName}')
 echo "sandbox Pod $pod, runtimeClassName=${runtime:-(node default, runc)}"
 claim=$(k get sandboxclaims -o name | head -1)
 [[ -n $claim ]] || die "no SandboxClaim found"
+
+if [[ $onecli -eq 1 ]]; then
+  log "from the sandbox: the gateway port is open, the management API port is closed"
+  tcp="timeout 5 bash -c 'exec 3<>/dev/tcp/\$0/\$1' "
+  cmd="if $tcp onecli-gateway.$namespace.svc 10255 2>/dev/null; then echo gw-open; else echo gw-closed; fi; if $tcp onecli-api.$namespace.svc 10256 2>/dev/null; then echo api-open; else echo api-closed; fi"
+  out=$(api ask "$session" "$(script_json "net-$marker" "$cmd")" "net-$marker" 600)
+  check "the sandbox reaches the OneCLI gateway" "$out" "gw-open"
+  check "the sandbox does not reach the OneCLI management API" "$out" "api-closed"
+fi
 
 # ------------------------------------------------------------------ 5. replace the Pod
 log "replace the sandbox Pod; the workspace marker must survive on the PVC"

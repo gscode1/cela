@@ -11,15 +11,20 @@
 #      values are written from a private temp file and are never printed.
 #   4. runs hack/agent-sandbox.sh external (read-only check; the controller and CRDs are cluster-wide and are never
 #      installed or changed here)
+#   4b. with onecli.mode=bundled: runs hack/onecli.sh (policies, the upstream OneCLI chart, the bootstrap), so that the
+#      account, the agent token and the CA exist before the orchestrator starts
 #   5. helm upgrade --install, waits for the rollout
 #   6. reads GET /admin/status through ingest (waits up to 2 min for the isolation probe) and prints the runtime and
 #      network-policy state; warnings do not fail
 #
-# The database (and OneCLI) stay external in this slice: the Secret named by database.external.existingSecret must
-# exist, or DATABASE_URL (a postgres:// URI) in the environment creates it once.
+# The database stays external: the Secret named by database.external.existingSecret must exist, or DATABASE_URL (a
+# postgres:// URI) in the environment creates it once. OneCLI is bundled (onecli.mode=bundled, step 4b), external or off.
+# Bundled OneCLI needs its own database: ONECLI_DATABASE_URL, or the Secret pi-postgres-auth of charts/pi-postgres
+# (hack/onecli.sh).
 #
 # Inputs: --namespace/-n (default pi-durable), --values/-f (repeatable), --set (repeatable, passed to helm),
-# --release (default pi-durable), --timeout (default 10m); KUBE_CONTEXT selects the kubectl and helm context (unset:
+# --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
+# http://localhost:10254, see hack/onecli.sh); KUBE_CONTEXT selects the kubectl and helm context (unset:
 # the current one); DATABASE_URL as above.
 set -euo pipefail
 
@@ -30,9 +35,10 @@ release=pi-durable
 timeout=10m
 values=()
 sets=()
+onecli_url=""
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m]" >&2
+  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL]" >&2
   exit 64
 }
 die() {
@@ -47,6 +53,7 @@ while [[ $# -gt 0 ]]; do
   -f | --values) [[ $# -ge 2 ]] || usage; values+=("$2"); shift 2 ;;
   --set) [[ $# -ge 2 ]] || usage; sets+=("$2"); shift 2 ;;
   --release) [[ $# -ge 2 ]] || usage; release=$2; shift 2 ;;
+  --onecli-external-url) [[ $# -ge 2 ]] || usage; onecli_url=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -182,6 +189,18 @@ fi
 # ------------------------------------------------------------------ 4. agent-sandbox
 log "agent-sandbox (external: read-only check)"
 KUBE_CONTEXT=$ctx "$root/hack/agent-sandbox.sh" external
+
+# ------------------------------------------------------------------ 4b. bundled OneCLI
+# The chart marks the mode on the orchestrator Deployment (read from the render, so --set and --values are both followed).
+onecli_mode=$(sed -n 's/^ *pi-durable\/onecli-mode: //p' "$rendered" | head -1)
+if [[ $onecli_mode == bundled ]]; then
+  log "bundled OneCLI (hack/onecli.sh)"
+  # The release name is the one the chart derives its URLs from: PI_ONECLI_API is http://<release>-api.<ns>.svc:10256.
+  onecli_release=$(rendered_value PI_ONECLI_API | sed -n 's#^http://\(.*\)-api\..*#\1#p')
+  [[ -n $onecli_release ]] || die "could not read the OneCLI release name from the rendered chart"
+  KUBE_CONTEXT=$ctx "$root/hack/onecli.sh" --namespace "$namespace" --release "$onecli_release" --timeout "$timeout" \
+    ${onecli_url:+--external-url "$onecli_url"}
+fi
 
 # ------------------------------------------------------------------ 5. install
 log "helm upgrade --install $release"
