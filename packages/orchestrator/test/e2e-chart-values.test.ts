@@ -7,7 +7,7 @@ import { chartsDir } from "./support/helm.js";
 
 // The values tests/e2e/run.sh gives the pi-durable chart (tests/e2e/chart-values.py) must pass the chart's schema in
 // every shape of a run, so a change to either side fails here and not on a cluster.
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 const root = resolve(import.meta.dirname, "../../..");
 const digest = `sha256:${"c".repeat(64)}`;
 
