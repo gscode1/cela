@@ -255,7 +255,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - Status: implemented (issue #126). The design choices that section 6 left open are in
      [network policy](network-policy.md#isolation-probe): a plain Pod with the sandbox labels instead of a SandboxClaim,
      the orchestrator itself as the positive control for denied targets, shard 0 as the only runner, and a request
-     column that ingest sets. Checked live on kind (kindnet, issue #131): `not-enforced` because of the `kube-api` target (see slice 8). Not yet checked live: Cilium and the policies-removed case. `kind-up.sh`
+     column that ingest sets. Checked live on kind (kindnet, issue #131): `not-enforced` because of the `kube-api` target (see slice 8). Checked live on Cilium (`enforced`) and with the namespace's policies removed (`not-enforced`), 2026-11-17. `kind-up.sh`
      (slice 8) only reads `/admin/status`.
 10. **Bundled OneCLI.**
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
