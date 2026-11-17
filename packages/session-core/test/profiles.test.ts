@@ -368,6 +368,29 @@ describe("capabilities", () => {
     });
     expect(db.capabilities?.instance).toBe("o2");
   });
+
+  it("round-trips the model catalog and the credential hints, and reads an old row without them", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    const models = [{ provider: "scripted", id: "scripted-1", reasoning: false }];
+    const modelProviders = [{ provider: "scripted", credential: "configured" as const }];
+    await publishCapabilities(pool, { tools: [], extensions: [], models, modelProviders }, "o1");
+    expect(await readCapabilities(pool)).toMatchObject({ models, modelProviders });
+    await publishCapabilities(pool, { tools: [], extensions: [] }, "o2");
+    const old = await readCapabilities(pool);
+    expect(old?.models).toBeUndefined();
+    expect(old?.modelProviders).toBeUndefined();
+  });
+
+  it("checks a profile's defaultModel against the catalog only when one is given", () => {
+    const known = { tools: [], mcpServers: [] };
+    const definition = { defaultModel: "openai/gpt-x" };
+    expect(checkProfileNames(definition, known)).toBeUndefined();
+    expect(checkProfileNames(definition, { ...known, models: ["scripted/scripted-1"] })).toMatch(
+      /defaultModel "openai\/gpt-x" is not in the model catalog/,
+    );
+    expect(checkProfileNames(definition, { ...known, models: ["openai/gpt-x"] })).toBeUndefined();
+  });
 });
 
 describe("strings Postgres cannot store", () => {

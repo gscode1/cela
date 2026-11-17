@@ -57,6 +57,7 @@ export {
   profileDefinitionsEqual,
   profileNameError,
   PROFILE_NAME,
+  catalogKeys,
   publishCapabilities,
   putProfile,
   readCapabilities,
@@ -66,6 +67,9 @@ export {
 } from "./profiles.js";
 export type {
   Capabilities,
+  CredentialState,
+  ModelCatalogEntry,
+  ModelProviderStatus,
   ProfileCatalog,
   ProfileDefinition,
   ProfileRef,

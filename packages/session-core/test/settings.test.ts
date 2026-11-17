@@ -277,3 +277,59 @@ describe("updateSettings", () => {
     expect(db.row?.turn_budget).toBe(100);
   });
 });
+
+describe("updateSettings against a model catalog", () => {
+  const catalog = ["scripted/scripted-1", "scripted/scripted-2", "openai/gpt-x"];
+
+  it("refuses a default or an allowlist entry that is not in the catalog, naming it", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), base);
+    expect(
+      await updateSettings(
+        db.asPool(),
+        { defaultModel: "openai/nope" },
+        "alice",
+        undefined,
+        catalog,
+      ),
+    ).toBe('defaultModel "openai/nope" is not in the model catalog');
+    expect(
+      await updateSettings(
+        db.asPool(),
+        { allowlist: ["scripted/scripted-1", "openai/typo"] },
+        "alice",
+        undefined,
+        catalog,
+      ),
+    ).toBe('allowlist entry "openai/typo" is not in the model catalog');
+    expect((await readSettings(db.asPool()))?.settings.allowlist).toEqual(base.allowlist);
+  });
+
+  it("accepts catalog models, and without a catalog accepts anything as before", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), base);
+    const ok = await updateSettings(
+      db.asPool(),
+      { defaultModel: "openai/gpt-x", allowlist: ["openai/gpt-x"] },
+      "alice",
+      undefined,
+      catalog,
+    );
+    expect(typeof ok).toBe("object");
+    const free = await updateSettings(db.asPool(), { defaultModel: "any/thing" }, "alice");
+    expect(typeof free).toBe("object");
+  });
+
+  it("does not reject a stored value that is kept, only what a write adds", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), { ...base, defaultModel: "old/gone", allowlist: ["old/gone"] });
+    const stored = await updateSettings(
+      db.asPool(),
+      { turnBudget: 5 },
+      "alice",
+      undefined,
+      catalog,
+    );
+    expect(typeof stored).toBe("object");
+  });
+});
