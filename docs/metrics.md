@@ -142,7 +142,7 @@ claim of 3.8 s, so the resume number varies a lot.
 | warm    | 0 | –         | –         | –          | –          | –                   | –                   |
 
 What it says: the claim (Pod ready) dominates; the bridge cold start is about 2 s at the current CPU limit, not the ~12 s
-of plan.md, so #59 (shared bridge) is mainly a memory change. `model` and `cap-wait` were near zero (scripted model, no
+of plan.md, so #59 (shared bridge, done as ADR 0016) was mainly a memory change. `model` and `cap-wait` were near zero (scripted model, no
 bridge-cap contention).
 
 readinessProbe `periodSeconds` 10 against 1 (not measured yet, see #82: run.sh re-applies the template, so it needs an override first):
@@ -154,4 +154,4 @@ readinessProbe `periodSeconds` 10 against 1 (not measured yet, see #82: run.sh r
 | 10 s         | resumed | TODO | TODO   | TODO      |
 | 1 s          | resumed | TODO | TODO   | TODO      |
 
-Bridge RSS per open session (same run): p50 about 126 MiB, peak 133 MiB, with up to 5 bridges open.
+Bridge RSS per open session (same run, before ADR 0016, when each bridge was its own Node process): p50 about 126 MiB, peak 133 MiB, with up to 5 bridges open. Since ADR 0016 an open env costs about 11 MiB (measured 2026-11-17, see [scaling](scaling.md)).

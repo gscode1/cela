@@ -1,6 +1,6 @@
 # pi-durable-k8s: Self-Hosted Durable Pi Agents on Kubernetes
 
-Status: draft, 2026-11-15
+Status: proof of concept running on the lab cluster; phases 1 to 4c done. Written 2026-11-15, facts refreshed 2026-11-17 (issue #97).
 Scope: proof of concept. Production hardening is out of scope and listed at the end.
 
 ## 1. Goal
@@ -19,7 +19,7 @@ Run Pi Durable agents on my own Kubernetes cluster so that:
 | Durability layer | Native Pi Durable, no durable-harness | Single replica is enough; avoids the reference-grade Postgres World and the 120 s takeover trap |
 | Storage | `@netzlabor/pi-durable-postgres`, ported to current Pi Durable | Exists, passes upstream conformance on 1.0.3; needs the 1.5 batched-commit contract |
 | Orchestrator topology | One replica per shard, `strategy: Recreate`; shard 0 is the default single orchestrator. More shards by Postgres schema sharding, one Deployment each (`docs/decisions/0017-schema-sharding.md`, `docs/scaling.md`) | Adapter allows one owner per schema (advisory lock); shards scale capacity without an adapter fork |
-| Execution | `pi-env` daemon inside the sandbox, bridged over Agent Sandbox `commands.start()` | Conformance-tested `RemoteExecutionEnv`; avoids hand-writing FileSystem + Shell |
+| Execution | `pi-env` daemon inside the sandbox, bridged over Agent Sandbox `commands.start()`. Since [ADR 0016](docs/decisions/0016-in-process-broker.md) the bridge runs in an in-process broker in the orchestrator and pi-env spawns only a thin `node:net` relay per session (this replaced one Node bridge process per session) | Conformance-tested `RemoteExecutionEnv`; avoids hand-writing FileSystem + Shell |
 | Execution fallback | `pi-env` over SSH | Documented path if the stdio bridge fails |
 | Sandbox | kubernetes-sigs/agent-sandbox, `runtimeClassName: gvisor`, `volumeClaimTemplates` | Lifecycle, PVC and reattach already exist |
 | SDK connectivity | `in-cluster-service` | Port-forward mode does not work on gVisor |
@@ -32,16 +32,16 @@ Run Pi Durable agents on my own Kubernetes cluster so that:
 
 ```mermaid
 flowchart TD
-    A["Client"] --> B["Session API (thin)"]
-    B --> C["Pi Durable orchestrator<br/>1 replica, Recreate"]
-    C <--> D["CloudNativePG<br/>-rw service, no tx pooling"]
-    C --> E["RemoteExecutionEnv (pi-env client)"]
+    A["Client"] --> B["Session API (ingest, 2 replicas)"]
+    B --> C["Pi Durable orchestrator<br/>1 replica per shard, Recreate"]
+    C <--> D["CloudNativePG<br/>-rw service, no tx pooling<br/>one schema per shard"]
+    C --> E["RemoteExecutionEnv (pi-env client)<br/>thin relay + in-process broker"]
     E --> F["Agent Sandbox TS SDK<br/>commands.start() stdio"]
     F --> G["Sandbox Pod (gVisor)<br/>pi-env daemon"]
     G --> H["Workspace PVC"]
 ```
 
-Session mapping: one Pi conversation ID = one named SandboxClaim = one PVC.
+Session mapping: one Pi conversation ID = one named SandboxClaim = one PVC (`pi-conv-<n>`, or `pi-s<k>-conv-<n>` on shard k). A **shard** is one orchestrator Deployment with its own Postgres schema; the **broker** is the in-process server that carries a session's pi-env stream to its sandbox.
 
 ## 4. Phases
 
@@ -61,7 +61,7 @@ Findings that change this plan:
 - pi-env's `Connection` only spawns a local argv, so the bridge is a local executable (`pi-sandbox-bridge`) that relays its stdio over `commands.start()`.
 - A SandboxClaim must reference a SandboxWarmPool. A pool with `replicas: 0` works as a plain template alias.
 - The SDK's `Sandbox.close()` deletes the claim. Use `closeLocal()` everywhere except on session deletion.
-- c2 runs flannel, so NetworkPolicy is not enforced. Until a policy-capable CNI is in place, only the sandboxd auth token protects the sandbox.
+- c2 runs flannel, so NetworkPolicy is not enforced. Until a policy-capable CNI is in place, only the sandboxd auth token protects the sandbox. (Superseded 2026-11-16: Cilium enforces the policies; see "Enforcement result".)
 - Stdio throughput is about 1.7 MiB/s in each direction. That is fine for tool calls, but large file transfers would need work.
 - Still open: whether a long-lived connection survives Pod recreation, and whether SIGKILL reaps pi-env's child process groups (both Phase 3).
 
@@ -99,7 +99,7 @@ Wire orchestrator, storage and sandbox together, then run:
 - Open questions answered. (1) SIGKILL of the remote stream: the command's process group and same-group descendants were reaped about 20 s after the orchestrator pod was killed, but a background child that called `setsid` survived. Interrupted commands can therefore leak escaped children until the sandbox is recycled (done: [ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)). (2) A long-lived `Connection` survives Pod recreation: the bridge dies with the stream, pi-env's `Connection` respawns it on the next call, and a call issued while the Pod was still being replaced also completed. No reconnect code was needed.
 - The adapter refuses a second owner immediately instead of blocking, so the orchestrator waits in a retry loop (2 s) until it gets the lock. After `pg_terminate_backend` the first owner exits with code 1 at its next write (`fail-closed`), and `durable_metadata.next_seq` stayed frozen while the lock was held by the test.
 - A tool that was running when the orchestrator died reads as `interrupted` after restart and is not replayed (`bash` is not replay-safe).
-- Fix found by the concurrency test: each bridge is a Node process that needs about 12 s of wall time to cold-start on the orchestrator's 250m CPU limit. With several at once pi-env gave up with "connection timed out" (30 s of silence). `sandbox-env` now starts bridges one at a time (`StartGate`). A shared in-process broker would remove the per-session Node start; that is a later optimisation.
+- Fix found by the concurrency test: each bridge is a Node process that needs about 12 s of wall time to cold-start on the orchestrator's 250m CPU limit. With several at once pi-env gave up with "connection timed out" (30 s of silence). `sandbox-env` now starts bridges one at a time (`StartGate`). A shared in-process broker would remove the per-session Node start; that is a later optimisation (done: [ADR 0016](docs/decisions/0016-in-process-broker.md); `StartGate` stays).
 
 ### Phase 4: Session API (several days)
 
@@ -109,6 +109,8 @@ Wire orchestrator, storage and sandbox together, then run:
 - Cleanup: delete the SandboxClaim and PVC on session deletion. The `shutdownAfterSeconds` backstop was dropped: an
   absolute deadline deletes the PVC. Idle sandboxes are suspended instead ([ADR 0004](docs/decisions/0004-idle-suspend.md)),
   and a periodic sweep removes what deletion missed ([ADR 0002](docs/decisions/0002-orphan-sweep.md)).
+
+**Status 2026-11-17: done and running.** The session API is `packages/ingest` (stateless, 2 replicas, static tokens per owner in `PI_API_TOKENS`) in front of the orchestrator; `docs/session-api.md` is the contract. Since the first cut it gained, each with an ADR: model settings and an admin API in Postgres (0008), the MCP server catalog and native remote MCP tools (0007, 0009), versioned session profiles (0010), skills pinned in profiles and skills and `AGENTS.md`/`CLAUDE.md` read from the cloned repo (0011, 0014, 0015), schema sharding (0017). The e2e suites run in a throwaway namespace per run (0013).
 
 ### Security baseline for real use (from the plan review, 2026-11-15)
 
@@ -152,7 +154,7 @@ Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQD
   - A digest-pinned orchestrator image (the liveness probe is in `deploy/orchestrator.yaml`).
   - Sandbox sizing per session, with ephemeral-storage limits.
   - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
-- **Capacity:** each session had its own Node bridge (about 12 s start, serialized, about 95 MiB). Since [ADR 0016](docs/decisions/0016-in-process-broker.md) (issue #59, slice 1) the bridge runs in an in-process broker and pi-env spawns only a thin `node:net` relay; the numbers still have to be re-measured with the #58 events.
+- **Capacity:** each session had its own Node bridge (about 12 s start, serialized, about 95 MiB). Since [ADR 0016](docs/decisions/0016-in-process-broker.md) (issue #59, slice 1) the bridge runs in an in-process broker and pi-env spawns only a thin `node:net` relay; measured 2026-11-17: 115-147 MiB idle orchestrator and about 11 MiB per open env, and the cap on open bridges is now derived from the memory limit ([ADR 0018](docs/decisions/0018-derived-bridge-cap.md), [scaling](docs/scaling.md), [metrics](docs/metrics.md)).
 
 **Enforcement result (2026-11-16):**
 - Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all pi-durable-poc endpoints enforce in both directions.
@@ -200,7 +202,7 @@ Decision: every credential goes through OneCLI. That covers model providers and 
    - pi-ai model calls go through `HTTPS_PROXY` plus the OneCLI CA.
    - Only `ONECLI_API_KEY` (for managing agents and grants) lives in a Secret, delivered with ExternalSecret.
 3. **Model choice.**
-   - The default `PI_MODEL_PROVIDER` / `PI_MODEL_ID` comes from a ConfigMap. `scripted` keeps the fake model for e2e.
+   - The default `PI_MODEL_PROVIDER` / `PI_MODEL_ID` comes from a ConfigMap. `scripted` keeps the fake model for e2e. (Superseded by [ADR 0008](docs/decisions/0008-settings-in-postgres.md): the ConfigMap only seeds Postgres, and the default, allowlist and reasoning change through `PUT /admin/settings`; session profiles, [ADR 0010](docs/decisions/0010-session-profiles.md), pick tools, instructions, MCP servers and skills per session.)
    - `POST /sessions` takes an optional `{ provider, model }`, checked against an allowlist.
    - Verify whether Pi Durable 1.5.2 persists the model per conversation.
 4. **Fallback.** If the spike shows OneCLI can't do subscription OAuth, use our own credential store as described in `docs/model-credentials.md`.
@@ -222,7 +224,7 @@ Tests:
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
 - The sandbox image adds git and CA certificates.
-- Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS).
+- Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS). (Superseded by the baseline decision above: direct public internet stays open; private, LAN and metadata ranges are blocked. Gateway-only egress is #47, and the egress proxy spike, [ADR 0012](docs/decisions/0012-egress-proxy-spike.md), is its first slice: Smokescreen chained to OneCLI in `packages/egress-proxy`, built and tested locally, not deployed.)
 - Tests:
   - A session without a repo works unchanged.
   - The clone happens once and survives a restart.
@@ -249,17 +251,17 @@ Tests:
 |---|---|---|
 | Pi Durable breaking releases every few weeks | Repeated porting; no rollback across state migrations | Pin exact versions; upgrade deliberately; back up before each upgrade |
 | Agent Sandbox TS SDK is private and unversioned | API drift | Vendor at a pinned commit; isolate behind one module |
-| Stdio bridge unproven | Phase 1 slips | SSH fallback |
+| Stdio bridge unproven | Phase 1 slips | SSH fallback. Proven in Phase 1 (conformance 29/29); the SSH fallback was not needed |
 | One replica per shard | Downtime of a shard's sessions during its restart | Accepted for the PoC; other shards keep running. Capacity: add a shard (`deploy/add-shard.sh`). Takeover or leader election later |
 | Non-idempotent external tools | Duplicate side effects after a crash | Mark tools `replay` correctly; add execution IDs for external APIs |
 | gVisor I/O overhead on PVCs | Slow builds | Measure in Phase 3; consider Kata if unacceptable |
-| Inbox drain transaction stays open for the whole repo preparation (about 96 s) | Row locks held, one pool connection per busy session; migrations used to queue behind it and crash-loop ingest | Migrations skip DDL when current and fail fast on locks, ingest serves `/healthz` first (`docs/decisions/0005-migrations-without-ddl-locks.md`); shortening the transaction is a follow-up |
+| Inbox drain transaction stays open for the whole repo preparation (about 96 s) | Row locks held, one pool connection per busy session; migrations used to queue behind it and crash-loop ingest | Migrations skip DDL when current and fail fast on locks, ingest serves `/healthz` first (`docs/decisions/0005-migrations-without-ddl-locks.md`); repo preparation now runs before the inbox claim, outside the drain transaction (#75) |
 
 ## 7. Out of scope for the PoC
 
-- Multi-replica orchestration and HA.
+- Active/active orchestration and HA: capacity scales by shards ([ADR 0017](docs/decisions/0017-schema-sharding.md)), but each shard is one replica and sessions do not move between shards.
 - Process reattachment.
-- Warm pools (PVC-backed sandboxes start cold).
+- Warm pools (PVC-backed sandboxes start cold; the SandboxWarmPool has `replicas: 0` and is only a template alias).
 - Encryption in transit to sandboxd, audit logging, retention, backup policy.
 - Web console.
 
@@ -269,10 +271,10 @@ About 2–3 weeks part-time to a working PoC. This is an estimate, not a measure
 
 ## 9. Open questions
 
-- Is `commands.start()` stdio binary-clean and unbuffered enough for pi-env's framed protocol?
-- Does the adapter maintainer want the 1.5 port, or is a fork needed?
-- Which Pi Durable version to pin: 1.5.x now, or wait for the churn to slow?
-- Is `in-cluster-service` DNS staleness after Pod recreation a problem in practice?
+- Is `commands.start()` stdio binary-clean and unbuffered enough for pi-env's framed protocol? (Answered yes, Phase 1.)
+- Does the adapter maintainer want the 1.5 port, or is a fork needed? (Open: the port is consumed as the packed tarball `vendor/netzlabor-pi-durable-postgres-0.2.0.tgz`; the upstream PR is pending.)
+- Which Pi Durable version to pin: 1.5.x now, or wait for the churn to slow? (Pinned 1.5.2.)
+- Is `in-cluster-service` DNS staleness after Pod recreation a problem in practice? (Not seen, Phase 1 and 3.)
 
 ## 10. Repository layout
 
@@ -290,12 +292,18 @@ Main repo layout:
 
 ```
 packages/
-  sandbox-env/      # pi-env bridge over commands.start()
-  orchestrator/     # Pi Durable host + session API
+  sandbox-env/      # pi-env bridge over commands.start(): broker, relay, start gate
+  orchestrator/     # Pi Durable host, sandbox lifecycle, one process per shard
+  ingest/           # session API (stateless HTTP front, 2 replicas)
+  session-core/     # shared schema, migrations, settings, profiles, skills, MCP catalog, auth
+  egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
-deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployment
-images/sandbox/     # image with the pi-env daemon
-tests/e2e/          # restart, double-owner, long-command, sandbox-loss; run.sh <phase1|phase3|phase4|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
+vendor/             # packed Postgres adapter port
+deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployments, push and shard scripts
+images/             # sandbox/ (pi-env daemon), egress-proxy/
+docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
+examples/           # recorded load-test and bug-hunt runs
+tests/e2e/          # restart, double-owner, long-command, sandbox-loss and more; run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
 ```
 
 Extract `sandbox-env` into its own package once it passes the env conformance suite; it is the piece most useful to others.

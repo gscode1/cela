@@ -19,7 +19,7 @@ metadata:
 data:
   PI_MODEL_PROVIDER: openai-codex
   PI_MODEL_ID: gpt-6.1-terra
-  # Reasoning effort (Pi thinkingLevel: off, minimal, low, medium, high, xhigh), stored with each new session.
+  # Reasoning effort (Pi thinkingLevel: off, minimal, low, medium, high, xhigh, max), stored with each new session.
   PI_MODEL_REASONING: medium
   # The default is always allowed in addition.
   PI_MODEL_ALLOWLIST: openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol,scripted/scripted-1,scripted/scripted-2

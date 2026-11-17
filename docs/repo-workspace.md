@@ -3,13 +3,13 @@
 `POST /sessions` may carry `{ "repo": "owner/name", "branch": "…" }`. The session then gets `/workspace/repo`, a clone of
 that GitHub repository, and can push to it. Without `repo` nothing changes: no OneCLI agent, no secret, no GitHub call.
 
-Status: code and unit/local tests only. Not run against the live OneCLI, GitHub or c2 (see "Unverified").
+Status: run live on c2 on 2026-11-16 (`tests/e2e/run.sh phase4c`, needs `REPO_A` and `REPO_B`): clone, push and branch delete through OneCLI pass, a push to the other repo is refused (plan.md). The items under "Unverified" were not checked separately.
 
 ## Input
 
 Validated in `session-core` (`repo.ts`), used by ingest: `repo` matches `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`, owner at most 39
-characters, no `..`, no leading `-`, no `.git` suffix. `branch` is a ref name: starts alphanumeric, `[A-Za-z0-9._/-]`, no `..`,
-`//`, trailing `/`, `.` or `.lock`. URLs are never accepted: the orchestrator builds `https://github.com/<repo>.git` itself.
+characters (`repo` at most 140, the name at most 100), no `..`, no leading or trailing `-` on the owner, no leading `-` on the name, no `.git` suffix. `branch` (at most 200 characters) is a ref name: starts alphanumeric, `[A-Za-z0-9._/-]`, no `..`,
+`//`, `/.`, trailing `/` or `.`, and no path component ending in `.lock`. URLs are never accepted: the orchestrator builds `https://github.com/<repo>.git` itself.
 Stored in `inbox.sessions` (`repo`, `repo_branch`; migration `004_repo.sql`).
 
 ## Credentials: no GitHub token in the sandbox
@@ -124,6 +124,4 @@ re-sent; a create looks the object up by name again after a failure and POSTs on
 - That an agent really cannot use an LLM secret after narrowing (not tested through the gateway).
 - "Rejected from another pod's IP": OneCLI v2 has no source binding, so this is not provided.
 - Hosts other than github.com/api.github.com (codeload, LFS) and the org egress rules in `docs/onecli-host-rules.md`.
-- Network: the orchestrator needs `deploy/cilium/orchestrator-github.yaml`, and the sandbox needs the new image (`images/sandbox`,
-  tag `1.5.2-r2-<sha>`) in `deploy/sandbox-template.yaml`.
-- Recycling the Pod on interrupt for repo sessions (plan, `setsid` children) and a sweep of orphaned agents are not built.
+- Pod recycling on interrupt (ADR 0003) and the orphan sweep of OneCLI agents (ADR 0002, `docs/session-api.md`) exist; neither was exercised on a repo session in the phase 4c run.

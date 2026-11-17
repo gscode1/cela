@@ -1,7 +1,9 @@
 # Network policy for pi-durable-poc
 
-Status: written, validated offline, **not applied**. c2 runs flannel, which ignores NetworkPolicy; enforcement starts with
-the Cilium migration (plan.md, "Security baseline for real use"). Nothing here changes the cluster until someone applies it.
+Status: plan.md records these policies as enforced on c2 since 2026-11-16 (Cilium v1.20.4, audit mode off, all pi-durable-poc
+endpoints enforced in both directions; "Enforcement result"). The repo applies them too: every e2e run applies `deploy/` and
+`deploy/cilium` into its namespace (`tests/e2e/run.sh`). The sections below were written before that run: the apply order and
+rollback still describe the procedure, and "UNVERIFIED" marks what the run did not record separately.
 
 Files:
 
@@ -9,7 +11,7 @@ Files:
 |---|---|---|
 | `deploy/networkpolicy.yaml` | default-deny both ways, DNS, sandbox policies | `kubectl apply -k deploy` |
 | `deploy/networkpolicy-{ingest,orchestrator,postgres,e2e}.yaml` | per-workload allows | `kubectl apply -k deploy` |
-| `deploy/cilium/` | kube-apiserver entity egress, DNS to kube-dns | `kubectl apply -k deploy/cilium` (needs Cilium CRDs, so it is not in `deploy/kustomization.yaml`) |
+| `deploy/cilium/` | kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `kubectl apply -k deploy/cilium` (needs Cilium CRDs, so it is not in `deploy/kustomization.yaml`) |
 | `tests/e2e/run.sh` | the same policies, in every e2e run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`), see `docs/e2e.md` | the run applies `deploy/` and `deploy/cilium` with the namespace set |
 | `deploy/onecli-policies/` | `onecli` namespace ingress and egress (FQDN allowlist) | your Argo repo, see its README |
 | `deploy/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | OneCLI v2 `allow ...` then `block *` | by hand, operator machine |
@@ -18,7 +20,7 @@ Files:
 
 | Workload | Selector | Source |
 |---|---|---|
-| orchestrator (also `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `deploy/orchestrator.yaml`, `tests/e2e/runner-pod.yaml` |
+| orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `deploy/orchestrator.yaml`, `tests/e2e/runner-pod.yaml` |
 | ingest | `app.kubernetes.io/name=pi-ingest` | `deploy/ingest.yaml` |
 | sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `deploy/sandbox-template.yaml` |
 | Postgres pi-pg | `cnpg.io/cluster=pi-pg` | set by CNPG on instance and job pods |
@@ -44,6 +46,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | orchestrator | sandbox pods | 8080, 9090 | sandboxd REST and gRPC | S orchestrator-allow-egress |
 | orchestrator | OneCLI | 10255, 10256 | model calls and remote MCP calls through the gateway; agent and secret management | S orchestrator-allow-egress |
 | orchestrator, e2e driver, Postgres | kube-apiserver | 443, 6443 | claims, pods, PVCs; suites; CNPG instance manager | C orchestrator/e2e-driver/postgres-egress-kube-apiserver |
+| orchestrator | `api.github.com` | 443 (+ DNS lookup of that name) | direct call that mints the repo-scoped GitHub App installation token (the App key never leaves the orchestrator); the only public host it may reach | C orchestrator-egress-github-api |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
 | sandbox | OneCLI gateway | 10255 | credentialed traffic (repo sessions): credentials injected | S sandbox-allow-onecli-egress |
@@ -78,9 +81,9 @@ instances, DNS and the Kubernetes API.
   Service) or another namespace, add a `from` entry to `ingest-allow-clients-ingress`.
 - **Kube API.** Both 443 (the Service port) and 6443 (the node endpoint) are allowed; which one Cilium evaluates depends on
   socket-level service translation. UNVERIFIED until Cilium runs on c2.
-- **GitHub App token mint (Phase 4c).** The orchestrator's call to `api.github.com` is assumed to go through the OneCLI
-  gateway (allowed above). If the other agent's code calls GitHub directly, the orchestrator also needs a `toFQDNs` rule
-  for `api.github.com:443` in `deploy/cilium/`; there is none today (UNVERIFIED, depends on that code).
+- **GitHub App token mint (Phase 4c).** The orchestrator calls `api.github.com` directly, not through the OneCLI gateway
+  (`callApi` in `main.ts` is a plain `fetch`; `mintInstallationToken` in `github-app.ts`), so `deploy/cilium/orchestrator-github.yaml`
+  gives it a `toFQDNs` rule for `api.github.com:443` plus a DNS rule limited to that name.
 - **Envoy labels** are from the running proxy pod; if Envoy Gateway is reinstalled with other labels, update
   `ingest-allow-clients-ingress` and `deploy/onecli-policies/ingress.yaml`.
 - **OneCLI pod's other egress** (update checks, calls to its own external URL) is unknown: use audit mode first.
@@ -113,7 +116,7 @@ Fast, per layer, in reverse order:
   ```sh
   kubectl delete -k deploy/cilium
   kubectl -n pi-durable-poc delete networkpolicy default-deny-all allow-dns-egress sandbox-default-deny \
-    sandbox-allow-orchestrator-ingress sandbox-allow-onecli-egress ingest-allow-clients-ingress ingest-allow-egress \
+    sandbox-allow-orchestrator-ingress sandbox-allow-onecli-egress sandbox-allow-internet-egress ingest-allow-clients-ingress ingest-allow-egress \
     orchestrator-allow-ingress orchestrator-allow-egress postgres-allow-ingress postgres-allow-egress e2e-driver-allow-egress
   ```
   A pod with no policy selecting it is open again at once. Deleting only `default-deny-all` is **not** a rollback:
@@ -127,9 +130,9 @@ delete it from the cluster (no prune), it is harmless and can be deleted.
 
 ## Verification status
 
-- `kubectl kustomize deploy` and `kubectl apply --dry-run=client` pass for the standard policies (12 NetworkPolicies).
+- `kubectl kustomize deploy` and `kubectl apply --dry-run=client` pass for the standard policies (13 NetworkPolicies).
 - The CiliumNetworkPolicies were checked against the upstream CRD schema (cilium v1.17.0
   `ciliumnetworkpolicies.yaml`) with a field-and-enum validator: no unknown fields, `kube-apiserver` is a valid entity. The
   CRDs are not installed on c2, so `kubectl apply --dry-run` for them cannot run yet.
-- UNVERIFIED: any real enforcement, FQDN behaviour, the `egressDeny` and endpoint-identity interaction, the CNPG port list,
+- Enforcement itself is verified (plan.md, "Enforcement result": the sandbox isolation test passes and phases 1, 3, 4, 4b are green). UNVERIFIED here: FQDN behaviour, the `egressDeny` and endpoint-identity interaction, the CNPG port list,
   the host-rule API's delete and list shapes, and rule evaluation order in OneCLI.

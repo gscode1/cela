@@ -60,6 +60,14 @@ files, the session is one the user can still talk to, and ADR 0001 made recreati
 Deleting the session through `DELETE /sessions/{id}` removes the claim and PVC through the normal path. (This is how the
 leftover test sessions on c2, among them the owners of `pi-conv-5858` and `pi-conv-5873`, were cleaned.)
 
+## Addendum: one sweep per shard (issue #84)
+
+Since [0017](0017-schema-sharding.md) there is one orchestrator, and so one sweeper, per shard. "The schema owner, so only
+one process" holds per schema, not per cluster. A shard's claim and PVC patterns are its own: `pi-conv-<n>` on shard 0
+and `pi-s<k>-conv-<n>` on shard k (`claimNameFor`, `conversationOfName` in `lifecycle.ts`; the patterns in `sweep.ts`),
+judged by that shard's sessions. OneCLI agents are UUID-keyed and shared, so a shard revokes an agent whose session is
+deleted and on that shard, and acts on an unknown one only if it is shard 0.
+
 ## Consequences
 
 - The sweep needs `list` on PVCs, in addition to the claim verbs the orchestrator already has (`deploy/orchestrator-rbac.yaml`).

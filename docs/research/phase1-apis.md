@@ -1,5 +1,7 @@
 # Phase 1 API brief (stdio bridge + sandbox basics)
 
+> Status (2026-11-17): historical. The local bridge executable it discusses became a broker inside the orchestrator and a thin relay, see [ADR 0016](../decisions/0016-in-process-broker.md); the sandboxd token is per sandbox, see [ADR 0001](../decisions/0001-per-sandbox-sandboxd-token.md).
+
 Researched 2026-11-15. Read-only research; no code was run (daemon binaries were only inspected with `file`).
 Method: `gh` was NOT authenticated, so sources are `git clone --depth 1`, `npm view` / `npm pack`, `curl` of the public GitHub
 releases API, and `registry.k8s.io` manifest queries. Clones live in the session scratchpad (`.../scratchpad/src/pi`, `.../scratchpad/src/as`).

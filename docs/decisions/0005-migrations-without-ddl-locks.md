@@ -86,6 +86,14 @@ Before #62 the transaction was left alone: it is also what makes `crash-before-m
 splitting `SessionService.apply` into an idempotent prepare phase and the transactional claim + submit + mark. Prepare
 failures then needed their own claim-free way to record row outcomes. That is what #62 did.
 
+## Addendum: one orchestrator per shard (issue #84)
+
+"The orchestrator is a single replica holding a storage lock" is per schema since [0017](0017-schema-sharding.md): each
+shard is its own Deployment on its own schema, and a session is drained only by its shard's loop (the inbox poll filters
+on `s.shard`). The argument that one session is never prepared twice still holds. Migration `014_shard.sql` adds the
+`shard` column; shards above 0 create their schema at start before migrating. The inbox poll also leaves sessions that
+are in flight or backing off out of its query and serves the oldest pending event first (`InboxLoop.#tick`, #95).
+
 ## Consequences
 
 - A restart of any process on a current schema issues no DDL and cannot be stalled by, or stall, running traffic.

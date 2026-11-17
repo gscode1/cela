@@ -42,4 +42,11 @@ for phases 4, 4b, 4c and 3), live sessions were disturbed, and a failed run left
 - OneCLI agents and secrets outlive the namespace. A killed or swept run leaves its `pi-e2e-<run id>-*` objects behind, and no later
   stack can sweep them (another prefix). `tests/e2e/sweep.sh` does not remove them (it has no OneCLI key); remove them by hand.
 - Until the argo-c2 ingress change is merged, suites that call OneCLI from a run namespace fail (docs/e2e.md).
+  (2026-11-17: merged and live; OneCLI admits labelled run namespaces.)
 - Cluster-wide pieces (CNPG operator, agent-sandbox controller, ESO) are shared by all runs. The CNPG operator reconciles up to 10 clusters at once.
+
+## Addendum: the shards suite (issue #84)
+
+`tests/e2e/run.sh shards` adds a second orchestrator Deployment (`deploy/add-shard.sh 1`) inside the run's own namespace
+to test [0017](0017-schema-sharding.md). It is not part of `all`, and it stays inside the `pi-e2e-<id>` namespace, so the
+isolation above holds. Shard claim names are `pi-s<k>-conv-<n>`; the per-stack OneCLI prefix is unchanged.

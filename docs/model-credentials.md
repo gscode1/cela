@@ -92,7 +92,7 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 | Key (seed only)          | Setting (admin API)                                                                                       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `PI_MODEL_PROVIDER`, `PI_MODEL_ID` | `defaultModel` (`provider/model`) for sessions that name none.                                  |
-| `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `null`.  |
+| `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `null`. |
 | `PI_MODEL_ALLOWLIST`     | `allowlist`: `provider/model` pairs; the model id may contain slashes. The default is always allowed.     |
 | `PI_SESSION_TURN_BUDGET` | `turnBudget`: model turns one session may use in total (default 100).                                     |
 
