@@ -33,6 +33,10 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        # Required by Pod Security "restricted" (docs/decisions/0019-restricted-pod-security.md). A Sandbox keeps its own
+        # copy of this template, so existing Sandboxes must be removed before a change here is enforced.
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: sandboxd
           image: docker.io/gsimage/pi-sandbox:1.5.2-r2-5bccb47@sha256:95c444f7ef6fc3f7b62f61d2e454a133b2a727ae41664508416c7ba9ae338060
