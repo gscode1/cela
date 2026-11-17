@@ -32,6 +32,16 @@ its own console and admin list, and scope C becomes a tenant-admin scope within 
 | Skills | Publish a new version (see [Skill upload](#skill-upload)). Browse versions and file manifests and fetch a version's file contents on demand. Pin exact versions from the profile editor, and show which profiles pin each version. Mark versions with model invocation disabled, which can be pinned but are omitted from the model's skill catalog. After a publish, offer to pin the new version in a profile. |
 | Shard status | Show the last reports from shards: configured runtime, observed sandbox runtime, network policy state, and publish time. An empty list means no reports yet. Distinguish an unobserved runtime (`null`) from the node default (empty string), and show `unknown` policy explicitly. Reports persist through downtime. Offer to run the isolation probe again (`POST /admin/status/probe`). |
 
+Links between screens (a contract with the profile editor; the editor reads the query string and preselects, it never writes
+from a link alone):
+- `/console/profiles?pinSkill=<name>@<version>` after a skill publish: add that exact version to a profile's skill pins.
+- `/console/profiles?addMcp=<name>` after an MCP save: add that server to a profile's `mcpServers`.
+- `/console/profiles/<name>` from the "pinned by" and "profiles" lists of the skill and MCP screens.
+
+`console.catalogs` (`manage` or `readOnly`, default `manage`) sets whether the skills and MCP screens offer writes. Ingest
+serves it as `GET /console/config.json`. It hides controls only: the API accepts writes from any admin either way, and the
+zip download stays.
+
 Settings and MCP history show at most the newest 500 entries returned by their APIs. Profile diffs compare stored
 definitions. An effective preview of an older definition uses current settings. V1 defers connectivity probes,
 credential management, and cross-owner session operations.

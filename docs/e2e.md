@@ -297,7 +297,12 @@ not part of `pnpm check`, which needs no browser.
 Without a cluster, the same specs run against the real ingest server code over session-core's in-memory fake database
 (`packages/admin-ui/e2e/local-server.mjs`), one instance with the console and one without. The local run also has the
 `settings` and `profiles` specs (edits, review, `409` conflicts, broken references, skill pins), which change global state
-and so run on one worker; the deployed `console` suite keeps to the read-only specs:
+and so run on one worker; the deployed `console` suite keeps to the read-only specs. Two more instances run the console
+with a small in-memory fake of the skills, MCP servers, status and profile reads in front (`e2e/fake-admin.mjs`, which reuses
+session-core's validators, digest and zip writer), one in `console.catalogs: manage` and one in `readOnly` mode. The catalog
+specs (`catalogs.spec.ts`, `catalogs-readonly.spec.ts`: skill upload from a folder and a zip, review, diff, identical
+re-upload, MCP register, edit, conflict, disable, delete with references, shard status, read-only mode) need that fake and
+run on those two only. The fake keeps its own profile list, separate from the profiles of the fake database:
 
 ```sh
 pnpm build
