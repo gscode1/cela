@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126) and slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md); the real-model check is still open). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126), slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)) and slice 11a (database TLS; issue #132). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -74,7 +74,7 @@ database:
   mode: bundled                 # bundled | external (any mode change is a reinstall)
   bundled: { image: postgres:17@sha256:..., persistence: { size: 10Gi, storageClass: "", retain: true } }
   external: { existingSecret: "", uriKey: uri }
-  tls: { mode: disable, existingSecret: "", caKey: ca.crt }       # verify-full once the code exists (slice 11)
+  tls: { mode: disable, existingSecret: "", caKey: ca.crt, certKey: "", keyKey: "" } # disable | verify-ca | verify-full (slice 11a, done)
 onecli:
   mode: bundled                 # bundled | external | disabled
   externalUrl: ""              # required by the OneCLI chart when bundled
@@ -102,8 +102,9 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 - **OneCLI name prefix.** The default prefix is `pi-session-` (`onecli-names.ts`). On a shared OneCLI, one install's
   orphan sweep could revoke another install's agents. Make it a value that `install.sh` defaults from release and
   namespace; a reinstalled stack keeps `pi-session-` (section 9a).
-- **DB TLS.** `session-core/src/db.ts` and `orchestrator/src/storage.ts` build separate `pg` pools with no CA/cert
-  contract. Add TLS to both, with verification, before `database.external` is called production-ready.
+- **DB TLS (implemented in slice 11a).** Both pools take their `ssl` options from `session-core/src/db-tls.ts`; modes
+  `disable`, `verify-ca`, `verify-full` (no `require`), CA and optional client cert from files of a mounted Secret.
+  See [ADR 0021](decisions/0021-database-tls.md) and [database-tls.md](database-tls.md).
 - **Shards.** Shard count can only grow: sessions stay on their shard (ADR 0017). `deploy/add-shard.sh` becomes the
   `orchestrator.shards` value, and ingest refuses to start when it sees sessions on a shard it has no route for.
 - **OneCLI bootstrap.** Installing OneCLI does not create a user, an org, an `oc_` admin key, the orchestrator agent,
@@ -276,13 +277,17 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
       the gateway (407 without the token, a TLS handshake that verifies against the CA ConfigMap, the gateway's own 403
       for a host that is not allowed) and that the API is closed to ingest and sandboxes. Sign-up cannot be closed (ADR
       0022): the network is the control.
-    - Still open: the real-model test with protected credentials, run by someone with a Codex login or an API key
-      (steps in [model credentials](model-credentials.md#bundled-onecli-sign-in-and-credentials)); the bootstrap as a Job.
+    - Real-model check, 2026-11-17 on kind (arm64): a Codex login added in the dashboard over port-forward, then one
+      `openai-codex/gpt-6-luna` session at `reasoning: low` ran a bash tool call and answered; the gateway logged
+      `chatgpt.com` `200` with `injections_applied: 2` for agent `pi-orchestrator`
+      ([model credentials](model-credentials.md#bundled-onecli-sign-in-and-credentials)). Still open: the bootstrap as a Job.
     - Done when: kind with `--onecli` runs a session through the gateway (scripted model plus one real-model test with
-      protected credentials), and a second bootstrap run changes nothing. The first part is covered without a model
-      call; the real-model part is open.
+      protected credentials), and a second bootstrap run changes nothing. Both are done.
 11. **DB TLS and cleanup.**
-    - TLS with verification for both `pg` pools; `database.tls` values. Remove the `deploy/` scripts and manifests that
+    - 11a (done, issue #132): TLS with verification for both `pg` pools; `database.tls` values; `pi-postgres` can serve
+      TLS. `DB_TLS=1 tests/e2e/run.sh <suite>` runs the e2e against a `pi-postgres` that requires TLS (throwaway CA; the run first
+      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Open: a green `DB_TLS=1` run on a cluster.
+    - 11b: Remove the `deploy/` scripts and manifests that
       the chart replaced; update README, `deploy/README.md`, `docs/e2e.md`, `docs/model-credentials.md` and plan.md.
     - Done when: e2e passes against an external Postgres that requires TLS; no doc points at a removed script.
 

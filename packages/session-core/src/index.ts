@@ -1,6 +1,8 @@
 export { isAdmin, parseAdmins, tokenAuthenticator } from "./auth.js";
 export type { Authenticator, Principal } from "./auth.js";
 export { createPool } from "./db.js";
+export { connectionOptions, DATABASE_TLS_MODES, loadDatabaseTls } from "./db-tls.js";
+export type { DatabaseConnection, DatabaseTls, DatabaseTlsMode } from "./db-tls.js";
 export { FRONTMATTER_LIMITS, parseFrontmatter } from "./frontmatter.js";
 export type { FrontmatterResult } from "./frontmatter.js";
 export { BodyError, errorMessage, readJsonObject, sendJson, UUID } from "./http.js";

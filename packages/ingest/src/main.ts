@@ -16,7 +16,7 @@ import { createIngestServer } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const authenticate = tokenAuthenticator(config.apiTokens);
-  const pool = createPool(config.databaseUrl, config.instance, 5);
+  const pool = createPool(config.databaseUrl, config.instance, 5, config.databaseTls);
 
   const settings = new SettingsCache(pool, { log });
   let schemaReady = false;

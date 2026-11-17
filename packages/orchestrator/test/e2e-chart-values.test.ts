@@ -81,6 +81,22 @@ describe("tests/e2e/chart-values.py", () => {
     expect(sc({ STORAGE_CLASS: "data", SANDBOX_STORAGE_CLASS: "scratch" })).toBe("scratch");
   });
 
+  it("adds database.tls only with DB_TLS=1, and the chart renders it", () => {
+    expect(JSON.parse(readFileSync(values(1), "utf8")).database.tls).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(values(1, { DB_TLS: "0" }), "utf8")).database.tls,
+    ).toBeUndefined();
+    const file = values(1, { DB_TLS: "1" });
+    expect(JSON.parse(readFileSync(file, "utf8")).database.tls).toEqual({
+      mode: "verify-full",
+      existingSecret: "pi-db-tls-ca",
+      caKey: "ca.crt",
+    });
+    const text = render(file);
+    expect(text).toContain("PI_DURABLE_DATABASE_TLS_MODE");
+    expect(text).toContain("pi-db-tls-ca");
+  });
+
   it("refuses an image without a tag or a digest", () => {
     expect(() => values(1, { ORCH_IMAGE: "pi-orchestrator" })).toThrow();
   });

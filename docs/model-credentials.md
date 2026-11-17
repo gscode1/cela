@@ -96,8 +96,12 @@ ONECLI_SECRET_NAME=openai ONECLI_SECRET_HOST=api.openai.com ONECLI_SECRET_VALUE=
   KUBE_CONTEXT=$CTX hack/onecli-bootstrap.sh -n $NS
 ```
 
-Then set `models.default` and `models.allowlist` (for example `openai-codex/gpt-6.1-terra`) in your values, `helm upgrade`, and
-run one session. `GATEWAY_CHECK_HOST=api.openai.com hack/kind-smoke.sh --onecli` (inside the orchestrator pod, with its token and CA)
+Then make the model available. The `models` values seed the settings row only on the first start, so on an install that
+already ran, `helm upgrade` with new `models` values changes nothing: use `PUT /admin/settings` (`allowlist`, and
+`defaultModel` if it should be the default; [session API](session-api.md)), or pick it per session with
+`POST /sessions {provider, model, reasoning}`. Then run one session. Verified on kind with `openai-codex/gpt-6-luna` at
+`reasoning: low`: one bash tool call and the answer, the gateway log shows `chatgpt.com` `status 200` with
+`injections_applied: 2` for agent `pi-orchestrator`, and the orchestrator has no OpenAI credential. `GATEWAY_CHECK_HOST=api.openai.com hack/kind-smoke.sh --onecli` (inside the orchestrator pod, with its token and CA)
 sends one request through the gateway to that host instead of the blocked `example.com`; the answer shows whether the credential was injected (OpenAI answers
 401 without one).
 

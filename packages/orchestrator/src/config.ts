@@ -1,5 +1,5 @@
-import { loadModelPolicy } from "@pi-durable-k8s/session-core";
-import type { ModelPolicy } from "@pi-durable-k8s/session-core";
+import { loadDatabaseTls, loadModelPolicy } from "@pi-durable-k8s/session-core";
+import type { DatabaseTls, ModelPolicy } from "@pi-durable-k8s/session-core";
 import { memoryLimitBytes, resolveBridgeCap } from "./bridge-cap.js";
 import type { BridgeCapSource } from "./bridge-cap.js";
 import { GITHUB_APP_DIR } from "./github-app.js";
@@ -25,6 +25,8 @@ export function shardSchema(base: string, shard: number): string {
 /** Environment contract of the orchestrator. Secrets (database URL, sandboxd token, API tokens) are env-only. */
 export interface OrchestratorConfig {
   databaseUrl: string;
+  /** TLS towards Postgres (`PI_DURABLE_DATABASE_TLS_*`); undefined leaves the URI's own `sslmode` alone. */
+  databaseTls: DatabaseTls | undefined;
   /** Dedicated schema holding the adapter's tables (created at start). Also the scope of the ownership lock. */
   schema: string;
   /** Which shard this orchestrator is; it owns the schema of that shard and the sessions assigned to it (ADR 0017). */
@@ -196,6 +198,7 @@ export function loadConfig(
     database.searchParams.get("host") || database.hostname || env.PGHOST || "localhost";
   return {
     databaseUrl,
+    databaseTls: loadDatabaseTls(env),
     schema: shardSchema(env.PI_DURABLE_SCHEMA ?? "public", shard),
     shard,
     namespace,

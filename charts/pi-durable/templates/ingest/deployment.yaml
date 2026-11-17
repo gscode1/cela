@@ -61,6 +61,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ .Values.database.external.existingSecret }}, key: {{ .Values.database.external.uriKey }} } }
+            {{- include "pi-durable.databaseTlsEnv" . | nindent 12 }}
             - name: PI_API_TOKENS
               valueFrom: { secretKeyRef: { name: {{ .Values.api.existingSecret }}, key: tokens } }
           ports:
@@ -79,6 +80,12 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            {{- if include "pi-durable.databaseTlsEnabled" . }}
+            {{- include "pi-durable.databaseTlsMount" . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if include "pi-durable.databaseTlsEnabled" . }}
+        {{- include "pi-durable.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}

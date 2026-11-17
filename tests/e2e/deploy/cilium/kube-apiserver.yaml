@@ -1,5 +1,4 @@
-# Kubernetes API access of the test-only pods: the e2e driver (everything the suites do through kubectl) and the CNPG
-# instance manager in pi-pg (it watches its Cluster resource). A standard NetworkPolicy cannot name the API server; see
+# Kubernetes API access of the test-only pods: the e2e driver (everything the suites do through kubectl). A standard NetworkPolicy cannot name the API server; see
 # the chart's templates/networkpolicy/cilium.yaml for the orchestrator's.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -9,21 +8,6 @@ spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: e2e-driver
-  egress:
-    - toEntities: [kube-apiserver]
-      toPorts:
-        - ports:
-            - { port: "443", protocol: TCP }
-            - { port: "6443", protocol: TCP }
----
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
-  name: postgres-egress-kube-apiserver
-spec:
-  endpointSelector:
-    matchLabels:
-      cnpg.io/cluster: pi-pg
   egress:
     - toEntities: [kube-apiserver]
       toPorts:

@@ -38,6 +38,18 @@ database:
       podSelector: {}
       cidrs: []
       port: 5432
+  # TLS towards the database, for both pools (orchestrator and ingest). The orchestrator and ingest verify the server;
+  # there is no mode that encrypts without verifying.
+  #   disable      no TLS (a plain install; the URI's own sslmode, if any, still applies)
+  #   verify-full  chain and host name must match the CA (use this)
+  #   verify-ca    the chain must verify, the host name need not match (a server certificate without the host's name)
+  # With a mode other than disable, `sslmode` and certificate parameters must not be in the URI (they would conflict).
+  tls:
+    mode: disable
+    existingSecret: "" # required unless mode is disable: a Secret in the release namespace with the keys below
+    caKey: ca.crt # PEM bundle that signed the server certificate; required for verify-ca, "" uses the system roots
+    certKey: "" # optional client certificate (mutual TLS); set certKey and keyKey together
+    keyKey: ""
 
 onecli:
   # bundled: the OneCLI release that hack/onecli.sh installs in this namespace (upstream chart, its own release;

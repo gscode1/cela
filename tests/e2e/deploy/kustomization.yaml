@@ -1,14 +1,13 @@
-# What an e2e run adds around the pi-durable chart (tests/e2e/run.sh installs the chart itself with Helm): the run's own
-# CloudNativePG database `pi-pg` as the external database (until the bundled Postgres of install slice 6 replaces it),
-# the ExternalSecrets that bring the shared OneCLI's credentials, the policies of the test-only pods (the e2e driver, the
-# database), and the driver's identity (tests/e2e/driver). It carries no namespace of its own: run.sh generates a tiny
-# overlay that sets `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is.
+# What an e2e run adds around the pi-durable chart (tests/e2e/run.sh installs the chart itself with Helm): the
+# ExternalSecrets that bring the shared OneCLI's credentials, the policies of the test-only pods (the e2e driver), and the
+# driver's identity (tests/e2e/driver). The run's database is the charts/pi-postgres release that run.sh installs with
+# Helm, with its own policy. It carries no namespace of its own: run.sh generates a tiny overlay that sets
+# `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is.
 # The CiliumNetworkPolicies are in cilium/, applied first. These files copy what deploy/ keeps for the long-lived stack
-# (postgres.yaml, networkpolicy-postgres.yaml, networkpolicy-e2e.yaml, the ExternalSecrets); deploy/ goes in slice 11.
+# (networkpolicy-e2e.yaml, the ExternalSecrets); deploy/ goes in slice 11.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../driver
-  - postgres.yaml
   - networkpolicy.yaml
   - external-secrets.yaml

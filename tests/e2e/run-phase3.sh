@@ -18,7 +18,7 @@
 #                  The orchestrator's own isolation probe (GET /admin/status networkPolicy) is printed first; with
 #                  NETPOL_ENFORCED=1 a `not-enforced` verdict fails the run before any test.
 #
-# Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the CNPG operator in postgres-system and the secret sandboxd-auth
+# Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the secret sandboxd-auth
 # (deploy/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
 # Run by hand from a Mac with your current kubectl context it works the same, but use tests/e2e/run.sh.
 # Exit code: 0 when every test passed (isolation may be KNOWN-FAIL while enforcement is absent), 1 otherwise.
@@ -420,16 +420,16 @@ t_isolation() {
   # Every denied address has its own positive control before the sandbox tests it. A failed control is a
   # FAIL, never evidence of isolation. Service and endpoint Pod IPs exercise DNS/VIP and direct paths separately.
   targets+=("driver pi-orchestrator.$ns.svc.cluster.local 8081 orchestrator")
-  targets+=("orchestrator pi-pg-rw.$ns.svc.cluster.local 5432 postgres")
+  targets+=("orchestrator pi-postgres.$ns.svc.cluster.local 5432 postgres")
   targets+=("driver pi-ingest.$ns.svc.cluster.local 8080 ingest")
   targets+=("orchestrator pi-conv-$b.$ns.svc.cluster.local 8080 other-sandbox-rest")
   targets+=("orchestrator pi-conv-$b.$ns.svc.cluster.local 9090 other-sandbox-grpc")
   targets+=("driver kubernetes.default.svc.cluster.local 443 kube-api")
   targets+=("orchestrator onecli.onecli.svc.cluster.local 10256 onecli-api")
-  for service in pi-orchestrator pi-pg-rw pi-ingest "pi-conv-$b"; do
+  for service in pi-orchestrator pi-postgres pi-ingest "pi-conv-$b"; do
     case $service in
     pi-orchestrator) source=driver; port=8081; label=orchestrator ;;
-    pi-pg-rw) source=orchestrator; port=5432; label=postgres ;;
+    pi-postgres) source=orchestrator; port=5432; label=postgres ;;
     pi-ingest) source=driver; port=8080; label=ingest ;;
     *) source=orchestrator; port=8080; label=other-sandbox-rest ;;
     esac

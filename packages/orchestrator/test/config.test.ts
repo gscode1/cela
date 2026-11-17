@@ -76,6 +76,23 @@ describe("config", () => {
     });
   });
 
+  it("passes the database TLS settings to the adapter's pool and drops sslmode from the URI", () => {
+    const tlsEnv = {
+      ...env,
+      PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app?sslmode=verify-full",
+      PI_DURABLE_DATABASE_TLS_MODE: "verify-full",
+    };
+    const options = poolConfig(loadConfig(tlsEnv));
+    expect(options).toMatchObject({
+      connectionString: "postgres://u:p@db:5432/app",
+      ssl: { rejectUnauthorized: true },
+    });
+    expect(poolConfig(loadConfig(env))).not.toHaveProperty("ssl");
+    expect(() => loadConfig({ ...env, PI_DURABLE_DATABASE_TLS_MODE: "require" })).toThrow(
+      /PI_DURABLE_DATABASE_TLS_MODE/,
+    );
+  });
+
   it("names claims from the conversation id as valid DNS-1123 names", () => {
     expect(claimNameFor(0, 42)).toBe("pi-conv-42");
     expect(claimNameFor(0, 42)).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);

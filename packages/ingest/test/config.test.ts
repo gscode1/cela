@@ -14,6 +14,16 @@ describe("loadConfig", () => {
     expect(config.orchestratorUrl).toBe(base.PI_ORCH_URL);
   });
 
+  it("reads the database TLS settings, unset by default", () => {
+    expect(loadConfig(base).databaseTls).toBeUndefined();
+    expect(
+      loadConfig({ ...base, PI_DURABLE_DATABASE_TLS_MODE: "verify-full" }).databaseTls,
+    ).toEqual({ mode: "verify-full" });
+    expect(() => loadConfig({ ...base, PI_DURABLE_DATABASE_TLS_MODE: "verify-ca" })).toThrow(
+      /TLS_CA_FILE/,
+    );
+  });
+
   it("rejects an empty, blank, zero or malformed port instead of binding a random one", () => {
     for (const port of ["", "  ", "0", "65536", "80x", "-1", "8.5"]) {
       expect(() => loadConfig({ ...base, PI_INGEST_PORT: port }), port).toThrow(/PI_INGEST_PORT/);

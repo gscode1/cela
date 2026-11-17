@@ -1,13 +1,19 @@
 import pg from "pg";
+import { connectionOptions, type DatabaseTls } from "./db-tls.js";
 
 /**
  * A pool against the CloudNativePG `-rw` service. Session-mode connections only: LISTEN and advisory
  * locks do not survive a transaction-pooled proxy. Keepalive and the statement timeout turn a silent
  * network drop into an error instead of a hang.
  */
-export function createPool(databaseUrl: string, applicationName: string, max: number): pg.Pool {
+export function createPool(
+  databaseUrl: string,
+  applicationName: string,
+  max: number,
+  tls?: DatabaseTls,
+): pg.Pool {
   const pool = new pg.Pool({
-    connectionString: databaseUrl,
+    ...connectionOptions(databaseUrl, tls),
     application_name: applicationName,
     max,
     connectionTimeoutMillis: 5_000,

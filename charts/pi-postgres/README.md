@@ -44,6 +44,15 @@ volume all converge to the same state:
 The superuser password is set by the image only when it creates the data directory. Changing the Secret later does not
 change it; do that with `ALTER ROLE postgres` yourself.
 
+## TLS
+
+Set `tls.existingSecret` to a Secret with the server certificate chain (`tls.crt`) and key (`tls.key`, keys configurable);
+the chart never creates it. The server then runs `ssl=on`, and plain connections still work. `tls.requireTls=true` also
+replaces `pg_hba.conf` so that remote clients must use TLS (`hostssl` only); the Pod-local socket used by the probes and the
+init sidecar is unaffected. Keep it `false` while OneCLI's connection string does not ask for TLS. The certificate must
+name the Service (`<release>.<ns>.svc`) for clients using `verify-full`; give them its CA through the app chart's
+`database.tls` ([docs/database-tls.md](../../docs/database-tls.md)).
+
 ## Storage and uninstall
 
 `persistence.retain: true` (default) sets `persistentVolumeClaimRetentionPolicy.whenDeleted: Retain`: the PVC survives

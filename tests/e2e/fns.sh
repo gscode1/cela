@@ -146,13 +146,19 @@ spec:
       env:
         - name: DATABASE_URL
           valueFrom:
-            secretKeyRef: {name: "${E2E_DB_SECRET:-pi-pg-app}", key: "${E2E_DB_URI_KEY:-uri}"}
+            secretKeyRef: {name: "${E2E_DB_SECRET:-pi-db-uri}", key: "${E2E_DB_URI_KEY:-uri}"}
+      volumeMounts:
+        - {name: db-tls, mountPath: /etc/pi-db-tls, readOnly: true}
       securityContext:
         allowPrivilegeEscalation: false
         capabilities: {drop: [ALL]}
       resources:
         requests: {cpu: 10m, memory: 32Mi}
         limits: {cpu: "1", memory: 128Mi}
+  volumes:
+    # DB_TLS=1 (run.sh) leaves the public CA here; without it the volume is empty and psql connects as the URI says.
+    - name: db-tls
+      secret: {secretName: pi-db-tls-ca, optional: true}
 YAML
   fi
   k wait --for=condition=Ready pod/e2e-psql --timeout=300s >/dev/null
@@ -167,5 +173,6 @@ YAML
 
 e2e_db() {
   # shellcheck disable=SC2016
-  k exec -i e2e-psql -c psql -- sh -c 'exec psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 "$@"' sh "$@"
+  # With the CA present (DB_TLS=1) the client verifies the server like the orchestrator does: that Postgres rejects plain TCP.
+  k exec -i e2e-psql -c psql -- sh -c '[ ! -f /etc/pi-db-tls/ca.crt ] || export PGSSLMODE=verify-full PGSSLROOTCERT=/etc/pi-db-tls/ca.crt; exec psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 "$@"' sh "$@"
 }
