@@ -48,7 +48,13 @@ else
 fi
 # Only "NotFound" means there is nothing to restart; any other failure must not look like a pushed bundle.
 if err=$(k get deployment pi-ingest -o name 2>&1 >/dev/null); then
-  k rollout restart deployment/pi-ingest >/dev/null
+  # Retried on a connection reset: the restart patches a timestamp annotation, so a repeat is harmless.
+  if ! push_retry k rollout restart deployment/pi-ingest >/dev/null; then
+    # The annotation is already set; clear it so a re-run does not report "unchanged" and skip the restart.
+    k annotate configmap ingest-code bundle-sha256- >/dev/null 2>&1 || true
+    echo "could not restart deployment pi-ingest; the bundle is in ConfigMap ingest-code but the pods still run the old code" >&2
+    exit 1
+  fi
 elif [[ $err == *NotFound* ]]; then
   echo "deployment pi-ingest not found; nothing to restart" >&2
 else

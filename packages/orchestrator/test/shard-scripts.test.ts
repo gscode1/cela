@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Drives deploy/add-shard.sh and deploy/push-code.sh against a stub kubectl on PATH. No cluster is touched.
+// Drives deploy/add-shard.sh, deploy/push-code.sh and deploy/push-ingest.sh against a stub kubectl on PATH. No cluster is touched.
 const deploy = resolve(import.meta.dirname, "../../../deploy");
 
 // Logs every call to $STUB_DIR/log. `get` of a name in $STUB_MISSING fails NotFound; STUB_LIST_FAIL makes a Deployment
@@ -19,6 +19,8 @@ fi
 for m in \${STUB_MISSING:-}; do
   if [[ $args == *" get deployment $m "* || $args == *" get service $m "* ]]; then echo "NotFound" >&2; exit 1; fi
 done
+if [[ $args == *" rollout restart "* && -n \${STUB_RESTART_FAIL:-} ]]; then echo "restart failed" >&2; exit 1; fi
+if [[ $args == *" create configmap "* || $args == *" annotate --local "* ]]; then echo "kind: ConfigMap"; exit 0; fi
 if [[ $args == *" get deployment "* ]]; then echo '{"spec":{"template":{"metadata":{"labels":{}},"spec":{"containers":[{"env":[]}]}}}}'; fi
 if [[ $args == *" apply "* ]]; then cat >/dev/null; fi
 exit 0
@@ -96,5 +98,28 @@ describe("push-code.sh Deployment discovery", () => {
   it("falls back to pi-orchestrator only after a successful empty listing", () => {
     const r = run("push-code.sh", [], { STUB_LIST: "" });
     expect(r.stderr).toContain("orchestrator deployments: pi-orchestrator\n");
+  });
+});
+
+describe("push-ingest.sh restart", () => {
+  // Builds are faked: `pnpm deploy` just creates its target directory with one file.
+  const fakePnpm = `#!/usr/bin/env bash
+if [[ " $* " == *" deploy "* ]]; then mkdir -p "\${@: -1}" && echo x >"\${@: -1}/f"; fi
+exit 0
+`;
+  beforeEach(() => writeFileSync(join(dir, "pnpm"), fakePnpm));
+
+  it("clears the bundle annotation and fails when the restart fails", () => {
+    const r = run("push-ingest.sh", [], { STUB_RESTART_FAIL: "1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("could not restart deployment pi-ingest");
+    expect(log()).toContain("annotate configmap ingest-code bundle-sha256-");
+  });
+
+  it("keeps the annotation when the restart succeeds", () => {
+    const r = run("push-ingest.sh", []);
+    expect(r.status, r.stderr).toBe(0);
+    expect(log()).toContain("rollout restart deployment/pi-ingest");
+    expect(log()).not.toContain("bundle-sha256-");
   });
 });
