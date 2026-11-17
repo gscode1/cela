@@ -204,8 +204,61 @@ describe("chart pi-postgres", () => {
     );
   });
 
+  describe("TLS", () => {
+    const postgres = (args: string[]): Obj =>
+      sts(args).spec.template.spec.containers.find((c: Obj) => c.name === "postgres");
+    const secretVolume = (args: string[]): Obj | undefined =>
+      sts(args).spec.template.spec.volumes.find((v: Obj) => v.name === "tls");
+
+    it("serves no TLS by default", () => {
+      expect(postgres([]).args).toBeUndefined();
+      expect(secretVolume([])).toBeUndefined();
+      expect(docs().find((d) => d.kind === "ConfigMap")?.data["pg_hba.conf"]).toBeUndefined();
+    });
+
+    it("turns ssl on with the key and certificate of a Secret, read-only", () => {
+      const args = ["--set", "tls.existingSecret=pg-cert"];
+      expect(postgres(args).args).toEqual([
+        "-c",
+        "ssl=on",
+        "-c",
+        "ssl_cert_file=/etc/pg-tls/tls.crt",
+        "-c",
+        "ssl_key_file=/etc/pg-tls/tls.key",
+      ]);
+      expect(postgres(args).volumeMounts).toContainEqual({
+        name: "tls",
+        mountPath: "/etc/pg-tls",
+        readOnly: true,
+      });
+      expect(secretVolume(args)?.secret).toMatchObject({
+        secretName: "pg-cert",
+        defaultMode: 0o440,
+      });
+      // Plain TCP stays allowed until requireTls (OneCLI's own connection may not use TLS yet).
+      expect(docs(args).find((d) => d.kind === "ConfigMap")?.data["pg_hba.conf"]).toBeUndefined();
+    });
+
+    it("requireTls admits hostssl only", () => {
+      const args = ["--set", "tls.existingSecret=pg-cert", "--set", "tls.requireTls=true"];
+      expect(postgres(args).args).toContain("hba_file=/config/pg_hba.conf");
+      const hba: string = docs(args).find((d) => d.kind === "ConfigMap")?.data["pg_hba.conf"];
+      expect(hba).toMatch(/^hostssl all all all scram-sha-256$/m);
+      expect(hba).toMatch(/^host all all all reject$/m);
+      expect(hba).not.toMatch(/^host all all all scram/m);
+    });
+
+    it("restarts the pod when TLS changes", () => {
+      const sum = (args: string[]): string =>
+        sts(args).spec.template.metadata.annotations["checksum/init"];
+      expect(sum(["--set", "tls.existingSecret=a"])).not.toBe(sum([]));
+    });
+  });
+
   describe("values.schema.json rejects bad values", () => {
     const bad: [string, string[]][] = [
+      ["requireTls without a Secret", ["--set", "tls.requireTls=true"]],
+      ["an empty certificate key", ["--set", "tls.certKey="]],
       ["an image without a digest", ["--set", "image.digest=latest"]],
       ["an unknown key", ["--set", "bogus=1"]],
       ["an empty superuser Secret", ["--set", "auth.superuser.existingSecret="]],

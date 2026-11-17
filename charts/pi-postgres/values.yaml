@@ -29,6 +29,17 @@ auth:
       existingSecret: pi-postgres-auth
       passwordKey: onecli-password
 
+# Serve TLS. A Secret (kubernetes.io/tls shape) holding the server certificate chain and key; this chart never creates
+# it (D8). The certificate must name the Service (`<release>`, `<release>.<ns>.svc`) for clients that verify-full, and
+# its CA goes to the clients (the app chart's database.tls.existingSecret).
+tls:
+  existingSecret: "" # "" = no TLS (plain connections, as before)
+  certKey: tls.crt
+  keyKey: tls.key
+  # true: remote clients must use TLS (pg_hba `hostssl` only, plain TCP rejected). Leave false while OneCLI's own
+  # connection string does not ask for TLS; the Pod-local unix socket (probes, init) is unaffected.
+  requireTls: false
+
 persistence:
   size: 10Gi
   storageClass: "" # "" = the cluster default class
