@@ -422,12 +422,14 @@ describe("model catalog", () => {
       providers: [],
       source: "none",
       filtered: false,
+      credentials: "unknown",
+      reason: "no orchestrator has published a model catalog yet",
     });
     expect((await call(base, "bob", "GET", "/admin/models")).status).toBe(403);
     expect((await call(base, "alice", "POST", "/admin/models", {})).status).toBe(405);
   });
 
-  it("returns only configured and unknown providers by default, everything with ?all=1", async () => {
+  it("returns only configured providers by default, everything with ?all=1", async () => {
     const { base, db } = await start();
     publish(db, [
       ["openai", "configured"],
@@ -435,26 +437,48 @@ describe("model catalog", () => {
       ["mistral", "unknown"],
     ]);
     const filtered = await names(base);
-    expect(filtered).toMatchObject({ filtered: true, source: "orchestrator" });
-    expect(filtered.models).toEqual(["openai", "mistral"]);
-    expect(filtered.providers.map((p) => p.provider)).toEqual(["openai", "mistral"]);
+    expect(filtered).toMatchObject({
+      filtered: true,
+      source: "orchestrator",
+      credentials: "configured",
+    });
+    expect(filtered.models).toEqual(["openai"]);
+    expect(filtered.providers.map((p) => p.provider)).toEqual(["openai"]);
     const full = await names(base, "?all=1");
     expect(full.filtered).toBe(false);
     expect(full.models).toEqual(["openai", "anthropic", "mistral"]);
     expect(full.providers).toHaveLength(3);
   });
 
-  it("falls back to the full catalog with a reason when no hint is known", async () => {
+  it("is empty with credentials none-configured when OneCLI was checked and holds none", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "missing"],
+      ["anthropic", "missing"],
+      ["scripted", "configured"],
+    ]);
+    expect(await names(base)).toMatchObject({
+      models: [],
+      providers: [],
+      filtered: true,
+      credentials: "none-configured",
+    });
+  });
+
+  it("is empty with credentials unknown and a reason when OneCLI could not be checked", async () => {
     const { base, db } = await start();
     publish(db, [
       ["openai", "unknown"],
-      ["anthropic", "unknown"],
       ["scripted", "configured"],
     ]);
     const body = await names(base);
-    expect(body.filtered).toBe(false);
-    expect(body.reason).toMatch(/no credential hint/);
-    expect(body.models).toEqual(["openai", "anthropic"]);
+    expect(body).toMatchObject({
+      models: [],
+      providers: [],
+      filtered: true,
+      credentials: "unknown",
+    });
+    expect(body.reason).toMatch(/could not be checked/);
   });
 
   it("never offers scripted in the default view, only with ?all=1", async () => {

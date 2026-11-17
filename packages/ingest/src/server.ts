@@ -254,11 +254,14 @@ async function publishedModelKeys(deps: IngestDeps): Promise<string[] | undefine
   return capabilities?.models === undefined ? undefined : catalogKeys(capabilities.models);
 }
 
+export type CredentialsView = "configured" | "none-configured" | "unknown";
+
 /**
- * The catalog as the console should offer it: never `scripted` (a test provider for CI, e2e and the quickstart), and
- * only providers whose credential is `configured` or `unknown` (unknown may be real). When no real provider's hint is
- * known the whole catalog goes out (still without `scripted`), with a `reason`, so the picker is never empty for want
- * of a hint. `all` lifts every filter. Validation of writes never uses this view (docs/decisions/0025-model-catalog.md).
+ * The catalog as the console should offer it: only providers whose credential is `configured`, never `scripted` (a
+ * test provider for CI, e2e and the quickstart), so the list is never big. `credentials` says why it may be empty:
+ * `none-configured` when OneCLI was checked and holds no model credential, `unknown` (with a `reason`) when it could not
+ * be checked. `all` returns the full catalog. Validation of writes never uses this view
+ * (docs/decisions/0025-model-catalog.md).
  */
 export function filterModelCatalog(
   models: readonly ModelCatalogEntry[],
@@ -268,23 +271,28 @@ export function filterModelCatalog(
   models: ModelCatalogEntry[];
   providers: ModelProviderStatus[];
   filtered: boolean;
+  credentials?: CredentialsView;
   reason?: string;
 } {
   if (all) return { models: [...models], providers: [...providers], filtered: false };
   const real = providers.filter((p) => p.provider !== "scripted");
-  const known = real.some((p) => p.credential !== "unknown");
-  if (!known) {
-    return {
-      models: models.filter((m) => m.provider !== "scripted"),
-      providers: real,
-      filtered: false,
-      reason:
-        "no credential hint is known (the orchestrator has no OneCLI admin key, or listing the secrets failed), so every provider is shown",
-    };
-  }
-  const kept = real.filter((p) => p.credential !== "missing");
+  const kept = real.filter((p) => p.credential === "configured");
   const names = new Set(kept.map((p) => p.provider));
-  return { models: models.filter((m) => names.has(m.provider)), providers: kept, filtered: true };
+  const filtered = {
+    models: models.filter((m) => names.has(m.provider)),
+    providers: kept,
+    filtered: true,
+  };
+  if (kept.length > 0) return { ...filtered, credentials: "configured" };
+  if (real.some((p) => p.credential === "missing")) {
+    return { ...filtered, credentials: "none-configured" };
+  }
+  return {
+    ...filtered,
+    credentials: "unknown",
+    reason:
+      "OneCLI could not be checked (the orchestrator has no OneCLI admin key, or listing the secrets failed)",
+  };
 }
 
 async function handleAdminRoutes(
@@ -349,7 +357,14 @@ async function handleAdminRoutes(
     }
     const capabilities = await readCapabilities(deps.pool);
     if (capabilities?.models === undefined) {
-      sendJson(res, 200, { models: [], providers: [], source: "none", filtered: false });
+      sendJson(res, 200, {
+        models: [],
+        providers: [],
+        source: "none",
+        filtered: false,
+        credentials: "unknown",
+        reason: "no orchestrator has published a model catalog yet",
+      });
       return;
     }
     const all = ["1", "true"].includes(url.searchParams.get("all") ?? "");

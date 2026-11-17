@@ -16,13 +16,13 @@ and ingest already learns the installed tools from it through `inbox.orchestrato
   all builtin providers it is about 1,650 models and 240 KB, which jsonb holds without trouble; it is read only by admin
   requests and by the checks below. Sharding (ADR 0017) changes nothing: the table has one row, every shard publishes with the
   same code, and the last writer wins.
-- **`GET /admin/models`** returns the catalog (`source: "orchestrator"`) or an empty one (`source: "none"`). 1,645 models are too
-  many to pick from, so by default it returns only the providers whose credential hint is `configured` or `unknown`
-  (`filtered: true`). `scripted` is a test provider for CI, e2e and the quickstart and is hidden from the console: the default view and the
-  fallback never include it; only `?all=1` does.
-  When no real provider's hint is known it returns every real provider with `filtered: false` and a `reason`, so the console can
-  explain instead of showing an empty picker. `?all=1` returns the full catalog. The filter shapes this view only:
-  validation below always uses the full catalog.
+- **`GET /admin/models`** returns the catalog (`source: "orchestrator"`) or an empty one (`source: "none"`). 1,645 models are
+  too many to pick from, so the default view never returns a big list: only providers whose credential hint is `configured`,
+  `filtered: true`, and never `scripted`, a test provider for CI, e2e and the quickstart that is hidden from the console.
+  There is no fallback to the full catalog: `credentials` says why the list is empty, `none-configured` when OneCLI was
+  checked and holds no model credential, `unknown` (with a `reason`) when it could not be checked, and the console shows that
+  instead of a list. `?all=1` returns the full catalog, `scripted` included. The filter shapes this view only: validation
+  below always uses the full catalog.
 - **Validation only when a catalog is published.** `PUT /admin/settings` and a profile `PUT` answer `400`, naming the entry,
   for a model the write adds that is not in the catalog. Entries kept from the stored value are not re-checked, so an
   operator can change another field while an old model has left the catalog; nothing is checked on reads, at session creation
