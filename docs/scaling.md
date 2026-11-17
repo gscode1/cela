@@ -26,13 +26,7 @@ The chart renders one Deployment per shard (`pi-orchestrator`, `pi-orchestrator-
 the Services `pi-orchestrator-<k>` (and `pi-orchestrator` for shard 0) and sets ingest's `PI_ORCH_SHARDS` and `PI_ORCH_URL`
 together, so a shard cannot exist without its route. `tests/e2e/run.sh shards` installs the chart with `orchestrator.shards=2`.
 
-On the older kustomize stack, `deploy/add-shard.sh` does the same imperatively:
-
-```bash
-NAMESPACE=pi-durable-poc deploy/add-shard.sh 1   # Deployment + Services, and ingest PI_ORCH_SHARDS=2, PI_ORCH_URL=...{shard}...
-```
-
-`add-shard.sh` clones the live `pi-orchestrator`, so it carries the same env and image. Shards can run on different nodes. It is safe to run again. `PI_ORCH_SHARDS` must never decrease.
+Shards can run on different nodes. `orchestrator.shards` and `PI_ORCH_SHARDS` must never decrease.
 
 Ingest requires `PI_ORCH_URL`: an explicit http(s) URL, with `{shard}` when `PI_ORCH_SHARDS` (default 1) is above 1.
 For example, `PI_ORCH_URL=http://orchestrator-{shard}:8081` and `PI_ORCH_SHARDS=3` route shards 0, 1 and 2.
@@ -43,8 +37,6 @@ After migrations, before readiness, ingest queries every distinct `inbox.session
 If any shard is outside that range, it exits with an error listing the missing routes. Restore the shard count and
 its Services; do not delete sessions to bypass the check. Database/migration failures still retry while unready.
 The check runs at startup, not on every request; shard counts must never decrease during a rolling deployment.
-The manifest in `deploy/ingest.yaml` stays single-shard; `kubectl apply` of it again resets both, so run `add-shard.sh`
-after a re-apply (the chart does not have this problem: the shard count is a value).
 
 ## Sizing one shard
 
@@ -72,7 +64,7 @@ max = max(1, floor((memoryLimit - 256 MiB) / 24 MiB))
 - `PI_MAX_OPEN_BRIDGES=<n>` overrides it (n of 1 or more), `0` removes the cap, `auto` or unset derives it. The start line
   `bridge-cap` shows the value, its source (`derived`, `explicit`, `unlimited`) and the limit it used. With no memory limit
   the cap is unlimited and the line is logged at `warn` level: nothing then bounds the bridges, so set a limit.
-- **Set the memory request equal to the limit** (`deploy/orchestrator.yaml` does). The cap is derived from the limit, and
+- **Set the memory request equal to the limit** (the chart's orchestrator does). The cap is derived from the limit, and
   a smaller request lets the scheduler place the Pod on a node that cannot back it.
 - The cap protects memory only. It does not bound Pods, claim creation, CPU or Postgres.
 

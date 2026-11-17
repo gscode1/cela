@@ -3,6 +3,8 @@
 Status: accepted, 2026-11-17 (issue #96). Builds on [0004](0004-idle-suspend.md) (suspend and resume of a Sandbox) and
 [0013](0013-e2e-namespace-per-run.md) (a namespace per e2e run).
 
+Note (install slice 11b, issue #141): `deploy/` is gone. `pod-security.test.ts` renders every chart with `helm template` and reads `tests/e2e/`; the namespace labels are checked in `hack/install.sh` and `tests/e2e/run.sh`.
+
 ## Context
 
 No Pod of ours needs privileges, but nothing enforced that. A server-side dry run against `restricted` on the poc cluster

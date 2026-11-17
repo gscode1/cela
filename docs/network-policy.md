@@ -1,34 +1,35 @@
 # Network policy for pi-durable-poc
 
 Status: plan.md records these policies as enforced on the example test cluster since 2026-11-16 (Cilium v1.20.4, audit mode off, all pi-durable-poc
-endpoints enforced in both directions; "Enforcement result"). The repo applies them too: every e2e run applies `deploy/` and
-`deploy/cilium` into its namespace (`tests/e2e/run.sh`). The sections below were written before that run: the apply order and
+endpoints enforced in both directions; "Enforcement result"). The repo applies them too: every e2e run installs the chart (`networkPolicy.provider: cilium`) into its namespace
+(`tests/e2e/run.sh`). The sections below were written before that run: the apply order and
 rollback still describe the procedure, and "UNVERIFIED" marks what the run did not record separately.
 
 The Helm chart [`charts/pi-durable`](../charts/pi-durable/README.md) renders the same policy set from
 `templates/networkpolicy/` (`networkPolicy.provider: cilium` adds the Cilium policies; `standard` replaces the
 `kube-apiserver` entity with an orchestrator egress rule to the API server, `networkPolicy.kubeApiCidrs` or TCP 443/6443 to any;
 the database and OneCLI selectors are values; `packages/orchestrator/test/pi-durable-chart.test.ts` checks the invariants below on the rendered
-output). The `deploy/` files described next are the kustomize form that the chart replaces.
+output). The kustomize form in `deploy/` that this document first described is gone (install slice 11b).
+The rows and sections about CloudNativePG (`pi-pg`, `postgres-allow-*`) describe the Postgres of that older stack; the
+bundled `charts/pi-postgres` has its own policy and CNPG is no longer part of the install.
 
 Files:
 
 | Path | What | Applied by |
 |---|---|---|
-| `deploy/networkpolicy.yaml` | default-deny both ways, DNS, sandbox policies | `kubectl apply -k deploy` |
-| `deploy/networkpolicy-{ingest,orchestrator,postgres,e2e}.yaml` | per-workload allows | `kubectl apply -k deploy` |
-| `deploy/cilium/` | kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `kubectl apply -k deploy/cilium` (needs Cilium CRDs, so it is not in `deploy/kustomization.yaml`) |
-| `tests/e2e/run.sh` | the same policies, in every e2e run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`), see `docs/e2e.md` | the run applies `deploy/` and `deploy/cilium` with the namespace set |
-| `deploy/onecli-policies/` | `onecli` namespace ingress and egress (FQDN allowlist) | your OneCLI deployment manager, see its README |
-| `deploy/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | OneCLI v2 `allow ...` then `block *` | by hand, operator machine |
+| `charts/pi-durable/templates/networkpolicy/` | default-deny both ways, DNS, per-workload allows, sandbox policies; with `provider: cilium` also kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `helm install` / `hack/install.sh` (the Cilium policies need the Cilium CRDs) |
+| `charts/pi-postgres/templates/networkpolicy.yaml` | the bundled database: ingress from the `clientSelectors` only | the `pi-postgres` release |
+| `tests/e2e/deploy/` | test-only policies of the e2e driver (and the CiliumNetworkPolicies in `tests/e2e/deploy/cilium`), see `docs/e2e.md` | `tests/e2e/run.sh`, next to the chart, in every run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`) |
+| `hack/onecli-policies/` | `onecli` namespace ingress and egress (FQDN allowlist) of an external OneCLI; the bundled one has its own in `charts/pi-onecli` | your OneCLI deployment manager, see its README |
+| `hack/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | OneCLI v2 `allow ...` then `block *` | by hand, operator machine |
 
 ## Example pod labels (adapt to your installed components)
 
 | Workload | Selector | Source |
 |---|---|---|
-| orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `deploy/orchestrator.yaml`, `tests/e2e/runner-pod.yaml` |
-| ingest | `app.kubernetes.io/name=pi-ingest` | `deploy/ingest.yaml` |
-| sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `deploy/sandbox-template.yaml` |
+| orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `charts/pi-durable/templates/orchestrator/`, `tests/e2e/runner-pod.yaml` |
+| ingest | `app.kubernetes.io/name=pi-ingest` | `charts/pi-durable/templates/ingest/` |
+| sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `charts/pi-durable/templates/sandbox/template.yaml` |
 | Postgres pi-pg | `cnpg.io/cluster=pi-pg` | set by CNPG on instance and job pods |
 | e2e driver Job | `app.kubernetes.io/name=e2e-driver` | `tests/e2e/job.yaml.tpl` |
 | CNPG operator | ns `postgres-system`, `app.kubernetes.io/name=cloudnative-pg` | example selector; verify locally |
@@ -36,8 +37,8 @@ Files:
 | Envoy Gateway data plane | ns `envoy-gateway-system`, `app.kubernetes.io/name=envoy` + `app.kubernetes.io/component=proxy` | example selector; verify locally |
 | CoreDNS | ns `kube-system`, `k8s-app=kube-dns` | example selector; verify locally |
 
-These selectors are configuration, not required installation names. Patch them in the base or a local overlay
-(see [deploy settings](../deploy/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
+These selectors are configuration, not required installation names. Set them in your values file
+(see the [chart README](../charts/pi-durable/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
 not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment.
 
 Namespaces are matched with `kubernetes.io/metadata.name`.
@@ -92,10 +93,10 @@ instances, DNS and the Kubernetes API.
 - **Kube API.** Both 443 (the Service port) and 6443 (the node endpoint) are allowed; which one Cilium evaluates depends on
   socket-level service translation. Verify which applies on your cluster.
 - **GitHub App token mint (Phase 4c).** The orchestrator calls `api.github.com` directly, not through the OneCLI gateway
-  (`callApi` in `main.ts` is a plain `fetch`; `mintInstallationToken` in `github-app.ts`), so `deploy/cilium/orchestrator-github.yaml`
-  gives it a `toFQDNs` rule for `api.github.com:443` plus a DNS rule limited to that name.
+  (`callApi` in `main.ts` is a plain `fetch`; `mintInstallationToken` in `github-app.ts`), so the chart's `templates/networkpolicy/cilium.yaml`
+  (`orchestrator-egress-github-api`) gives it a `toFQDNs` rule for `api.github.com:443` plus a DNS rule limited to that name.
 - **Ingress-controller labels** must match your installed controller; update
-  `ingest-allow-clients-ingress` and `deploy/onecli-policies/ingress.yaml`.
+  `ingest-allow-clients-ingress` (`networkPolicy.ingest.clients`) and `hack/onecli-policies/ingress.yaml`.
 - **OneCLI pod's other egress** (update checks, calls to its own external URL) is unknown: use audit mode first.
 
 ## Apply order
@@ -106,16 +107,16 @@ Enforcement starts per pod the moment any policy selects it, so the safe route i
    CNPG cluster are healthy, and a baseline `tests/e2e/run.sh phase3` passes (isolation KNOWN-FAIL on flannel).
 2. Put the pi-durable-poc endpoints in policy audit mode (Cilium agent: `cilium-dbg endpoint config <id>
    PolicyAuditMode=Enabled`, for each pod in the namespace, or Cilium's cluster-wide `policy-audit-mode` during the window).
-3. `kubectl apply -k deploy/cilium` then `kubectl apply -k deploy`. (Dry checks: `kubectl kustomize deploy`,
-   `kubectl apply --dry-run=client -k deploy`.)
+3. `hack/install.sh` with `networkPolicy.provider: cilium` (the chart applies the Cilium policies with the rest). Dry check:
+   `helm template pi-durable charts/pi-durable -f <values> | kubectl apply --dry-run=client -f -`.
 4. Run the e2e suites (phase3, phase4, phase4b with `REAL_MODEL=1` once) and watch `hubble observe -n pi-durable-poc
    --verdict AUDIT`. Every AUDIT entry is a missing allow: fix the policy first.
 5. Disable audit mode (enforce). Re-run phase3: isolation must PASS. `NETPOL_ENFORCED=1` (makes absent enforcement a FAIL,
    not KNOWN-FAIL) is read only by `run-phase3.sh`; `tests/e2e/run.sh` and `job.yaml.tpl` do not forward it to the driver Job,
    so through the runner phase3 stays on `auto`. Read the isolation line yourself: it must say PASS, not KNOWN-FAIL.
-6. With your OneCLI deployment manager, apply adapted `deploy/onecli-policies/` (audit first, as its README says). Check the orchestrator still gets model
+6. With your OneCLI deployment manager, apply adapted `hack/onecli-policies/` (audit first, as its README says). Check the orchestrator still gets model
    answers and the dashboard still loads.
-7. Last: `deploy/onecli-host-rules.sh --apply` (see `docs/onecli-host-rules.md`), then its verify probes.
+7. Last: `hack/onecli-host-rules.sh --apply` (see `docs/onecli-host-rules.md`), then its verify probes.
 
 ## Rollback
 
@@ -126,10 +127,10 @@ Fast, per layer, in reverse order:
   `kubectl -n onecli delete cnp onecli-ingress onecli-egress`).
 - pi-durable-poc, whole set (does not touch Pods or data):
   ```sh
-  kubectl delete -k deploy/cilium
-  kubectl -n pi-durable-poc delete networkpolicy default-deny-all allow-dns-egress sandbox-default-deny \
-    sandbox-allow-orchestrator-ingress sandbox-allow-onecli-egress sandbox-allow-internet-egress ingest-allow-clients-ingress ingest-allow-egress \
-    orchestrator-allow-ingress orchestrator-allow-egress postgres-allow-ingress postgres-allow-egress e2e-driver-allow-egress
+  kubectl -n <ns> delete ciliumnetworkpolicy orchestrator-egress-kube-apiserver dns-egress-kube-dns-only orchestrator-egress-github-api
+  kubectl -n <ns> delete networkpolicy default-deny-all allow-dns-egress sandbox-default-deny \
+    sandbox-allow-orchestrator-ingress sandbox-allow-onecli-egress sandbox-allow-internet-egress ingest-allow-clients-ingress \
+    ingest-allow-expose-ingress ingest-allow-egress orchestrator-allow-ingress orchestrator-allow-egress
   ```
   A pod with no policy selecting it is open again at once. Deleting only `default-deny-all` is **not** a rollback:
   the per-workload policies still select their pods and keep them default-deny.
@@ -145,7 +146,7 @@ delete it from the cluster (no prune), it is harmless and can be deleted.
 
 ## Verification status
 
-- `kubectl kustomize deploy` and `kubectl apply --dry-run=client` pass for the standard policies (13 NetworkPolicies).
+- `helm template` and `kubectl apply --dry-run=client` pass for the standard policies; the render tests check the invariants.
 - The CiliumNetworkPolicies were checked against the upstream CRD schema (cilium v1.17.0
   `ciliumnetworkpolicies.yaml`) with a field-and-enum validator: no unknown fields, `kube-apiserver` is a valid entity. Client dry-run on your cluster requires the Cilium CRDs.
 - Enforcement itself is verified (plan.md, "Enforcement result": the sandbox isolation test passes and phases 1, 3, 4, 4b are green). UNVERIFIED here: FQDN behaviour, the `egressDeny` and endpoint-identity interaction, the CNPG port list,
@@ -201,7 +202,7 @@ it never gates readiness, sessions or tools.
   every run that is not `enforced`; NOTES.txt tells the installer and `hack/install.sh` waits up to two minutes for the
   first result and prints it.
 - **RBAC.** The orchestrator's Role gets `create` and `list` on `pods` (it already had `get` and `delete`) and `get` on
-  `pods/log`, in the release namespace only (chart `rbac.yaml` and `deploy/orchestrator-rbac.yaml`).
+  `pods/log`, in the release namespace only (chart `rbac.yaml`).
 - **Live-verified:** not yet. To see `not-enforced`, remove the policies in a scratch namespace (`kubectl -n <ns> delete
   networkpolicy --all`) or install on a CNI that ignores them (flannel alone), then `POST /admin/status/probe`.
 

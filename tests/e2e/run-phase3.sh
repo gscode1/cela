@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh (ServiceAccount kubeconfig, no context).
-# The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and image deployment are done by
+# The overlay tests/e2e/deploy (the chart plus test-only orchestrator switches) and image deployment are done by
 # run.sh on the Mac before the Job starts; this script only waits for them and runs the tests.
 # Phase 3 failure tests on the real cluster: orchestrator + CNPG + sandboxes, scripted model, no LLM.
 #
@@ -11,7 +11,7 @@
 #   concurrency    two sessions at once, separate sandboxes and PVCs, no cross-access
 #   isolation      a sandbox cannot reach the orchestrator, Postgres, another sandbox, the Kubernetes API, the OneCLI
 #                  API or ingest, and can reach public internet and the OneCLI gateway (controls). It must PASS once the CNI
-#                  enforces NetworkPolicy (Cilium, deploy/networkpolicy*.yaml + deploy/cilium/). It is KNOWN-FAIL
+#                  enforces NetworkPolicy (Cilium, the chart's networkpolicy templates). It is KNOWN-FAIL
 #                  (printed, not a failure of the run) only while enforcement is absent: every denied target is
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
 #                  KNOWN-FAIL into FAIL (use it after the migration); NETPOL_ENFORCED=0 forces KNOWN-FAIL.
@@ -19,7 +19,7 @@
 #                  NETPOL_ENFORCED=1 a `not-enforced` verdict fails the run before any test.
 #
 # Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the secret sandboxd-auth
-# (deploy/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
+# (hack/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
 # Run by hand from a Mac with your current kubectl context it works the same, but use tests/e2e/run.sh.
 # Exit code: 0 when every test passed (isolation may be KNOWN-FAIL while enforcement is absent), 1 otherwise.
 set -euo pipefail
@@ -27,7 +27,7 @@ set -euo pipefail
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
+root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and hack/gen-api-secret.sh
 work=$(mktemp -d)
 claims_file=$work/claims
 : >"$claims_file"
@@ -164,7 +164,7 @@ dump_orchestrator_logs() { # on a failed takeover: both orchestrators' logs, cur
 not() { ! "$@"; }
 exited_with_1() { k get pod "$1" -o json | jq -e '.status.containerStatuses[0].lastState.terminated.exitCode==1'; }
 sandbox_file_exists() { k exec "$1" -c sandboxd -- test -e "$2"; }
-# The second orchestrator for the double-owner test is the LIVE pi-orchestrator Deployment (base deploy/ plus the
+# The second orchestrator for the double-owner test is the LIVE pi-orchestrator Deployment (the chart's Deployment plus the
 # e2e overlay) under another name, so its env, image, volumes and test switches cannot drift from the first. Only
 # the identity changes: name, instance label and selector. It asks for less, since it mostly waits on the lock.
 render_orchestrator_b() {
@@ -502,10 +502,10 @@ log "setup: wait for the database and the orchestrator (overlay and code were pu
 e2e_db_start
 if [[ ${SKIP_SETUP:-0} == 1 ]]; then wait_owner; else
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
-  echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
+  echo "secret sandboxd-auth has no master key: run hack/gen-secret.sh" >&2
   exit 1
 }
-"$root/deploy/gen-api-secret.sh" >/dev/null
+"$root/hack/gen-api-secret.sh" >/dev/null
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 wait_owner
 fi
@@ -516,7 +516,7 @@ netpol_probe_check || exit 1
 isolation_status=""
 record() { # name rc: like the shared one, plus isolation's KNOWN-FAIL (exit 3)
   if [[ $1 == isolation && $2 -eq 3 ]]; then
-    summary+=("KNOWN-FAIL  $1 (NetworkPolicy is not enforced by the CNI yet; passes once Cilium enforces deploy/networkpolicy*.yaml)")
+    summary+=("KNOWN-FAIL  $1 (NetworkPolicy is not enforced by the CNI yet; passes once Cilium enforces the chart policies)")
     isolation_status=known-fail
   elif [[ $2 -eq 0 ]]; then
     summary+=("PASS  $1")

@@ -28,8 +28,8 @@ const podKinds =
 const kindLine = new RegExp(`^\\s*kind:\\s*"?(${podKinds})"?\\s*$`, "gm");
 const countKinds = (text: string): number => text.match(kindLine)?.length ?? 0;
 
-const files = [...walk(join(root, "deploy")), ...walk(join(root, "tests/e2e"))]
-  .filter((p) => !p.includes("/onecli-policies/") && !p.endsWith(".json"))
+const files = walk(join(root, "tests/e2e"))
+  .filter((p) => !p.endsWith(".json"))
   .map((p) => ({ path: relative(root, p), text: readFileSync(p, "utf8") }));
 
 // The manifests of a file: the whole file for YAML and templates, every heredoc body for a shell script or .mjs file.
@@ -132,9 +132,6 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
     expect(uncovered).toEqual([]);
     const byFile = new Set(discovered.map((d) => d.file));
     for (const known of [
-      "deploy/sandbox-template.yaml",
-      "deploy/orchestrator.yaml",
-      "deploy/ingest.yaml",
       "tests/e2e/runner-pod.yaml",
       "tests/e2e/job.yaml.tpl",
       "charts/pi-postgres (helm template)",
@@ -233,7 +230,7 @@ describe("the namespaces enforce the restricted level at a pinned version", () =
       text,
     )?.[1];
 
-  for (const path of ["deploy/namespace.yaml", "tests/e2e/run.sh", "hack/install.sh"]) {
+  for (const path of ["tests/e2e/run.sh", "hack/install.sh"]) {
     it(`${path} sets enforce, warn and audit to restricted, pinned to ${version}`, () => {
       const text = readFileSync(join(root, path), "utf8");
       for (const level of levels) {
@@ -242,12 +239,6 @@ describe("the namespaces enforce the restricted level at a pinned version", () =
       }
     });
   }
-
-  it("deploy/namespace.yaml parses as a Namespace with the labels", () => {
-    const [ns] = loadAllYaml(readFileSync(join(root, "deploy/namespace.yaml"), "utf8")) as Obj[];
-    expect(ns?.kind).toBe("Namespace");
-    expect(ns?.metadata.labels["pod-security.kubernetes.io/enforce"]).toBe("restricted");
-  });
 
   it("tests/e2e/run.sh keeps the e2e label next to the Pod Security labels", () => {
     expect(readFileSync(join(root, "tests/e2e/run.sh"), "utf8")).toMatch(/pi-durable-e2e: "true"/);

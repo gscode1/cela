@@ -146,7 +146,7 @@ ns_touched=1
 # The label is what the OneCLI ingress policy (docs/e2e.md) and the sweeper select on. It must exist before the
 # first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts. The Pod Security labels
 # are applied here too, on a reused namespace as well (docs/decisions/0019-restricted-pod-security.md); the version is
-# pinned, so keep it equal to deploy/namespace.yaml and hack/install.sh (a unit test checks).
+# pinned, so keep it equal to hack/install.sh (a unit test checks).
 kc apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Namespace
@@ -186,15 +186,15 @@ k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=f
 log "secrets"
 # sandboxd-auth and api-auth are random per run, made in the namespace (never copied from the long-lived stack, never
 # printed). The chart only references them (D8).
-NAMESPACE=$ns "$root/deploy/gen-secret.sh" >/dev/null
-NAMESPACE=$ns "$root/deploy/gen-api-secret.sh" >/dev/null
+NAMESPACE=$ns "$root/hack/gen-secret.sh" >/dev/null
+NAMESPACE=$ns "$root/hack/gen-api-secret.sh" >/dev/null
 # pi-onecli, pi-onecli-admin and pi-github-app are ExternalSecrets on the ClusterSecretStore: ESO copies them in. The
 # orchestrator reads them optionally and only once at start, so they must be Ready before the chart starts it (below).
 if ! k wait --for=condition=Ready externalsecret --all --timeout=120s >/dev/null 2>&1; then
   echo "WARNING: some ExternalSecrets are not Ready (kubectl -n $ns get externalsecret); suites that need OneCLI or GitHub will SKIP or fail" >&2
 fi
 # The gateway CA (public) from OneCLI itself, for the orchestrator's model calls and MCP. Only the suites that use OneCLI need it.
-if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/fetch-onecli-ca.sh" >"$work/ca.log" 2>&1; then
+if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/hack/fetch-onecli-ca.sh" >"$work/ca.log" 2>&1; then
   if [[ ${REAL_MODEL:-0} == 1 ]] || has_phase phase4c || has_phase mcp; then
     cat "$work/ca.log" >&2
     echo "could not fetch the OneCLI CA, and this suite needs it" >&2

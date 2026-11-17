@@ -151,7 +151,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
 - **Inputs:** validate `{repo, branch}` (`owner/name` and ref regex, https only, argv with `--`). Clone into a temp dir, then rename.
 - **Ops:**
   - Retention and caps on tool output. Configure database backups before production use.
-  - A digest-pinned orchestrator image (the liveness probe is in `deploy/orchestrator.yaml`).
+  - A digest-pinned orchestrator image (the liveness probe is in the chart's `templates/orchestrator/deployment.yaml`).
   - Sandbox sizing per session, with ephemeral-storage limits.
   - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
 - **Capacity:** each session had its own Node bridge (about 12 s start, serialized, about 95 MiB). Since [ADR 0016](docs/decisions/0016-in-process-broker.md) (issue #59, slice 1) the bridge runs in an in-process broker and pi-env spawns only a thin `node:net` relay; measured 2026-11-17: 115-147 MiB idle orchestrator and about 11 MiB per open env, and the cap on open bridges is now derived from the memory limit ([ADR 0018](docs/decisions/0018-derived-bridge-cap.md), [scaling](docs/scaling.md), [metrics](docs/metrics.md)).
@@ -164,7 +164,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
   - Hubble is disabled.
 - 2026-11-16: sandbox image `1.5.2-r2-5bccb47` pinned by digest; phase 4c run live on `<owner>/<repo-a>` and
   `<owner>/<repo-b>`: 5/5 PASS (clone, push and branch delete through OneCLI; push to the other repo refused).
-- OneCLI ingress and egress policy example: `deploy/onecli-policies/`. Apply it with your OneCLI deployment manager,
+- OneCLI ingress and egress policy example: `hack/onecli-policies/`. Apply it with your OneCLI deployment manager,
   then verify the dashboard, model, repository and isolation paths. An interactive dashboard login was not covered by the original run.
 
 ### Phase 4b: Credentials through OneCLI, and model selection
@@ -183,7 +183,7 @@ Decision: every credential goes through OneCLI. That covers model providers and 
      - Fixed: a request with no token gets 407. Private, cluster and metadata targets are always refused. The management API needs auth (API key `oc_…`).
      - Still open:
        - Public hosts are relayed unless there are explicit `allow …` then `block *` rules; add them.
-         Done 2026-11-16 (`deploy/onecli-host-rules.sh --apply`; probes in `docs/onecli-host-rules.md`).
+         Done 2026-11-16 (`hack/onecli-host-rules.sh --apply`; probes in `docs/onecli-host-rules.md`).
        - No repo scoping without an enterprise license; GitHub connections inject an account-wide token, and path rules can be bypassed. So use our own repo-scoped GitHub App installation token per session, never a OneCLI GitHub connection.
        - No token TTL or source binding. Mitigate with a short session lifetime, rotate on `ensure()`, and delete on session end.
        - Sign-up is open and email/Google are the only login options.
@@ -217,7 +217,7 @@ Tests:
 
 - `POST /sessions` takes an optional `{ repo, branch }`. Without it, `/workspace` stays empty and no OneCLI agent is created.
 - With a repo:
-  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection: apply `deploy/agent-ruleset.sh` to each repo so the App can only write `agent/**` (see `docs/repo-workspace.md`).
+  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection: apply `hack/agent-ruleset.sh` to each repo so the App can only write `agent/**` (see `docs/repo-workspace.md`).
   - It passes the proxy token, `HTTPS_PROXY` and the CA to that session's commands.
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
@@ -240,7 +240,7 @@ Tests:
 
 One install path on any cluster: Helm releases behind `hack/install.sh` (app chart, bundled Postgres instead of
 CloudNativePG, bundled OneCLI and agent-sandbox, each optional), gVisor by default with runc for tests, warn-only network
-policy with an isolation probe, and a one-command kind install. Existing `deploy/` stacks are reinstalled, not migrated,
+policy with an isolation probe, and a one-command kind install. Stacks made from the old kustomize `deploy/` directory (removed in slice 11b) are reinstalled, not migrated,
 and the CNPG operator is never touched. Plan, slices and acceptance checks: [install-plan.md](docs/install-plan.md);
 decision: [ADR 0020](docs/decisions/0020-helm-install.md).
 
@@ -258,7 +258,7 @@ decision: [ADR 0020](docs/decisions/0020-helm-install.md).
 | Pi Durable breaking releases every few weeks | Repeated porting; no rollback across state migrations | Pin exact versions; upgrade deliberately; back up before each upgrade |
 | Agent Sandbox TS SDK is private and unversioned | API drift | Vendor at a pinned commit; isolate behind one module |
 | Stdio bridge unproven | Phase 1 slips | SSH fallback. Proven in Phase 1 (conformance 29/29); the SSH fallback was not needed |
-| One replica per shard | Downtime of a shard's sessions during its restart | Accepted for the PoC; other shards keep running. Capacity: add a shard (`deploy/add-shard.sh`). Takeover or leader election later |
+| One replica per shard | Downtime of a shard's sessions during its restart | Accepted for the PoC; other shards keep running. Capacity: add a shard (`orchestrator.shards`). Takeover or leader election later |
 | Non-idempotent external tools | Duplicate side effects after a crash | Mark tools `replay` correctly; add execution IDs for external APIs |
 | gVisor I/O overhead on PVCs | Slow builds | Measure in Phase 3; consider Kata if unacceptable |
 | Inbox drain transaction stays open for the whole repo preparation (about 96 s) | Row locks held, one pool connection per busy session; migrations used to queue behind it and crash-loop ingest | Migrations skip DDL when current and fail fast on locks, ingest serves `/healthz` first (`docs/decisions/0005-migrations-without-ddl-locks.md`); repo preparation now runs before the inbox claim, outside the drain transaction (#75) |
@@ -305,8 +305,9 @@ packages/
   egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
 vendor/             # packed Postgres adapter port
-deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployments, image references and shard scripts
-images/             # sandbox/ (pi-env daemon), egress-proxy/
+charts/             # pi-durable (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
+hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules, repo ruleset), onecli-policies/
+images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), e2e-driver/, egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
 examples/           # recorded load-test and bug-hunt runs
 tests/e2e/          # restart, double-owner, long-command, sandbox-loss and more; run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
@@ -329,6 +330,6 @@ Extract `sandbox-env` into its own package once it passes the env conformance su
 
 `images/build.sh` builds orchestrator, ingest, sandbox and e2e-driver for linux/amd64 and linux/arm64. App images
 include workspace dependencies, vendored code and SQL migrations; the driver includes its scripts and Phase 1 tests.
-Deployments use built images instead of runtime code uploads. New shards inherit shard 0's image and need no
-shared-code node affinity. Build/push images explicitly, then configure digest references as described in
-[deploy settings](deploy/README.md) and [e2e](docs/e2e.md). Helm remains a later installation slice.
+Deployments use built images instead of runtime code uploads. Every shard Deployment uses the chart's image values and needs no
+shared-code node affinity. Build/push images explicitly, then set the digests in your values file as described in
+[image builds](images/README.md), the [chart README](charts/pi-durable/README.md) and [e2e](docs/e2e.md).

@@ -33,7 +33,7 @@ sessions_file=$work/sessions
 repo_session_file=$work/repo-session
 : >"$sessions_file"
 run_id=$(date +%s)
-branch="agent/pi-e2e-$run_id" # the agent ruleset (deploy/agent-ruleset.sh) only allows agent/**
+branch="agent/pi-e2e-$run_id" # the agent ruleset (hack/agent-ruleset.sh) only allows agent/**
 
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }

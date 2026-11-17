@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh shards (ServiceAccount kubeconfig, no context).
 # run.sh has already built the stack with TWO orchestrator shards on the Mac side: the base Deployment pi-orchestrator
-# (shard 0, schema durable) and pi-orchestrator-1 (shard 1, schema durable_s1) from deploy/add-shard.sh, ingest with
+# (shard 0, schema durable) and pi-orchestrator-1 (shard 1, schema durable_s1) from the chart (orchestrator.shards=2), ingest with
 # PI_ORCH_SHARDS=2 and PI_ORCH_URL=http://pi-orchestrator-{shard}:8081, and the images deployed. This script only waits for
 # them and runs the tests (docs/decisions/0017-schema-sharding.md). Scripted fake model, no LLM.
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
+root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and hack/gen-api-secret.sh
 work=$(mktemp -d)
 sessions_file=$work/sessions
 : >"$sessions_file"
@@ -406,10 +406,10 @@ t_long_command() {
 # ---------------------------------------------------------------- setup
 log "setup: wait for CNPG, both orchestrator shards and ingest (stack, shard 1 and code were pushed by run.sh)"
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
-  echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
+  echo "secret sandboxd-auth has no master key: run hack/gen-secret.sh" >&2
   exit 1
 }
-"$root/deploy/gen-api-secret.sh" >/dev/null
+"$root/hack/gen-api-secret.sh" >/dev/null
 e2e_db_start
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 k rollout status deployment/pi-orchestrator-1 --timeout=240s >/dev/null

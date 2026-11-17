@@ -56,7 +56,8 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                 |
 | `vendor/`                              | Packed `@netzlabor/pi-durable-postgres` adapter, ported to Pi Durable 1.5.2                                                |
 | `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                          |
-| `deploy/`                              | Kubernetes manifests (namespace, Postgres, orchestrator, ingest, sandbox template, network policies)                       |
+| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)            |
+| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules, repository ruleset)            |
 | `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                              |
 | `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
 | `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |
@@ -117,14 +118,14 @@ CI runs this on every pull request ([workflow](.github/workflows/kind.yml)).
 ## Deploy on your cluster
 
 The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), installed with `hack/install.sh`
-([install plan](docs/install-plan.md); the `deploy/` manifests are being replaced by it).
+([install plan](docs/install-plan.md)).
 
 Prerequisites (separate from the chart): the **agent-sandbox controller with extensions** (v1.0.11; `hack/agent-sandbox.sh
 external` checks it), a gVisor RuntimeClass named `gvisor` (or `security.allowInsecureRuntime` for evaluation), a Postgres 17
 reachable by URI (CloudNativePG or any other), OneCLI (tested with v2.20.0) unless you only use scripted models, a
 NetworkPolicy-enforcing CNI such as Cilium (or `networkPolicy.provider: standard`), and a dynamically provisioned
 StorageClass. Do not use real credentials until the isolation suite passes. Build the application and sandbox images
-for your nodes (amd64 and arm64 are supported, [build instructions](deploy/README.md#build-images)).
+for your nodes (amd64 and arm64 are supported, [build instructions](images/README.md)).
 
 ```sh
 # values.yaml: your image digests, database.external (Secret with the URI + egress selector), onecli, models
@@ -134,8 +135,7 @@ KUBE_CONTEXT=your-context hack/install.sh --namespace pi-durable --values local/
 It creates the namespace with the restricted Pod Security labels and the missing `sandboxd-auth` and `api-auth` Secrets,
 installs the chart and prints the runtime and network-policy state from `GET /admin/status`. Read the
 [chart README](charts/pi-durable/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
-[network policy](docs/network-policy.md) for the isolation rules. The older kustomize base in [deploy settings](deploy/README.md)
-still works until the chart replaces it.
+[network policy](docs/network-policy.md) for the isolation rules.
 
 Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`. Omit
 `STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed

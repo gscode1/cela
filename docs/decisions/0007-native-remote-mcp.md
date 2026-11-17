@@ -3,6 +3,8 @@
 Status: accepted, 2026-11-16 (issue #39, first slice). Credentials are #42, per-session selection is #41, the server
 catalog beyond static config is #40 (done: see [0009](0009-mcp-catalog-in-postgres.md), which replaces `PI_MCP_SERVERS`).
 
+Note (install slice 11b, issue #141): `deploy/onecli-host-rules.sh` and `deploy/onecli-policies/` moved to `hack/`.
+
 ## Context
 
 Sessions should get typed MCP tools that the model calls directly. `plan.md` says tools run in the sandbox, but an MCP

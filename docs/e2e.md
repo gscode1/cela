@@ -46,7 +46,7 @@ the run installs the chart with `networkPolicy.provider: cilium`. Your own `loca
 `tests/e2e/chart-values.py` (the chart values of a run) or `tests/e2e/deploy/` (database, secrets, test-only policies) for
 network identities, secret stores and OneCLI endpoints. `HELM_TIMEOUT` (default `10m`) bounds the chart's rollout wait.
 
-Build and push all four images before running the suites ([build instructions](../deploy/README.md#build-images)).
+Build and push all four images before running the suites ([build instructions](../images/README.md)).
 The defaults match `images/build.sh` at the current root package version and git short SHA; they are local names,
 not published images. On a remote cluster set all four variables to reachable registry references, preferably digests:
 
@@ -67,14 +67,13 @@ The operator machine does not build or ship code during a run. Node is used only
    select on it) and the annotations `pi-durable-e2e/branch` and `/suite`. The label exists before the first Pod does,
    because Cilium takes a Pod's identity from its namespace labels when the Pod starts. The same `apply` (also on a reused
    namespace) sets the Pod Security labels: `enforce`, `warn` and `audit` = `restricted`, version `v1.36`, as in
-   `deploy/namespace.yaml` ([decision 0019](decisions/0019-restricted-pod-security.md)). Every Pod the run creates,
+   `hack/install.sh` ([decision 0019](decisions/0019-restricted-pod-security.md)). Every Pod the run creates,
    including the Phase 1 runner and the driver Job, must meet that profile.
 3. **Stack.** A generated overlay (`kustomization.yaml` in a temp dir with `namespace: pi-e2e-<id>`) over
    `tests/e2e/deploy` applies what surrounds the chart: the three ExternalSecrets, the policies of the test-only pods (the e2e driver; the
    CiliumNetworkPolicies in `tests/e2e/deploy/cilium` first, see `docs/network-policy.md`) and `tests/e2e/driver` (driver
-   ServiceAccount and Roles). The files that mirror `deploy/` (the driver egress policy, the
-   ExternalSecrets) are copies, removed with `deploy/` in slice 11.
-4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI; e2e runs use the external OneCLI, not the bundled one of [ADR 0022](decisions/0022-bundled-onecli.md), which `hack/kind-smoke.sh --onecli` covers), then
+   ServiceAccount and Roles).
+4. **Secrets** (next section), then the **OneCLI CA** (`hack/fetch-onecli-ca.sh`, public data fetched from OneCLI; e2e runs use the external OneCLI, not the bundled one of [ADR 0022](decisions/0022-bundled-onecli.md), which `hack/kind-smoke.sh --onecli` covers), then
    the **database**: random passwords in `pi-postgres-auth` (made here, never printed; a reused namespace keeps its
    secret), `helm upgrade --install pi-postgres charts/pi-postgres` (1 Gi, `STORAGE_CLASS`, PVC not retained,
    `networkPolicy.clientSelectors` = orchestrator, ingest and the `e2e-db-client` pod), wait for `pi-postgres-0`, and the
@@ -86,10 +85,8 @@ The operator machine does not build or ship code during a run. Node is used only
    (`PI_ORCH_CONTROL`, `PI_ORCH_TEST_FAULTS`, short sweep and suspend times) as `orchestrator.extraEnv`, and lower resource
    requests. Everything the orchestrator reads once at start exists before it starts, so there is no scale-to-zero step.
    Helm waits for the rollout. The `shards` suite installs with `orchestrator.shards=2` (a second Deployment
-   `pi-orchestrator-1`, the Services and ingest's `PI_ORCH_SHARDS`/`PI_ORCH_URL` come from the chart; `deploy/add-shard.sh`
-   is not used). A kept namespace that already has shard 1 keeps two shards on a re-run, because the count can only grow
-   ([scaling](scaling.md)). The chart is never reinstalled over a namespace made by the old kustomize layout (Helm refuses
-   to adopt it): use a fresh `RUN_ID`.
+   `pi-orchestrator-1`, the Services and ingest's `PI_ORCH_SHARDS`/`PI_ORCH_URL` come from the chart). A kept namespace that already has shard 1 keeps two shards on a re-run, because the count can only grow
+   ([scaling](scaling.md)).
 6. **Driver.** Create one Job per suite phase using `DRIVER_IMAGE`. Scripts, clients and Phase 1 dependencies are
    baked in: there is no local build, code upload, loader Pod or driver PVC. Phase 1 starts a runner using the same
    image, copying its packaged test bundle into a writable emptyDir so tests can model process restarts.
@@ -105,12 +102,12 @@ The operator machine does not build or ship code during a run. Node is used only
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `pi-postgres-auth` (passwords)            | `tests/e2e/run.sh`, random per run, for `charts/pi-postgres` (`openssl rand`), never printed |
 | `pi-db-uri` (database URI)                | `tests/e2e/run.sh`, built from `pi-postgres-auth`; the chart's `database.external.existingSecret` |
-| `sandboxd-auth` (`master`)                | `deploy/gen-secret.sh`, random per run, created in the namespace before the chart. Not copied from production |
-| `api-auth` (`tokens`: alice, bob)         | `deploy/gen-api-secret.sh`, random per run. Not copied from production                          |
+| `sandboxd-auth` (`master`)                | `hack/gen-secret.sh`, random per run, created in the namespace before the chart. Not copied from production |
+| `api-auth` (`tokens`: alice, bob)         | `hack/gen-api-secret.sh`, random per run. Not copied from production                          |
 | `pi-onecli` (OneCLI agent token)          | ExternalSecret `pi-onecli`, store `ClusterSecretStore/cluster-secret-store` (example store; configure your own) |
 | `pi-onecli-admin` (OneCLI management key) | ExternalSecret `pi-onecli-admin`, same store                                                    |
 | `pi-github-app` (App key, ids)            | ExternalSecret `pi-github-app`, same store                                                      |
-| ConfigMap `onecli-ca` (public CA)         | `deploy/fetch-onecli-ca.sh`, from `onecli:10256/v1/gateway/ca`                                  |
+| ConfigMap `onecli-ca` (public CA)         | `hack/fetch-onecli-ca.sh`, from `onecli:10256/v1/gateway/ca`                                  |
 
 The three ExternalSecrets are in `tests/e2e/deploy/external-secrets.yaml` and are applied with the stack. Configure your **ClusterSecretStore** to admit the labelled e2e namespaces (do not open it to every namespace
 unnecessarily), or adapt the ExternalSecrets to your own store. No secret value needs to pass through the operator machine. The orchestrator reads them as optional and only once at start, so `run.sh` waits for the
@@ -145,14 +142,14 @@ holds no OneCLI management key (only the orchestrator pods do).
 | agent-sandbox controller, `gvisor` RuntimeClass | shared                             | cluster-wide, unchanged                                                                          |
 | ESO `ClusterSecretStore/cluster-secret-store` | cluster                              | configure access for test namespaces                                                           |
 | OneCLI ingress policy `onecli/onecli-ingress` | `onecli` namespace | admit labelled test namespaces as below |
-| OneCLI host rules (`deploy/onecli-host-rules.sh`) | OneCLI, global                   | unchanged, global to all agents                                                                  |
+| OneCLI host rules (`hack/onecli-host-rules.sh`) | OneCLI, global                   | unchanged, global to all agents                                                                  |
 
 ## OneCLI ingress for test namespaces
 
 The ingress policy of your OneCLI namespace must admit orchestrators from namespaces labelled
 `pi-durable-e2e=true` to :10255 and :10256, and sandboxes to :10255 only.
 Without these rules, suites that call the gateway or API from a run namespace fail.
-The example `deploy/onecli-policies/ingress.yaml` (the OneCLI side, not part of the chart) includes these entries; apply them however you manage OneCLI:
+The example `hack/onecli-policies/ingress.yaml` (the OneCLI side, not part of the chart) includes these entries; apply them however you manage OneCLI:
 
 ```yaml
     # e2e run namespaces (tests/e2e/run.sh, docs/e2e.md): any namespace labelled pi-durable-e2e=true
@@ -208,8 +205,8 @@ the production ones. Storage: one 1 Gi database persistent volume plus one per s
 
 ## Scripts that take the namespace
 
-Every deploy script reads `NAMESPACE` (default `pi-durable-poc`, the long-lived deployment) and `KUBE_CONTEXT`:
-`add-shard.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The run does not use `add-shard.sh` any more. The
+Every script that takes a namespace reads `NAMESPACE` (default `pi-durable-poc`, the long-lived deployment) and `KUBE_CONTEXT`:
+`hack/gen-secret.sh`, `hack/gen-api-secret.sh`, `hack/fetch-onecli-ca.sh`. The
 chart's manifests carry no namespace (Helm applies the release namespace); the orchestrator gets `PI_ORCH_NAMESPACE` from the
 downward API and `PI_ONECLI_NAME_PREFIX` (`pi-e2e-<run id>-`) from the chart values. The `run-*.sh` suites require
 `NAMESPACE` (the Job sets it). `packages/orchestrator/test/e2e-namespace.test.ts` fails if a new hard-coded `pi-durable-poc`

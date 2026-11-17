@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126), slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)) and slice 11a (database TLS; issue #132). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126), slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)) slice 11a (database TLS; issue #132) and slice 11b (`deploy/` removed; issue #141). Slice 11 is done, except a green `DB_TLS=1` e2e run on a cluster. The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -63,7 +63,7 @@ images/{orchestrator,ingest,sandbox,e2e-driver}/
 ```
 
 `pi-postgres` is its own release so that it exists before OneCLI, which needs its `onecli` database. `install.sh`
-creates the namespace with the restricted Pod Security labels (`deploy/namespace.yaml` today); `helm
+creates the namespace with the restricted Pod Security labels (as `deploy/namespace.yaml` did before slice 11b); `helm
 --create-namespace` would set none. Bundled OneCLI runs in the same namespace; whether its Jobs pass `restricted` is
 still to be checked.
 
@@ -105,7 +105,7 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 - **DB TLS (implemented in slice 11a).** Both pools take their `ssl` options from `session-core/src/db-tls.ts`; modes
   `disable`, `verify-ca`, `verify-full` (no `require`), CA and optional client cert from files of a mounted Secret.
   See [ADR 0021](decisions/0021-database-tls.md) and [database-tls.md](database-tls.md).
-- **Shards.** Shard count can only grow: sessions stay on their shard (ADR 0017). `deploy/add-shard.sh` becomes the
+- **Shards.** Shard count can only grow: sessions stay on their shard (ADR 0017). `deploy/add-shard.sh` was replaced by the
   `orchestrator.shards` value, and ingest refuses to start when it sees sessions on a shard it has no route for.
 - **OneCLI bootstrap.** Installing OneCLI does not create a user, an org, an `oc_` admin key, the orchestrator agent,
   grants or host rules. `hack/onecli-bootstrap.sh` does this through OneCLI's API only, idempotently, right after the
@@ -119,14 +119,14 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
   API-key path can read `ONECLI_SECRET_*`.
 - **OneCLI CA.** OneCLI's chart creates its gateway CA in Secret `<release>-gateway-ca`, with key and certificate
   together. The bootstrap (which can read that Secret) copies only the public certificate to ConfigMap `pi-onecli-ca`,
-  key `ca.pem`, which `charts/pi-durable` mounts (bundled mode). `deploy/fetch-onecli-ca.sh` stays for an external
+  key `ca.pem`, which `charts/pi-durable` mounts (bundled mode). `hack/fetch-onecli-ca.sh` stays for an external
   OneCLI. The orchestrator reads the CA once at start, so a rotation needs a restart.
-- **Multi-arch sandbox.** Implemented in slice 2: select the pi-env binary by `TARGETARCH`, with a verified checksum per architecture (see deploy/README.md).
+- **Multi-arch sandbox.** Implemented in slice 2: select the pi-env binary by `TARGETARCH`, with a verified checksum per architecture (see `images/README.md`).
 - **Policies rewritten, not just templated.** Replace the CNPG selectors and the CNPG operator rules
   (`networkpolicy-{ingest,orchestrator,postgres}.yaml`, `cilium/kube-apiserver.yaml`). Match the OneCLI chart's labels
   (it has separate web/api/gateway Deployments). Add OneCLI-to-database egress. Sandboxes may reach gateway :10255
   only. For bundled OneCLI the policies are `charts/pi-onecli` (slice 10), a separate release installed first, because
-  they must hold before OneCLI starts; `deploy/onecli-policies/*` stay the examples for an external OneCLI. External mode needs the OneCLI namespace
+  they must hold before OneCLI starts; `hack/onecli-policies/*` stay the examples for an external OneCLI. External mode needs the OneCLI namespace
   and pod selector as values (today `onecli` and `app: onecli`), and `database.external` needs a pod selector or CIDR
   for the orchestrator and ingest egress rule, or `default-deny-all` makes the database unreachable.
 - **Template changes do not reach existing Sandboxes** (ADR 0019). Changing runtime or security settings on an
@@ -184,7 +184,7 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
 
 - Every PR: `pnpm check`; `helm lint` and render tests for gvisor/insecure, bundled/external DB, bundled/external/
   disabled OneCLI and both policy providers; pod-security checks on the **rendered** chart
-  (`packages/orchestrator/test/pod-security.test.ts` scans `deploy/` today); kind (amd64, kindnet, `standard` policy,
+  (`packages/orchestrator/test/pod-security.test.ts` renders the charts and scans `tests/e2e/`); kind (amd64, kindnet, `standard` policy,
   runc, OneCLI disabled) running install, smoke, orchestrator restart and sandbox replacement.
 - Nightly or release: kind with Cilium and bundled OneCLI; the full `all` suite and `shards`; external DB; arm64.
   Real-model, MCP and private-repo tests run only with protected credentials, never on untrusted PRs.
@@ -289,10 +289,14 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
 11. **DB TLS and cleanup.**
     - 11a (done, issue #132): TLS with verification for both `pg` pools; `database.tls` values; `pi-postgres` can serve
       TLS. `DB_TLS=1 tests/e2e/run.sh <suite>` runs the e2e against a `pi-postgres` that requires TLS (throwaway CA; the run first
-      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Open: a green `DB_TLS=1` run on a cluster.
-    - 11b: Remove the `deploy/` scripts and manifests that
-      the chart replaced; update README, `deploy/README.md`, `docs/e2e.md`, `docs/model-credentials.md` and plan.md.
-    - Done when: e2e passes against an external Postgres that requires TLS; no doc points at a removed script.
+      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Run green on the test cluster on 2026-11-17 (`smoke`: plain TCP rejected by `pg_hba.conf`, `verify-full` accepted).
+    - 11b (done, issue #141): `deploy/` is removed. The manifests and `add-shard.sh` the charts replaced are deleted; the
+      scripts that e2e and the external-OneCLI path still call moved to `hack/` (`gen-secret.sh`, `gen-api-secret.sh`,
+      `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `agent-ruleset.sh` and `.json`, `onecli-policies/`); the ExternalSecret
+      examples are in `charts/pi-durable/examples/`; the image build notes are `images/README.md`. The pod-security,
+      image-build and e2e-namespace tests read the rendered charts or `hack/`; the stub-kubectl test of `add-shard.sh` went with it.
+    - Done when: e2e passes against an external Postgres that requires TLS (done, see 11a); no doc points at a removed
+      script (done).
 
 Deferred (not needed for the PoC): gVisor-on-kind lane, an Ingress/HTTPRoute template, a backup CronJob. The shard
 check (`shards` may only grow) is done by ingest at start, not by the chart, so the chart needs no `lookup`.

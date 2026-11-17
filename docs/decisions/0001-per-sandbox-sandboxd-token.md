@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-16 (issue #7). Replaces the single shared token of Phases 1 to 4.
 
+Note (install slice 11b, issue #141): `deploy/` is gone; `gen-secret.sh` is now `hack/gen-secret.sh`, and the RBAC and manifests named below are in `charts/pi-durable`.
+
 ## Context
 
 Every sandbox's sandboxd started with the same `--auth-token-sha256`, read from Secret `sandboxd-auth`. A sandbox that

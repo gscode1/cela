@@ -35,7 +35,7 @@ rules:
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [get, list, delete]
-  # deploy/gen-api-secret.sh (create if missing) and the sandboxd-auth presence check.
+  # hack/gen-api-secret.sh (create if missing) and the sandboxd-auth presence check.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, create]

@@ -7,7 +7,7 @@
 #
 # Setup: the suite PUTs server deepwiki to /admin/mcp-servers (alice is in PI_API_ADMINS) and DELETEs it at the end, so
 # nothing is restarted and no Deployment is edited. Prerequisite (otherwise the tests fail to connect, never fake a
-# result): OneCLI allows mcp.deepwiki.com (`deploy/onecli-host-rules.sh --apply`, deploy/onecli-policies/egress.yaml).
+# result): OneCLI allows mcp.deepwiki.com (`hack/onecli-host-rules.sh --apply`, hack/onecli-policies/egress.yaml).
 #
 #   add           PUT creates deepwiki (201); the orchestrator logs mcp-server-added and mcp-tools-ready without a restart
 #   profile       PUT /admin/profiles/research {mcpServers:[deepwiki]} (profiles are never deleted: cleanup disables it)

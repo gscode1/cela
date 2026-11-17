@@ -7,7 +7,7 @@ not change that: it only applies to credentialed non-LLM requests. The working a
 `openrouter.ai`.
 
 This is the gateway-side control (what a leaked token can ask for). The pod-side control is the Cilium FQDN allowlist
-in `deploy/onecli-policies/egress.yaml`; keep both lists identical.
+in `hack/onecli-policies/egress.yaml`; keep both lists identical.
 
 ## The rule set
 
@@ -38,11 +38,11 @@ behaved as an allowlist); check with the probes below after applying.
 
 ## Apply
 
-`deploy/onecli-host-rules.sh`. Dry run by default.
+`hack/onecli-host-rules.sh`. Dry run by default.
 
 ```sh
-deploy/onecli-host-rules.sh            # prints the plan, makes no request
-deploy/onecli-host-rules.sh --apply    # needs the admin key
+hack/onecli-host-rules.sh            # prints the plan, makes no request
+hack/onecli-host-rules.sh --apply    # needs the admin key
 ```
 
 - Admin key: Secret `secret-store/pi-onecli-admin`, key `api-key`, read with `kubectl` (or `ONECLI_API_KEY`). It goes to
@@ -81,7 +81,7 @@ Probes from the orchestrator pod through `:10255` with its agent token (not prin
 | `https://registry.npmjs.org/left-pad` | 200 |
 | `https://chatgpt.com/` | 200 |
 
-The Cilium FQDN policy on the OneCLI pod (see `deploy/onecli-policies/`) is the second layer: a host allowed here but
+The Cilium FQDN policy on the OneCLI pod (see `hack/onecli-policies/`) is the second layer: a host allowed here but
 missing there fails to connect.
 
 Sandboxes still reach public hosts directly (`sandbox-allow-internet-egress`, decision 2026-11-15), so this list only
@@ -98,7 +98,7 @@ v2.20.0 defaults), then the `pi-allow-*` rules if wanted. Deleting only the bloc
 
 An MCP server in the catalog (`inbox.mcp_servers`, managed through `/admin/mcp-servers`, ADR 0009) is only a name and a
 URL. Adding a row never allows its host: the orchestrator reaches it through the OneCLI gateway, so the host must also
-be allowed here (a rule in `deploy/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's
-egress policy (`deploy/onecli-policies/egress.yaml`). Until both allow it, the server fails to connect: the orchestrator
+be allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's
+egress policy (`hack/onecli-policies/egress.yaml`). Until both allow it, the server fails to connect: the orchestrator
 logs `mcp-discovery-failed` with the retry delay, and calls to its tools settle `tool_unavailable`. The admin API does
 not probe the network, so it reports reachability as `unknown`; the log is the signal. Add the rule first, then the row.
