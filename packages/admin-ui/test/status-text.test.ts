@@ -67,8 +67,9 @@ describe("isolation summary", () => {
     expect(two.notes).toEqual([
       "Shard 1: no sandbox has started since the last restart, so the runtime is not confirmed yet.",
     ]);
-    expect(summarizeIsolation([shard({ observedRuntime: null, networkPolicy: "not-enforced" })]))
-      .toMatchObject({ healthy: false, problems: ["network isolation is not enforced."] });
+    expect(
+      summarizeIsolation([shard({ observedRuntime: null, networkPolicy: "not-enforced" })]),
+    ).toMatchObject({ healthy: false, problems: ["network isolation is not enforced."] });
   });
 
   it("treats a running probe as neither healthy nor a problem", () => {
