@@ -9,7 +9,7 @@
 // and the profile specs run against different instances.
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { SettingsCache, seedSettings } from "../../session-core/dist/index.js";
+import { SettingsCache, publishCapabilities, seedSettings } from "../../session-core/dist/index.js";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { setConsoleHeaders } from "../../ingest/dist/console.js";
 import { createIngestServer } from "../../ingest/dist/server.js";
@@ -25,6 +25,65 @@ await seedSettings(db.asPool(), {
   defaultProfile: "coding",
   turnBudget: 100,
 });
+// The model catalog the orchestrator would publish: "openai" has a credential, "anthropic" has none, scripted is the
+// test provider. `/__local/models?mode=` switches what the credentials hint says, for the specs of the model pickers.
+const MODELS = [
+  {
+    provider: "openai",
+    id: "gpt-fast",
+    name: "GPT Fast",
+    reasoning: false,
+    contextWindow: 128000,
+    maxTokens: 4096,
+  },
+  {
+    provider: "openai",
+    id: "gpt-think",
+    name: "GPT Think",
+    reasoning: true,
+    contextWindow: 200000,
+    maxTokens: 8192,
+  },
+  {
+    provider: "anthropic",
+    id: "claude-x",
+    name: "Claude X",
+    reasoning: true,
+    contextWindow: 200000,
+    maxTokens: 8192,
+  },
+  { provider: "scripted", id: "scripted-1", reasoning: false },
+  { provider: "scripted", id: "scripted-2", reasoning: false },
+];
+const PROVIDERS = {
+  default: [
+    { provider: "openai", credential: "configured" },
+    { provider: "anthropic", credential: "missing" },
+    { provider: "scripted", credential: "configured" },
+  ],
+  "none-configured": [
+    { provider: "openai", credential: "missing" },
+    { provider: "anthropic", credential: "missing" },
+    { provider: "scripted", credential: "configured" },
+  ],
+  unknown: [
+    { provider: "openai", credential: "unknown" },
+    { provider: "anthropic", credential: "unknown" },
+    { provider: "scripted", credential: "configured" },
+  ],
+};
+const publishModels = (mode) =>
+  publishCapabilities(
+    db.asPool(),
+    {
+      tools: ["read", "write", "edit", "bash"],
+      extensions: [],
+      models: MODELS,
+      modelProviders: PROVIDERS[mode] ?? PROVIDERS.default,
+    },
+    "local",
+  );
+await publishModels("default");
 const settings = new SettingsCache(db.asPool(), { pollMs: 60_000 });
 await settings.start();
 
@@ -46,8 +105,19 @@ const ingest = createIngestServer({
   consoleCatalogs: process.env.CATALOGS === "readOnly" ? "readOnly" : "manage",
   schemaReady: () => true,
 });
+const modelControl = (req, res) => {
+  const mode = new URL(req.url ?? "/", "http://localhost").searchParams.get("mode") ?? "default";
+  void publishModels(mode).then(() => {
+    res.writeHead(204);
+    res.end();
+  });
+};
 if (process.env.FAKE_ADMIN !== "1") {
-  ingest.listen(Number(process.env.PORT), "127.0.0.1");
+  createServer((req, res) => {
+    if (new URL(req.url ?? "/", "http://localhost").pathname === "/__local/models")
+      return modelControl(req, res);
+    return ingest.emit("request", req, res);
+  }).listen(Number(process.env.PORT), "127.0.0.1");
 } else {
   const fake = createFakeAdmin();
   const server = createServer((req, res) => {

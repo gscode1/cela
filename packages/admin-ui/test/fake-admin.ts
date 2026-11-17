@@ -33,6 +33,8 @@ export interface FakeAdmin {
   profiles: FakeProfile[];
   invalid: { name: string; message: string }[];
   tools: string[];
+  /** The `GET /admin/models` answer (default view). */
+  models: Record<string, unknown>;
   mcp: { name: string; url: string; enabled: boolean }[];
   skills: {
     name: string;
@@ -77,6 +79,16 @@ export function createFakeAdmin(): FakeAdmin {
     ],
     invalid: [],
     tools: ["read", "write", "edit", "bash"],
+    models: {
+      models: [
+        { provider: "openai", id: "gpt-fast", name: "GPT Fast", reasoning: false },
+        { provider: "openai", id: "gpt-think", name: "GPT Think", reasoning: true },
+      ],
+      providers: [{ provider: "openai", credential: "configured" }],
+      source: "orchestrator",
+      filtered: true,
+      credentials: "configured",
+    },
     mcp: [],
     skills: [],
     writes: [],
@@ -188,6 +200,7 @@ export function createFakeAdmin(): FakeAdmin {
       }
       return reply(200, { ...profileJson(profile), versionCreated });
     }
+    if (route === "/admin/models") return reply(200, admin.models);
     if (route === "/admin/tools") return reply(200, { tools: admin.tools, source: "orchestrator" });
     if (route === "/admin/mcp-servers") return reply(200, { servers: admin.mcp, invalid: [] });
     if (route === "/admin/skills")

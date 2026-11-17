@@ -114,8 +114,9 @@ describe("API content", () => {
     ];
     renderApp();
     await signIn("alice-token");
-    expect(await screen.findByText(hostile)).toBeInTheDocument();
-    expect(screen.getByText("<script>alert(2)</script>")).toBeInTheDocument();
+    expect(await screen.findByText("<script>alert(2)</script>")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /set the initial values/ }));
+    expect(screen.getAllByText(hostile, { selector: "td" }).length).toBeGreaterThan(0);
     expect(document.querySelector("main img, main b, main script")).toBeNull();
   });
 });

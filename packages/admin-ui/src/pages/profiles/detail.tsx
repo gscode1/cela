@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useAuth } from "@/auth";
+import { LastChanged } from "@/components/changed";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -155,19 +156,22 @@ function ProfileScreenFor({ name }: { name: string }) {
           <div className="flex flex-col gap-1.5">
             <CardTitle className="flex flex-wrap items-center gap-2">
               {name}
-              <Badge variant="outline">v{stored.currentVersion}</Badge>
-              <Badge variant={stored.enabledForNew ? "secondary" : "destructive"}>
-                {stored.enabledForNew ? "enabled" : "disabled"}
-              </Badge>
               {isDefault && <Badge variant="outline">default</Badge>}
+              {!stored.enabledForNew && <Badge variant="destructive">disabled</Badge>}
             </CardTitle>
             <CardDescription>
-              Last change by {stored.updatedBy} at {stored.updatedAt}. Revision {stored.revision}.
+              <LastChanged by={stored.updatedBy} at={stored.updatedAt} />
             </CardDescription>
           </div>
           <Button
             variant="outline"
-            disabled={toggle.isPending}
+            disabled={toggle.isPending || (isDefault && stored.enabledForNew)}
+            {...(isDefault && stored.enabledForNew
+              ? {
+                  title:
+                    "This is the default profile. Select another default in Global settings first.",
+                }
+              : {})}
             onClick={() => {
               toggle.mutate({ enabled: !stored.enabledForNew, revision: stored.revision });
             }}
@@ -176,16 +180,6 @@ function ProfileScreenFor({ name }: { name: string }) {
           </Button>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {isDefault && stored.enabledForNew && (
-            <p className="text-sm text-muted-foreground">
-              This is the default profile. To disable it, select another enabled profile as the
-              default first.
-            </p>
-          )}
-          <p className="text-sm text-muted-foreground">
-            Enabling or disabling decides whether new sessions may choose the profile. It adds no
-            version and never changes a session that exists.
-          </p>
           {toggleConflict !== undefined && conflictKind(toggleConflict) === "default-profile" && (
             <Alert variant="warning" data-testid="toggle-conflict">
               <p className="break-words">{toggleConflict.message}</p>
@@ -200,7 +194,8 @@ function ProfileScreenFor({ name }: { name: string }) {
           )}
           {toggleConflict !== undefined && conflictKind(toggleConflict) === "stale" && (
             <Alert variant="warning" data-testid="toggle-conflict">
-              <p className="break-words">{toggleConflict.message}</p>
+              {/* The API's text names revision numbers; the operator only needs to know it moved on. */}
+              <p>Not changed: someone else changed this profile since you opened it.</p>
               <Button
                 className="mt-2"
                 size="sm"
@@ -222,29 +217,21 @@ function ProfileScreenFor({ name }: { name: string }) {
               {saved}
             </Alert>
           )}
-          <div role="tablist" aria-label="Profile views" className="flex gap-2">
-            <Button
-              role="tab"
-              aria-selected={tab === "edit"}
-              variant={tab === "edit" ? "default" : "outline"}
-              size="sm"
-              onClick={() => {
-                setTab("edit");
-              }}
-            >
-              Edit
-            </Button>
-            <Button
-              role="tab"
-              aria-selected={tab === "versions"}
-              variant={tab === "versions" ? "default" : "outline"}
-              size="sm"
-              onClick={() => {
-                setTab("versions");
-              }}
-            >
-              Versions
-            </Button>
+          <div role="tablist" aria-label="Profile views" className="flex gap-4 border-b">
+            {(["edit", "versions"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                className={`-mb-px border-b-2 px-1 pb-2 text-sm ${tab === id ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                onClick={() => {
+                  setTab(id);
+                }}
+              >
+                {id === "edit" ? "Edit" : "Versions"}
+              </button>
+            ))}
           </div>
         </CardContent>
       </Card>

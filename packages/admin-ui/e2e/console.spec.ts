@@ -34,7 +34,7 @@ test.describe("console enabled", () => {
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();
-    await expect(page.getByLabel("Default model")).toBeVisible();
+    await expect(page.getByLabel("Default model", { exact: true })).toBeVisible();
 
     expect(assets.length).toBeGreaterThanOrEqual(2);
     expect(assets.filter((asset) => asset.status !== 200)).toEqual([]);
@@ -138,6 +138,7 @@ test.describe("console enabled", () => {
     await page.goto("/console/");
     await signIn(page, admin);
     await expect(page.getByText("<script>window.__xss=2</script>").first()).toBeVisible();
+    await page.getByRole("button", { name: /set the initial values/ }).click();
     await expect(page.getByText(hostile).first()).toBeVisible();
     await expect(page.locator("main img, main b, main script")).toHaveCount(0);
     expect(await page.evaluate(() => (window as { __xss?: number }).__xss)).toBeUndefined();

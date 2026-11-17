@@ -29,10 +29,10 @@ test.describe("session profiles", () => {
     await page.getByRole("link", { name: "New profile" }).click();
     await page.getByLabel("Name", { exact: true }).fill(name);
     await page.getByLabel("Instructions", { exact: true }).fill("Review the diff and list risks.");
-    await page.getByLabel("Model", { exact: true }).selectOption("scripted/scripted-2");
-    await page.getByLabel("Reasoning", { exact: true }).selectOption("off");
+    await page.getByLabel("Default model", { exact: true }).selectOption("scripted/scripted-2");
+    await page.getByLabel("Default reasoning").selectOption("off");
     await page.getByLabel("Turn budget").fill("12");
-    await expect(page.getByRole("region", { name: "Admission preview" })).toContainText(
+    await expect(page.getByRole("region", { name: "What a new session gets" })).toContainText(
       "scripted/scripted-2 (from this profile)",
     );
     await page.getByRole("button", { name: "Create profile" }).click();
@@ -48,9 +48,9 @@ test.describe("session profiles", () => {
     });
 
     // Explicit off survives an edit elsewhere; clearing the model override omits the field.
-    await expect(page.getByLabel("Reasoning", { exact: true })).toHaveValue("off");
-    await page.getByLabel("Model", { exact: true }).selectOption("");
-    await shot(page, "02-profile-editor");
+    await expect(page.getByLabel("Default reasoning")).toHaveValue("off");
+    await page.getByLabel("Default model", { exact: true }).selectOption("");
+    await shot(page, "cleanup-profiles-editor");
     await publish(page).click();
     await expect(page.getByTestId("saved")).toHaveText(`Published version 2 of ${name}.`);
     const stored = await getProfile(page, name);
@@ -68,8 +68,9 @@ test.describe("session profiles", () => {
     const row = page
       .getByRole("row")
       .filter({ has: page.getByRole("link", { name, exact: true }) });
-    await expect(row).toContainText("v2");
-    await expect(row).toContainText("alice");
+    await expect(row).toContainText("by alice");
+    await shot(page, "cleanup-profiles-list");
+    await expect(row).not.toContainText("v2");
   });
 
   test("tells omitted tool lists from empty ones and diffs stored versions", async ({
@@ -80,24 +81,21 @@ test.describe("session profiles", () => {
     await api(request, "PUT", `/admin/profiles/${name}`, { definition: { instructions: "x" } });
     await signIn(page, `/console/profiles/${name}`);
     await page.locator("#tools-all").uncheck();
+    await expect(page.getByText("Read files")).toBeVisible();
     for (const tool of ["read", "write", "edit", "bash"])
       await page.locator(`#tools-${tool}`).uncheck();
-    await expect(page.getByText("No tools: an empty list.")).toBeVisible();
+    await expect(page.getByText("No tools.")).toBeVisible();
     await publish(page).click();
     await expect(page.getByTestId("saved")).toContainText("Published version 2");
     expect((await getProfile(page, name)).definition).toEqual({ instructions: "x", tools: [] });
 
     await page.getByRole("tab", { name: "Versions" }).click();
     const diff = page.getByLabel("Version diff");
-    await expect(
-      diff.getByRole("row", { name: /tools\s+\(omitted\)\s+\(empty list\)/ }),
-    ).toBeVisible();
-    await shot(page, "03-profile-version-diff");
+    await expect(diff.getByRole("row", { name: /Tools\s+all tools\s+no tools/ })).toBeVisible();
+    await shot(page, "cleanup-profiles-versions");
     await page.getByLabel("From").selectOption("2");
     await page.getByLabel("To").selectOption("1");
-    await expect(
-      diff.getByRole("row", { name: /tools\s+\(empty list\)\s+\(omitted\)/ }),
-    ).toBeVisible();
+    await expect(diff.getByRole("row", { name: /Tools\s+no tools\s+all tools/ })).toBeVisible();
   });
 
   test("pins an exact skill version and explains read and bash without changing tools", async ({
@@ -130,9 +128,7 @@ test.describe("session profiles", () => {
     await expect(page.getByTestId("skill-pin")).toContainText(`${skill}@v1`);
     await expect(page.getByTestId("skill-pin")).toContainText("executable files");
     await expect(page.getByTestId("read-dependency")).toBeVisible();
-    await expect(
-      page.getByText("skills need the read tool, but tools does not include it"),
-    ).toBeVisible();
+    await expect(page.getByText("Skills need the read tool.")).toBeVisible();
     await expect(publish(page)).toBeDisabled();
     await expect(page.locator("#tools-read")).not.toBeChecked();
 
@@ -182,14 +178,14 @@ test.describe("session profiles", () => {
     await api(request, "PUT", "/admin/settings", { maxReasoning: "low" });
     await api(request, "PUT", `/admin/profiles/${other}`, { definition: {} });
     await signIn(page, `/console/profiles/${other}`);
-    await page.getByLabel("Reasoning", { exact: true }).selectOption("high");
+    await page.getByLabel("Default reasoning").selectOption("high");
     await expect(page.getByTestId("warnings")).toContainText(
       "reasoning high is above the allowed maximum low",
     );
     await expect(publish(page)).toBeEnabled();
 
     await signIn(page, "/console/profiles/coding");
-    await page.getByLabel("Reasoning", { exact: true }).selectOption("high");
+    await page.getByLabel("Default reasoning").selectOption("high");
     await expect(page.getByTestId("blocking")).toContainText(
       "reasoning high is above the allowed maximum low",
     );
@@ -210,12 +206,9 @@ test.describe("session profiles", () => {
     await expect(page.getByTestId("saved")).toHaveText(`${name} is enabled for new sessions.`);
 
     await signIn(page, "/console/profiles/coding");
-    await page.getByRole("button", { name: "Disable for new sessions" }).click();
-    const conflict = page.getByTestId("toggle-conflict");
-    await expect(conflict).toContainText(
-      'profile "coding" is the default profile for new sessions',
-    );
-    await expect(conflict.getByRole("link", { name: "Global settings" })).toBeVisible();
+    const disable = page.getByRole("button", { name: "Disable for new sessions" });
+    await expect(disable).toBeDisabled();
+    await expect(disable).toHaveAttribute("title", /Select another default/);
     expect(await getProfile(page, "coding")).toMatchObject({ enabledForNew: true });
   });
 
@@ -233,7 +226,7 @@ test.describe("session profiles", () => {
     await expect(page.getByLabel("Instructions", { exact: true })).toHaveValue("mine");
     await page.getByRole("button", { name: "Reload and compare" }).click();
     const compare = page.getByTestId("conflict-compare");
-    await expect(compare.getByRole("row", { name: /instructions\s+theirs\s+mine/ })).toBeVisible();
+    await expect(compare.getByRole("row", { name: /Instructions\s+theirs\s+mine/ })).toBeVisible();
     expect((await getProfile(page, name)).definition).toEqual({ instructions: "theirs" });
 
     await page.getByRole("button", { name: "Keep my draft on top of the server version" }).click();

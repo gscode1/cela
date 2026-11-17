@@ -30,14 +30,14 @@ describe("settings editor", () => {
     const budget = screen.getByLabelText("Turn budget");
     await userEvent.clear(budget);
     await userEvent.type(budget, "150");
-    const review = screen.getByText("Review before saving").closest("div");
-    expect(review).not.toBeNull();
-    expect(screen.getByText("turnBudget")).toBeInTheDocument();
+    expect(screen.getByText("Turn budget", { selector: "td" })).toBeInTheDocument();
     expect(screen.getByText("150", { selector: "td" })).toBeInTheDocument();
-    expect(screen.getByText(/applies to sessions that inherit it/)).toBeInTheDocument();
+    expect(screen.getByText(/from their next message/)).toBeInTheDocument();
+    expect(screen.getByText("Applies to new sessions only.")).toBeInTheDocument();
+    expect(screen.queryByText(/revision/i)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await screen.findByTestId("saved");
+    expect(await screen.findByTestId("saved")).toHaveTextContent(/^Settings saved\.$/);
     expect(admin.writes).toHaveLength(1);
     expect(admin.writes[0]?.body).toEqual({
       defaultModel: "scripted/scripted-1",
@@ -56,10 +56,10 @@ describe("settings editor", () => {
     admin.settings = { ...admin.settings, reasoning: "low", maxReasoning: "high" };
     await open(admin);
     await waitFor(() => {
-      expect(screen.getByLabelText("Reasoning")).toHaveValue("low");
+      expect(screen.getByLabelText("Default reasoning")).toHaveValue("low");
     });
-    await userEvent.selectOptions(screen.getByLabelText("Reasoning"), "not set");
-    await userEvent.selectOptions(screen.getByLabelText("Max reasoning"), "not set");
+    await userEvent.selectOptions(screen.getByLabelText("Default reasoning"), "");
+    await userEvent.selectOptions(screen.getByLabelText("Highest reasoning allowed"), "");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await screen.findByTestId("saved");
     expect(admin.writes[0]?.body).toMatchObject({ reasoning: null, maxReasoning: null });
@@ -87,9 +87,9 @@ describe("settings editor", () => {
       ).toBeInTheDocument();
     });
     // Dropping scripted-2 breaks "fast", which is not the default: a warning.
-    const list = screen.getByLabelText("Allowlist");
-    await userEvent.clear(list);
-    await userEvent.type(list, "scripted/scripted-1");
+    await userEvent.click(
+      screen.getByLabelText("scripted/scripted-2", { selector: "#allow-scripted\\/scripted-2" }),
+    );
     expect(await screen.findByTestId("warnings")).toHaveTextContent("fast");
     expect(screen.getByRole("button", { name: "Save settings" })).toBeEnabled();
 
@@ -145,22 +145,98 @@ describe("settings editor", () => {
     expect(admin.settings.turnBudget).toBe(150);
   });
 
-  it("shows who changed what in the history", async () => {
+  it("lists the history one line per entry, newest five first, and expands a line", async () => {
     const admin = createFakeAdmin();
+    const entry = (id: string, by: string, old: unknown) => ({
+      id,
+      changedAt: "2026-11-17T10:00:00.000Z",
+      changedBy: by,
+      old,
+      new: admin.settings,
+    });
     admin.history = [
-      {
-        id: "2",
-        changedAt: "2026-11-17T10:00:00.000Z",
-        changedBy: "carol",
-        old: { ...admin.settings, turnBudget: 50 },
-        new: admin.settings,
-      },
+      ...Array.from({ length: 6 }, (_, i) =>
+        entry(String(10 - i), "carol", { ...admin.settings, turnBudget: 50 + i }),
+      ),
+      { ...entry("1", "seed", null), changedAt: "1970-01-01T00:00:00.000Z" },
     ];
     renderApp("/settings");
     await signIn("alice-token");
     const list = await screen.findByRole("list", { name: "Settings history" });
-    expect(list).toHaveTextContent("carol");
-    expect(list).toHaveTextContent("2026-11-17T10:00:00.000Z");
-    expect(within(list).getByText("50")).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(5);
+    expect(list).toHaveTextContent("carol changed Turn budget");
+    expect(within(list).queryByText("50")).not.toBeInTheDocument();
+    await userEvent.click(within(list).getAllByRole("button")[5 - 1] as HTMLElement);
+    await userEvent.click(within(list).getAllByRole("button")[0] as HTMLElement);
+    expect(within(list).getByText("50", { selector: "td" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(within(list).getAllByRole("listitem")).toHaveLength(7);
+    expect(list).toHaveTextContent("built-in set the initial values");
+    expect(list).not.toHaveTextContent("1970");
+  });
+
+  it("offers only configured models, shows a scripted current value with its note, and round-trips the allowlist", async () => {
+    const admin = createFakeAdmin();
+    admin.settings = { ...admin.settings, defaultModel: "scripted/scripted-1" };
+    await open(admin);
+    expect(screen.getByText(/Test model — replays the message as a script/)).toBeInTheDocument();
+    const provider = screen.getByLabelText("Provider");
+    expect(within(provider).queryByText("anthropic")).not.toBeInTheDocument();
+    await userEvent.selectOptions(provider, "openai");
+    expect(screen.getByLabelText("Default model")).toHaveValue("openai/gpt-fast");
+    await userEvent.click(screen.getByLabelText("GPT Think", { selector: "[id^=allow-]" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByTestId("saved");
+    expect(admin.writes[0]?.body).toMatchObject({
+      defaultModel: "openai/gpt-fast",
+      allowlist: ["openai/gpt-fast", "scripted/scripted-1", "openai/gpt-think"],
+    });
+  });
+
+  it("says why there is no list, and keeps the current values with a field for a model id", async () => {
+    const admin = createFakeAdmin();
+    admin.models = {
+      models: [],
+      providers: [],
+      source: "orchestrator",
+      filtered: true,
+      credentials: "none-configured",
+    };
+    await waitForOpenNoList(admin);
+    expect(
+      screen.getByText("No model credentials are configured in OneCLI yet."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("current-model")).toHaveTextContent("scripted/scripted-1");
+    await userEvent.type(
+      screen.getByLabelText("Enter a model id", { selector: "#default-model-custom" }),
+      "openai/typed",
+    );
+    await userEvent.click(screen.getAllByRole("button", { name: "Use" })[0] as HTMLElement);
+    expect(screen.getByTestId("current-model")).toHaveTextContent("openai/typed");
+  });
+
+  it("says when OneCLI could not be checked", async () => {
+    const admin = createFakeAdmin();
+    admin.models = {
+      models: [],
+      providers: [],
+      source: "orchestrator",
+      filtered: true,
+      credentials: "unknown",
+      reason: "no admin key",
+    };
+    await waitForOpenNoList(admin);
+    const notice = screen.getByText("Could not check OneCLI for model credentials.");
+    expect(notice).toHaveAttribute("title", "no admin key");
   });
 });
+
+async function waitForOpenNoList(admin: FakeAdmin): Promise<void> {
+  renderApp("/settings");
+  await signIn("alice-token");
+  await screen.findByTestId("current-model");
+  await waitFor(() => {
+    expect(screen.getByLabelText("Default profile")).toHaveValue(admin.settings.defaultProfile);
+  });
+}
