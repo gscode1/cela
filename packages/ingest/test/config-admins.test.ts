@@ -28,4 +28,15 @@ describe("loadConfig settings", () => {
     expect(loadConfig({ ...base, PI_CONSOLE_DIR: "  " }).consoleDir).toBeUndefined();
     expect(loadConfig({ ...base, PI_CONSOLE_DIR: "/app/console" }).consoleDir).toBe("/app/console");
   });
+
+  it("reads PI_CONSOLE_CATALOGS: manage by default, readOnly on request, nothing else", () => {
+    expect(loadConfig(base).consoleCatalogs).toBe("manage");
+    expect(loadConfig({ ...base, PI_CONSOLE_CATALOGS: "" }).consoleCatalogs).toBe("manage");
+    expect(loadConfig({ ...base, PI_CONSOLE_CATALOGS: "readOnly" }).consoleCatalogs).toBe(
+      "readOnly",
+    );
+    expect(() => loadConfig({ ...base, PI_CONSOLE_CATALOGS: "readonly" })).toThrow(
+      /PI_CONSOLE_CATALOGS/,
+    );
+  });
 });

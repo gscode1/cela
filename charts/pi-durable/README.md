@@ -71,6 +71,7 @@ per database: the schema `inbox` is fixed.
 | `networkPolicy.orchestrator.extraEgress`                                                 | extra raw egress rules (for example `api.github.com:443` with `standard`)                                                                                                                                                                        |
 | `orchestrator.shards`                                                                    | number of orchestrator Deployments (can only grow, see below); `resources`, `noProxy`, `extraEnv`                                                                                                                                                |
 | `console.enabled`                                                                        | serve the admin console under `/console/` from the ingest image (default `false`: `/console/` is a 404). See [Admin console](#admin-console)                                                                                                     |
+| `console.catalogs`                                                                       | `manage` (default) or `readOnly`: whether the console's Skills and MCP servers screens offer writes. UI only, see [Admin console](#admin-console)                                                                                                |
 | `ingest.replicas`, `resources`                                                           | ingest scale                                                                                                                                                                                                                                     |
 | `api.admins`, `api.existingSecret`                                                       | owners who may call `/admin/*`; Secret with key `tokens`, one `owner:token` line per owner                                                                                                                                                       |
 | `models.default`, `allowlist`, `turnBudget`                                              | seeds Postgres once (ADR 0008); change later with `PUT /admin/settings`                                                                                                                                                                          |
@@ -94,6 +95,11 @@ Access:
   clients through your ingress, that ingress must route `/console` and `/admin` only through operator access (a
   restricted HTTPS route, VPN or an authenticating proxy), and must rate-limit failed sign-ins: ingest does not.
 - Tokens are the existing named bearer tokens; a change takes effect after the ingest pods restart.
+
+`console.catalogs: readOnly` removes the publish, register, edit, enable, disable and delete controls from the Skills and
+MCP servers screens (browsing, history and the skill zip download stay). Ingest tells the page through
+`GET /console/config.json` (`{"catalogs":"readOnly"}`, no token needed). This hides controls only: `/admin/*` still accepts
+writes from every admin, so it is not an access control. Use it when a catalog repository is meant to be the one writer.
 
 ### Models and OneCLI
 

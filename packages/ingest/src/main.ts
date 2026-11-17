@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     settings,
     admins: config.admins,
     consoleDir: config.consoleDir,
+    consoleCatalogs: config.consoleCatalogs,
     schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.

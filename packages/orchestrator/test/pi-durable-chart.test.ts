@@ -813,6 +813,21 @@ describe("console.enabled", () => {
     expect(ingestEnv(["--set", "console.enabled=true"]).PI_CONSOLE_DIR?.value).toBe("/app/console");
   });
 
+  it("tells ingest to manage the catalogs by default, and to go read-only on request", () => {
+    expect(ingestEnv(["--set", "console.enabled=true"]).PI_CONSOLE_CATALOGS?.value).toBe("manage");
+    expect(
+      ingestEnv(["--set", "console.enabled=true", "--set", "console.catalogs=readOnly"])
+        .PI_CONSOLE_CATALOGS?.value,
+    ).toBe("readOnly");
+    expect(ingestEnv(["--set", "console.catalogs=readOnly"]).PI_CONSOLE_CATALOGS).toBeUndefined();
+  });
+
+  it("rejects a catalogs value other than manage or readOnly", () => {
+    expect(() => helmTemplate(chart, [...external, "--set", "console.catalogs=write"])).toThrow(
+      /console/,
+    );
+  });
+
   it("adds no Ingress, route or Service for it", () => {
     const kinds = docs([...external, "--set", "console.enabled=true"]).map((d) => d.kind);
     expect(kinds).not.toContain("Ingress");
