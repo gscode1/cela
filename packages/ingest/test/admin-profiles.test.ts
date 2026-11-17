@@ -394,28 +394,91 @@ describe("POST /sessions with profiles", () => {
 const RESEARCH_PLAIN = { tools: ["read"] };
 
 describe("model catalog", () => {
-  it("GET /admin/models: none before a publish, then the catalog with the credential hints; admin only", async () => {
-    const { base, db } = await start(["alice"]);
-    expect(await json(await call(base, "alice", "GET", "/admin/models"))).toEqual({
-      models: [],
-      providers: [],
-      source: "none",
-    });
-    const models = [{ provider: "openai", id: "gpt-x", name: "GPT X", reasoning: true }];
+  const entry = (provider: string) => ({ provider, id: "m", reasoning: false });
+  const publish = (db: FakeSettingsDb, providers: [string, string][]): void => {
     db.capabilities = {
       tools: ["read"],
       extensions: [],
       instance: "o",
-      models,
-      model_providers: [{ provider: "openai", credential: "missing" }],
+      models: providers.map(([p]) => entry(p)),
+      model_providers: providers.map(([provider, credential]) => ({ provider, credential })),
     };
+  };
+  const names = async (base: string, query = "") => {
+    const body = (await json(await call(base, "alice", "GET", `/admin/models${query}`))) as {
+      models: { provider: string }[];
+      providers: { provider: string }[];
+      filtered: boolean;
+      reason?: string;
+      source: string;
+    };
+    return { ...body, models: body.models.map((m) => m.provider) };
+  };
+
+  it("GET /admin/models: none before a publish; admin only; GET only", async () => {
+    const { base } = await start(["alice"]);
     expect(await json(await call(base, "alice", "GET", "/admin/models"))).toEqual({
-      models,
-      providers: [{ provider: "openai", credential: "missing" }],
-      source: "orchestrator",
+      models: [],
+      providers: [],
+      source: "none",
+      filtered: false,
     });
     expect((await call(base, "bob", "GET", "/admin/models")).status).toBe(403);
     expect((await call(base, "alice", "POST", "/admin/models", {})).status).toBe(405);
+  });
+
+  it("returns only configured and unknown providers by default, everything with ?all=1", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "configured"],
+      ["anthropic", "missing"],
+      ["mistral", "unknown"],
+    ]);
+    const filtered = await names(base);
+    expect(filtered).toMatchObject({ filtered: true, source: "orchestrator" });
+    expect(filtered.models).toEqual(["openai", "mistral"]);
+    expect(filtered.providers.map((p) => p.provider)).toEqual(["openai", "mistral"]);
+    const full = await names(base, "?all=1");
+    expect(full.filtered).toBe(false);
+    expect(full.models).toEqual(["openai", "anthropic", "mistral"]);
+    expect(full.providers).toHaveLength(3);
+  });
+
+  it("falls back to the full catalog with a reason when no hint is known", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "unknown"],
+      ["anthropic", "unknown"],
+      ["scripted", "configured"],
+    ]);
+    const body = await names(base);
+    expect(body.filtered).toBe(false);
+    expect(body.reason).toMatch(/no credential hint/);
+    expect(body.models).toEqual(["openai", "anthropic", "scripted"]);
+  });
+
+  it("offers scripted only while the settings or a profile name it", async () => {
+    const { base, db } = await start(["alice"], {
+      ...seed,
+      defaultModel: "openai/m",
+      allowlist: ["openai/m"],
+    });
+    publish(db, [
+      ["openai", "configured"],
+      ["scripted", "configured"],
+    ]);
+    expect((await names(base)).models).toEqual(["openai"]);
+    expect((await names(base, "?all=1")).models).toEqual(["openai", "scripted"]);
+    await call(base, "alice", "PUT", "/admin/profiles/t", {
+      definition: { defaultModel: "scripted/m" },
+    });
+    expect((await names(base)).models).toEqual(["openai", "scripted"]);
+    const second = await start(["alice"]);
+    publish(second.db, [
+      ["openai", "configured"],
+      ["scripted", "configured"],
+    ]);
+    expect((await names(second.base)).models).toEqual(["openai", "scripted"]);
   });
 
   it("settings and profile writes check models against the catalog only once one is published", async () => {

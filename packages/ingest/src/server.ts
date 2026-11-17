@@ -54,6 +54,8 @@ import {
   UUID,
 } from "@pi-durable-k8s/session-core";
 import type {
+  ModelCatalogEntry,
+  ModelProviderStatus,
   Authenticator,
   ModelChoice,
   ModelPolicy,
@@ -252,6 +254,49 @@ async function publishedModelKeys(deps: IngestDeps): Promise<string[] | undefine
   return capabilities?.models === undefined ? undefined : catalogKeys(capabilities.models);
 }
 
+/**
+ * The catalog as the console should offer it: only providers whose credential is `configured` or `unknown` (unknown
+ * may be real), and `scripted` only when `used` (the settings' and profiles' models) names it. When no provider's hint
+ * is known the whole catalog goes out, with a `reason`, so the picker is never empty for want of a hint. `all` lifts
+ * every filter. Validation of writes never uses this view (docs/decisions/0025-model-catalog.md).
+ */
+export function filterModelCatalog(
+  models: readonly ModelCatalogEntry[],
+  providers: readonly ModelProviderStatus[],
+  all: boolean,
+  used: readonly string[],
+): {
+  models: ModelCatalogEntry[];
+  providers: ModelProviderStatus[];
+  filtered: boolean;
+  reason?: string;
+} {
+  if (all) return { models: [...models], providers: [...providers], filtered: false };
+  const known = providers.some(
+    (p) =>
+      p.credential !== "unknown" && !(p.provider === "scripted" && p.credential === "configured"),
+  );
+  if (!known) {
+    return {
+      models: [...models],
+      providers: [...providers],
+      filtered: false,
+      reason:
+        "no credential hint is known (the orchestrator has no OneCLI admin key, or listing the secrets failed), so every provider is shown",
+    };
+  }
+  const scriptedUsed = used.some((entry) => entry.startsWith("scripted/"));
+  const kept = providers.filter(
+    (p) => p.credential !== "missing" && (p.provider !== "scripted" || scriptedUsed),
+  );
+  const names = new Set(kept.map((p) => p.provider));
+  return {
+    models: models.filter((m) => names.has(m.provider)),
+    providers: kept,
+    filtered: true,
+  };
+}
+
 async function handleAdminRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -313,17 +358,21 @@ async function handleAdminRoutes(
       return;
     }
     const capabilities = await readCapabilities(deps.pool);
-    sendJson(
-      res,
-      200,
-      capabilities?.models === undefined
-        ? { models: [], providers: [], source: "none" }
-        : {
-            models: capabilities.models,
-            providers: capabilities.modelProviders ?? [],
-            source: "orchestrator",
-          },
-    );
+    if (capabilities?.models === undefined) {
+      sendJson(res, 200, { models: [], providers: [], source: "none", filtered: false });
+      return;
+    }
+    const all = ["1", "true"].includes(url.searchParams.get("all") ?? "");
+    const providers = capabilities.modelProviders ?? [];
+    // `scripted` is a test provider: offered only where the settings or a profile already name it.
+    const used = [deps.settings.get().defaultModel, ...deps.settings.get().allowlist];
+    for (const profile of (await readProfiles(deps.pool)).profiles) {
+      if (profile.definition.defaultModel !== undefined) used.push(profile.definition.defaultModel);
+    }
+    sendJson(res, 200, {
+      ...filterModelCatalog(capabilities.models, providers, all, used),
+      source: "orchestrator",
+    });
     return;
   }
   if (parts[1] === "mcp-servers") {
