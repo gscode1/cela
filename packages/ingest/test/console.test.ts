@@ -29,7 +29,11 @@ afterEach(async () => {
   await rm(join(dir, "..", "console-secret.txt"), { force: true });
 });
 
-async function start(consoleDir: string | undefined, ready = true): Promise<string> {
+async function start(
+  consoleDir: string | undefined,
+  ready = true,
+  consoleCatalogs?: "manage" | "readOnly",
+): Promise<string> {
   const pool = { query: () => Promise.resolve({ rows: [] }) } as unknown as pg.Pool;
   server = createIngestServer({
     pool,
@@ -43,6 +47,7 @@ async function start(consoleDir: string | undefined, ready = true): Promise<stri
     settings: {} as SettingsView,
     admins: ["alice"],
     consoleDir,
+    consoleCatalogs,
     schemaReady: () => ready,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
@@ -168,6 +173,34 @@ describe("console serving", () => {
     const base = await start(dir);
     expect((await fetch(`${base}/consolex/`)).status).toBe(401);
     expect((await fetch(`${base}/index.html`)).status).toBe(401);
+  });
+});
+
+describe("console config", () => {
+  it("answers /console/config.json without a token, before the schema is ready, with the headers", async () => {
+    const base = await start(dir, false);
+    const res = await fetch(`${base}/console/config.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.json()).toEqual({ catalogs: "manage" });
+    expect(headersOf(res)).toEqual(HARDENED);
+  });
+
+  it("reports readOnly when configured", async () => {
+    const base = await start(dir, true, "readOnly");
+    expect(await (await fetch(`${base}/console/config.json`)).json()).toEqual({
+      catalogs: "readOnly",
+    });
+  });
+
+  it("is a 404 without a console, and HEAD has no body", async () => {
+    expect((await fetch(`${await start(undefined)}/console/config.json`)).status).toBe(404);
+    server?.closeAllConnections();
+    server?.close();
+    const base = await start(dir);
+    const head = await fetch(`${base}/console/config.json`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
   });
 });
 

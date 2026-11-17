@@ -96,6 +96,10 @@ no secret: the operator's token goes from the browser to `/admin/*` only. Other 
 - `/console` redirects (`308`) to `/console/`. A path with a file extension is an asset: it is served from the directory
   or is `404`, never `index.html`. Any other path under `/console/` is a client-side route and gets `index.html`. A path
   that would leave the directory (`..`, a NUL or a backslash, also percent-encoded) is `404`.
+- `GET /console/config.json` is answered by ingest, never from a file, with `{ "catalogs": "manage" | "readOnly" }` (from
+  `PI_CONSOLE_CATALOGS`, the chart's `console.catalogs`; default `manage`; any other value stops ingest at start). It holds no
+  secret and needs no token. `readOnly` hides the write controls of the Skills and MCP servers screens and nothing more:
+  the admin API accepts writes from any admin either way.
 - Console responses and every `/admin/*` response, including `401`, `403` and errors, carry `Cache-Control: no-store`,
   `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` and
   `Referrer-Policy: no-referrer`. The console contains no inline script or style.
@@ -323,7 +327,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
   owner-only.
 - The chart's `models` values (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
-  list and fallback; `PI_CONSOLE_DIR` (set only with `console.enabled`) names the console bundle; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
+  list and fallback; `PI_CONSOLE_DIR` (set only with `console.enabled`) names the console bundle and `PI_CONSOLE_CATALOGS` (`console.catalogs`, `manage` or `readOnly`) its catalog mode; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 
 ## Known limits

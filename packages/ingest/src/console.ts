@@ -6,6 +6,22 @@ import { extname, join, sep } from "node:path";
 /** The console is served under this prefix; the build's Vite `base` must match it. */
 export const CONSOLE_PREFIX = "/console";
 
+/**
+ * Whether the console's skills and MCP screens offer writes (`manage`) or only browsing (`readOnly`). This gates the UI
+ * only: the admin API accepts writes from any admin either way (docs/admin-ui-plan.md, "Later: a catalog repository").
+ */
+export type ConsoleCatalogs = "manage" | "readOnly";
+
+/** Reads `PI_CONSOLE_CATALOGS`: unset or blank is `manage`; anything but the two names is a startup error. */
+export function parseConsoleCatalogs(value: string | undefined): ConsoleCatalogs {
+  const text = value?.trim() ?? "";
+  if (text === "" || text === "manage") return "manage";
+  if (text === "readOnly") return "readOnly";
+  throw new Error('PI_CONSOLE_CATALOGS must be "manage" or "readOnly"');
+}
+
+const CONFIG_PATH = `${CONSOLE_PREFIX}/config.json`;
+
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -76,6 +92,7 @@ export async function serveConsole(
   res: ServerResponse,
   pathname: string,
   consoleDir: string | undefined,
+  catalogs: ConsoleCatalogs = "manage",
 ): Promise<void> {
   setConsoleHeaders(res);
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -84,6 +101,16 @@ export async function serveConsole(
   }
   if (consoleDir === undefined) {
     plain(res, 404, "not found");
+    return;
+  }
+  // The page's one runtime setting, answered here (so before the bearer gate) and never from a file. It holds no secret.
+  if (pathname === CONFIG_PATH) {
+    const body = JSON.stringify({ catalogs });
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": String(Buffer.byteLength(body)),
+    });
+    res.end(req.method === "HEAD" ? undefined : body);
     return;
   }
   // `/console` has no trailing slash: relative asset URLs would resolve against `/`.

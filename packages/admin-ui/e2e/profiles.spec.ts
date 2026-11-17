@@ -241,4 +241,53 @@ test.describe("session profiles", () => {
     await expect(page.getByTestId("saved")).toContainText("Published version 3");
     expect((await getProfile(page, name)).definition).toEqual({ instructions: "mine" });
   });
+
+  test("opens a profile from the pinSkill and addMcp links with a draft, and saves nothing", async ({
+    page,
+    request,
+  }) => {
+    const skill = unique("link");
+    const server = unique("linked");
+    const name = unique("target");
+    await api(
+      request,
+      "POST",
+      `/admin/skills/${skill}/versions`,
+      {
+        files: [
+          {
+            path: "SKILL.md",
+            content: `---\nname: ${skill}\ndescription: Linked\n---\nText.\n`,
+          },
+        ],
+      },
+      201,
+    );
+    await api(
+      request,
+      "PUT",
+      `/admin/mcp-servers/${server}`,
+      { url: "https://mcp.example.com/mcp", readOnly: true },
+      201,
+    );
+    await api(request, "PUT", `/admin/profiles/${name}`, { definition: { instructions: "x" } });
+
+    // The operator chooses the profile; the link's parameters travel on to it.
+    await signIn(page, `/console/profiles?pinSkill=${skill}@1&addMcp=${server}`);
+    await expect(page.getByTestId("choose-profile")).toContainText(`pin ${skill} v1`);
+    await page.getByRole("link", { name }).click();
+    await expect(page).toHaveURL(new RegExp(`/console/profiles/${name}$`));
+    await expect(page.getByTestId("skill-pin")).toContainText(`${skill}@v1`);
+    await expect(page.locator(`#mcp-${server}`)).toBeChecked();
+    await expect(publish(page)).toBeEnabled();
+    await shot(page, "profile-editor-from-pinskill-link");
+    // Nothing is written until the operator publishes.
+    expect((await getProfile(page, name)).currentVersion).toBe(1);
+
+    await publish(page).click();
+    await expect(page.getByTestId("saved")).toContainText("Published version 2");
+    const stored = await getProfile(page, name);
+    expect(stored.definition).toMatchObject({ mcpServers: [server] });
+    expect(stored.definition.skills).toMatchObject([{ name: skill, version: 1 }]);
+  });
 });

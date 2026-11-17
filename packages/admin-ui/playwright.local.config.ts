@@ -1,13 +1,16 @@
 import { defineConfig } from "@playwright/test";
 
 /**
- * The same specs against two local ingest servers on a fake in-memory settings table (e2e/local-server.mjs): one
- * with the console, one without. Needs `pnpm build` first (admin-ui and ingest) and a Chromium
+ * The same specs against local ingest servers on session-core's in-memory fake database (e2e/local-server.mjs):
+ * one with the console, one without, and two with the in-memory catalog fake in front (e2e/fake-admin.mjs), one in
+ * `console.catalogs: manage` and one in `readOnly` mode. The catalog specs run on those two only. Needs `pnpm build` first (admin-ui and ingest) and a Chromium
  * (`pnpm exec playwright install chromium`). Ports are fixed and local to this config; change them with
  * CONSOLE_LOCAL_PORT and CONSOLE_LOCAL_OFF_PORT if they clash.
  */
 const on = Number(process.env.CONSOLE_LOCAL_PORT ?? 18480);
 const off = Number(process.env.CONSOLE_LOCAL_OFF_PORT ?? 18481);
+const catalogs = Number(process.env.CONSOLE_LOCAL_CATALOGS_PORT ?? 18483);
+const readOnly = Number(process.env.CONSOLE_LOCAL_READONLY_PORT ?? 18482);
 process.env.CONSOLE_ADMIN_TOKEN = "local-admin-token";
 process.env.CONSOLE_NONADMIN_TOKEN = "local-owner-token";
 
@@ -32,8 +35,30 @@ export default defineConfig({
       url: `http://127.0.0.1:${String(off)}/healthz`,
       reuseExistingServer: false,
     },
+    {
+      command: "node --disable-warning=ExperimentalWarning e2e/local-server.mjs",
+      env: { PORT: String(catalogs), WITH_CONSOLE: "1", FAKE_ADMIN: "1" },
+      url: `http://127.0.0.1:${String(catalogs)}/healthz`,
+      reuseExistingServer: false,
+    },
+    {
+      command: "node --disable-warning=ExperimentalWarning e2e/local-server.mjs",
+      env: { PORT: String(readOnly), WITH_CONSOLE: "1", CATALOGS: "readOnly", FAKE_ADMIN: "1" },
+      url: `http://127.0.0.1:${String(readOnly)}/healthz`,
+      reuseExistingServer: false,
+    },
   ],
   projects: [
+    {
+      name: "catalogs",
+      testMatch: "catalogs.spec.ts",
+      use: { baseURL: `http://127.0.0.1:${String(catalogs)}`, trace: "retain-on-failure" },
+    },
+    {
+      name: "catalogs-readonly",
+      testMatch: "catalogs-readonly.spec.ts",
+      use: { baseURL: `http://127.0.0.1:${String(readOnly)}`, trace: "retain-on-failure" },
+    },
     {
       name: "enabled",
       testMatch: ["console.spec.ts", "settings.spec.ts", "profiles.spec.ts"],

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useAuth } from "@/auth";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { isConflict } from "@/lib/api";
 import { putProfile } from "@/lib/api/profiles";
 import type { ProfileDefinition, ProfileDetail as ProfileDetailData } from "@/lib/api/profiles";
 import { conflictKind } from "@/lib/conflict";
+import { applyIntent, describeIntent, hasIntent, intentFromSearch } from "@/lib/profile-links";
 import { formFromDefinition } from "@/lib/profile-form";
 import { keys, useProfileQuery, useProfilesQuery } from "@/lib/queries";
 import { useDraft } from "@/lib/use-draft";
@@ -77,6 +78,21 @@ function ProfileScreenFor({ name }: { name: string }) {
   const [tab, setTab] = useState<"edit" | "versions">("edit");
   const [saved, setSaved] = useState<string | undefined>(savedFromState(location.state));
   const stored = profile.data;
+  const [params, setParams] = useSearchParams();
+  const applied = useRef(false);
+
+  // `?pinSkill=` and `?addMcp=` from the skill and MCP screens: put the change in this profile's draft once, then drop
+  // the parameters so a reload does not add it again. The operator still has to publish.
+  useEffect(() => {
+    if (stored === undefined || applied.current) return;
+    const intent = intentFromSearch(params);
+    if (!hasIntent(intent)) return;
+    applied.current = true;
+    const base = draft ?? seedFor(stored);
+    setDraft({ ...base, form: applyIntent(base.form, intent) });
+    setSaved(`Draft prepared to ${describeIntent(intent)}. Review it and publish when ready.`);
+    setParams({}, { replace: true });
+  }, [stored, params, draft, setDraft, setParams]);
 
   const toggle = useMutation({
     mutationFn: (input: { enabled: boolean; revision: number }) =>

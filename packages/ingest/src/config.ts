@@ -1,4 +1,6 @@
 import { loadDatabaseTls, parseAdmins, settingsFromEnv } from "@pi-durable-k8s/session-core";
+import { parseConsoleCatalogs } from "./console.js";
+import type { ConsoleCatalogs } from "./console.js";
 import type { DatabaseTls, Settings } from "@pi-durable-k8s/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
@@ -26,6 +28,8 @@ export interface IngestConfig {
   admins: string[];
   /** Built console (`PI_CONSOLE_DIR`, set by the chart's `console.enabled`); undefined serves no console. */
   consoleDir: string | undefined;
+  /** `PI_CONSOLE_CATALOGS` (`manage` or `readOnly`, from the chart's `console.catalogs`). */
+  consoleCatalogs: ConsoleCatalogs;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -75,5 +79,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     seed: settingsFromEnv(env),
     admins: parseAdmins(env.PI_API_ADMINS),
     consoleDir: env.PI_CONSOLE_DIR?.trim() || undefined,
+    consoleCatalogs: parseConsoleCatalogs(env.PI_CONSOLE_CATALOGS),
   };
 }

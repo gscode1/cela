@@ -60,6 +60,8 @@ spec:
             {{- if .Values.console.enabled }}
             # The built console is in the image (images/ingest/Dockerfile); without this variable /console/ is a 404.
             - { name: PI_CONSOLE_DIR, value: /app/console }
+            # manage | readOnly: served to the page as /console/config.json; it hides write controls, the API is unchanged.
+            - { name: PI_CONSOLE_CATALOGS, value: {{ .Values.console.catalogs | quote }} }
             {{- end }}
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
