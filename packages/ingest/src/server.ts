@@ -4,8 +4,10 @@ import { URL } from "node:url";
 import type pg from "pg";
 import { orchestratorUrlFor } from "./config.js";
 import {
+  AdminConflictError,
   BodyError,
   BUILTIN_TOOL_NAMES,
+  buildZip,
   chooseModel,
   chooseRepo,
   createSession,
@@ -20,6 +22,7 @@ import {
   listSettingsHistory,
   mcpServerNameError,
   listSkillVersions,
+  parseExpectedRevision,
   profileNameError,
   putMcpServer,
   putSkillVersion,
@@ -29,6 +32,7 @@ import {
   readSkillVersion,
   SKILL_BODY_LIMIT,
   skillNameError,
+  verifySkillBundle,
   validateProfileDefinition,
   putProfile,
   readCapabilities,
@@ -58,6 +62,7 @@ import type {
   SkillVersionMeta,
   StoredMcpServer,
   StoredProfile,
+  StoredSettings,
 } from "@pi-durable-k8s/session-core";
 import { parseEventBody } from "./events.js";
 import { log } from "./log.js";
@@ -189,8 +194,48 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
 const HISTORY_DEFAULT = 50;
 const HISTORY_MAX = 500;
 
-/** `/admin/*`: only the owners in `PI_API_ADMINS` (403 for any other authenticated caller). */
+/**
+ * `/admin/*`: only the owners in `PI_API_ADMINS` (403 for any other authenticated caller). A write the stored state
+ * refuses (a stale `expectedRevision`, disabling the default profile) throws `AdminConflictError` from inside its
+ * transaction, which rolled back: it is a 409 here.
+ */
 async function handleAdmin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: IngestDeps,
+  principal: Principal,
+  url: URL,
+  parts: string[],
+): Promise<void> {
+  try {
+    await handleAdminRoutes(req, res, deps, principal, url, parts);
+  } catch (error) {
+    if (!(error instanceof AdminConflictError)) throw error;
+    sendJson(res, 409, { error: error.message });
+  }
+}
+
+/** `expectedRevision` taken out of a body, so the rest can go to a validator that refuses unknown keys. */
+function takeExpectedRevision(
+  body: Record<string, unknown>,
+): { expectedRevision: number | undefined; rest: Record<string, unknown> } | string {
+  const { expectedRevision, ...rest } = body;
+  const parsed = parseExpectedRevision(expectedRevision);
+  return typeof parsed === "string" ? parsed : { expectedRevision: parsed, rest };
+}
+
+/** The tools the profile validator accepts: what the orchestrator published, before it ever started the built-in names. */
+async function installedTools(
+  deps: IngestDeps,
+): Promise<{ tools: readonly string[]; source: "orchestrator" | "builtin" }> {
+  const capabilities = await readCapabilities(deps.pool);
+  if (capabilities === undefined) log("capabilities-missing", { using: "builtin tool names" });
+  return capabilities === undefined
+    ? { tools: BUILTIN_TOOL_NAMES, source: "builtin" }
+    : { tools: capabilities.tools, source: "orchestrator" };
+}
+
+async function handleAdminRoutes(
   req: IncomingMessage,
   res: ServerResponse,
   deps: IngestDeps,
@@ -237,6 +282,14 @@ async function handleAdmin(
     });
     return;
   }
+  if (parts[1] === "tools" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    sendJson(res, 200, await installedTools(deps));
+    return;
+  }
   if (parts[1] === "mcp-servers") {
     await handleAdminMcpServers(req, res, deps, principal, url, parts);
     return;
@@ -273,11 +326,7 @@ async function handleAdmin(
       sendJson(res, 404, { error: "settings are not seeded" });
       return;
     }
-    sendJson(res, 200, {
-      ...stored.settings,
-      updatedAt: stored.updatedAt.toISOString(),
-      updatedBy: stored.updatedBy,
-    });
+    sendJson(res, 200, settingsJson(stored));
     return;
   }
   if (parts[2] === undefined && method === "PUT") {
@@ -291,43 +340,36 @@ async function handleAdmin(
       }
       throw error;
     }
-    if (body.defaultProfile !== undefined) {
-      const problem = await defaultProfileProblem(deps.pool, body.defaultProfile);
-      if (problem !== undefined) {
-        sendJson(res, 400, { error: problem });
-        return;
-      }
+    const taken = takeExpectedRevision(body);
+    if (typeof taken === "string") {
+      sendJson(res, 400, { error: taken });
+      return;
     }
-    const stored = await updateSettings(deps.pool, body, principal.owner);
+    // The default-profile check runs inside the write transaction, under the lock that profile disables take.
+    const stored = await updateSettings(
+      deps.pool,
+      taken.rest,
+      principal.owner,
+      taken.expectedRevision,
+    );
     if (typeof stored === "string") {
       sendJson(res, 400, { error: stored });
       return;
     }
     await deps.settings.refresh();
-    sendJson(res, 200, {
-      ...stored.settings,
-      updatedAt: stored.updatedAt.toISOString(),
-      updatedBy: stored.updatedBy,
-    });
+    sendJson(res, 200, settingsJson(stored));
     return;
   }
   sendJson(res, 405, { error: "method not allowed" });
 }
 
-/** The default profile must exist and be open to new sessions, or every `POST /sessions` without `profile` would fail. */
-async function defaultProfileProblem(pool: pg.Pool, name: unknown): Promise<string | undefined> {
-  const nameError = profileNameError(name);
-  if (nameError !== undefined) return `defaultProfile: ${nameError}`;
-  let profile: StoredProfile | undefined;
-  try {
-    profile = await readProfile(pool, String(name));
-  } catch {
-    return `defaultProfile: profile "${String(name)}" is invalid`;
-  }
-  if (profile === undefined) return `defaultProfile: profile "${String(name)}" does not exist`;
-  return profile.enabledForNew
-    ? undefined
-    : `defaultProfile: profile "${String(name)}" is disabled for new sessions`;
+function settingsJson(stored: StoredSettings) {
+  return {
+    ...stored.settings,
+    revision: stored.revision,
+    updatedAt: stored.updatedAt.toISOString(),
+    updatedBy: stored.updatedBy,
+  };
 }
 
 function profileRef(profile: { name: string; version: number }): { name: string; version: number } {
@@ -362,6 +404,7 @@ function skillVersionJson(meta: SkillVersionMeta) {
     disableModelInvocation: meta.disableModelInvocation,
     size: meta.size,
     files: meta.files,
+    source: meta.source,
     createdAt: meta.createdAt.toISOString(),
     createdBy: meta.createdBy,
   };
@@ -428,7 +471,11 @@ async function handleAdminSkills(
     });
     return;
   }
-  if (parts[3] !== "versions" || parts.length > 5) {
+  if (
+    parts[3] !== "versions" ||
+    parts.length > 6 ||
+    (parts[5] !== undefined && parts[5] !== "zip")
+  ) {
     sendJson(res, 404, { error: "not found" });
     return;
   }
@@ -474,6 +521,34 @@ async function handleAdminSkills(
     sendJson(res, 400, { error: "version must be a positive integer" });
     return;
   }
+  if (parts[5] === "zip") {
+    const bundle = await readSkillBundle(deps.pool, name, version);
+    if (bundle === undefined) {
+      sendJson(res, 404, { error: "skill version not found" });
+      return;
+    }
+    const corrupt = verifySkillBundle(bundle);
+    if (corrupt !== undefined) {
+      log("skill-corrupt", { skill: name, version, message: corrupt });
+      sendJson(res, 409, { error: "the stored skill version is corrupt" });
+      return;
+    }
+    // Same paths and executable bits as the manifest: a re-upload of the unzipped files is the same digest.
+    const zip = buildZip(
+      bundle.files.map((file) => ({
+        path: file.path,
+        content: bundle.contents.get(file.path) ?? Buffer.alloc(0),
+        executable: file.executable,
+      })),
+    );
+    res.writeHead(200, {
+      "content-type": "application/zip",
+      "content-length": String(zip.length),
+      "content-disposition": `attachment; filename="${name}-v${String(version)}.zip"`,
+    });
+    res.end(zip);
+    return;
+  }
   if (url.searchParams.get("content") === "true") {
     const bundle = await readSkillBundle(deps.pool, name, version);
     if (bundle === undefined) {
@@ -501,6 +576,7 @@ function profileJson(stored: StoredProfile) {
   return {
     name: stored.name,
     currentVersion: stored.currentVersion,
+    revision: stored.revision,
     enabledForNew: stored.enabledForNew,
     definition: stored.definition,
     createdAt: stored.createdAt.toISOString(),
@@ -581,19 +657,33 @@ async function handleAdminProfiles(
       throw error;
     }
     for (const key of Object.keys(body)) {
-      if (key !== "definition" && key !== "enabledForNew") {
+      if (key !== "definition" && key !== "enabledForNew" && key !== "expectedRevision") {
         sendJson(res, 400, { error: `unknown field "${key.slice(0, 50)}"` });
         return;
       }
     }
-    // The installed tools, as the orchestrator published them; before it ever started, the built-in names.
-    const capabilities = await readCapabilities(deps.pool);
-    if (capabilities === undefined) log("capabilities-missing", { using: "builtin tool names" });
+    const taken = takeExpectedRevision(body);
+    if (typeof taken === "string") {
+      sendJson(res, 400, { error: taken });
+      return;
+    }
+    const installed = await installedTools(deps);
     const catalog = await readMcpServers(deps.pool);
-    const result = await putProfile(deps.pool, name, body, principal.owner, {
-      tools: capabilities?.tools ?? BUILTIN_TOOL_NAMES,
-      mcpServers: catalog.servers.map((stored) => stored.server.name),
-    });
+    const result = await putProfile(
+      deps.pool,
+      name,
+      {
+        ...taken.rest,
+        ...(taken.expectedRevision === undefined
+          ? {}
+          : { expectedRevision: taken.expectedRevision }),
+      },
+      principal.owner,
+      {
+        tools: installed.tools,
+        mcpServers: catalog.servers.map((stored) => stored.server.name),
+      },
+    );
     if (!result.ok) {
       sendJson(res, 400, { error: result.message });
       return;
@@ -610,6 +700,8 @@ async function handleAdminProfiles(
 function mcpServerJson(stored: StoredMcpServer) {
   return {
     ...stored.server,
+    revision: stored.revision,
+    source: stored.source,
     // The admin API never probes the network (ADR 0009): whether the host is also allowed in the OneCLI rules and the
     // egress policy is only seen when the orchestrator connects.
     reachability: "unknown",
@@ -691,7 +783,18 @@ async function handleAdminMcpServers(
       }
       throw error;
     }
-    const result = await putMcpServer(deps.pool, name, body, principal.owner);
+    const taken = takeExpectedRevision(body);
+    if (typeof taken === "string") {
+      sendJson(res, 400, { error: taken });
+      return;
+    }
+    const result = await putMcpServer(
+      deps.pool,
+      name,
+      taken.rest,
+      principal.owner,
+      taken.expectedRevision,
+    );
     if (typeof result === "string") {
       sendJson(res, 400, { error: result });
       return;
@@ -700,7 +803,16 @@ async function handleAdminMcpServers(
     return;
   }
   if (method === "DELETE") {
-    if (!(await deleteMcpServer(deps.pool, name, principal.owner))) {
+    // A DELETE has no body to speak of: the revision is a query parameter, `?expectedRevision=3`.
+    const asked = url.searchParams.get("expectedRevision");
+    const expected = parseExpectedRevision(
+      asked === null ? undefined : /^[0-9]{1,10}$/.test(asked) ? Number(asked) : asked,
+    );
+    if (typeof expected === "string") {
+      sendJson(res, 400, { error: expected });
+      return;
+    }
+    if (!(await deleteMcpServer(deps.pool, name, principal.owner, expected))) {
       sendJson(res, 404, { error: "server not found" });
       return;
     }
