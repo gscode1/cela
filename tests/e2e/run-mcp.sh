@@ -50,7 +50,7 @@ ingest_pod() {
 }
 api() { k exec -i "$(ingest_pod)" -c ingest -- node - call "$@" <"$here/client-4b.mjs"; }
 results() { k exec -i "$(ingest_pod)" -c ingest -- node - results "$@" <"$here/client-4b.mjs"; }
-sql() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 -c "$1"; }
+sql() { e2e_db -c "$1"; }
 orch_log() { k logs deploy/pi-orchestrator --tail=2000; }
 
 admin() { api alice "$@"; } # METHOD PATH [BODY]
@@ -224,8 +224,10 @@ t_history() {
 # default are independent of each other once add and profile are done (own sessions, they only read the catalog), so
 # they run side by side. Everything that edits the catalog or the profile (add, profile, edit, disable, unreachable,
 # history) is serial, around them.
+e2e_db_start
 e2e_serial add t_add
 e2e_serial profile t_profile
+
 e2e_parallel call:t_call default:t_default
 e2e_serial edit t_edit
 e2e_serial disable t_disable

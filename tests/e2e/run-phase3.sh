@@ -136,7 +136,7 @@ sandbox_uid() { k get pod "$1" -o jsonpath='{.metadata.uid}'; }
 pod_ready() { [[ $(k get pod "$1" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; }
 pod_replaced() { [[ -n $(sandbox_uid "$1" 2>/dev/null) && $(sandbox_uid "$1") != "$2" ]]; } # claim old-uid
 file_lines() { k exec "$1" -c sandboxd -- sh -c "wc -l < $2" | tr -d ' '; }
-pg() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 "$@"; }
+pg() { e2e_db "$@"; }
 pg_seq() { pg -c 'select next_seq from durable.durable_metadata'; }
 seq_advancing() {
   local s1 s2
@@ -442,15 +442,15 @@ t_isolation() {
 }
 
 # ---------------------------------------------------------------- setup
-log "setup: wait for CNPG and the orchestrator (overlay and code were pushed by run.sh)"
+log "setup: wait for the database and the orchestrator (overlay and code were pushed by run.sh)"
 # SKIP_SETUP=1 reuses what is deployed (debugging aid).
+e2e_db_start
 if [[ ${SKIP_SETUP:-0} == 1 ]]; then wait_owner; else
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
   echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
   exit 1
 }
 "$root/deploy/gen-api-secret.sh" >/dev/null
-k wait --for=condition=Ready cluster.postgresql.cnpg.io/pi-pg --timeout=300s >/dev/null
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 wait_owner
 fi

@@ -72,7 +72,7 @@ sql() {
   if [[ $mode == local ]]; then
     psql "$LOCAL_DB_URL" -At -v ON_ERROR_STOP=1 -c "$1"
   else
-    k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 -c "$1"
+    e2e_db -c "$1"
   fi
 }
 orch_restarts() {
@@ -294,6 +294,8 @@ t_real_model() {
 # nothing in this suite changes), so they run side by side. disallowed compares the table-wide session count before and
 # after, so no other test may create a session meanwhile; real-model scans the orchestrator log for token-shaped text
 # and spends model turns. Both run alone, afterwards.
+[[ ${mode:-cluster} == local ]] || e2e_db_start
+
 e2e_parallel models:t_models failed-401:t_failed_401
 e2e_serial disallowed t_disallowed
 if [[ ${REAL_MODEL:-0} == 1 ]]; then e2e_serial real-model t_real_model; fi

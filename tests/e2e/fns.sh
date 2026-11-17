@@ -119,3 +119,53 @@ e2e_parallel() { # name:function ...
   done
   [[ ${#_e2e_names[@]} -eq 0 ]] || e2e_settle
 }
+
+# A client only: the URI Secret is the sole database-backend contract. No credentials cross kubectl's output.
+# A dedicated client label keeps workload selectors from mistaking this Pod for an orchestrator.
+e2e_db_start() {
+  if ! k get pod e2e-psql >/dev/null 2>&1; then
+    k create -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-psql
+  labels:
+    app.kubernetes.io/name: e2e-db-client
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: psql
+      image: postgres:17-bookworm
+      command: [sleep, "infinity"]
+      env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef: {name: "${E2E_DB_SECRET:-pi-pg-app}", key: "${E2E_DB_URI_KEY:-uri}"}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: "1", memory: 128Mi}
+YAML
+  fi
+  k wait --for=condition=Ready pod/e2e-psql --timeout=300s >/dev/null
+  local i
+  for i in {1..60}; do
+    if e2e_db -c 'select 1' >/dev/null 2>&1; then return 0; fi
+    sleep 5
+  done
+  echo "database URI did not become ready" >&2
+  return 1
+}
+
+e2e_db() {
+  # shellcheck disable=SC2016
+  k exec -i e2e-psql -c psql -- sh -c 'exec psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 "$@"' sh "$@"
+}

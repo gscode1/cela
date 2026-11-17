@@ -50,7 +50,7 @@ ingest_pod() {
 api() { k exec -i "$(ingest_pod)" -c ingest -- node - call "$@" <"$here/client-4b.mjs"; }
 stream_has() { k exec -i "$(ingest_pod)" -c ingest -- node - stream "$@" <"$here/client-4b.mjs"; }
 answer_has() { k exec -i "$(ingest_pod)" -c ingest -- node - answer "$@" <"$here/client-4b.mjs" | cut -d" " -f1; }
-sql() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 -c "$1"; }
+sql() { e2e_db -c "$1"; }
 orch_log() { k logs deploy/pi-orchestrator --tail=2000; }
 
 # OneCLI management API through the orchestrator pod, which holds the key. Prints the response body.
@@ -275,6 +275,8 @@ t_delete() {
 # no-repo and clone-push use their own sessions and run side by side. The rest is one chain on the shared repo session
 # that clone-push creates (restart-skip, then scope, then delete, which ends it), and restart-skip scales the
 # orchestrator: serial, in this order, after them.
+[[ ${mode:-cluster} == local ]] || e2e_db_start
+
 e2e_parallel no-repo:t_no_repo clone-push:t_clone_push
 e2e_serial restart-skip t_restart_skip
 e2e_serial scope t_scope

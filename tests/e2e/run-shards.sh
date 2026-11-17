@@ -35,7 +35,7 @@ now() { date +%s; }
 # shellcheck source=fns.sh
 . "$here/fns.sh"
 
-pg() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 "$@"; }
+pg() { e2e_db "$@"; }
 
 # ---------------------------------------------------------------- shard names (docs/decisions/0017)
 deploy_of() { if [[ $1 -eq 0 ]]; then echo pi-orchestrator; else echo "pi-orchestrator-$1"; fi; }
@@ -410,7 +410,7 @@ log "setup: wait for CNPG, both orchestrator shards and ingest (stack, shard 1 a
   exit 1
 }
 "$root/deploy/gen-api-secret.sh" >/dev/null
-k wait --for=condition=Ready cluster.postgresql.cnpg.io/pi-pg --timeout=300s >/dev/null
+e2e_db_start
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 k rollout status deployment/pi-orchestrator-1 --timeout=240s >/dev/null
 k rollout status deployment/pi-ingest --timeout=240s >/dev/null
