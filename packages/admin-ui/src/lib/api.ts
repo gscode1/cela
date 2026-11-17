@@ -6,6 +6,8 @@ export interface AdminSettings {
   maxReasoning: string | null;
   defaultProfile: string | null;
   turnBudget: number;
+  /** Goes back as `expectedRevision` on the next write (docs/decisions/0023-admin-revisions.md). */
+  revision: number;
   updatedAt: string;
   updatedBy: string;
 }
@@ -45,7 +47,11 @@ export async function adminFetch<T>(
   const res = await fetch(path, {
     ...init,
     credentials: "omit",
-    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+      ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+    },
   });
   if (!res.ok) throw new ApiError(res.status, await errorText(res));
   return (await res.json()) as T;
@@ -53,6 +59,16 @@ export async function adminFetch<T>(
 
 export function getSettings(token: string, signal?: AbortSignal): Promise<AdminSettings> {
   return adminFetch<AdminSettings>(token, "/admin/settings", signal ? { signal } : {});
+}
+
+/** A write with a JSON body (`PUT`); the caller puts `expectedRevision` in it. */
+export function adminPut<T>(token: string, path: string, body: unknown): Promise<T> {
+  return adminFetch<T>(token, path, { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** True for the `409` of a write the stored state refuses (a stale revision, or disabling the default profile). */
+export function isConflict(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409;
 }
 
 /** What the sign-in screen says for a failed check; both are about the token, not the network. */
