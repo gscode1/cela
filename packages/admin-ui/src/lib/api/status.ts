@@ -29,19 +29,83 @@ export interface ProbeAnswer {
   state: string;
 }
 
-/** Asks shard 0's orchestrator to run the isolation probe again (`202`; `503` before shard 0 has published). */
+/** Asks the first shard to run the isolation probe again (`202`; `503` before shard 0 has published). */
 export async function requestProbe(token: string): Promise<ProbeAnswer> {
   const res = await adminRequest(token, "/admin/status/probe", { method: "POST" });
   return (await res.json()) as ProbeAnswer;
 }
 
-/** What the observed-runtime cell says: `null` and the empty string are different facts. */
-export function observedRuntimeText(value: string | null): string {
-  if (value === null) return "not observed yet";
-  if (value === "") return "node default (no runtimeClassName)";
-  return value;
+/** A runtime for a sentence: the node default has no name, and gVisor has a capital V. */
+export function runtimeName(value: string): string {
+  if (value === "") return "the node default runtime";
+  return /^(gvisor|runsc)$/i.test(value) ? "gVisor" : value;
 }
 
-export function configuredRuntimeText(value: string): string {
-  return value === "" ? "none set (node default)" : value;
+/** The Runtime cell: the value, and only when it differs from the configured one, both. `null` and `""` differ. */
+export function runtimeText(shard: Pick<ShardStatus, "configuredRuntime" | "observedRuntime">): {
+  text: string;
+  mismatch: boolean;
+} {
+  const { configuredRuntime, observedRuntime } = shard;
+  const plain = (value: string): string => (value === "" ? "node default" : value);
+  if (observedRuntime === null) return { text: "not observed yet", mismatch: false };
+  if (observedRuntime !== configuredRuntime)
+    return {
+      text: `configured ${plain(configuredRuntime)}, observed ${plain(observedRuntime)}`,
+      mismatch: true,
+    };
+  return { text: plain(observedRuntime), mismatch: false };
 }
+
+export const POLICY_TEXT: Readonly<Record<NetworkPolicyState, string>> = {
+  enforced: "enforced",
+  "not-enforced": "not enforced",
+  unknown: "not checked yet",
+  running: "checking",
+  inconclusive: "inconclusive",
+};
+
+export interface IsolationSummary {
+  /** Every shard enforces the network policy and runs the runtime it is configured with. */
+  healthy: boolean;
+  /** One line per problem, naming the shard when there is more than one. */
+  problems: string[];
+  /** A probe is running: not a problem, but not healthy yet either. */
+  checking: boolean;
+  /** The runtimes the sandboxes run under, for the healthy sentence. */
+  runtimes: string[];
+}
+
+export function summarizeIsolation(shards: readonly ShardStatus[]): IsolationSummary {
+  const problems: string[] = [];
+  const several = shards.length > 1;
+  for (const shard of shards) {
+    const who = several ? `Shard ${String(shard.shard)}: ` : "";
+    const runtime = runtimeText(shard);
+    if (shard.observedRuntime === null)
+      problems.push(`${who}no sandbox has started yet, so its runtime is not verified.`);
+    else if (runtime.mismatch) problems.push(`${who}${runtime.text}.`);
+    if (shard.networkPolicy === "not-enforced")
+      problems.push(`${who}network isolation is not enforced.`);
+    else if (shard.networkPolicy === "unknown")
+      problems.push(`${who}network isolation has not been checked since the last start.`);
+    else if (shard.networkPolicy === "inconclusive")
+      problems.push(`${who}the network isolation check was inconclusive.`);
+  }
+  const checking = shards.some((shard) => shard.networkPolicy === "running");
+  const runtimes = [
+    ...new Set(
+      shards.flatMap((shard) => (shard.observedRuntime === null ? [] : [shard.observedRuntime])),
+    ),
+  ];
+  return {
+    healthy: shards.length > 0 && problems.length === 0 && !checking,
+    problems,
+    checking,
+    runtimes,
+  };
+}
+
+/** The "checked" time of a policy result is worth a word only when it is old. */
+export const isStale = (iso: string, now: Date = new Date()): boolean =>
+  now.getTime() - new Date(iso).getTime() > 86_400_000;

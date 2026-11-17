@@ -552,63 +552,117 @@ test.describe("MCP servers", () => {
   });
 });
 
-test.describe("shard status", () => {
+test.describe("isolation", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("says so when there are no reports", async ({ page, request }) => {
-    await request.put("/__fake/status", { data: { shards: [] } });
-    await signInAndGo(page, "/console/status");
-    await expect(page.getByText("No reports yet.")).toBeVisible();
-    await expect(page.getByRole("table")).toHaveCount(0);
-    // Nothing to probe yet: the API answers 503 and the console shows it.
-    await page.getByRole("button", { name: "Run the isolation probe again" }).click();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "has not published a status row yet" }),
-    ).toBeVisible();
+  const report = (over: Record<string, unknown> = {}) => ({
+    shard: 0,
+    configuredRuntime: "gvisor",
+    observedRuntime: "gvisor",
+    networkPolicy: "enforced",
+    networkPolicyCheckedAt: new Date().toISOString(),
+    networkPolicyDetail: null,
+    updatedAt: new Date().toISOString(),
+    ...over,
   });
 
-  test("tells null (not observed) from the empty string (node default) and shows unknown policy", async ({
+  test("says so in one sentence when there are no reports", async ({ page, request }) => {
+    await request.put("/__fake/status", { data: { shards: [] } });
+    await signInAndGo(page, "/console/status");
+    await expect(page.getByRole("heading", { name: "Isolation" })).toBeVisible();
+    await expect(page.getByText("No report yet \u2014 the runtime has not started.")).toBeVisible();
+    await expect(page.getByRole("table")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Re-check network isolation" })).toHaveCount(0);
+  });
+
+  test("healthy: one green line, the table collapsed under Details and no Shard column for one shard", async ({
     page,
     request,
   }) => {
+    await request.put("/__fake/status", { data: { shards: [report()] } });
+    await signInAndGo(page, "/console/status");
+    await expect(page.getByTestId("isolation-ok")).toHaveText(
+      "Sandboxes run under gVisor and network isolation is enforced.",
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("table")).toBeHidden();
+    await shot(page, "isolation-healthy.png");
+    await page.getByText("Details", { exact: true }).click();
+    const row = page.getByTestId("shard-0");
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("gvisor");
+    await expect(row).toContainText("just now");
+    await expect(page.getByRole("columnheader", { name: "Shard" })).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Last report" })).toBeVisible();
+    // A fresh check needs no timestamp of its own.
+    await expect(row).not.toContainText("checked");
+    await expect(page.getByRole("button", { name: "Re-check network isolation" })).toHaveAttribute(
+      "title",
+      "Takes up to a minute.",
+    );
+    for (const gone of ["Asks shard 0", "This page follows", "runtimeClassName"])
+      await expect(page.getByText(gone)).toHaveCount(0);
+  });
+
+  test("a problem: the alert names the shard, the table is open and mismatches read plainly", async ({
+    page,
+    request,
+  }) => {
+    const old = new Date(Date.now() - 3 * 86_400_000).toISOString();
     await request.put("/__fake/status", {
       data: {
         shards: [
-          {
-            shard: 0,
-            configuredRuntime: "gvisor",
+          report({ networkPolicyCheckedAt: old }),
+          report({
+            shard: 1,
+            observedRuntime: "",
+            networkPolicy: "not-enforced",
+            networkPolicyDetail: { state: "not-enforced", reason: "egress to 10.0.0.1 succeeded" },
+          }),
+          report({
+            shard: 2,
+            configuredRuntime: "",
             observedRuntime: null,
             networkPolicy: "unknown",
-            networkPolicyCheckedAt: null,
-            networkPolicyDetail: null,
-            updatedAt: "2026-11-17T00:00:00.000Z",
-          },
-          {
-            shard: 1,
-            configuredRuntime: "",
-            observedRuntime: "",
-            networkPolicy: "unknown",
-            networkPolicyCheckedAt: null,
-            networkPolicyDetail: null,
-            updatedAt: "2026-11-17T00:01:00.000Z",
-          },
+          }),
         ],
       },
     });
     await signInAndGo(page, "/console/status");
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText("Shard 1: configured gvisor, observed node default.");
+    await expect(alert).toContainText("Shard 1: network isolation is not enforced.");
+    await expect(alert).toContainText("Shard 2: no sandbox has started yet");
+    await expect(page.getByTestId("isolation-ok")).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Shard" })).toBeVisible();
     const first = page.getByTestId("shard-0");
-    await expect(first).toContainText("gvisor");
-    await expect(first).toContainText("not observed yet");
-    await expect(first).toContainText("unknown");
-    await expect(first).toContainText("2026-11-17T00:00:00.000Z");
-    const second = page.getByTestId("shard-1");
-    await expect(second).toContainText("node default (no runtimeClassName)");
-    await expect(second).not.toContainText("not observed yet");
-    await shot(page, "shard-status.png");
-
-    await page.getByRole("button", { name: "Run the isolation probe again" }).click();
-    await expect(page.getByText("Probe requested.")).toBeVisible();
     await expect(first).toContainText("enforced");
-    await expect(first).not.toContainText("the isolation probe has not run");
+    // An old check shows when it ran.
+    await expect(first).toContainText("checked");
+    const second = page.getByTestId("shard-1");
+    await expect(second).toContainText("configured gvisor, observed node default");
+    await expect(second).toContainText("not enforced");
+    await expect(second).toContainText("egress to 10.0.0.1 succeeded");
+    const third = page.getByTestId("shard-2");
+    await expect(third).toContainText("not observed yet");
+    await expect(third).toContainText("not checked yet");
+    await expect(page.getByText("runtimeClassName")).toHaveCount(0);
+    await shot(page, "isolation-problem.png");
+  });
+
+  test("re-checking turns a not-yet-checked report into the healthy line", async ({
+    page,
+    request,
+  }) => {
+    await request.put("/__fake/status", {
+      data: { shards: [report({ networkPolicy: "unknown", networkPolicyCheckedAt: null })] },
+    });
+    await signInAndGo(page, "/console/status");
+    await expect(page.getByRole("alert")).toContainText(
+      "network isolation has not been checked since the last start.",
+    );
+    await page.getByRole("button", { name: "Re-check network isolation" }).click();
+    await expect(page.getByTestId("isolation-ok")).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 });

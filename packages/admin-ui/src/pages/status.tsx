@@ -1,32 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth";
+import { Time } from "@/components/time";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
 import {
-  configuredRuntimeText,
   getStatus,
-  observedRuntimeText,
+  isStale,
+  POLICY_TEXT,
   requestProbe,
+  runtimeName,
+  runtimeText,
+  summarizeIsolation,
 } from "@/lib/api/status";
 import type { ShardStatus } from "@/lib/api/status";
 
 function PolicyCell({ shard }: { shard: ShardStatus }) {
   return (
     <div className="flex flex-col gap-1">
-      <Badge variant={shard.networkPolicy === "not-enforced" ? "destructive" : "secondary"}>
-        {shard.networkPolicy}
+      <Badge
+        className="self-start"
+        variant={shard.networkPolicy === "not-enforced" ? "destructive" : "secondary"}
+      >
+        {POLICY_TEXT[shard.networkPolicy]}
       </Badge>
-      {shard.networkPolicy === "unknown" && (
+      {shard.networkPolicyCheckedAt !== null && isStale(shard.networkPolicyCheckedAt) && (
         <span className="text-xs text-muted-foreground">
-          the isolation probe has not run since the last start
-        </span>
-      )}
-      {shard.networkPolicyCheckedAt !== null && (
-        <span className="text-xs text-muted-foreground">
-          checked {shard.networkPolicyCheckedAt}
+          checked <Time value={shard.networkPolicyCheckedAt} />
         </span>
       )}
       {shard.networkPolicyDetail !== null && (
@@ -36,7 +38,52 @@ function PolicyCell({ shard }: { shard: ShardStatus }) {
   );
 }
 
-/** Last reports of the orchestrator shards, as text. Nothing here is a heartbeat: rows persist through downtime. */
+function ShardTable({ shards }: { shards: readonly ShardStatus[] }) {
+  const several = shards.length > 1;
+  return (
+    <Table>
+      <thead>
+        <tr>
+          {several && <Th>Shard</Th>}
+          <Th>Runtime</Th>
+          <Th>Network isolation</Th>
+          <Th>Last report</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {shards.map((shard) => {
+          const runtime = runtimeText(shard);
+          return (
+            <tr key={shard.shard} data-testid={`shard-${String(shard.shard)}`}>
+              {several && <Td>{shard.shard}</Td>}
+              <Td className={runtime.mismatch ? "font-medium text-destructive" : undefined}>
+                {runtime.text}
+              </Td>
+              <Td>
+                <PolicyCell shard={shard} />
+              </Td>
+              <Td>
+                <Time value={shard.updatedAt} />
+              </Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </Table>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      role="status"
+      aria-label="Checking"
+      className="inline-block size-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+    />
+  );
+}
+
+/** Whether sandboxes are isolated, from the last report of each shard. A healthy answer is one line. */
 export function ShardStatusPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -54,76 +101,71 @@ export function ShardStatusPage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["status"] }),
   });
   const shards = status.data?.shards ?? [];
+  const summary = summarizeIsolation(shards);
+  const checking = summary.checking || probe.isPending;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Shard status</CardTitle>
+        <CardTitle>Isolation</CardTitle>
         <CardDescription>
-          The last report each orchestrator shard published. The publish time is the last start or
-          attach write, not a heartbeat, and a row stays through downtime, so it may be stale. A
-          configured runtime or an unknown or inconclusive policy does not prove isolation.
+          Whether sandboxes are walled off from the node and the network.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {status.isError && <Alert variant="destructive">{status.error.message}</Alert>}
         {status.isSuccess && shards.length === 0 && (
-          <Alert>
-            No reports yet. No shard has published its status, which is not the same as verified
-            isolation.
-          </Alert>
+          <p className="text-sm">No report yet {"—"} the runtime has not started.</p>
         )}
-        {shards.length > 0 && (
-          <Table>
-            <thead>
-              <tr>
-                <Th>Shard</Th>
-                <Th>Configured runtime</Th>
-                <Th>Observed sandbox runtime</Th>
-                <Th>Network policy</Th>
-                <Th>Published</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {shards.map((shard) => (
-                <tr key={shard.shard} data-testid={`shard-${String(shard.shard)}`}>
-                  <Td>{shard.shard}</Td>
-                  <Td>{configuredRuntimeText(shard.configuredRuntime)}</Td>
-                  <Td>{observedRuntimeText(shard.observedRuntime)}</Td>
-                  <Td>
-                    <PolicyCell shard={shard} />
-                  </Td>
-                  <Td>{shard.updatedAt}</Td>
-                </tr>
+        {summary.problems.length > 0 && (
+          <Alert variant="destructive">
+            <ul className="flex flex-col gap-1">
+              {summary.problems.map((problem) => (
+                <li key={problem}>{problem}</li>
               ))}
-            </tbody>
-          </Table>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void status.refetch()}
-            disabled={status.isFetching}
-          >
-            Refresh
-          </Button>
-          <Button size="sm" onClick={() => probe.mutate()} disabled={probe.isPending}>
-            Run the isolation probe again
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            Asks shard 0 to re-measure the network policy, for example after a CNI or policy change.
-            It takes seconds to about a minute.
-          </span>
-        </div>
-        {probe.isError && <Alert variant="destructive">{probe.error.message}</Alert>}
-        {probe.isSuccess && (
-          <Alert>
-            {probe.data.requested
-              ? "Probe requested. This page follows the state until it leaves running."
-              : `No new probe was queued: one is already ${probe.data.state}.`}
+            </ul>
           </Alert>
         )}
+        {summary.healthy && (
+          <>
+            <p
+              className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
+              data-testid="isolation-ok"
+            >
+              Sandboxes run under {summary.runtimes.map(runtimeName).join(" and ")} and network
+              isolation is enforced.
+            </p>
+            <details>
+              <summary className="cursor-pointer text-sm font-medium">Details</summary>
+              <div className="mt-2">
+                <ShardTable shards={shards} />
+              </div>
+            </details>
+          </>
+        )}
+        {!summary.healthy && shards.length > 0 && <ShardTable shards={shards} />}
+        {shards.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => probe.mutate()}
+              disabled={probe.isPending}
+              title="Takes up to a minute."
+            >
+              Re-check network isolation
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void status.refetch()}
+              disabled={status.isFetching}
+            >
+              Refresh
+            </Button>
+            {checking && <Spinner />}
+          </div>
+        )}
+        {probe.isError && <Alert variant="destructive">{probe.error.message}</Alert>}
       </CardContent>
     </Card>
   );
