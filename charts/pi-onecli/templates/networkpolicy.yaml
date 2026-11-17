@@ -2,7 +2,7 @@
 The OneCLI pods of release {{ .Values.release }} (upstream chart labels: app.kubernetes.io/name=onecli, instance=<release>,
 component = api | web | gateway | migrations | gateway-ca-generate). Everything is denied first; what follows is the whole
 allow list. The management API on :10256 accepts sign-ups from anyone who reaches it, and an organization created that
-way is not covered by our host rules, so who may reach it is the security boundary (docs/decisions/0021-bundled-onecli.md).
+way is not covered by our host rules, so who may reach it is the security boundary (docs/decisions/0022-bundled-onecli.md).
 */ -}}
 {{- $r := .Values.release -}}
 {{- $onecli := dict "app.kubernetes.io/name" "onecli" "app.kubernetes.io/instance" $r -}}

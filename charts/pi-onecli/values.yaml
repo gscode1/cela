@@ -1,4 +1,4 @@
-# Network policies for the bundled OneCLI (docs/decisions/0021-bundled-onecli.md). They exist from the first minute, before
+# Network policies for the bundled OneCLI (docs/decisions/0022-bundled-onecli.md). They exist from the first minute, before
 # charts/pi-durable (and its namespace-wide default deny) is installed, because OneCLI's management API accepts a sign-up
 # from anyone who can reach it and nothing in OneCLI can turn that off.
 

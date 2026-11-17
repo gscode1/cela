@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126) and slice 10 (bundled OneCLI; issue #136, [ADR 0021](decisions/0021-bundled-onecli.md); the real-model check is still open). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126) and slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md); the real-model check is still open). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -110,7 +110,7 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
   grants or host rules. `hack/onecli-bootstrap.sh` does this through OneCLI's API only, idempotently, right after the
   rollout (slice 10). **Sign-up cannot be closed**: OneCLI 2.20.0 has no switch, the first account does not own the
   install, and a second account gets an organization of its own whose agents are not bound by our host rules and use
-  the gateway as an open proxy ([spike](research/onecli-bundled-spike.md), [ADR 0021](decisions/0021-bundled-onecli.md)).
+  the gateway as an open proxy ([spike](research/onecli-bundled-spike.md), [ADR 0022](decisions/0022-bundled-onecli.md)).
   So the API and the dashboard are ClusterIP only with no Ingress, and `charts/pi-onecli` (installed before OneCLI) lets
   only the orchestrator and a bootstrap Pod reach the API. The orchestrator holds an **account-level** admin key
   (OneCLI has no scoped key type); only that key of `pi-onecli-admin` reaches the pod, not the login password. Model
@@ -267,7 +267,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
       Prisma migrations on a shared Postgres 17 without superuser; OneCLI Jobs under `restricted`.
       Done in [research/onecli-bundled-spike.md](research/onecli-bundled-spike.md) (#120), with a prototype `hack/onecli-bootstrap.sh`.
-    - Status: implemented (issue #136, [ADR 0021](decisions/0021-bundled-onecli.md)). `hack/onecli.sh` creates
+    - Status: implemented (issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)). `hack/onecli.sh` creates
       `onecli-database` and `onecli-secrets` once, installs `charts/pi-onecli` (network policies) first, then the upstream
       chart (pinned by version and digest; runner off, one replica, no Redis, the `onecli` database), then runs the
       bootstrap (`hack/onecli-bootstrap.sh`: account, admin key, orchestrator agent and token Secret, host rules, public
@@ -275,7 +275,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
       `hack/kind-up.sh --onecli` is that on kind; `hack/kind-smoke.sh --onecli` proves the orchestrator's CONNECT through
       the gateway (407 without the token, a TLS handshake that verifies against the CA ConfigMap, the gateway's own 403
       for a host that is not allowed) and that the API is closed to ingest and sandboxes. Sign-up cannot be closed (ADR
-      0021): the network is the control.
+      0022): the network is the control.
     - Still open: the real-model test with protected credentials, run by someone with a Codex login or an API key
       (steps in [model credentials](model-credentials.md#bundled-onecli-sign-in-and-credentials)); the bootstrap as a Job.
     - Done when: kind with `--onecli` runs a session through the gateway (scripted model plus one real-model test with

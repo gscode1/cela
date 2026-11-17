@@ -10,7 +10,7 @@ database:
 runner:
   enabled: false # no hosted sandboxes: our sandboxes are agent-sandbox pods and only use the gateway
 # One replica each is all the chart allows without Redis and an Enterprise license. Never an Ingress or HTTPRoute for
-# /auth: sign-up cannot be closed in OneCLI (docs/decisions/0021-bundled-onecli.md).
+# /auth: sign-up cannot be closed in OneCLI (docs/decisions/0022-bundled-onecli.md).
 ingress:
   enabled: false
 httpRoute:

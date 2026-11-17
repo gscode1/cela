@@ -208,7 +208,7 @@ it never gates readiness, sessions or tools.
 ## Bundled OneCLI
 
 With `onecli.mode: bundled` the OneCLI pods run in the app's namespace and `charts/pi-onecli` (release `pi-onecli`,
-installed by `hack/onecli.sh` before the upstream chart) supplies their policies ([ADR 0021](decisions/0021-bundled-onecli.md)).
+installed by `hack/onecli.sh` before the upstream chart) supplies their policies ([ADR 0022](decisions/0022-bundled-onecli.md)).
 They hold from the first minute, before `pi-durable` and its namespace-wide `default-deny-all` exist. Pods are selected by
 the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release>`, `component`).
 

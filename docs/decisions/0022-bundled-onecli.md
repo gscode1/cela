@@ -1,4 +1,4 @@
-# 0021: Bundled OneCLI, its bootstrap, and why sign-up stays open
+# 0022: Bundled OneCLI, its bootstrap, and why sign-up stays open
 
 Status: accepted, 2026-11-17 (issue #136, install slice 10). Builds on [0020](0020-helm-install.md) (D4), the spike
 [research/onecli-bundled-spike.md](../research/onecli-bundled-spike.md) (#120) and [0019](0019-restricted-pod-security.md).

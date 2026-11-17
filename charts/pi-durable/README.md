@@ -97,7 +97,7 @@ the chart is installed, `hack/onecli.sh` installs `charts/pi-onecli` (network po
 from the orchestrator and a bootstrap Pod), the upstream chart `oci://ghcr.io/onecli/charts/onecli` 2.20.0 as release
 `onecli` (runner off, one replica, no Redis, the `onecli` database of `charts/pi-postgres`, or `ONECLI_DATABASE_URL`), and
 the bootstrap. OneCLI cannot close sign-up, so keep the API and dashboard off every Ingress
-([ADR 0021](../../docs/decisions/0021-bundled-onecli.md), sign-in: [model credentials](../../docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)).
+([ADR 0022](../../docs/decisions/0022-bundled-onecli.md), sign-in: [model credentials](../../docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)).
 
 Model credentials stay in the orchestrator; they are never mounted into a sandbox.
 

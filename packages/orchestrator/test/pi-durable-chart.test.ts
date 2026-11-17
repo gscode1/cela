@@ -568,7 +568,7 @@ describe("network policy invariants", () => {
   });
 });
 
-describe("bundled OneCLI (install slice 10, ADR 0021)", () => {
+describe("bundled OneCLI (install slice 10, ADR 0022)", () => {
   const bundled = ["--set", "onecli.mode=bundled"];
   const list = docs(bundled);
   const orchestrator = named(list, "Deployment", "pi-orchestrator");

@@ -158,7 +158,7 @@ describe("hack/onecli.sh", () => {
     const digest = /^onecli_digest=(sha256:[0-9a-f]{64})/m.exec(text)?.[1];
     expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(digest).toBeDefined();
-    const adr = readFileSync(join(root, "docs/decisions/0021-bundled-onecli.md"), "utf8");
+    const adr = readFileSync(join(root, "docs/decisions/0022-bundled-onecli.md"), "utf8");
     expect(adr).toContain(version ?? "?");
     expect(adr).toContain(digest ?? "?");
     expect(readFileSync(join(root, "charts/pi-onecli/Chart.yaml"), "utf8")).toContain(

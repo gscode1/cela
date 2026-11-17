@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The bootstrap step of the bundled OneCLI (docs/install-plan.md slice 10, docs/decisions/0021-bundled-onecli.md; the
+# The bootstrap step of the bundled OneCLI (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md; the
 # behaviour was worked out in docs/research/onecli-bundled-spike.md). hack/onecli.sh runs it right after the upstream
 # chart is rolled out. It is idempotent: a second run reports `changed=0` and writes nothing.
 #
@@ -12,7 +12,7 @@
 #   6. copy only the PUBLIC gateway CA certificate to a ConfigMap.
 # Results go to Kubernetes Secrets and a ConfigMap; nothing secret is printed. A second run changes nothing.
 #
-# It does NOT close sign-up: OneCLI has no switch for that (ADR 0021). Whoever can reach the API can still create an
+# It does NOT close sign-up: OneCLI has no switch for that (ADR 0022). Whoever can reach the API can still create an
 # account in an organization of their own, whose agents are not bound by the host rules below. The control is the
 # network: hack/onecli.sh installs charts/pi-onecli first, so only the orchestrator (and a bootstrap Pod) reach the API.
 # This script reaches it with `kubectl port-forward`, which those policies do not touch.

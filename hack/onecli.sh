@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the bundled OneCLI into one namespace (docs/install-plan.md slice 10, docs/decisions/0021-bundled-onecli.md):
+# Install the bundled OneCLI into one namespace (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md):
 #
 #   hack/onecli.sh [--namespace pi-durable] [--external-url http://localhost:10254] [--release onecli] [--timeout 10m]
 #

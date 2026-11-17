@@ -3,7 +3,7 @@ import { loadYaml } from "@kubernetes/client-node";
 import { describe, expect, it } from "vitest";
 import { chartsDir, helmTemplate, renderDocs, type Obj } from "./support/helm.js";
 
-// charts/pi-onecli (install slice 10, ADR 0021): the policies that keep OneCLI's management API closed, and the values the
+// charts/pi-onecli (install slice 10, ADR 0022): the policies that keep OneCLI's management API closed, and the values the
 // upstream chart is installed with. Parsed YAML has no static shape; every field read below is asserted on.
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call */
 

@@ -36,7 +36,7 @@ orchestrator (pi-ai, apiKey = placeholder)
 ## Bundled OneCLI: sign-in and credentials
 
 `hack/kind-up.sh --onecli` (or `onecli.mode=bundled` with `hack/install.sh`) installs the upstream OneCLI chart as release
-`onecli` next to the app ([ADR 0021](decisions/0021-bundled-onecli.md), [network policy](network-policy.md#bundled-onecli)).
+`onecli` next to the app ([ADR 0022](decisions/0022-bundled-onecli.md), [network policy](network-policy.md#bundled-onecli)).
 The bootstrap leaves three things in the namespace; no script prints a value:
 
 | Object | Holds |

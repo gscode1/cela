@@ -95,7 +95,7 @@ hack/kind-down.sh               # delete the cluster
 orchestrator. The dashboard has no Ingress; sign in over `kubectl port-forward`, with the login from a Secret
 ([how, and what works that way](docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)). OneCLI cannot close its
 sign-up, so never put its API or dashboard behind an Ingress without blocking `/auth/signup` and `/auth/sign-up*`
-([ADR 0021](docs/decisions/0021-bundled-onecli.md)).
+([ADR 0022](docs/decisions/0022-bundled-onecli.md)).
 
 It takes about five minutes (the first run pulls the node image and the application images). It prints where the API token
 is (it never prints the token) and how to port-forward, and shows the isolation probe from `GET /admin/status`. The

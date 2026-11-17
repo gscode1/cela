@@ -41,7 +41,7 @@ database:
 
 onecli:
   # bundled: the OneCLI release that hack/onecli.sh installs in this namespace (upstream chart, its own release;
-  #   docs/decisions/0021-bundled-onecli.md). The URLs, the agent token, the admin key and the CA come from onecli.bundled.
+  #   docs/decisions/0022-bundled-onecli.md). The URLs, the agent token, the admin key and the CA come from onecli.bundled.
   # external: use an existing OneCLI (gateway and management API URLs below).
   # disabled: no OneCLI; the scripted model only (the allowlist may name no other provider).
   mode: disabled
