@@ -19,7 +19,9 @@ import {
 } from "./kube.js";
 import { bridgeCommand } from "./bridge-launcher.js";
 import { claimNameFor, conversationOfName, interruptedExec, planSuspend } from "./lifecycle.js";
+import { capField } from "./bridge-cap.js";
 import { bridgeRssByClaim } from "./bridge-rss.js";
+import { readMemoryCurrent } from "./memory-current.js";
 import { errorMessage, log } from "./log.js";
 import { TurnTimings } from "./timing.js";
 
@@ -141,9 +143,19 @@ export class Sandboxes {
     return this.#envs.has(conversationId);
   }
 
-  /** One `bridge-rss` line per open bridge, keyed by session. Best effort: unavailable numbers are skipped. */
+  /**
+   * One `memory-sample` line, then one `bridge-rss` line per open bridge, keyed by session. Best effort: unavailable
+   * numbers are skipped. The sample is logged with no bridge open too: that is the base of the fit.
+   */
   async #logBridgeRss(): Promise<void> {
     try {
+      const memory = await readMemoryCurrent();
+      log("memory-sample", {
+        memoryCurrentBytes: memory.bytes,
+        memorySource: memory.source,
+        open: this.#envs.size,
+        max: capField(this.#config.sandbox.maxOpenBridges),
+      });
       if (this.#envs.size === 0) return;
       const rss = await bridgeRssByClaim();
       for (const conversationId of this.#envs.keys()) {
@@ -187,7 +199,7 @@ export class Sandboxes {
     const counts = {
       claim: claimNameFor(this.#config.shard, conversationId),
       open: this.#envs.size,
-      max: this.#config.sandbox.maxOpenBridges,
+      max: capField(this.#config.sandbox.maxOpenBridges),
       waiting: this.#slotQueue.length,
     };
     // A failed open has nothing to close and is already reported to its caller.
@@ -501,7 +513,7 @@ export class Sandboxes {
       ...this.timings.fields(conversationId),
       claim: claimNameFor(this.#config.shard, conversationId),
       open: this.#envs.size,
-      max: maxOpenBridges,
+      max: capField(maxOpenBridges),
       waiting: this.#slotQueue.length,
     });
     return await waiter;

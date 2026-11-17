@@ -316,11 +316,33 @@ describe("bridge cap", () => {
     );
   });
 
-  it("defaults to 12 and refuses a value below 1", () => {
-    expect(config().sandbox.maxOpenBridges).toBe(12);
+  it("reads PI_MAX_OPEN_BRIDGES: a number is explicit, 0 is no cap, anything else is refused", () => {
     expect(config({ PI_MAX_OPEN_BRIDGES: "3" }).sandbox.maxOpenBridges).toBe(3);
-    for (const bad of ["0", "-1", "1.5", "many"])
+    expect(config({ PI_MAX_OPEN_BRIDGES: "0" }).sandbox.maxOpenBridges).toBe(Infinity);
+    for (const bad of ["-1", "1.5", "many", "", "1e3"])
       expect(() => config({ PI_MAX_OPEN_BRIDGES: bad })).toThrow(/PI_MAX_OPEN_BRIDGES/);
+  });
+
+  it("derives the cap from the memory limit and records where it came from", () => {
+    const env = {
+      PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
+      PI_API_TOKENS: "alice:0123456789abcdef0123",
+    };
+    const twoGi = loadConfig(env, 2 * 1024 ** 3).sandbox;
+    expect(twoGi.maxOpenBridges).toBe(74);
+    expect(twoGi.bridgeCap).toEqual({ source: "derived", memoryLimitBytes: 2 * 1024 ** 3 });
+    const none = loadConfig(env, undefined).sandbox;
+    expect(none.maxOpenBridges).toBe(Infinity);
+    expect(none.bridgeCap.source).toBe("unlimited");
+    const explicit = loadConfig({ ...env, PI_MAX_OPEN_BRIDGES: "5" }, 2 * 1024 ** 3).sandbox;
+    expect(explicit.bridgeCap.source).toBe("explicit");
+  });
+
+  it("never queues or evicts without a cap", async () => {
+    const sandboxes = make({ PI_MAX_OPEN_BRIDGES: "0" });
+    for (const id of [1, 2, 3, 4, 5, 6]) await exec(sandboxes, id);
+    for (const id of [1, 2, 3, 4, 5, 6]) expect(sandboxes.isOpen(id)).toBe(true);
+    sandboxes.stop();
   });
 
   it("evicts the least recently used idle env to make room", async () => {
