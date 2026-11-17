@@ -50,6 +50,26 @@ describe("tokenAuthenticator", () => {
   });
 });
 
+describe("tokenAuthenticator with a shared token", () => {
+  it("refuses two owners with the same token, naming the owners and not the token", () => {
+    const spec = "alice:sharedtokenvalue123\nbob:bbbbbbbbbbbbbbbbbbbb\ncarol:sharedtokenvalue123";
+    expect(() => tokenAuthenticator(spec)).toThrow(/alice and carol/);
+    try {
+      tokenAuthenticator(spec);
+    } catch (error) {
+      expect(String(error)).not.toContain("sharedtokenvalue123");
+    }
+  });
+
+  it("still accepts several distinct tokens for one owner", async () => {
+    const both = tokenAuthenticator("alice:aaaaaaaaaaaaaaaaaaaa,alice:cccccccccccccccccccc");
+    expect(await both({ authorization: "Bearer cccccccccccccccccccc" })).toEqual({
+      owner: "alice",
+      subject: "static:alice",
+    });
+  });
+});
+
 describe("parseAdmins", () => {
   it("splits on commas and newlines, and means nobody when empty", () => {
     expect(parseAdmins("alice, bob\ncarol")).toEqual(["alice", "bob", "carol"]);

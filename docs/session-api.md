@@ -50,7 +50,7 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | `DELETE /sessions/{id}` | `202 { sessionId, status }` | Idempotent. See Deletion. |
 | `GET /healthz`, `GET /readyz` | `200` | Both processes. Ingest is ready when migrations succeeded and the database answers. The orchestrator is ready only once it owns the schema (the Service therefore always points at the owner). |
 
-Status codes for authentication: `401` for a missing or wrong token. `/admin/*` answers `403` to an authenticated caller whose owner is not listed in `PI_API_ADMINS` on ingest (comma-separated owner names from `PI_API_TOKENS`; empty or unset means nobody). `404` when the session does not exist **or
+Status codes for authentication: `401` for a missing or wrong token. `/admin/*` answers `403` to an authenticated caller whose owner is not listed in `PI_API_ADMINS` on ingest (comma-separated owner names from `PI_API_TOKENS`, whose tokens must be unique across owners: both processes refuse to start otherwise; empty or unset means nobody). `404` when the session does not exist **or
 belongs to another owner**: the two look the same, so the API does not reveal that a session exists.
 
 `DELETE` is also an inbox row (kind `delete`). `POST .../events` with `kind: "delete"` is refused; use `DELETE`.
