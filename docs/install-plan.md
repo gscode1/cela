@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`) and slice 7 (`hack/agent-sandbox.sh`). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -237,6 +237,11 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
      inconclusive` to its status row. NOTES.txt, `install.sh` and `kind-up.sh` print it.
    - Done when: the probe reports `enforced` on kind (kindnet) and on a Cilium cluster, and `not-enforced` with the
      policies removed; e2e fails on `not-enforced` only with `NETPOL_ENFORCED=1`.
+   - Status: implemented (issue #126). The design choices that section 6 left open are in
+     [network policy](network-policy.md#isolation-probe): a plain Pod with the sandbox labels instead of a SandboxClaim,
+     the orchestrator itself as the positive control for denied targets, shard 0 as the only runner, and a request
+     column that ingest sets. Not yet checked live: kind (kindnet), Cilium, and the policies-removed case. `kind-up.sh`
+     (slice 8) does not exist yet and will only read `/admin/status`.
 10. **Bundled OneCLI.**
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
       Prisma migrations on a shared Postgres 17 without superuser; OneCLI Jobs under `restricted`.

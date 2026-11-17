@@ -12,8 +12,11 @@ Agent code runs with container isolation only. Use this for evaluation, never fo
 {{- end }}
 
 WARNING: NetworkPolicies isolate sandboxes only if the cluster's CNI enforces them (Cilium, Calico, kindnet since kind
-0.24; flannel alone does not). This chart cannot tell. Without enforcement a sandbox can reach the database, the
-orchestrator and the Kubernetes API. Read the measured state, never assume it:
+0.24; flannel alone does not). This chart cannot tell, so the orchestrator (shard 0) runs an isolation probe: a short-lived
+Pod with the sandbox's labels tries the database, the orchestrator, the Kubernetes API, the OneCLI API and another
+sandbox, and the result is enforced | not-enforced | inconclusive (unknown until the first run, shortly after start).
+Without enforcement a sandbox can reach all of them. The probe only reports; nothing is blocked. Read the measured
+state, never assume it:
 {{- if eq .Values.networkPolicy.provider "standard" }}
 provider standard: the orchestrator may reach {{ if .Values.networkPolicy.kubeApiCidrs }}{{ join ", " .Values.networkPolicy.kubeApiCidrs }}{{ else }}ANY address{{ end }} on TCP 443 and 6443 (the API server cannot be named in a plain policy).
 {{- if .Values.networkPolicy.kubeApiCidrs }}
@@ -27,8 +30,12 @@ Read the runtime and network-policy state (GET /admin/status; admin owner: {{ fi
   TOKEN=$(kubectl -n {{ .Release.Namespace }} get secret {{ .Values.api.existingSecret }} -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^{{ first .Values.api.admins }}://p')
   curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status
 
-It lists, per shard, the configured and the observed runtime and networkPolicy (unknown until the isolation probe
-exists). Check the orchestrators: kubectl -n {{ .Release.Namespace }} get deploy -l app.kubernetes.io/name=pi-orchestrator
+It lists, per shard, the configured and the observed runtime and networkPolicy, and the probe's detail (what it tried,
+when, why). Run the probe again, for example after a CNI change (the orchestrator picks the request up within seconds):
+
+  curl -s -X POST -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status/probe
+
+Check the orchestrators: kubectl -n {{ .Release.Namespace }} get deploy -l app.kubernetes.io/name=pi-orchestrator
 {{- if gt (int .Values.orchestrator.shards) 1 }}
 
 The shard count can only grow: sessions stay on their shard. Never lower orchestrator.shards.

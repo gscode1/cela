@@ -15,6 +15,9 @@ const seed: Settings = {
   turnBudget: 100,
 };
 
+/** What the fake shard 0 row says to a probe request; reset by every `start`. */
+const probe = { running: false, shardExists: true, requests: 0 };
+
 let server: Server | undefined;
 let cache: SettingsCache | undefined;
 afterEach(async () => {
@@ -27,11 +30,18 @@ afterEach(async () => {
 async function start(
   admins: string[] = ["alice"],
 ): Promise<{ base: string; db: FakeSettingsDb; sessions: unknown[][] }> {
+  Object.assign(probe, { running: false, shardExists: true, requests: 0 });
   const db = new FakeSettingsDb();
   await seedSettings(db.asPool(), seed);
   const sessions: unknown[][] = [];
   const query = db.query.bind(db);
   db.query = (sql, params) => {
+    if (sql.includes("probe_requested_at = clock_timestamp()")) {
+      probe.requests++;
+      return Promise.resolve({ rows: [], rowCount: probe.running || !probe.shardExists ? 0 : 1 });
+    }
+    if (sql.startsWith("select 1 from inbox.shard_status"))
+      return Promise.resolve({ rows: [], rowCount: probe.shardExists ? 1 : 0 });
     if (sql.includes("from inbox.shard_status"))
       return Promise.resolve({
         rows: [
@@ -40,6 +50,8 @@ async function start(
             configuredRuntime: "gvisor",
             observedRuntime: null,
             networkPolicy: "unknown",
+            networkPolicyCheckedAt: null,
+            networkPolicyDetail: null,
             updatedAt: new Date(0),
           },
         ],
@@ -117,6 +129,52 @@ describe("admin settings authorization", () => {
   it("makes nobody an admin when the list is empty", async () => {
     const { base } = await start([]);
     expect((await call(base, "alice", "GET", "/admin/settings")).status).toBe(403);
+  });
+});
+
+describe("admin status and the isolation probe", () => {
+  it("GET shows the namespace's isolation state next to the shards", async () => {
+    const { base } = await start();
+    const got = (await (await call(base, "alice", "GET", "/admin/status")).json()) as Record<
+      string,
+      unknown
+    >;
+    expect(got).toMatchObject({
+      shards: [{ shard: 0, networkPolicy: "unknown" }],
+      networkPolicy: { state: "unknown", checkedAt: null, detail: null },
+    });
+  });
+
+  it("POST /admin/status/probe is for admins only", async () => {
+    const { base } = await start();
+    expect((await call(base, undefined, "POST", "/admin/status/probe")).status).toBe(401);
+    expect((await call(base, "bob", "POST", "/admin/status/probe")).status).toBe(403);
+    expect(probe.requests).toBe(0);
+  });
+
+  it("POST /admin/status/probe records a request for shard 0 and answers 202", async () => {
+    const { base } = await start();
+    const res = await call(base, "alice", "POST", "/admin/status/probe");
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ requested: true, state: "requested" });
+    expect(probe.requests).toBe(1);
+  });
+
+  it("answers 202 without a second request while a run is in progress, and 503 before shard 0 reported", async () => {
+    const { base } = await start();
+    probe.running = true;
+    const running = await call(base, "alice", "POST", "/admin/status/probe");
+    expect(running.status).toBe(202);
+    expect(await running.json()).toEqual({ requested: false, state: "running" });
+    probe.running = false;
+    probe.shardExists = false;
+    expect((await call(base, "alice", "POST", "/admin/status/probe")).status).toBe(503);
+  });
+
+  it("rejects other methods on both routes", async () => {
+    const { base } = await start();
+    expect((await call(base, "alice", "GET", "/admin/status/probe")).status).toBe(405);
+    expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
   });
 });
 
@@ -268,9 +326,12 @@ describe("admin shard status", () => {
           configuredRuntime: "gvisor",
           observedRuntime: null,
           networkPolicy: "unknown",
+          networkPolicyCheckedAt: null,
+          networkPolicyDetail: null,
           updatedAt: "1970-01-01T00:00:00.000Z",
         },
       ],
+      networkPolicy: { state: "unknown", checkedAt: null, detail: null },
     });
     expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
     expect((await call(base, "alice", "GET", "/admin/status/extra")).status).toBe(404);

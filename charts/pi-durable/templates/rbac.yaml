@@ -1,7 +1,9 @@
 # Least privilege for the orchestrator, namespace-scoped only. It creates and attaches SandboxClaims through the SDK
 # and reads the Sandbox / Pod / Service the SDK resolves. Sandbox lifecycle (docs/decisions/0003 and 0004): `patch` on
 # sandboxes suspends and resumes (spec.operatingMode); `delete` on pods replaces the Pod after an interrupted command;
-# `list` on PVCs lets the orphan sweep (0002) find workspace PVCs whose claim is gone.
+# `list` on PVCs lets the orphan sweep (0002) find workspace PVCs whose claim is gone. The isolation probe (docs/network-policy.md)
+# creates a short-lived Pod with the sandbox label and reads its log: `create` and `list` on pods, `get` on pods/log (it
+# also deletes the Pod, and lists sandbox Pods to pick another sandbox as a target).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -30,7 +32,10 @@ rules:
     verbs: [get]
   - apiGroups: [""]
     resources: [pods]
-    verbs: [get, delete]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [list, delete]

@@ -196,7 +196,8 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
 
 describe("no TypeScript code builds a pod spec", () => {
   // The orchestrator only creates SandboxClaims (the Pod comes from the SandboxTemplate), so there is no pod spec in
-  // TypeScript to audit. A change that adds one has to extend this test.
+  // TypeScript to audit, with one exception: the isolation probe Pod (src/netprobe-pod.ts), audited in
+  // netprobe-pod.test.ts. A change that adds another has to extend this test.
   const sources = [
     "orchestrator",
     "sandbox-env",
@@ -215,7 +216,7 @@ describe("no TypeScript code builds a pod spec", () => {
     });
   it("no source file defines a pod template, a Pod or a host namespace", () => {
     expect(sources.length).toBeGreaterThan(0);
-    for (const path of sources) {
+    for (const path of sources.filter((p) => !p.endsWith("/orchestrator/src/netprobe-pod.ts"))) {
       const text = readFileSync(path, "utf8");
       // Reading podTemplate for the startup guard is allowed; defining one in code bypasses manifest security checks.
       expect(text, path).not.toMatch(

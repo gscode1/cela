@@ -426,10 +426,24 @@ writes nothing; a failure keeps the instructions), and needs no `read` tool.
       "shard": 0,
       "configuredRuntime": "gvisor",
       "observedRuntime": null,
-      "networkPolicy": "unknown",
+      "networkPolicy": "enforced",
+      "networkPolicyCheckedAt": "2026-11-17T00:00:05.000Z",
+      "networkPolicyDetail": {
+        "state": "enforced",
+        "reason": "every verified denied target was blocked",
+        "controls": { "dns": true, "allowedTcp": true },
+        "targets": [
+          { "name": "postgres", "address": "10.0.0.5:5432", "verdict": "blocked", "outcome": "timeout" }
+        ]
+      },
       "updatedAt": "2026-11-17T00:00:00.000Z"
     }
-  ]
+  ],
+  "networkPolicy": {
+    "state": "enforced",
+    "checkedAt": "2026-11-17T00:00:05.000Z",
+    "detail": { "state": "enforced", "reason": "..." }
+  }
 }
 ```
 
@@ -444,8 +458,20 @@ prominent structured warning on every start. RBAC grants `get` on pools and temp
 (empty string means the node default). The claim's resolved Sandbox and Pod-name annotation identify that Pod,
 including warm-pool allocations. This is the latest observation, not a guarantee that every existing sandbox has the
 configured runtime; template changes do not update existing sandboxes (ADR 0019).
-`networkPolicy` is currently always `unknown`, with a startup warning: the production isolation probe is a later
-installation-plan slice. Neither a configured runtime nor an unknown policy proves network isolation. `updatedAt`
+`networkPolicy` is `unknown` until the isolation probe has run, `running` while it does, then `enforced`,
+`not-enforced` or `inconclusive` ([network policy](network-policy.md#isolation-probe)). Only shard 0's orchestrator
+measures it (the policies are namespace-wide), so every shard row shows shard 0's value, and `networkPolicyCheckedAt`
+and `networkPolicyDetail` (what it tried, why) are set on shard 0's row only. The top-level `networkPolicy` object is
+the same state, time and detail in one place. A restart resets it to `unknown` until the next run. Neither a configured
+runtime nor an unknown or `inconclusive` policy proves network isolation; `not-enforced` means a sandbox can reach cluster
+services. The probe only reports: nothing is blocked. `updatedAt`
 is the last start/attach write, not a heartbeat; rows persist through downtime and may be stale.
 The new `inbox.shard_status` migration uses the recorded-migration mechanism (ADR 0005), so current-schema restarts
-perform no DDL. Status is read-only (405 for other methods); no probe endpoint exists yet.
+perform no DDL. `GET /admin/status` is read-only (405 for other methods).
+
+`POST /admin/status/probe` (admin only, no body) asks shard 0's orchestrator to run the isolation probe again, for
+example after a CNI or policy change. Ingest only records the request in Postgres; the orchestrator picks it up within
+about 5 s and the probe takes seconds to about a minute (longer with an image pull). Answers: `202 {"requested": true,
+"state": "requested"}`; `202 {"requested": false, "state": "running"}` while a run is in progress (no second run is
+queued); `503` before shard 0 has published a status row. Poll `GET /admin/status` until `networkPolicy.state` is no
+longer `running` and `checkedAt` is new.

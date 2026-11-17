@@ -37,7 +37,9 @@ import {
   readProfiles,
   readJsonObject,
   readSettings,
+  PROBE_SHARD,
   readShardStatus,
+  requestNetworkProbe,
   updateSettings,
   beginDelete,
   requeueFailedDelete,
@@ -206,7 +208,33 @@ async function handleAdmin(
       sendJson(res, 405, { error: "method not allowed" });
       return;
     }
-    sendJson(res, 200, { shards: await readShardStatus(deps.pool) });
+    const shards = await readShardStatus(deps.pool);
+    const probed = shards.find((row) => row.shard === PROBE_SHARD);
+    sendJson(res, 200, {
+      shards,
+      networkPolicy: {
+        state: probed?.networkPolicy ?? "unknown",
+        checkedAt: probed?.networkPolicyCheckedAt ?? null,
+        detail: probed?.networkPolicyDetail ?? null,
+      },
+    });
+    return;
+  }
+  // Ingest cannot reach the Kubernetes API: it records the request, shard 0's orchestrator picks it up within seconds.
+  if (parts[1] === "status" && parts[2] === "probe" && parts.length === 3) {
+    if (method !== "POST") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const asked = await requestNetworkProbe(deps.pool);
+    if (asked === "no-shard") {
+      sendJson(res, 503, { error: "orchestrator shard 0 has not published its status yet" });
+      return;
+    }
+    sendJson(res, 202, {
+      requested: asked === "requested",
+      state: asked === "running" ? "running" : "requested",
+    });
     return;
   }
   if (parts[1] === "mcp-servers") {
