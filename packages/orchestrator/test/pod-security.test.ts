@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { loadAllYaml } from "@kubernetes/client-node";
 import { describe, expect, it } from "vitest";
+import { chartNames, renderDocs } from "./support/helm.js";
 
 // Invariant (docs/decisions/0019-restricted-pod-security.md): every Pod our manifests and scripts can create meets the
 // Pod Security "restricted" profile, and the namespaces enforce it with a pinned version. No cluster is touched.
@@ -77,6 +78,16 @@ for (const { path, text } of files) {
   if (parsed !== found) uncovered.push(`${path}: ${found} pod kinds, ${parsed} parsed`);
 }
 
+// Rendered Helm charts (charts/*, default values): the same pod kinds, the same checks.
+for (const chart of chartNames()) {
+  for (const doc of renderDocs(chart)) {
+    if (typeof doc.kind !== "string" || !new RegExp(`^(${podKinds})$`).test(doc.kind)) continue;
+    const spec = podSpecOf(doc.kind, doc);
+    expect(spec, `charts/${chart}: ${doc.kind} has no pod spec`).toBeDefined();
+    discovered.push({ file: `charts/${chart} (helm template)`, kind: doc.kind, spec: spec ?? {} });
+  }
+}
+
 const allowedVolumes = new Set([
   "configMap",
   "csi",
@@ -99,6 +110,7 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
       "deploy/ingest.yaml",
       "tests/e2e/runner-pod.yaml",
       "tests/e2e/job.yaml.tpl",
+      "charts/pi-postgres (helm template)",
     ]) {
       expect(byFile.has(known), `${known} was not discovered`).toBe(true);
     }
