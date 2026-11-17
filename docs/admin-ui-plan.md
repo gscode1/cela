@@ -28,9 +28,9 @@ its own console and admin list, and scope C becomes a tenant-admin scope within 
 | --- | --- |
 | Global settings | `defaultModel`, `allowlist`, `reasoning` and `maxReasoning`, `defaultProfile`, and `turnBudget`. Show previous and new values, actor, and time from recent history. |
 | Session profiles | Create a profile, publish a version, and enable or disable it for new sessions. Edit instructions, `tools` and `modelTools`, model and reasoning overrides, `turnBudget`, MCP references, and exact skill pins. Toggle loading instructions and skills from the repository checkout. Show invalid profiles with their validation errors, diff stored definitions, and show the last actor and timestamp. Enable and disable update this metadata without a new version. |
-| MCP servers | Register an HTTPS endpoint, edit its `url`, `timeoutMs` and `maxOutputBytes`, enable or disable it, and delete it. Transport is fixed to Streamable HTTP. `onecliSecret` is shown read-only until #42. Show recent changes and current profile references. Delete names the profiles that still reference the server and suggests disabling instead. Reachability is `unknown`. After a save, offer to add the server to a profile. |
-| Skills | Publish a new version (see [Skill upload](#skill-upload)). Browse versions and file manifests and fetch a version's file contents on demand. Pin exact versions from the profile editor, and show which profiles pin each version. Mark versions with model invocation disabled, which can be pinned but are omitted from the model's skill catalog. After a publish, offer to pin the new version in a profile. |
-| Shard status | Show the last reports from shards: configured runtime, observed sandbox runtime, network policy state, and publish time. An empty list means no reports yet. Distinguish an unobserved runtime (`null`) from the node default (empty string), and show `unknown` policy explicitly. Reports persist through downtime. Offer to run the isolation probe again (`POST /admin/status/probe`). |
+| MCP servers | A table of servers (status, host, whether it can change state, the profiles using it, last update). Register an HTTPS endpoint, edit its `url`, timeout and max output (seconds and KB), enable or disable it, and delete it. Timeout and max output show only when they differ from the defaults, under a per-row Details expander. `onecliSecret`, transport, reachability and revision numbers stay out of the screens. Recent changes are collapsed. Delete names the profiles that still use the server and suggests disabling instead. After a save, offer to add the server to a profile. |
+| Skills | Publish a new version (see [Skill upload](#skill-upload)). Browse versions and file manifests and fetch a version's file contents on demand. Pin exact versions from the profile editor, and show which profiles pin each version. Mark versions with model invocation disabled as "manual only": they can be pinned but are omitted from the model's skill catalog. The list shows which profiles use each skill; digests appear only in a version's Details and as a hover on file names. After a publish, offer to pin the new version in a profile. |
+| Isolation | Show the last reports from shards. When every shard enforces the network policy and runs its configured runtime, one summary line, with the table under Details. Otherwise an alert names the shard and the problem, and the table is open: runtime (configured and observed only on a mismatch), network policy state, last report. An empty list means no report yet. Distinguish an unobserved runtime (`null`, "not observed yet") from the node default (empty string), and show an unchecked policy explicitly. Reports persist through downtime. Offer to re-check network isolation (`POST /admin/status/probe`). |
 
 Links between screens (a contract with the profile editor; the editor reads the query string and preselects, it never writes
 from a link alone):
@@ -51,18 +51,18 @@ only. Skill versions are immutable: a new version reaches a profile only when so
 
 ### Skill upload
 
-- **Input.** A folder (directory picker) or a `.zip`, unpacked in the browser. The console sends the files to
+- **Input.** One control, "Choose a folder or a .zip" (also a drop zone), unpacked in the browser. The skill name is the `name` in the `SKILL.md` frontmatter, else the folder or zip name; on a skill's own page it must match that skill. The console sends the files to
   `POST /admin/skills/{name}/versions`: text as `content`, everything else as `contentBase64`, with the executable bit
   taken from the zip or set in the review step (a folder picker cannot read it). The API enforces the limits:
   `SKILL.md` with a `description` in its frontmatter, at most 128 files and 5 MiB, regular files only.
-- **Review before publishing.** Show the parsed name and description, and per file the path, size, sha256 and
-  executable flag. Text files are readable inline, binaries by digest only. Show the diff against the current version.
-  Publishing deploys code that runs in every session that pins it, so the step names that and asks to confirm.
+- **Review before publishing.** Show the parsed name and description, and per file the path, size and executable
+  flag. Text files are readable inline, binaries are listed as not shown. Show the non-zero change counts and the text
+  diff against the current version. There is no confirmation step: a version reaches no session until a profile pins it.
 - **Scripts and binaries.** Files marked executable are `chmod 755` in the sandbox, and the model runs them with the
   bash tool. The editor warns when a profile pins such a skill without `bash` in its tool lists. Runtimes such as
   Python come from the sandbox image, not from skills. Binaries must match the nodes' architecture; the console only
   states that.
-- **Identical content** returns `200` with no new version. The console says so instead of reporting a publish.
+- **Identical content** returns `200` with no new version. The review says "No changes — nothing to publish." and disables Publish.
 
 ### Review before saving
 
