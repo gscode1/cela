@@ -7,6 +7,9 @@ set -euo pipefail
 
 ctx=${KUBE_CONTEXT:-}
 ns=${NAMESPACE:-pi-durable-poc}
+onecli_ns=${ONECLI_NAMESPACE:-onecli}
+onecli_service=${ONECLI_SERVICE:-onecli}
+onecli_port=${ONECLI_API_PORT:-10256}
 work=$(mktemp -d)
 pf_pid=
 cleanup() {
@@ -17,13 +20,13 @@ trap cleanup EXIT
 
 # A free local port; the API is cluster-internal, so go through a port-forward.
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
-kubectl ${ctx:+--context="$ctx"} -n onecli port-forward svc/onecli "$port:10256" >/dev/null 2>&1 &
+kubectl ${ctx:+--context="$ctx"} -n "$onecli_ns" port-forward "svc/$onecli_service" "$port:$onecli_port" >/dev/null 2>&1 &
 pf_pid=$!
 for _ in $(seq 1 20); do
   curl -fsS -m 3 -o "$work/ca.pem" "http://127.0.0.1:$port/v1/gateway/ca" 2>/dev/null && break
   sleep 1
 done
-[[ -s $work/ca.pem ]] || { echo "could not fetch the CA from onecli:10256/v1/gateway/ca" >&2; exit 1; }
+[[ -s $work/ca.pem ]] || { echo "could not fetch the CA from $onecli_service:$onecli_port/v1/gateway/ca" >&2; exit 1; }
 # Refuse anything that is not a certificate (an error page, a login redirect).
 openssl x509 -in "$work/ca.pem" -noout -subject -fingerprint -sha256 >&2
 kubectl ${ctx:+--context="$ctx"} -n "$ns" create configmap onecli-ca --from-file=ca.pem="$work/ca.pem" \

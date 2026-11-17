@@ -5,7 +5,7 @@ metadata:
   name: orchestrator-code
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: longhorn-static
+  # storageClassName omitted: use the cluster default; override with a kustomize patch.
   resources:
     requests:
       storage: 1Gi

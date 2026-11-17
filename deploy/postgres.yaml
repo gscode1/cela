@@ -10,7 +10,7 @@ spec:
   enableSuperuserAccess: false
   storage:
     size: 1Gi
-    storageClass: longhorn-static
+    # storageClass omitted: use the cluster default; override with a kustomize patch.
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
