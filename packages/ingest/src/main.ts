@@ -28,6 +28,7 @@ async function main(): Promise<void> {
     shards: config.shards,
     settings,
     admins: config.admins,
+    consoleDir: config.consoleDir,
     schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.

@@ -22,4 +22,10 @@ describe("loadConfig settings", () => {
     expect(loadConfig(base).admins).toEqual([]);
     expect(() => loadConfig({ ...base, PI_API_ADMINS: "Alice Smith" })).toThrow(/PI_API_ADMINS/);
   });
+
+  it("serves no console unless PI_CONSOLE_DIR is set and not blank", () => {
+    expect(loadConfig(base).consoleDir).toBeUndefined();
+    expect(loadConfig({ ...base, PI_CONSOLE_DIR: "  " }).consoleDir).toBeUndefined();
+    expect(loadConfig({ ...base, PI_CONSOLE_DIR: "/app/console" }).consoleDir).toBe("/app/console");
+  });
 });
