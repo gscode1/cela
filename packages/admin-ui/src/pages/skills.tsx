@@ -25,7 +25,7 @@ function NewSkill() {
       className="flex flex-wrap items-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
-        if (valid) void navigate(`${encodeURIComponent(name)}/publish`);
+        if (valid) void navigate(`/skills/${encodeURIComponent(name)}/publish`);
       }}
     >
       <div className="flex flex-col gap-1.5">
@@ -88,7 +88,7 @@ function SkillList() {
               {skills.data.map((skill) => (
                 <tr key={skill.name} data-testid={`skill-${skill.name}`}>
                   <Td>
-                    <Link className="underline" to={encodeURIComponent(skill.name)}>
+                    <Link className="underline" to={`/skills/${encodeURIComponent(skill.name)}`}>
                       {skill.name}
                     </Link>
                   </Td>

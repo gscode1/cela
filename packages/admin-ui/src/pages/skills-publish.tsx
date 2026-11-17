@@ -341,7 +341,7 @@ export function SkillPublish() {
     return (
       <Alert>
         Skills are read-only in this console.{" "}
-        <Link className="underline" to="..">
+        <Link className="underline" to={`/skills/${encodeURIComponent(name)}`}>
           Back to {name}
         </Link>
       </Alert>
@@ -474,7 +474,7 @@ export function SkillPublish() {
             >
               Pin {name} v{result.version.version} in a profile
             </Link>
-            <Link className="text-sm underline" to="..">
+            <Link className="text-sm underline" to={`/skills/${encodeURIComponent(name)}`}>
               Back to {name}
             </Link>
           </CardContent>

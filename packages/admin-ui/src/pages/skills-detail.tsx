@@ -205,7 +205,7 @@ export function SkillDetail() {
         <CardHeader>
           <CardTitle>Skill {name}</CardTitle>
           <CardDescription>
-            <Link className="underline" to="..">
+            <Link className="underline" to="/skills">
               All skills
             </Link>
           </CardDescription>
@@ -214,7 +214,7 @@ export function SkillDetail() {
           {mode === "readOnly" && <ReadOnlyNote what="Skills" />}
           {mode === "manage" && (
             <div>
-              <Link to="publish">
+              <Link to={`/skills/${encodeURIComponent(name)}/publish`}>
                 <Button size="sm">Publish a new version</Button>
               </Link>
             </div>
