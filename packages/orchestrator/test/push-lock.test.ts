@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Drives deploy/push-lock.sh (sourced by deploy/push-code.sh) against a stub kubectl that keeps one
+// Preserves the legacy locking helper regression tests against a stub kubectl that keeps one
 // ConfigMap in a temp dir. No cluster is touched.
-const lockScript = resolve(import.meta.dirname, "../../../deploy/push-lock.sh");
+const lockScript = resolve(import.meta.dirname, "./fixtures/push-lock.sh");
 
 const kubectlStub = `#!/usr/bin/env bash
 # state files in $STUB_DIR: holder, expires, rv (absent = no ConfigMap)
@@ -60,7 +60,7 @@ const run = (steps: string, env: Record<string, string> = {}) =>
     [
       "-c",
       `set -euo pipefail
-ns=test; lock=orchestrator-code-push-lock
+ns=test; lock=retired-code-volume-push-lock
 k() { kubectl -n "$ns" "$@"; }
 . "${lockScript}"
 ${steps}`,

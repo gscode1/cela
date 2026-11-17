@@ -55,7 +55,7 @@ sandbox tool call, through the gateway, with no provider credential in the orche
    allowlist `openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol,scripted/scripted-1,scripted/scripted-2`. Pick a
    model per session with `POST /sessions {provider, model}`. In pi-ai's list `gpt-6-luna` is the cheapest
    ($0.10/$0.50 per million tokens), then `gpt-6.1-terra` ($1/$5), then `gpt-6.1-sol` and `gpt-6-sol` ($2/$10).
-5. **Deploy:** `deploy/fetch-onecli-ca.sh`, `deploy/push-code.sh`, `deploy/push-ingest.sh`, `kubectl apply -k deploy`, then
+5. **Deploy:** `deploy/fetch-onecli-ca.sh`, configure your built image digests ([deploy settings](../deploy/README.md)), `kubectl apply -k deploy`, then
    restart orchestrator and ingest. Gateway line for a model call (redacted): `INFO session{peer=<pod ip> host=chatgpt.com:443
    lane=Mitm workspace_id=.. org_id=.. agent="pi-orchestrator" ..}: server: CONNECT`. A `WARN ... error=serving MITM
    connection` after a stream ends is normal here.

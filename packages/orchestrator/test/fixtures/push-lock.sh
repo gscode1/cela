@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by deploy/push-code.sh. A push lock is a ConfigMap that records its holder and an expiry, so a
+# Sourced by legacy delivery tooling. A push lock is a ConfigMap that records its holder and an expiry, so a
 # lock left behind by a crashed run or a failed delete is taken over once expired instead of blocking every
 # later push. Needs from the caller: k (kubectl wrapper bound to the namespace), ns, and the lock name.
 # PUSH_LOCK_TTL_SECONDS (default 900) must be longer than any push.
@@ -44,7 +44,7 @@ push_lock_acquire() {
   fi
   read -r rv expires holder <<<"$cur"
   if [[ ! $expires =~ ^[0-9]+$ ]]; then
-    # A lock without an expiry (made by an older push-code.sh) cannot be judged, so it is never taken over.
+    # A lock without an expiry (made by older delivery tooling) cannot be judged, so it is never taken over.
     echo "another push holds the lock ($lock, holder ${holder:-unknown}, no expiry)." >&2
     echo "If no push is running, remove it with: kubectl -n $ns delete configmap $lock" >&2
     return 1

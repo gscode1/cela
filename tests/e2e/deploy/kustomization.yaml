@@ -16,7 +16,7 @@ patches:
       kind: Namespace
       metadata:
         name: unused
-  # Start at 0: deploy/push-code.sh scales the orchestrator to 1 once the code is on the volume, after the secrets
+  # Start at 0: run.sh scales the orchestrator to 1 after the secrets
   # exist (a Pod that starts before an optional secret does would never see it).
   - target: { kind: Deployment, name: pi-orchestrator }
     patch: |-

@@ -262,11 +262,9 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
 
 - `deploy/gen-api-secret.sh` creates `api-auth`. `deploy/ingest.yaml` is the 2-replica Deployment
   (250m / 256Mi limits each) and Service `pi-ingest`.
-- **Ingest code delivery:** `deploy/push-ingest.sh` bundles ingest and `session-core` (about 140 KB) into the
-  ConfigMap `ingest-code`; an initContainer unpacks it into an emptyDir. Chosen over a code PVC because a
-  ReadWriteOnce volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
-  is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
-- The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC). Both push scripts hold a ConfigMap lock (`deploy/push-lock.sh`); `push-ingest.sh` records the bundle hash only after the pods restarted onto it.
+- **Image delivery:** ingest and orchestrator run multi-arch application images built by `images/build.sh`.
+  Dependencies and session-core migrations are packaged at build time; no runtime code volumes or unpack containers.
+  See [deploy settings](../deploy/README.md) for digest overrides.
 - The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `014_shard.sql`, which adds `inbox.sessions.shard`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock

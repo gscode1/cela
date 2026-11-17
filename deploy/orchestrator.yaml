@@ -1,7 +1,7 @@
 # One replica, Recreate: the Postgres adapter allows a single owner per schema. This is shard 0, the only shard of a
 # default stack. More shards are Deployments `pi-orchestrator-<k>` cloned from this one by deploy/add-shard.sh, each
 # owning its own schema `durable_s<k>` (docs/decisions/0017-schema-sharding.md).
-# Code comes from the orchestrator-code PVC (deploy/push-code.sh), so no image is pushed.
+# Replace the example image with a built digest (deploy/README.md).
 # The DB URI comes from the CNPG-generated secret pi-pg-app and is never printed.
 apiVersion: apps/v1
 kind: Deployment
@@ -33,9 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: orchestrator
-          image: node:22-bookworm-slim
-          workingDir: /code/app
-          command: [node, dist/main.js]
+          image: registry.example.com/team/pi-orchestrator:replace-me
           # PI_MODEL_ALLOWLIST (which providers to install), the fallback default model and turn budget until
           # inbox.settings is seeded. The live default and turn budget come from Postgres (PUT /admin/settings).
           envFrom:
@@ -104,7 +102,6 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - { name: code, mountPath: /code, readOnly: true }
             - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
             - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
       volumes:
@@ -114,6 +111,3 @@ spec:
         # Filled by deploy/fetch-onecli-ca.sh; optional so the scripted model starts without it.
         - name: onecli-ca
           configMap: { name: onecli-ca, optional: true }
-        - name: code
-          persistentVolumeClaim:
-            claimName: orchestrator-code

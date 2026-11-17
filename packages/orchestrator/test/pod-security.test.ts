@@ -97,10 +97,8 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
       "deploy/sandbox-template.yaml",
       "deploy/orchestrator.yaml",
       "deploy/ingest.yaml",
-      "deploy/push-code.sh",
       "tests/e2e/runner-pod.yaml",
       "tests/e2e/job.yaml.tpl",
-      "tests/e2e/run.sh",
     ]) {
       expect(byFile.has(known), `${known} was not discovered`).toBe(true);
     }

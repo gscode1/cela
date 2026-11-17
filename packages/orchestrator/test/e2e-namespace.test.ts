@@ -36,7 +36,7 @@ describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
     .filter((p) => !allowedFiles.has(p) && !p.startsWith("deploy/onecli-policies/"));
 
   it("scans the deploy scripts, the manifests and the e2e scripts", () => {
-    expect(files).toContain("deploy/push-code.sh");
+    expect(files).toContain("deploy/add-shard.sh");
     expect(files).toContain("tests/e2e/run.sh");
     expect(files).toContain("tests/e2e/driver/driver-rbac.yaml");
   });

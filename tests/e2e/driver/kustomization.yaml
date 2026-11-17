@@ -1,9 +1,8 @@
-# Identity, RBAC and the code volume of the in-cluster e2e driver (the Job that runs tests/e2e/run-phase*.sh).
+# Identity and RBAC of the in-cluster e2e driver (the Job that runs tests/e2e/run-phase*.sh).
 # Part of the run stack (tests/e2e/deploy); the namespace is set by the overlay that tests/e2e/run.sh generates.
 # Namespace-scoped: nothing here is cluster-wide.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - driver-rbac.yaml
-  - driver-pvc.yaml
   - runner-rbac.yaml

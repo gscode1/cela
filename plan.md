@@ -305,7 +305,7 @@ packages/
   egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
 vendor/             # packed Postgres adapter port
-deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployments, push and shard scripts
+deploy/             # SandboxTemplate, NetworkPolicy, CNPG cluster, Deployments, image references and shard scripts
 images/             # sandbox/ (pi-env daemon), egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
 examples/           # recorded load-test and bug-hunt runs
@@ -324,3 +324,11 @@ Extract `sandbox-env` into its own package once it passes the env conformance su
 - Self-hosted Claude Managed Agents (rejected option, reference architecture): https://platform.claude.com/docs/en/managed-agents/self-hosted
 - durable-harness self-hosting (rejected option): https://vercel.com/docs/agent-harnesses/self-hosting
 
+
+### Image delivery (installation slice 2, issue #107)
+
+`images/build.sh` builds orchestrator, ingest, sandbox and e2e-driver for linux/amd64 and linux/arm64. App images
+include workspace dependencies, vendored code and SQL migrations; the driver includes its scripts and Phase 1 tests.
+Deployments use built images instead of runtime code uploads. New shards inherit shard 0's image and need no
+shared-code node affinity. Build/push images explicitly, then configure digest references as described in
+[deploy settings](deploy/README.md) and [e2e](docs/e2e.md). Helm remains a later installation slice.

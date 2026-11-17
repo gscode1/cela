@@ -1,8 +1,5 @@
 # ingest: the stateless HTTP front of the session API. Two replicas, any node, no volume.
-# Code delivery: an initContainer unpacks the bundle in ConfigMap `ingest-code` (deploy/push-ingest.sh builds it,
-# about 140 KB, limit 1 MiB) into an emptyDir. Chosen over a code PVC because a ReadWriteOnce volume cannot be
-# shared across nodes, which would pin both replicas to one node; the ConfigMap needs no pinning and a rollout
-# is "replace the ConfigMap, restart". No image is pushed.
+# Replace the example image with a built digest (deploy/README.md).
 # Ingest never talks to the orchestrator except to proxy a stream, so it keeps accepting events while the
 # orchestrator restarts. Its readiness depends on the database only.
 apiVersion: apps/v1
@@ -41,25 +38,9 @@ spec:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/name: pi-ingest
-      initContainers:
-        - name: unpack
-          image: node:22-bookworm-slim
-          command: [sh, -c, "mkdir -p /app/code && tar xzmf /bundle/app.tgz -C /app/code && test -f /app/code/dist/main.js"]
-          resources:
-            requests: { cpu: 10m, memory: 32Mi }
-            limits: { cpu: 100m, memory: 64Mi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-          volumeMounts:
-            - { name: bundle, mountPath: /bundle, readOnly: true }
-            - { name: app, mountPath: /app }
       containers:
         - name: ingest
-          image: node:22-bookworm-slim
-          workingDir: /app/code
-          command: [node, dist/main.js]
+          image: registry.example.com/team/pi-ingest:replace-me
           # SEED ONLY: ingest writes these values to inbox.settings once, when the row is absent. After that the table
           # wins (change it with PUT /admin/settings) and a differing value only logs `settings-env-ignored`.
           envFrom:
@@ -95,13 +76,8 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - { name: app, mountPath: /app, readOnly: true }
             - { name: tmp, mountPath: /tmp }
       volumes:
-        - name: bundle
-          configMap: { name: ingest-code }
-        - name: app
-          emptyDir: {}
         - name: tmp
           emptyDir: {}
 ---

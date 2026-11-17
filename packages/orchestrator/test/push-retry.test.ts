@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Drives deploy/push-retry.sh (sourced by push-code.sh and push-ingest.sh) against a stub kubectl on PATH.
+// Preserves the legacy retry helper regression tests against a stub kubectl on PATH.
 // No cluster is touched.
-const retryScript = resolve(import.meta.dirname, "../../../deploy/push-retry.sh");
+const retryScript = resolve(import.meta.dirname, "./fixtures/push-retry.sh");
 
 // STUB_FAILS failures with STUB_ERR on stderr come first, then success. Each call is counted in $STUB_DIR/calls.
 const kubectlStub = `#!/usr/bin/env bash
@@ -50,8 +50,8 @@ push_retry k cp a b`,
   );
 
 describe("push retry", () => {
-  it("is a valid bash script, and the push scripts still parse", () => {
-    for (const f of ["push-retry.sh", "push-code.sh", "push-ingest.sh"]) {
+  it("is a valid bash script, and deployment helpers still parse", () => {
+    for (const f of ["push-retry.sh", "push-lock.sh"]) {
       execFileSync("bash", ["-n", resolve(retryScript, "..", f)]);
     }
   });
