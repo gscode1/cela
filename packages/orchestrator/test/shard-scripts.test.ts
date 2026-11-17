@@ -20,7 +20,8 @@ for m in \${STUB_MISSING:-}; do
   if [[ $args == *" get deployment $m "* || $args == *" get service $m "* ]]; then echo "NotFound" >&2; exit 1; fi
 done
 if [[ $args == *" rollout restart "* && -n \${STUB_RESTART_FAIL:-} ]]; then echo "restart failed" >&2; exit 1; fi
-if [[ $args == *" create configmap "* || $args == *" annotate --local "* ]]; then echo "kind: ConfigMap"; exit 0; fi
+if [[ $args == *" annotate configmap "* && -n \${STUB_ANNOTATE_FAIL:-} ]]; then echo "connection refused" >&2; exit 1; fi
+if [[ $args == *" create configmap "* ]]; then echo "kind: ConfigMap"; exit 0; fi
 if [[ $args == *" get deployment "* ]]; then echo '{"spec":{"template":{"metadata":{"labels":{}},"spec":{"containers":[{"env":[]}]}}}}'; fi
 if [[ $args == *" apply "* ]]; then cat >/dev/null; fi
 exit 0
@@ -109,17 +110,28 @@ exit 0
 `;
   beforeEach(() => writeFileSync(join(dir, "pnpm"), fakePnpm));
 
-  it("clears the bundle annotation and fails when the restart fails", () => {
+  it("never records the bundle hash when the restart fails", () => {
     const r = run("push-ingest.sh", [], { STUB_RESTART_FAIL: "1" });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("could not restart deployment pi-ingest");
-    expect(log()).toContain("annotate configmap ingest-code bundle-sha256-");
+    // The pushed ConfigMap carries no marker, and none is added afterwards: a re-run pushes and restarts again.
+    expect(log()).not.toContain("annotate");
   });
 
-  it("keeps the annotation when the restart succeeds", () => {
+  it("records the bundle hash only after the restart succeeds", () => {
     const r = run("push-ingest.sh", []);
     expect(r.status, r.stderr).toBe(0);
-    expect(log()).toContain("rollout restart deployment/pi-ingest");
-    expect(log()).not.toContain("bundle-sha256-");
+    const calls = log();
+    const restart = calls.indexOf("rollout restart deployment/pi-ingest");
+    const mark = calls.indexOf("annotate configmap ingest-code --overwrite bundle-sha256=");
+    expect(restart).toBeGreaterThanOrEqual(0);
+    expect(mark).toBeGreaterThan(restart);
+    expect(calls).not.toContain("annotate --local");
+  });
+
+  it("still succeeds, with a warning, when only recording the hash fails", () => {
+    const r = run("push-ingest.sh", [], { STUB_ANNOTATE_FAIL: "1" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("could not record bundle-sha256");
   });
 });

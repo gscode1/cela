@@ -37,8 +37,9 @@ if [[ $current == "$sum" ]]; then
 fi
 # replace (create when missing), never apply: apply copies the whole object, bundle included, into the
 # last-applied-configuration annotation, which is capped at 256 KiB, far below the 1 MiB ConfigMap limit.
-k create configmap ingest-code --from-file=app.tgz="$work/app.tgz" --dry-run=client -o yaml |
-  k annotate --local -f - "bundle-sha256=$sum" -o yaml >"$work/cm.yaml"
+# The bundle goes in without the bundle-sha256 annotation (replace drops the old one), and the annotation is added only
+# once the pods restart onto it. Any failure in between, cleanup included, leaves no marker, so a re-run pushes again.
+k create configmap ingest-code --from-file=app.tgz="$work/app.tgz" --dry-run=client -o yaml >"$work/cm.yaml"
 # replace is retried on a connection reset: it sends the same full object, so repeating it is harmless.
 # create is not retried, because a repeat after a lost reply would fail with AlreadyExists.
 if k get configmap ingest-code >/dev/null 2>&1; then
@@ -50,17 +51,17 @@ fi
 if err=$(k get deployment pi-ingest -o name 2>&1 >/dev/null); then
   # Retried on a connection reset: the restart patches a timestamp annotation, so a repeat is harmless.
   if ! push_retry k rollout restart deployment/pi-ingest >/dev/null; then
-    # The annotation is already set; clear it so a re-run does not report "unchanged" and skip the restart.
-    k annotate configmap ingest-code bundle-sha256- >/dev/null 2>&1 || true
     echo "could not restart deployment pi-ingest; the bundle is in ConfigMap ingest-code but the pods still run the old code" >&2
     exit 1
   fi
 elif [[ $err == *NotFound* ]]; then
   echo "deployment pi-ingest not found; nothing to restart" >&2
 else
-  # Clear the annotation so a re-run does not report "unchanged" and skip the restart.
-  k annotate configmap ingest-code bundle-sha256- >/dev/null 2>&1 || true
   echo "could not look up deployment pi-ingest: $err" >&2
   exit 1
+fi
+# A lost marker only costs a redundant push and restart next time.
+if ! push_retry k annotate configmap ingest-code --overwrite "bundle-sha256=$sum" >/dev/null; then
+  echo "WARNING: could not record bundle-sha256; the next push will push and restart again" >&2
 fi
 echo "ingest bundle pushed ($size bytes)"
