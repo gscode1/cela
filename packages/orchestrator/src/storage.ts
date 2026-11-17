@@ -1,6 +1,6 @@
 import type { Storage } from "@earendil-works/pi-durable";
 import { openNodePostgresStorage } from "@netzlabor/pi-durable-postgres";
-import { createPool } from "@pi-durable-k8s/session-core";
+import { connectionOptions, createPool } from "@pi-durable-k8s/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 
@@ -11,7 +11,7 @@ import { errorMessage, log } from "./log.js";
  */
 export function poolConfig(config: OrchestratorConfig): Record<string, unknown> {
   return {
-    connectionString: config.databaseUrl,
+    ...connectionOptions(config.databaseUrl, config.databaseTls),
     options: `-c search_path=${config.schema}`,
     application_name: config.instance,
     max: 1,
@@ -30,7 +30,12 @@ const LOCK_HELD = /only one owner is supported|in use/;
  * as "in use or its schema does not exist". Only a lookup of the schema tells the two apart.
  */
 async function schemaExists(config: OrchestratorConfig): Promise<boolean> {
-  const pool = createPool(config.databaseUrl, `${config.instance}-schema-probe`, 1);
+  const pool = createPool(
+    config.databaseUrl,
+    `${config.instance}-schema-probe`,
+    1,
+    config.databaseTls,
+  );
   try {
     const { rowCount } = await pool.query("select 1 from pg_namespace where nspname = $1", [
       config.schema,
@@ -46,7 +51,12 @@ async function schemaExists(config: OrchestratorConfig): Promise<boolean> {
  * has none. The name was validated in `shardSchema`, so quoting it is enough.
  */
 async function ensureSchema(config: OrchestratorConfig): Promise<void> {
-  const pool = createPool(config.databaseUrl, `${config.instance}-schema-create`, 1);
+  const pool = createPool(
+    config.databaseUrl,
+    `${config.instance}-schema-create`,
+    1,
+    config.databaseTls,
+  );
   try {
     await pool.query(`create schema if not exists "${config.schema}"`);
   } finally {
