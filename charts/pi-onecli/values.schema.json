@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["release", "clients", "database", "dns", "web", "gateway"],
+  "properties": {
+    "release": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" },
+    "clients": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orchestrator", "sandbox", "bootstrap"],
+      "properties": {
+        "orchestrator": { "$ref": "#/definitions/labels" },
+        "sandbox": { "$ref": "#/definitions/labels" },
+        "bootstrap": { "$ref": "#/definitions/labels" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["podSelector", "port"],
+      "properties": {
+        "podSelector": { "$ref": "#/definitions/labels" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "dns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "podSelector"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "podSelector": { "$ref": "#/definitions/labels" }
+      }
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowFrom"],
+      "properties": { "allowFrom": { "type": "array", "items": { "type": "object" } } }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["egressInternet"],
+      "properties": { "egressInternet": { "type": "boolean" } }
+    }
+  },
+  "definitions": {
+    "labels": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

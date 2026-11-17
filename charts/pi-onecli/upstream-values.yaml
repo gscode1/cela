@@ -1,0 +1,17 @@
+# Values for the UPSTREAM OneCLI chart (oci://ghcr.io/onecli/charts/onecli, version and digest pinned in hack/onecli.sh).
+# hack/onecli.sh adds externalUrl and, for an http URL, allowInsecureExternalUrl. Everything not set here is the chart's
+# own default; the spike (docs/research/onecli-bundled-spike.md) verified this set on a restricted namespace.
+secrets:
+  existingSecret: onecli-secrets # BETTER_AUTH_SECRET, SECRET_ENCRYPTION_KEY, GATEWAY_INTERNAL_SECRET; created once by hack/onecli.sh
+database:
+  enabled: false # no database of its own: the `onecli` database and role of charts/pi-postgres (or your Postgres)
+  external:
+    existingSecret: onecli-database # key DATABASE_URL
+runner:
+  enabled: false # no hosted sandboxes: our sandboxes are agent-sandbox pods and only use the gateway
+# One replica each is all the chart allows without Redis and an Enterprise license. Never an Ingress or HTTPRoute for
+# /auth: sign-up cannot be closed in OneCLI (docs/decisions/0021-bundled-onecli.md).
+ingress:
+  enabled: false
+httpRoute:
+  enabled: false
