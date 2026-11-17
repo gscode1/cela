@@ -264,7 +264,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   (250m / 256Mi limits each) and Service `pi-ingest`.
 - **Ingest code delivery:** `deploy/push-ingest.sh` bundles ingest and `session-core` (about 140 KB) into the
   ConfigMap `ingest-code`; an initContainer unpacks it into an emptyDir. Chosen over a code PVC because a
-  ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
+  ReadWriteOnce volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
 - The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC). Both push scripts hold a ConfigMap lock (`deploy/push-lock.sh`); `push-ingest.sh` records the bundle hash only after the pods restarted onto it.
 - The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `014_shard.sql`, which adds `inbox.sessions.shard`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied

@@ -101,14 +101,14 @@ only one `open` value give no fit.
 ## Measuring
 
 `tests/e2e/measure-timing.mjs` reads the orchestrator log (read-only `kubectl logs`) and prints n, p50, p90 and max of
-every phase and span by sandbox state, the base and per-bridge memory fit, and median and peak bridge RSS per session. It runs from the Mac.
+every phase and span by sandbox state, the base and per-bridge memory fit, and median and peak bridge RSS per session. It runs from the operator machine.
 
 ```
 node tests/e2e/measure-timing.mjs --context <kube context> --namespace <namespace> [--since 24h] [--deployment pi-orchestrator]
 node tests/e2e/measure-timing.mjs --file saved-orchestrator.log      # offline
 ```
 
-Procedure for a clean sample (use the lab cluster):
+Procedure for a clean sample (use a dedicated test cluster):
 
 1. Cold: create N sessions (N of 10 or more) and send each a message that runs one tool call (`echo hi`).
 2. Resume: wait for the suspend age (set `PI_SANDBOX_IDLE_SUSPEND_SECONDS` low, for example 150, which must not be below
@@ -124,13 +124,13 @@ up to 10 s of probe delay. Hypothesis: with `periodSeconds: 1` (and `initialDela
 about 5 s on average (half a period) and `sandbox-to-exec` by the same.
 
 Method: measure as above with the template as it is (baseline); set `periodSeconds: 1` in the template, apply it to the
-lab namespace, delete the warm pool Pods so they are recreated from it (a new claim and a resume both use the new
+test namespace, delete the warm pool Pods so they are recreated from it (a new claim and a resume both use the new
 template), measure again with the same N; compare `span:claim` p50 and p90 for `cold` and `resumed`. Keep the change only
 if p50 improves by more than the run-to-run spread; a 1 s probe adds one tiny request per second per Pod to sandboxd.
 
 ## Results
 
-First baseline: c2 lab cluster, 2026-11-16, throwaway namespace `pi-e2e-t58a`, branch `58-timing-metrics` (default
+First baseline in one example environment, 2026-11-16, throwaway namespace `pi-e2e-t58a`, branch `58-timing-metrics` (default
 template, readinessProbe period 10 s, orchestrator `cpu: "1"`), driven by phase 4's `create-send-stream`, `concurrency`,
 `idle-suspend` and `sandbox-is-lazy` tests. The sample is small (5 cold, 1 resumed, no warm turn that ran a tool), so
 treat these as orders of magnitude, not a benchmark; a second run of the same tests earlier that evening gave a resume

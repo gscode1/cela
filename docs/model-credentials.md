@@ -2,7 +2,7 @@
 
 Every model credential lives in OneCLI. The orchestrator holds only a OneCLI **agent token**; provider API keys in
 pi-ai are placeholders that the gateway replaces (for the Codex provider, a JWT-shaped placeholder login: see below). Sandboxes and bridges never see either. Background and test
-results: `docs/research/onecli-spike.md` (v1.45) and `docs/research/onecli-v2-recheck.md` (v2.20.0, what runs on c2).
+results: `docs/research/onecli-spike.md` (v1.45) and `docs/research/onecli-v2-recheck.md` (v2.20.0, what runs on the example test cluster).
 
 ## Flow
 
@@ -34,7 +34,7 @@ orchestrator (pi-ai, apiKey = placeholder)
 
 ## OpenAI Codex (ChatGPT subscription): the working setup
 
-Verified on c2 (OneCLI v2.20, pi-ai 1.5.2): `openai-codex/gpt-6.1-terra` and `gpt-6.1-sol` each answered after one
+Verified on the example test cluster (OneCLI v2.20, pi-ai 1.5.2): `openai-codex/gpt-6.1-terra` and `gpt-6.1-sol` each answered after one
 sandbox tool call, through the gateway, with no provider credential in the orchestrator.
 
 1. **OneCLI.** Secret "Codex subscription": type `openai`, host `chatgpt.com`, `authMode: oauth` (a Codex `auth.json`
@@ -75,10 +75,12 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 
 ## Set up (once per cluster)
 
-1. **OneCLI agent for the orchestrator** (dashboard `https://onecli.example.com`, or the API with an `oc_` key): create
+1. **OneCLI agent for the orchestrator** (your dashboard, or the API with an `oc_` key): create
    an agent, for example identifier `pi-orchestrator`, and grant it **only** the model-provider secrets (`Codex subscription`). Never grant a GitHub connection to it. Copy its access token (`aoc_...`).
-2. **Secret in the store:**
-   `kubectl -n secret-store create secret generic pi-onecli --from-literal=agent-token=<token>`.
+2. **Secret in your store:** securely supply the token under the remote key/property referenced by
+   `deploy/onecli-externalsecret.yaml` (example: `pi-onecli` / `agent-token`). Adapt `secretStoreRef` and `remoteRef`
+   to your backend. Alternatively omit the ExternalSecret and provision target Secret `pi-onecli`, key `agent-token`,
+   with your secret-management tool. Do not put tokens in shell history or manifests.
 3. `kubectl apply -k deploy` (adds `pi-model-config` and the ExternalSecret), then
    `deploy/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
 4. **Gateway egress.** OneCLI v2 still relays any public host by default. Add org rules that allow the model hosts and

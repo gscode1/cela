@@ -23,8 +23,8 @@ const walk = (dir: string): string[] =>
   });
 
 describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
-  // The long-lived deployment's own manifests (its namespace and the kustomizations that set it) and the reference copy
-  // of the policies applied in the OneCLI namespace.
+  // The long-lived deployment's own manifests (its namespace and the kustomizations that set it) and the examples
+  // of policies applied separately in the OneCLI namespace. Markdown documents these defaults; it is not applied.
   const allowedFiles = new Set([
     "deploy/namespace.yaml",
     "deploy/kustomization.yaml",
@@ -32,6 +32,7 @@ describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
   ]);
   const files = [...walk(join(root, "deploy")), ...walk(join(root, "tests/e2e"))]
     .map((p) => relative(root, p))
+    .filter((p) => !p.endsWith(".md"))
     .filter((p) => !allowedFiles.has(p) && !p.startsWith("deploy/onecli-policies/"));
 
   it("scans the deploy scripts, the manifests and the e2e scripts", () => {

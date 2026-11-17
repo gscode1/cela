@@ -7,7 +7,7 @@ Status: accepted, 2026-11-17 (issue #91). Builds on [0004](0004-idle-suspend.md)
 
 `PI_MAX_OPEN_BRIDGES` defaulted to 12, set when a bridge was a 100 MiB Node process. Since ADR 0016 an open env is a small
 relay process and in-process broker state: about 11 MiB each, with an idle orchestrator at 115-147 MiB (measured
-2026-11-17). A fixed 12 is far below what the 2Gi limit holds and it is not tied to the limit, so changing one without
+2026-11-17 in one example environment). A fixed 12 is far below what the 2Gi limit holds and it is not tied to the limit, so changing one without
 the other is a silent mistake in either direction.
 
 Removing the cap is not safe. `Host.open` calls `harness.resume()`, which continues every unfinished run at once, and each
@@ -59,8 +59,8 @@ guidance is in [scaling.md](../scaling.md).
 - Admission on live memory headroom or event-loop lag (a feedback loop on a noisy signal that oscillates), a cap derived
   from CPU, a claim-creation rate limiter, a durable queue, per-session priority, a fixed upper clamp.
 - A unit test of per-env memory (open 20 envs against a stub, fail above 18 MiB each). With a stub `start` no relay is
-  spawned, so a process-memory delta would measure the test, not the product, and would be flaky. The honest check is the lab
-  one: sample `memory.current` at 0 and at 50 or more open bridges and compare the fit from `measure-timing.mjs` with the
+  spawned, so a process-memory delta would measure the test, not the product, and would be flaky. The honest check is a cluster
+  measurement: sample `memory.current` at 0 and at 50 or more open bridges and compare the fit from `measure-timing.mjs` with the
   constants (fail above 18 MiB per bridge or 192 MiB base).
 - Nothing above 100 open bridges has been run. The V8 heap limit may be reached before the cgroup limit at the larger
   caps; check it in the first load test above 100.

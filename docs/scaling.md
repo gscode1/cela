@@ -47,7 +47,7 @@ max = max(1, floor((memoryLimit - 256 MiB) / 24 MiB))
 | 8Gi | 330 |
 
 - 256 MiB is the base reserve and 24 MiB the cost per open bridge, both about twice the measured values: 115-147 MiB idle
-  and about 11 MiB per bridge (measured 2026-11-17 on the lab cluster, sessions running tool calls through the broker,
+  and about 11 MiB per bridge (measured 2026-11-17 in one example environment, sessions running tool calls through the broker,
   see [metrics.md](metrics.md)). At the cap the predicted use is about half the limit. The margin is for what one
   workload did not show: model-only turns, large tool output.
 - `PI_MAX_OPEN_BRIDGES=<n>` overrides it (n of 1 or more), `0` removes the cap, `auto` or unset derives it. The start line
@@ -57,7 +57,7 @@ max = max(1, floor((memoryLimit - 256 MiB) / 24 MiB))
   a smaller request lets the scheduler place the Pod on a node that cannot back it.
 - The cap protects memory only. It does not bound Pods, claim creation, CPU or Postgres.
 
-**CPU, the real ceiling.** One orchestrator saturated 1 CPU at 100 sessions running tools at once while using 1.25 GiB of 8Gi.
+**CPU, the real ceiling.** In one example environment, one orchestrator saturated 1 CPU at 100 sessions running tools at once while using 1.25 GiB of 8Gi.
 Plan about **100 concurrently tool-active sessions per shard at 1 CPU**; that is the largest load tested. Beyond it, add a
 shard (above) rather than a bigger limit: the derived cap at 8Gi (330) is far past what one event loop was shown to serve.
 Nothing above 100 open bridges has been run; the V8 heap limit may be reached before the cgroup limit at the larger caps.

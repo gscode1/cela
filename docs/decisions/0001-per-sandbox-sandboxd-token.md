@@ -37,7 +37,7 @@ policy is wrong or a sandbox is reached another way.
 - Claims with `spec.env` cold-start a Pod; the warm pool has `replicas: 0`, so nothing changes.
 - **Fail closed.** The template keeps `--auth-token-sha256=$(SANDBOXD_AUTH_TOKEN_SHA256)` and no value for the variable.
   A claim created without the env makes a Pod whose argument is the literal `$(...)` text; sandboxd refuses to start
-  (`auth token sha256: encoding/hex: invalid byte: U+0024`) and CrashLoops. Observed on c2. There is no path to a
+  (`auth token sha256: encoding/hex: invalid byte: U+0024`) and CrashLoops. Observed on the example test cluster. There is no path to a
   sandboxd without authentication.
 
 ## Migration of existing claims

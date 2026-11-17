@@ -1,11 +1,11 @@
 # pi-durable-k8s: Self-Hosted Durable Pi Agents on Kubernetes
 
-Status: proof of concept running on the lab cluster; phases 1 to 4c done. Written 2026-11-15, facts refreshed 2026-11-17 (issue #97).
+Status: proof of concept; phases 1 to 4c done. Results below are historical observations in one example test environment.
 Scope: proof of concept. Production hardening is out of scope and listed at the end.
 
 ## 1. Goal
 
-Run Pi Durable agents on my own Kubernetes cluster so that:
+Run Pi Durable agents on your own Kubernetes cluster so that:
 
 - agent state lives in PostgreSQL (CloudNativePG) and survives orchestrator restarts,
 - tools run in a per-session gVisor sandbox with a persistent workspace PVC; remote MCP tools are the exception: the orchestrator calls them over HTTP through the OneCLI gateway, like the model, and never from the sandbox ([ADR 0007](docs/decisions/0007-native-remote-mcp.md)),
@@ -52,7 +52,7 @@ Session mapping: one Pi conversation ID = one named SandboxClaim = one PVC (`pi-
    - If it fails: fall back to SSH and note what `commands.start()` lacks.
 2. **Sandbox basics.** SandboxTemplate with gVisor, `spec.service: true`, PVC, dropped capabilities, no service-account token. Verify `getSandbox()` reattach after orchestrator restart and Pod recreation with the PVC intact.
 
-**Phase 1 result (2026-11-15): done.** `tests/e2e/run-phase1.sh` is green on c2.
+**Phase 1 result (2026-11-15): done.** `tests/e2e/run-phase1.sh` is green on the example test cluster.
 - The env conformance suite passes 29/29 through the bridge.
 - Reattach works after an orchestrator restart and after Pod recreation, with the PVC intact.
 - No in-cluster-service DNS staleness was seen for a fresh connection.
@@ -61,7 +61,7 @@ Findings that change this plan:
 - pi-env's `Connection` only spawns a local argv, so the bridge is a local executable (`pi-sandbox-bridge`) that relays its stdio over `commands.start()`.
 - A SandboxClaim must reference a SandboxWarmPool. A pool with `replicas: 0` works as a plain template alias.
 - The SDK's `Sandbox.close()` deletes the claim. Use `closeLocal()` everywhere except on session deletion.
-- c2 runs flannel, so NetworkPolicy is not enforced. Until a policy-capable CNI is in place, only the sandboxd auth token protects the sandbox. (Superseded 2026-11-16: Cilium enforces the policies; see "Enforcement result".)
+- Early tests used flannel without enforcement; later tests used Cilium. A policy-enforcing CNI is required before using real credentials.
 - Stdio throughput is about 1.7 MiB/s in each direction. That is fine for tool calls, but large file transfers would need work.
 - Still open: whether a long-lived connection survives Pod recreation, and whether SIGKILL reaps pi-env's child process groups (both Phase 3).
 
@@ -75,7 +75,7 @@ Findings that change this plan:
 - Constraint: connect to the `-rw` service or a session-mode pooler only.
 
 **Phase 2 result (2026-11-15): port done, upstream PR pending.**
-- The port is in the local clone `../pi-durable-postgres`, branch `port-pi-durable-1.5`, tag `v0.2.0-pi-durable-1.5.2`. It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
+- The port is consumed as the packed adapter under `vendor/` (version `0.2.0`). It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
 - The upstream storage conformance suite passes 32/32 on PostgreSQL 17, plus 32 adapter tests: lock, fail-closed on `pg_terminate_backend`, batched refusals, and the v2 migration. The contract diff is in that repo's `docs/port-1.5.md`.
 - Schema migration v2 adds the `sleeping` status, and older adapter builds cannot open a migrated database.
 - Watch/changes needs no storage work: conversation views and `observeCommits` live in Session/Harness.
@@ -95,7 +95,7 @@ Wire orchestrator, storage and sandbox together, then run:
 | Concurrency | Two sessions run in parallel with separate sandboxes and no cross-access |
 | Isolation | Sandbox cannot reach the orchestrator, Postgres or other sandboxes (NetworkPolicy) |
 
-**Phase 3 result (2026-11-15): done.** `tests/e2e/run-phase3.sh` ran twice in a row on c2: restart, double owner, long command, sandbox loss and concurrency pass; isolation is KNOWN-FAIL (flannel does not enforce NetworkPolicy; an in-sandbox probe reached the orchestrator, Postgres and another sandbox's sandboxd). The orchestrator is `packages/orchestrator` (scripted Pi faux model, no LLM); the adapter is consumed as a packed tarball under `vendor/`.
+**Phase 3 result (2026-11-15): done.** `tests/e2e/run-phase3.sh` ran twice in a row on the example test cluster: restart, double owner, long command, sandbox loss and concurrency pass; isolation is KNOWN-FAIL (flannel does not enforce NetworkPolicy; an in-sandbox probe reached the orchestrator, Postgres and another sandbox's sandboxd). The orchestrator is `packages/orchestrator` (scripted Pi faux model, no LLM); the adapter is consumed as a packed tarball under `vendor/`.
 - Open questions answered. (1) SIGKILL of the remote stream: the command's process group and same-group descendants were reaped about 20 s after the orchestrator pod was killed, but a background child that called `setsid` survived. Interrupted commands can therefore leak escaped children until the sandbox is recycled (done: [ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)). (2) A long-lived `Connection` survives Pod recreation: the bridge dies with the stream, pi-env's `Connection` respawns it on the next call, and a call issued while the Pod was still being replaced also completed. No reconnect code was needed.
 - The adapter refuses a second owner immediately instead of blocking, so the orchestrator waits in a retry loop (2 s) until it gets the lock. After `pg_terminate_backend` the first owner exits with code 1 at its next write (`fail-closed`), and `durable_metadata.next_seq` stayed frozen while the lock was held by the test.
 - A tool that was running when the orchestrator died reads as `interrupted` after restart and is not replayed (`bash` is not replay-safe).
@@ -114,16 +114,16 @@ Wire orchestrator, storage and sandbox together, then run:
 
 ### Security baseline for real use (from the plan review, 2026-11-15)
 
-Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQDN egress rules. Design and write every policy now. Enforcement and the isolation test turn real with the migration, and that migration gates real credentials (4b/4c).
+Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also use FQDN egress rules. Verify isolation before using real credentials (4b/4c).
 
 - **Policies:**
   - Ingress allow-lists for the orchestrator (from ingest only), Postgres (from orchestrator and ingest), and sandboxd (from the orchestrator).
   - Sandbox egress: OneCLI gateway, DNS, and direct public internet. Private, LAN and metadata ranges are excluded. This was decided 2026-11-15 so every session can install packages; revisit gateway+allowlist later.
   - In the `onecli` namespace, admit only the orchestrator and sandboxes.
-- **OneCLI management API has no auth (found 2026-11-15):**
-  - On c2, `onecli:10254/v1/agents` returns agents including their `accessToken`, and `/v1/secrets` returns metadata, with no authentication.
-  - It answers in-cluster and via `onecli.example.com`, which resolves to a LAN IP.
-  - Enable OneCLI auth (or auth at the ingress) before any real credential goes through it. The user will enable it later.
+- **Historical OneCLI v1.45 management API finding (2026-11-15):**
+  - On the example test cluster, `onecli:10254/v1/agents` returns agents including their `accessToken`, and `/v1/secrets` returns metadata, with no authentication.
+  - Protect any exposed dashboard and management routes as well as in-cluster access.
+  - Require OneCLI authentication and protect ingress before using real credentials; v2 findings are below.
 - **Gateway egress:** an explicit host allowlist (model APIs, github.com, package registries). Deny cluster CIDRs and `*.svc` through CONNECT. Use a CiliumNetworkPolicy `toFQDNs` rule where it helps.
 - **Per-sandbox sandboxd token (done, [ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)):** token = HMAC-SHA256(master, claim); only its sha256 is injected per claim (SandboxClaim `spec.env`, template policy `Allowed`), replacing the shared secret. Master in Secret `sandboxd-auth` key `master`, orchestrator only; bridges get their own claim's token. Claims from before this need a one-time recreate.
 - **Token handling:**
@@ -150,7 +150,7 @@ Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQD
 - **Spend:** a per-session turn and token budget, a concurrency cap, and a terminal `failed` state on 401/403 so a crash loop can't retry paid calls.
 - **Inputs:** validate `{repo, branch}` (`owner/name` and ref regex, https only, argv with `--`). Clone into a temp dir, then rename.
 - **Ops:**
-  - Retention and caps on tool output. No backups for `pi-pg` on c2 (dev only); set up backups when the DB moves to the production cluster.
+  - Retention and caps on tool output. Configure database backups before production use.
   - A digest-pinned orchestrator image (the liveness probe is in `deploy/orchestrator.yaml`).
   - Sandbox sizing per session, with ephemeral-storage limits.
   - Mount the OneCLI CA from a ConfigMap (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`).
@@ -164,14 +164,12 @@ Assumption: c2 migrates to Cilium, which enforces NetworkPolicy and supports FQD
   - Hubble is disabled.
 - 2026-11-16: sandbox image `1.5.2-r2-5bccb47` pinned by digest; phase 4c run live on `<owner>/<repo-a>` and
   `<owner>/<repo-b>`: 5/5 PASS (clone, push and branch delete through OneCLI; push to the other repo refused).
-- 2026-11-16: OneCLI policies merged into argo-c2 (#53, applied by Argo, endpoint enforcing both directions; no audit
-  run first, on the user's call). Afterwards: dashboard 200 via Envoy, phase 4b with the real Codex model, phase 4c and
-  isolation all PASS; `cilium-dbg monitor --type drop` on the OneCLI endpoint saw 0 drops over the runs.
-  Not covered: an interactive dashboard login.
+- OneCLI ingress and egress policy example: `deploy/onecli-policies/`. Apply it with your OneCLI deployment manager,
+  then verify the dashboard, model, repository and isolation paths. An interactive dashboard login was not covered by the original run.
 
 ### Phase 4b: Credentials through OneCLI, and model selection
 
-Decision: every credential goes through OneCLI. That covers model providers and GitHub. OneCLI already runs on c2 in namespace `onecli`, with the gateway on :10255. Neither the orchestrator nor the sandboxes hold real secrets; they only hold OneCLI proxy tokens.
+Decision: every credential goes through OneCLI. That covers model providers and GitHub. The manifests default to OneCLI in namespace `onecli`, with the gateway on :10255; adapt endpoints and policy selectors for your installation. Neither the orchestrator nor the sandboxes hold real secrets; they only hold OneCLI proxy tokens.
 
 0. **OneCLI spike results** (`docs/research/onecli-spike.md`, deployed v1.45.0):
    - Works: subscription OAuth (`authMode: oauth`, auto-refresh), header injection, git with `-c http.proxyAuthMethod=basic`, Node `fetch` and pi-ai through the proxy (`NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `NO_PROXY`).
@@ -181,7 +179,7 @@ Decision: every credential goes through OneCLI. That covers model providers and 
      - No native per-repo scope. The workaround is a per-session secret with `pathPattern:/owner/repo*`.
      - No token TTL or source binding; tokens can only be rotated or deleted.
      - The management API has no auth.
-   - **Upgraded to v2.20.0 (2026-11-15, via Argo, pinned by digest; `docs/research/onecli-v2-recheck.md`):**
+   - **Upgraded to v2.20.0 (2026-11-15, pinned by digest; `docs/research/onecli-v2-recheck.md`):**
      - Fixed: a request with no token gets 407. Private, cluster and metadata targets are always refused. The management API needs auth (API key `oc_…`).
      - Still open:
        - Public hosts are relayed unless there are explicit `allow …` then `block *` rules; add them.
