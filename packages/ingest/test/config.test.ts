@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig, orchestratorUrlFor } from "../src/config.ts";
 
-const base = { PI_DURABLE_DATABASE_URL: "postgres://x/y", PI_API_TOKENS: "alice:aaaaaaaaaaaaaaaa" };
+const base = {
+  PI_ORCH_URL: "http://orchestrator:8081",
+  PI_DURABLE_DATABASE_URL: "postgres://x/y",
+  PI_API_TOKENS: "alice:aaaaaaaaaaaaaaaa",
+};
 
 describe("loadConfig", () => {
-  it("defaults the port and orchestrator URL when unset", () => {
+  it("defaults the port and uses the configured orchestrator URL", () => {
     const config = loadConfig(base);
     expect(config.port).toBe(8080);
-    expect(config.orchestratorUrl).toBe("http://pi-orchestrator:8081");
+    expect(config.orchestratorUrl).toBe(base.PI_ORCH_URL);
   });
 
   it("rejects an empty, blank, zero or malformed port instead of binding a random one", () => {
@@ -46,3 +50,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, PI_ORCH_SHARDS: "2" })).toThrow(/\{shard\}/);
   });
 });
+
+it("requires an explicit shard route", () => {
+  expect(() => loadConfig({ ...base, PI_ORCH_URL: undefined })).toThrow("PI_ORCH_URL is required");
+}, 5_000);

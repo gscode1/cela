@@ -27,6 +27,10 @@ import { Sandboxes } from "../src/sandboxes.ts";
 
 const config = (extra: Record<string, string> = {}) =>
   loadConfig({
+    PI_ORCH_NAMESPACE: "test-ns",
+    PI_ORCH_WARMPOOL: "test-pool",
+    PI_ONECLI_GATEWAY: "http://gateway:10255",
+    PI_ONECLI_API: "http://gateway-api:10256",
     PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
     PI_API_TOKENS: "alice:0123456789abcdef0123",
     ...extra,
@@ -93,7 +97,7 @@ describe("recycle on interrupt", () => {
     execResults.push({ ok: false, error: { code: "aborted" } });
     await exec(sandboxes);
     await flush();
-    expect(kube.recyclePod).toHaveBeenCalledWith("pi-durable-poc", "pi-conv-5");
+    expect(kube.recyclePod).toHaveBeenCalledWith("test-ns", "pi-conv-5");
     expect(closed).toBe(1);
     expect(ledger.calls).toEqual(["5:true", "5:false"]);
     await exec(sandboxes);
@@ -111,7 +115,7 @@ describe("recycle on interrupt", () => {
     execResults.push({ ok: false, error: { code: "timeout" } });
     await exec(sandboxes, 2);
     await flush();
-    expect(kube.recyclePod).toHaveBeenCalledWith("pi-durable-poc", "pi-conv-2");
+    expect(kube.recyclePod).toHaveBeenCalledWith("test-ns", "pi-conv-2");
 
     sandboxEnv.connectSandboxEnv.mockImplementationOnce(() => ({
       env: { exec: () => Promise.reject(new Error("connection lost")) },
@@ -119,7 +123,7 @@ describe("recycle on interrupt", () => {
     }));
     await expect(exec(sandboxes, 3)).rejects.toThrow("connection lost");
     await flush();
-    expect(kube.recyclePod).toHaveBeenCalledWith("pi-durable-poc", "pi-conv-3");
+    expect(kube.recyclePod).toHaveBeenCalledWith("test-ns", "pi-conv-3");
     sandboxes.stop();
   });
 
@@ -221,7 +225,7 @@ describe("idle suspend and resume", () => {
     await vi.advanceTimersByTimeAsync(90_000);
     expect(kube.suspendSandbox).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(kube.suspendSandbox).toHaveBeenCalledWith("pi-durable-poc", "pi-conv-5");
+    expect(kube.suspendSandbox).toHaveBeenCalledWith("test-ns", "pi-conv-5");
     expect(closed).toBeGreaterThanOrEqual(1);
     sandboxes.stop();
   });
@@ -325,6 +329,10 @@ describe("bridge cap", () => {
 
   it("derives the cap from the memory limit and records where it came from", () => {
     const env = {
+      PI_ORCH_NAMESPACE: "test-ns",
+      PI_ORCH_WARMPOOL: "test-pool",
+      PI_ONECLI_GATEWAY: "http://gateway:10255",
+      PI_ONECLI_API: "http://gateway-api:10256",
       PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
       PI_API_TOKENS: "alice:0123456789abcdef0123",
     };

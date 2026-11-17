@@ -15,6 +15,10 @@ import { PermanentError, SessionService } from "../src/sessions.ts";
 import type { SubmissionState } from "../src/watcher.ts";
 
 const config = loadConfig({
+  PI_ORCH_NAMESPACE: "test-ns",
+  PI_ORCH_WARMPOOL: "test-pool",
+  PI_ONECLI_GATEWAY: "http://gateway:10255",
+  PI_ONECLI_API: "http://gateway-api:10256",
   PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
   PI_API_TOKENS: "alice:0123456789abcdef0123",
   PI_SESSION_TURN_BUDGET: "2",

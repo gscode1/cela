@@ -34,7 +34,7 @@ export class Redacted {
 
 /** How the orchestrator reaches model providers through the OneCLI gateway. */
 export interface OneCliConfig {
-  /** Proxy URL of the gateway, `http://onecli.onecli:10255`. No credentials in it: the token travels separately. */
+  /** Proxy URL of the gateway, `http://gateway.example:10255`. No credentials in it: the token travels separately. */
   gateway: string;
   /** The orchestrator's OneCLI agent token (`aoc_...`), from the Secret `pi-onecli`. */
   token: Redacted;

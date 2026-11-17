@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.ts";
 
-const base = { PI_DURABLE_DATABASE_URL: "postgres://x/y", PI_API_TOKENS: "alice:aaaaaaaaaaaaaaaa" };
+const base = {
+  PI_ORCH_URL: "http://orchestrator:8081",
+  PI_DURABLE_DATABASE_URL: "postgres://x/y",
+  PI_API_TOKENS: "alice:aaaaaaaaaaaaaaaa",
+};
 
 describe("loadConfig settings", () => {
   it("reads the admins and the env seed", () => {

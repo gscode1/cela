@@ -111,7 +111,6 @@ export const DEFAULT_NO_PROXY = [
   ".svc",
   ".cluster.local",
   "kubernetes.default",
-  "pi-pg-rw",
   "10.0.0.0/8",
   "172.16.0.0/12",
   "192.168.0.0/16",
@@ -183,12 +182,24 @@ export function loadConfig(
   if (remote !== undefined && !token) {
     throw new Error(`ONECLI_AGENT_TOKEN is required for model provider ${remote.provider}`);
   }
+  const required = (name: string): string => {
+    const value = env[name]?.trim();
+    if (!value) throw new Error(`${name} is required`);
+    return value;
+  };
+  const namespace = required("PI_ORCH_NAMESPACE");
+  const warmPool = required("PI_ORCH_WARMPOOL");
+  const gateway = required("PI_ONECLI_GATEWAY");
+  const onecliApi = required("PI_ONECLI_API");
+  const database = new URL(databaseUrl);
+  const databaseHost =
+    database.searchParams.get("host") || database.hostname || env.PGHOST || "localhost";
   return {
     databaseUrl,
     schema: shardSchema(env.PI_DURABLE_SCHEMA ?? "public", shard),
     shard,
-    namespace: env.PI_ORCH_NAMESPACE ?? "pi-durable-poc",
-    warmPool: env.PI_ORCH_WARMPOOL ?? "pi-env-pool",
+    namespace,
+    warmPool,
     port,
     instance: env.POD_NAME ?? `orchestrator-${String(process.pid)}`,
     apiTokens,
@@ -209,14 +220,19 @@ export function loadConfig(
       maxActions,
     },
     onecli: {
-      gateway: env.PI_ONECLI_GATEWAY ?? "http://onecli.onecli:10255",
+      gateway,
       caFile: env.PI_ONECLI_CA_FILE ?? "/etc/onecli/ca.pem",
-      noProxy: [...DEFAULT_NO_PROXY, ...parseNoProxy(env.NO_PROXY)],
+      noProxy: [
+        ...DEFAULT_NO_PROXY,
+        databaseHost,
+        new URL(onecliApi).hostname,
+        ...parseNoProxy(env.NO_PROXY),
+      ],
       token: token ? new Redacted(token) : undefined,
       codexAccountId: env.PI_CODEX_ACCOUNT_ID ?? PLACEHOLDER_API_KEY,
     },
     repos: {
-      onecliApi: env.PI_ONECLI_API ?? "http://onecli.onecli:10256",
+      onecliApi,
       onecliApiKey: env.ONECLI_API_KEY ? new Redacted(env.ONECLI_API_KEY) : undefined,
       githubAppDir: env.PI_GITHUB_APP_DIR ?? GITHUB_APP_DIR,
       onecliCalls: {

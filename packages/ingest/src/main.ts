@@ -9,6 +9,7 @@ import {
   tokenAuthenticator,
 } from "@pi-durable-k8s/session-core";
 import { loadConfig } from "./config.js";
+import { assertSessionShardRoutes, MissingShardRoutesError } from "./shard-routes.js";
 import { log } from "./log.js";
 import { createIngestServer } from "./server.js";
 
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
     while (!state.stopping) {
       try {
         await applyMigrations(pool);
+        await assertSessionShardRoutes(pool, config.shards);
         // Seed once from the environment (a no-op when the row exists); after that the table wins.
         await seedSettings(pool, config.seed);
         const stored = await readSettings(pool);
@@ -56,6 +58,10 @@ async function main(): Promise<void> {
         log("migrated", { instance: config.instance });
         return;
       } catch (error) {
+        if (error instanceof MissingShardRoutesError) {
+          log("fatal", { message: error.message });
+          process.exit(1);
+        }
         log("migrate-failed", { message: errorMessage(error) });
         await new Promise((resolve) => setTimeout(resolve, 2_000));
       }

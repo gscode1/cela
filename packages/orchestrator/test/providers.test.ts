@@ -4,6 +4,10 @@ import { PLACEHOLDER_API_KEY } from "../src/onecli.ts";
 import { buildModels } from "../src/providers.ts";
 
 const base = {
+  PI_ORCH_NAMESPACE: "test-ns",
+  PI_ORCH_WARMPOOL: "test-pool",
+  PI_ONECLI_GATEWAY: "http://gateway:10255",
+  PI_ONECLI_API: "http://gateway-api:10256",
   PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
   PI_API_TOKENS: "alice:0123456789abcdef0123",
 };
@@ -35,7 +39,8 @@ describe("model config", () => {
         ".svc",
         ".cluster.local",
         "kubernetes.default",
-        "pi-pg-rw",
+        "db",
+        "gateway-api",
         "corp.internal",
       ]),
     );
