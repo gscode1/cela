@@ -56,6 +56,7 @@ stores it in OneCLI for that session only, and the sandbox clones and pushes thr
 - [Model credentials through OneCLI](docs/model-credentials.md)
 - [Repository workspaces](docs/repo-workspace.md)
 - [End-to-end suites, one namespace per run](docs/e2e.md)
+- [Pod Security: the restricted level](docs/decisions/0019-restricted-pod-security.md)
 - [Network policy](docs/network-policy.md) and [OneCLI host rules](docs/onecli-host-rules.md)
 - [Plan, decisions and phase results](plan.md)
 

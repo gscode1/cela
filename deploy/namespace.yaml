@@ -2,3 +2,12 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: pi-durable-poc
+  # Pod Security Admission, pinned to the cluster's Kubernetes minor version so a cluster upgrade does not change the
+  # rules under us (docs/decisions/0019-restricted-pod-security.md). tests/e2e/run.sh sets the same labels.
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
