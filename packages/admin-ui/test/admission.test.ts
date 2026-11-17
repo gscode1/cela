@@ -188,6 +188,17 @@ describe("admitDefault", () => {
 });
 
 describe("failingProfiles and reviewSettingsSave", () => {
+  it("warns only about profiles this change newly refuses", () => {
+    const fast = profile("fast", { defaultModel: "scripted/scripted-2" });
+    const slow = profile("slow", { defaultModel: "scripted/scripted-3" });
+    const next = { ...settings, allowlist: ["scripted/scripted-1"] };
+    const review = reviewSettingsSave(next, [coding, fast, slow], [], settings);
+    // "slow" was refused before this change already.
+    expect(review.warnings.map((w) => w.name)).toEqual(["fast"]);
+    const again = reviewSettingsSave(next, [coding, fast, slow], [], next);
+    expect(again.warnings).toEqual([]);
+  });
+
   const fast = profile("fast", { defaultModel: "scripted/scripted-2" });
   const disabled = profile("disabled", { defaultModel: "nowhere/none" }, false);
 

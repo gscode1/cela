@@ -191,16 +191,25 @@ export interface SaveReview {
   warnings: ProfileFailure[];
 }
 
-/** The review of a settings save: the default profile blocks, the others warn. */
+/**
+ * The review of a settings save: the default profile blocks, the others warn. With `before` (the stored settings), a
+ * profile that was refused already is left out: only what this change breaks is news.
+ */
 export function reviewSettingsSave(
   next: SettingsValues,
   profiles: readonly ProfileFacts[],
   invalid: readonly InvalidProfile[],
+  before?: SettingsValues,
 ): SaveReview {
   const result = admitDefault(next, profiles, invalid);
+  const already = new Set(
+    before === undefined ? [] : failingProfiles(before, profiles).map((entry) => entry.name),
+  );
   return {
     blocking: result.ok ? undefined : result,
-    warnings: failingProfiles(next, profiles, next.defaultProfile),
+    warnings: failingProfiles(next, profiles, next.defaultProfile).filter(
+      (entry) => !already.has(entry.name),
+    ),
   };
 }
 

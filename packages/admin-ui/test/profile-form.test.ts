@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProfileDefinition, SkillInfo } from "@/lib/api/profiles";
 import type { SettingsValues } from "@/lib/api/settings";
-import { diffDefinitions, diffSettings, OMITTED } from "@/lib/diff";
+import { diffDefinitions, diffSettings } from "@/lib/diff";
 import {
   definitionFromForm,
   definitionProblems,
@@ -215,11 +215,11 @@ describe("executableSkillsWithoutBash", () => {
 describe("diffs", () => {
   it("tells an omitted field from an empty one and shows explicit off", () => {
     expect(diffDefinitions({}, { tools: [], reasoning: "off" })).toEqual([
-      { field: "tools", before: OMITTED, after: "(empty list)" },
-      { field: "reasoning", before: OMITTED, after: "off" },
+      { field: "tools", before: "all tools", after: "no tools" },
+      { field: "reasoning", before: "global default", after: "off" },
     ]);
     expect(diffDefinitions({ tools: [] }, {})).toEqual([
-      { field: "tools", before: "(empty list)", after: OMITTED },
+      { field: "tools", before: "no tools", after: "all tools" },
     ]);
   });
 
@@ -250,10 +250,18 @@ describe("diffs", () => {
       }),
     );
     expect(diffSettings(values, { ...values, reasoning: "low", turnBudget: 20 })).toEqual([
-      { field: "reasoning", before: "(not set)", after: "low" },
+      { field: "reasoning", before: "model default", after: "low" },
       { field: "turnBudget", before: "10", after: "20" },
     ]);
     expect(diffSettings(null, values)).toHaveLength(6);
+    // A reordering of the allowlist is no change; a spelling of an empty list is no change either.
+    expect(
+      diffSettings(
+        { ...values, allowlist: ["a/b", "c/d"] },
+        { ...values, allowlist: ["c/d", "a/b"] },
+      ),
+    ).toEqual([]);
+    expect(diffDefinitions({}, { mcpServers: [], repoSkills: false })).toEqual([]);
   });
 });
 
@@ -278,7 +286,7 @@ describe("settings form", () => {
     });
   });
 
-  it("parses the allowlist from lines and commas", () => {
+  it("puts the default model first in the allowlist, once", () => {
     const form = formFromValues({
       defaultModel: "a/b",
       allowlist: [],
@@ -287,10 +295,9 @@ describe("settings form", () => {
       defaultProfile: "coding",
       turnBudget: 1,
     });
-    expect(valuesFromForm({ ...form, allowlistText: " a/b\n\nc/d, e/f " }).allowlist).toEqual([
+    expect(valuesFromForm({ ...form, allowlist: ["c/d", "a/b"] }).allowlist).toEqual([
       "a/b",
       "c/d",
-      "e/f",
     ]);
   });
 

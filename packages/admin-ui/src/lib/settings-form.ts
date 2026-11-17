@@ -9,7 +9,7 @@ const MAX_TURN_BUDGET = 1_000_000;
 /** What the editor holds while an operator types: the list and the number are text until they are checked. */
 export interface SettingsForm {
   defaultModel: string;
-  allowlistText: string;
+  allowlist: string[];
   /** Empty for "not set", which is sent as `null`. */
   reasoning: ReasoningLevel | "";
   maxReasoning: ReasoningLevel | "";
@@ -20,7 +20,7 @@ export interface SettingsForm {
 export function formFromValues(values: SettingsValues): SettingsForm {
   return {
     defaultModel: values.defaultModel,
-    allowlistText: values.allowlist.join("\n"),
+    allowlist: values.allowlist,
     reasoning: values.reasoning ?? "",
     maxReasoning: values.maxReasoning ?? "",
     defaultProfile: values.defaultProfile,
@@ -28,19 +28,12 @@ export function formFromValues(values: SettingsValues): SettingsForm {
   };
 }
 
-/** One model per line (commas work too). */
-export function parseAllowlist(text: string): string[] {
-  return text
-    .split(/[\n,]/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
-}
-
-/** Clearing reasoning or max reasoning gives `null`: the API reads an omitted field as "keep". */
+/** The allowlist has the default model first, as the API stores it. Clearing reasoning gives `null`: omitted means "keep". */
 export function valuesFromForm(form: SettingsForm): SettingsValues {
+  const defaultModel = form.defaultModel.trim();
   return {
-    defaultModel: form.defaultModel.trim(),
-    allowlist: parseAllowlist(form.allowlistText),
+    defaultModel,
+    allowlist: [...new Set([defaultModel, ...form.allowlist])].filter((entry) => entry !== ""),
     reasoning: form.reasoning === "" ? null : form.reasoning,
     maxReasoning: form.maxReasoning === "" ? null : form.maxReasoning,
     defaultProfile: form.defaultProfile,
@@ -48,8 +41,11 @@ export function valuesFromForm(form: SettingsForm): SettingsValues {
   };
 }
 
+/** The order of the allowlist carries no meaning, so a reordering is not a change. */
 export function sameSettings(a: SettingsValues, b: SettingsValues): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  const norm = (values: SettingsValues): string =>
+    JSON.stringify({ ...values, allowlist: [...values.allowlist].sort() });
+  return norm(a) === norm(b);
 }
 
 function isModelKey(entry: string): boolean {

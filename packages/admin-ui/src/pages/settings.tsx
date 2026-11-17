@@ -3,22 +3,28 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "@/auth";
 import { ChangeList } from "@/components/change-list";
+import { LastChanged } from "@/components/changed";
 import { ConflictPanel } from "@/components/conflict-panel";
 import type { ConflictView } from "@/components/conflict-panel";
+import { AllowedModels, ModelNotice, ModelSelect } from "@/components/model-picker";
+import { Time } from "@/components/time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { admitDefault, reviewSettingsSave } from "@/lib/admission";
 import type { ProfileFacts } from "@/lib/admission";
 import { isConflict } from "@/lib/api";
 import type { AdminSettings } from "@/lib/api";
 import { REASONING_LEVELS, putSettings, valuesOf } from "@/lib/api/settings";
-import type { SettingsValues } from "@/lib/api/settings";
-import { diffSettings } from "@/lib/diff";
+import type { SettingsHistoryEntry, SettingsValues } from "@/lib/api/settings";
+import { actorName, isEpoch } from "@/lib/actor";
+import { changedNames, diffSettings } from "@/lib/diff";
+import { fieldLabel } from "@/lib/field-labels";
+import { supportsReasoning } from "@/lib/models";
+import { useModelView } from "@/lib/use-models";
 import { settingsImpact } from "@/lib/impact";
 import { keys, useProfilesQuery, useSettingsHistoryQuery, useSettingsQuery } from "@/lib/queries";
 import {
@@ -60,10 +66,12 @@ function Field({
 function ReasoningSelect({
   id,
   value,
+  emptyLabel,
   onChange,
 }: {
   id: string;
   value: string;
+  emptyLabel: string;
   onChange: (value: SettingsForm["reasoning"]) => void;
 }) {
   return (
@@ -74,7 +82,7 @@ function ReasoningSelect({
         onChange(REASONING_LEVELS.find((level) => level === event.target.value) ?? "");
       }}
     >
-      <option value="">not set</option>
+      <option value="">{emptyLabel}</option>
       {REASONING_LEVELS.map((level) => (
         <option key={level} value={level}>
           {level}
@@ -90,10 +98,11 @@ export function GlobalSettings() {
   const queryClient = useQueryClient();
   const settings = useSettingsQuery();
   const history = useSettingsHistoryQuery();
+  const models = useModelView();
   const profiles = useProfilesQuery();
   const [draft, setDraft] = useDraft<SettingsDraft>("settings");
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
-  const [saved, setSaved] = useState<string[] | undefined>(undefined);
+  const [saved, setSaved] = useState(false);
   const [reloading, setReloading] = useState(false);
 
   const server = settings.data;
@@ -114,17 +123,13 @@ export function GlobalSettings() {
       queryClient.setQueryData(keys.settings, stored);
       setDraft(undefined);
       setConflict(undefined);
-      const changed =
-        current === undefined
-          ? []
-          : diffSettings(current.base, valuesOf(stored)).map((c) => c.field);
-      setSaved(settingsImpact(changed));
+      setSaved(true);
       // Settings and their history, and the profile list (it carries the default profile).
       void queryClient.invalidateQueries({ queryKey: keys.settings });
       void queryClient.invalidateQueries({ queryKey: keys.profiles });
     },
     onError: (error) => {
-      setSaved(undefined);
+      setSaved(false);
       if (isConflict(error)) setConflict({ message: error.message });
     },
   });
@@ -141,7 +146,7 @@ export function GlobalSettings() {
   }
 
   const edit = (patch: Partial<SettingsForm>): void => {
-    setSaved(undefined);
+    setSaved(false);
     setDraft({ ...current, form: { ...current.form, ...patch } });
   };
   const values = valuesFromForm(current.form);
@@ -152,12 +157,13 @@ export function GlobalSettings() {
   const review =
     facts === undefined || profiles.data === undefined
       ? undefined
-      : reviewSettingsSave(values, facts, profiles.data.invalid);
+      : reviewSettingsSave(values, facts, profiles.data.invalid, current.base);
   const storedDefault =
     server === undefined || facts === undefined || profiles.data === undefined
       ? undefined
       : admitDefault(valuesOf(server), facts, profiles.data.invalid);
   const impact = settingsImpact(changes.map((change) => change.field));
+  const reasoningSupport = supportsReasoning(models.models, current.form.defaultModel);
   const blocked = problems.length > 0 || review?.blocking !== undefined || review === undefined;
 
   const reload = (): void => {
@@ -194,8 +200,12 @@ export function GlobalSettings() {
           <CardTitle>Global settings</CardTitle>
           <CardDescription>
             What a new session gets when its request and its profile say nothing.
-            {server !== undefined &&
-              ` Revision ${String(server.revision)}, last changed by ${server.updatedBy} at ${server.updatedAt}.`}
+            {server !== undefined && (
+              <>
+                {" "}
+                <LastChanged by={server.updatedBy} at={server.updatedAt} />.
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -213,46 +223,54 @@ export function GlobalSettings() {
               event.preventDefault();
             }}
           >
-            <Field id="default-model" label="Default model" hint="provider/model; always allowed.">
-              <Input
+            <ModelNotice view={models} />
+            <Field id="default-model" label={fieldLabel("defaultModel")}>
+              <ModelSelect
                 id="default-model"
                 value={current.form.defaultModel}
-                onChange={(event) => {
-                  edit({ defaultModel: event.target.value });
+                view={models}
+                onChange={(key) => {
+                  edit({ defaultModel: key });
                 }}
               />
             </Field>
-            <Field
-              id="allowlist"
-              label="Allowlist"
-              hint="One provider/model per line. The default model is always included."
-            >
-              <Textarea
-                id="allowlist"
-                value={current.form.allowlistText}
-                onChange={(event) => {
-                  edit({ allowlistText: event.target.value });
-                }}
-              />
-            </Field>
+            <AllowedModels
+              value={current.form.allowlist}
+              defaultModel={current.form.defaultModel.trim()}
+              view={models}
+              onChange={(next) => {
+                edit({ allowlist: next });
+              }}
+            />
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field id="reasoning" label="Reasoning" hint="Clearing it sends null.">
-                <ReasoningSelect
-                  id="reasoning"
-                  value={current.form.reasoning}
-                  onChange={(value) => {
-                    edit({ reasoning: value });
-                  }}
-                />
+              <Field id="reasoning" label={fieldLabel("reasoning")}>
+                {reasoningSupport === false && current.form.reasoning === "" ? (
+                  <p className="text-sm text-muted-foreground">
+                    This model has no reasoning levels.
+                  </p>
+                ) : (
+                  <>
+                    <ReasoningSelect
+                      id="reasoning"
+                      value={current.form.reasoning}
+                      emptyLabel="model default"
+                      onChange={(value) => {
+                        edit({ reasoning: value });
+                      }}
+                    />
+                    {reasoningSupport === false && (
+                      <p className="text-xs text-muted-foreground">
+                        This model has no reasoning levels.
+                      </p>
+                    )}
+                  </>
+                )}
               </Field>
-              <Field
-                id="max-reasoning"
-                label="Max reasoning"
-                hint="Highest effort a request may ask for."
-              >
+              <Field id="max-reasoning" label={fieldLabel("maxReasoning")}>
                 <ReasoningSelect
                   id="max-reasoning"
                   value={current.form.maxReasoning}
+                  emptyLabel="no limit"
                   onChange={(value) => {
                     edit({ maxReasoning: value });
                   }}
@@ -261,8 +279,8 @@ export function GlobalSettings() {
             </div>
             <Field
               id="default-profile"
-              label="Default profile"
-              hint="The profile a new session gets when its request names none. It must exist and be enabled."
+              label={fieldLabel("defaultProfile")}
+              hint="The profile a new session gets when its request names none."
             >
               <Select
                 id="default-profile"
@@ -281,7 +299,7 @@ export function GlobalSettings() {
             </Field>
             <Field
               id="turn-budget"
-              label="Turn budget"
+              label={fieldLabel("turnBudget")}
               hint="Model turns one session may use in total, 1 to 1000000."
             >
               <Input
@@ -297,12 +315,9 @@ export function GlobalSettings() {
         </CardContent>
       </Card>
 
-      {saved !== undefined && (
+      {saved && (
         <Alert role="status" data-testid="saved">
-          <p className="font-medium">Settings saved.</p>
-          {saved.map((note) => (
-            <p key={note}>{note}</p>
-          ))}
+          Settings saved.
         </Alert>
       )}
 
@@ -321,7 +336,6 @@ export function GlobalSettings() {
         <Card role="region" aria-label="Review before saving">
           <CardHeader>
             <CardTitle>Review before saving</CardTitle>
-            <CardDescription>Previous values are revision {current.baseRevision}.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <ChangeList changes={changes} />
@@ -340,15 +354,19 @@ export function GlobalSettings() {
             {review !== undefined && review.warnings.length > 0 && (
               <Alert variant="warning" data-testid="warnings">
                 <p className="font-medium">
-                  Other enabled profiles would be refused when a session picks them.
+                  Would be refused when a session picks them:{" "}
+                  {review.warnings.map((warning) => warning.name).join(", ")}.
                 </p>
-                <ul className="list-disc pl-5">
-                  {review.warnings.map((warning) => (
-                    <li key={warning.name} className="break-words">
-                      {warning.name}: {warning.refused.message}. {warning.refused.fix}
-                    </li>
-                  ))}
-                </ul>
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-muted-foreground">details</summary>
+                  <ul className="list-disc pl-5">
+                    {review.warnings.map((warning) => (
+                      <li key={warning.name} className="break-words">
+                        {warning.name}: {warning.refused.message}. {warning.refused.fix}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </Alert>
             )}
             {impact.map((note) => (
@@ -359,7 +377,7 @@ export function GlobalSettings() {
             {save.isError && !isConflict(save.error) && (
               <Alert variant="destructive">{save.error.message}</Alert>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 disabled={blocked || save.isPending}
                 onClick={() => {
@@ -371,33 +389,95 @@ export function GlobalSettings() {
               <Button variant="ghost" disabled={save.isPending} onClick={discard}>
                 Discard changes
               </Button>
+              <span className="text-sm text-muted-foreground">Applies to new sessions only.</span>
             </div>
           </CardContent>
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent changes</CardTitle>
-          <CardDescription>Newest first, at most 20 entries.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {history.isError && <Alert variant="destructive">{history.error.message}</Alert>}
-          <ol className="flex flex-col gap-4" aria-label="Settings history">
-            {(history.data ?? []).map((entry) => (
-              <li key={entry.id} className="flex flex-col gap-1">
-                <p className="text-sm">
-                  <span className="font-medium">{entry.changedBy}</span>{" "}
-                  <span className="text-muted-foreground">{entry.changedAt}</span>
-                  {entry.old === null && " (initial values)"}
-                </p>
-                <ChangeList changes={diffSettings(entry.old, entry.new)} />
-              </li>
-            ))}
-          </ol>
-        </CardContent>
-      </Card>
+      <SettingsHistory
+        entries={history.data ?? []}
+        error={history.isError ? history.error.message : undefined}
+      />
     </div>
+  );
+}
+
+const HISTORY_SHOWN = 5;
+
+function SettingsHistory({
+  entries,
+  error,
+}: {
+  entries: readonly SettingsHistoryEntry[];
+  error: string | undefined;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? entries : entries.slice(0, HISTORY_SHOWN);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Recent changes</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {error !== undefined && <Alert variant="destructive">{error}</Alert>}
+        <ol className="flex flex-col gap-1" aria-label="Settings history">
+          {shown.map((entry) => (
+            <HistoryRow key={entry.id} entry={entry} />
+          ))}
+        </ol>
+        {!all && entries.length > HISTORY_SHOWN && (
+          <div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setAll(true);
+              }}
+            >
+              Show more
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HistoryRow({ entry }: { entry: SettingsHistoryEntry }) {
+  const [open, setOpen] = useState(false);
+  const initial = entry.old === null;
+  const changes = diffSettings(entry.old, entry.new);
+  return (
+    <li className="flex flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        className="flex flex-wrap items-baseline gap-x-1 text-left text-sm hover:underline"
+        onClick={() => {
+          setOpen(!open);
+        }}
+      >
+        <span className="font-medium">{actorName(entry.changedBy)}</span>{" "}
+        <span>
+          {initial
+            ? "set the initial values"
+            : changes.length === 0
+              ? "saved without changes"
+              : `changed ${changedNames(changes)}`}
+        </span>
+        {!isEpoch(entry.changedAt) && (
+          <span className="ml-1 text-muted-foreground">
+            <Time value={entry.changedAt} />
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="pb-2 pl-4">
+          <ChangeList changes={changes} initial={initial} />
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -412,21 +492,25 @@ function DefaultProfileOptions({
   invalid: string[];
   loaded: boolean;
 }) {
-  const known = new Set([...profiles.map((profile) => profile.name), ...invalid]);
+  // Only profiles a new session may get are offered; a stale current value stays, marked, so it can be seen and replaced.
+  const offered = profiles.filter((profile) => profile.enabledForNew);
+  const stale = ((): string | undefined => {
+    if (!loaded) return selected;
+    if (offered.some((profile) => profile.name === selected)) return undefined;
+    if (invalid.includes(selected)) return `${selected} (invalid)`;
+    if (profiles.some((profile) => profile.name === selected)) return `${selected} (disabled)`;
+    return `${selected} (does not exist)`;
+  })();
   return (
     <>
-      {loaded && !known.has(selected) && (
-        <option value={selected}>{selected} (does not exist)</option>
-      )}
-      {!loaded && <option value={selected}>{selected}</option>}
-      {profiles.map((profile) => (
-        <option key={profile.name} value={profile.name} disabled={!profile.enabledForNew}>
-          {profile.enabledForNew ? profile.name : `${profile.name} (disabled)`}
+      {stale !== undefined && (
+        <option value={selected} disabled={loaded}>
+          {stale}
         </option>
-      ))}
-      {invalid.map((name) => (
-        <option key={name} value={name} disabled>
-          {name} (invalid)
+      )}
+      {offered.map((profile) => (
+        <option key={profile.name} value={profile.name}>
+          {profile.name}
         </option>
       ))}
     </>
