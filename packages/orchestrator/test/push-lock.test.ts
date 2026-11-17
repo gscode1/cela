@@ -93,7 +93,7 @@ describe("push lock", () => {
     seed("other-1-1", now() + 600);
     const r = run("push_lock_acquire");
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("another push-code run holds the lock");
+    expect(r.stderr).toContain("another push holds the lock");
     expect(r.stderr).toContain("other-1-1");
     expect(readFileSync(join(dir, "holder"), "utf8")).toBe("other-1-1");
   });

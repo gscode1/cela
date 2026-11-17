@@ -20,6 +20,8 @@ for m in \${STUB_MISSING:-}; do
   if [[ $args == *" get deployment $m "* || $args == *" get service $m "* ]]; then echo "NotFound" >&2; exit 1; fi
 done
 if [[ $args == *" rollout restart "* && -n \${STUB_RESTART_FAIL:-} ]]; then echo "restart failed" >&2; exit 1; fi
+if [[ -n \${STUB_LOCK_HELD:-} && $args == *" create -f - "* ]]; then echo "AlreadyExists" >&2; exit 1; fi
+if [[ -n \${STUB_LOCK_HELD:-} && $args == *" get configmap ingest-code-push-lock -o "* ]]; then echo "1 9999999999 other-host"; exit 0; fi
 if [[ $args == *" annotate configmap "* && -n \${STUB_ANNOTATE_FAIL:-} ]]; then echo "connection refused" >&2; exit 1; fi
 if [[ $args == *" create configmap "* ]]; then echo "kind: ConfigMap"; exit 0; fi
 if [[ $args == *" get deployment "* ]]; then echo '{"spec":{"template":{"metadata":{"labels":{}},"spec":{"containers":[{"env":[]}]}}}}'; fi
@@ -127,6 +129,22 @@ exit 0
     expect(restart).toBeGreaterThanOrEqual(0);
     expect(mark).toBeGreaterThan(restart);
     expect(calls).not.toContain("annotate --local");
+  });
+
+  it("takes the ingest push lock before reading the hash and releases it at the end", () => {
+    const r = run("push-ingest.sh", []);
+    expect(r.status, r.stderr).toBe(0);
+    const calls = log();
+    const lock = calls.indexOf("create -f -");
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(calls.indexOf("get configmap ingest-code -o jsonpath"));
+    expect(calls).toContain("get configmap ingest-code-push-lock --ignore-not-found");
+  });
+
+  it("stops before touching the ConfigMap when another push holds the lock", () => {
+    const r = run("push-ingest.sh", [], { STUB_LOCK_HELD: "1" });
+    expect(r.status).toBe(1);
+    expect(log()).not.toMatch(/replace|rollout|annotate/);
   });
 
   it("still succeeds, with a warning, when only recording the hash fails", () => {

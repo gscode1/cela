@@ -13,7 +13,17 @@ work=$(mktemp -d)
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 # shellcheck source=push-retry.sh
 . "$here/push-retry.sh"
-trap 'rm -rf "$work"' EXIT
+# Two concurrent pushes could otherwise label one bundle with the other's hash, and a later push of that hash would
+# then report "unchanged". The lock covers everything from reading the hash to writing it.
+lock=ingest-code-push-lock
+# shellcheck source=push-lock.sh
+. "$here/push-lock.sh"
+locked=0
+cleanup() {
+  rm -rf "$work"
+  if [[ $locked -eq 1 ]]; then push_lock_release || true; fi
+}
+trap cleanup EXIT
 
 (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter @pi-durable-k8s/session-core --filter @pi-durable-k8s/ingest build >/dev/null)
 (cd "$root" && pnpm --filter @pi-durable-k8s/ingest deploy --prod "$work/app" >/dev/null)
@@ -30,6 +40,8 @@ if [[ $size -gt 900000 ]]; then
 fi
 
 sum=$(shasum -a 256 "$work/app.tgz" | awk '{print $1}')
+push_lock_acquire || exit 1
+locked=1
 current=$(k get configmap ingest-code -o jsonpath='{.metadata.annotations.bundle-sha256}' 2>/dev/null || true)
 if [[ $current == "$sum" ]]; then
   echo "ingest bundle unchanged"
