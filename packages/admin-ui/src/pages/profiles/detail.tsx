@@ -194,7 +194,8 @@ function ProfileScreenFor({ name }: { name: string }) {
           )}
           {toggleConflict !== undefined && conflictKind(toggleConflict) === "stale" && (
             <Alert variant="warning" data-testid="toggle-conflict">
-              <p className="break-words">{toggleConflict.message}</p>
+              {/* The API's text names revision numbers; the operator only needs to know it moved on. */}
+              <p>Not changed: someone else changed this profile since you opened it.</p>
               <Button
                 className="mt-2"
                 size="sm"
