@@ -1,4 +1,5 @@
 import { Link, useSearchParams } from "react-router";
+import { ChangedCell } from "@/components/changed";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -19,7 +20,7 @@ export function ProfileList() {
         <div className="flex flex-col gap-1.5">
           <CardTitle>Session profiles</CardTitle>
           <CardDescription>
-            Named, versioned definitions of what a session gets. Profiles are disabled, not deleted.
+            What a new session gets. Profiles can be disabled, not deleted.
           </CardDescription>
         </div>
         <Link className={buttonVariants()} to="/profiles/new">
@@ -42,9 +43,7 @@ export function ProfileList() {
             <thead>
               <tr className="text-muted-foreground">
                 <th className="py-1 pr-4 font-medium">Name</th>
-                <th className="py-1 pr-4 font-medium">Version</th>
-                <th className="py-1 pr-4 font-medium">New sessions</th>
-                <th className="py-1 font-medium">Last change</th>
+                <th className="py-1 font-medium">Last changed</th>
               </tr>
             </thead>
             <tbody>
@@ -62,12 +61,14 @@ export function ProfileList() {
                         default
                       </Badge>
                     )}
+                    {!profile.enabledForNew && (
+                      <Badge className="ml-2" variant="destructive">
+                        disabled
+                      </Badge>
+                    )}
                   </td>
-                  <td className="py-2 pr-4">v{profile.currentVersion}</td>
-                  <td className="py-2 pr-4">{profile.enabledForNew ? "enabled" : "disabled"}</td>
                   <td className="py-2 break-words">
-                    {profile.updatedBy}{" "}
-                    <span className="text-muted-foreground">{profile.updatedAt}</span>
+                    <ChangedCell by={profile.updatedBy} at={profile.updatedAt} />
                   </td>
                 </tr>
               ))}
@@ -81,21 +82,16 @@ export function ProfileList() {
                       </Badge>
                     )}
                   </td>
-                  <td className="py-2 pr-4" colSpan={3}>
+                  <td className="py-2">
                     <Badge variant="destructive">invalid</Badge>{" "}
-                    <span className="break-words">{entry.message}</span>
+                    <span className="break-words" title={entry.message}>
+                      This profile&apos;s stored definition is invalid; publish a corrected version.
+                    </span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-        {data?.invalid.length !== undefined && data.invalid.length > 0 && (
-          <p className="text-sm text-muted-foreground">
-            An invalid profile cannot be chosen for new sessions. Its current version was edited
-            into something the validator rejects; fix the stored definition or publish a complete
-            new one through the API.
-          </p>
         )}
       </CardContent>
     </Card>

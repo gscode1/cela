@@ -222,3 +222,28 @@ export function executableSkillsWithoutBash(
   }
   return found;
 }
+
+/** True when the form says nothing: the profile then inherits everything from the global settings. */
+export function isEmptyForm(form: ProfileForm): boolean {
+  return (
+    form.instructions.trim() === "" &&
+    form.allTools &&
+    form.allModelTools &&
+    form.defaultModel.trim() === "" &&
+    form.reasoning === "" &&
+    form.turnBudget.trim() === "" &&
+    form.mcpServers.length === 0 &&
+    form.skills.length === 0 &&
+    !form.repoSkills &&
+    !form.repoContext
+  );
+}
+
+/** The host of an MCP server's URL, for lists; the full URL stays available for a title. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}

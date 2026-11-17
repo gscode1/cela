@@ -1,11 +1,15 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Link } from "react-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import type { McpServerRef, SkillInfo, SkillPin } from "@/lib/api/profiles";
+import { fieldLabel } from "@/lib/field-labels";
+import { hostOf } from "@/lib/profile-form";
+import { toolDescription } from "@/lib/tool-descriptions";
 
 export function Fieldset({
   legend,
@@ -32,16 +36,17 @@ export function Fieldset({
 export function ToolList({
   idPrefix,
   legend,
-  hint,
   all,
   selected,
   offered,
   installed,
+  bare = false,
   onChange,
 }: {
   idPrefix: string;
   legend: string;
-  hint: string;
+  /** Inside another disclosure: no frame of its own. */
+  bare?: boolean;
   all: boolean;
   selected: string[];
   /** The tools that may be picked: the installed ones, narrowed for `modelTools` by the enabled tools. */
@@ -50,8 +55,9 @@ export function ToolList({
   onChange: (all: boolean, selected: string[]) => void;
 }) {
   const unknown = selected.filter((name) => !installed.includes(name));
+  const Frame = bare ? BareFrame : Fieldset;
   return (
-    <Fieldset legend={legend} hint={hint}>
+    <Frame legend={legend}>
       <div className="flex items-center gap-2">
         <Checkbox
           id={`${idPrefix}-all`}
@@ -60,7 +66,7 @@ export function ToolList({
             onChange(event.target.checked, event.target.checked ? [] : [...offered]);
           }}
         />
-        <Label htmlFor={`${idPrefix}-all`}>All (field omitted)</Label>
+        <Label htmlFor={`${idPrefix}-all`}>All tools (default)</Label>
       </div>
       {!all && (
         <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -79,9 +85,12 @@ export function ToolList({
                 }}
               />
               <Label htmlFor={`${idPrefix}-${name}`}>{name}</Label>
+              {toolDescription(name) !== undefined && (
+                <span className="text-xs text-muted-foreground">{toolDescription(name)}</span>
+              )}
             </div>
           ))}
-          {selected.length === 0 && <p className="text-sm">No tools: an empty list.</p>}
+          {selected.length === 0 && <p className="text-sm">No tools.</p>}
         </div>
       )}
       {unknown.map((name) => (
@@ -93,8 +102,7 @@ export function ToolList({
           <Badge variant="destructive">removed tool</Badge>
           <span className="font-mono break-all">{name}</span>
           <span className="text-muted-foreground">
-            The orchestrator no longer has this tool, so the API refuses a new version that lists
-            it.
+            This tool is no longer installed, so a new version cannot list it.
           </span>
           <Button
             size="sm"
@@ -110,7 +118,17 @@ export function ToolList({
           </Button>
         </div>
       ))}
-    </Fieldset>
+    </Frame>
+  );
+}
+
+/** The same heading as a fieldset, without the frame: for a list that already sits in one. */
+function BareFrame({ legend, children }: { legend: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-medium">{legend}</p>
+      {children}
+    </div>
   );
 }
 
@@ -125,13 +143,19 @@ export function McpPicker({
 }) {
   const missing =
     catalog === undefined ? [] : selected.filter((name) => !catalog.some((s) => s.name === name));
+  const empty = catalog?.length === 0;
   return (
     <Fieldset
-      legend="MCP servers"
-      hint="Servers from the MCP catalog. A session gets tool_search and their tools. Attaching one publishes a new version, so it applies to new sessions only."
+      legend={fieldLabel("mcpServers")}
+      {...(empty ? {} : { hint: "Their tools become available to the model." })}
     >
-      {catalog?.length === 0 && (
-        <p className="text-sm text-muted-foreground">The catalog has no servers.</p>
+      {empty && (
+        <p className="text-sm text-muted-foreground">
+          No MCP servers registered.{" "}
+          <Link className="underline underline-offset-4" to="/mcp">
+            Register one
+          </Link>
+        </p>
       )}
       {(catalog ?? []).map((server) => (
         <div key={server.name} className="flex flex-wrap items-center gap-2 text-sm">
@@ -147,10 +171,10 @@ export function McpPicker({
             }}
           />
           <Label htmlFor={`mcp-${server.name}`}>{server.name}</Label>
-          <span className="break-all text-muted-foreground">{server.url}</span>
-          {!server.enabled && (
-            <Badge variant="outline">disabled: its tools are unavailable until it is enabled</Badge>
-          )}
+          <span className="break-all text-muted-foreground" title={server.url}>
+            {hostOf(server.url)}
+          </span>
+          {!server.enabled && <Badge variant="outline">disabled</Badge>}
         </div>
       ))}
       {missing.map((name) => (
@@ -162,7 +186,7 @@ export function McpPicker({
           <Badge variant="destructive">deleted server</Badge>
           <span className="font-mono break-all">{name}</span>
           <span className="text-muted-foreground">
-            It is not in the catalog, so the API refuses a new version that lists it.
+            It is not registered any more, so a new version cannot list it.
           </span>
           <Button
             size="sm"
@@ -179,10 +203,6 @@ export function McpPicker({
   );
 }
 
-function shortDigest(digest: string | undefined): string {
-  return digest === undefined ? "" : digest.slice(0, 12);
-}
-
 export function SkillPicker({
   pins,
   catalog,
@@ -196,16 +216,28 @@ export function SkillPicker({
   const [version, setVersion] = useState("");
   const skill = catalog?.find((entry) => entry.name === name);
   const chosen = skill?.versions.find((entry) => String(entry.version) === version);
+  const empty = catalog?.length === 0;
   const detail = (pin: SkillPin) =>
     catalog
       ?.find((entry) => entry.name === pin.name)
       ?.versions.find((v) => v.version === pin.version);
   return (
     <Fieldset
-      legend="Skills"
-      hint="Exact versions. A published version never changes, and a new one reaches this profile only when you pin it."
+      legend={fieldLabel("skills")}
+      {...(empty
+        ? {}
+        : {
+            hint: "Pinned to an exact version; a newer one reaches this profile only when you pin it.",
+          })}
     >
-      {pins.length === 0 && <p className="text-sm text-muted-foreground">No skills pinned.</p>}
+      {empty && (
+        <p className="text-sm text-muted-foreground">
+          No skills published yet.{" "}
+          <Link className="underline underline-offset-4" to="/skills">
+            Publish one
+          </Link>
+        </p>
+      )}
       {pins.map((pin) => {
         const info = detail(pin);
         const executable = info?.files.some((file) => file.executable) === true;
@@ -218,11 +250,6 @@ export function SkillPicker({
             <span className="font-mono break-all">
               {pin.name}@v{pin.version}
             </span>
-            {pin.digest !== undefined && (
-              <span className="font-mono text-xs text-muted-foreground">
-                {shortDigest(pin.digest)}
-              </span>
-            )}
             {executable && <Badge variant="outline">executable files</Badge>}
             {info?.disableModelInvocation === true && (
               <Badge variant="outline">model invocation disabled</Badge>
@@ -242,66 +269,68 @@ export function SkillPicker({
           </div>
         );
       })}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex min-w-40 flex-col gap-1.5">
-          <Label htmlFor="skill-name">Skill</Label>
-          <Select
-            id="skill-name"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              const next = catalog?.find((entry) => entry.name === event.target.value);
-              setVersion(next === undefined ? "" : String(next.currentVersion));
+      {!empty && (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex min-w-40 flex-col gap-1.5">
+            <Label htmlFor="skill-name">Skill</Label>
+            <Select
+              id="skill-name"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                const next = catalog?.find((entry) => entry.name === event.target.value);
+                setVersion(next === undefined ? "" : String(next.currentVersion));
+              }}
+            >
+              <option value="">choose a skill</option>
+              {(catalog ?? []).map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {entry.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex min-w-32 flex-col gap-1.5">
+            <Label htmlFor="skill-version">Version</Label>
+            <Select
+              id="skill-version"
+              value={version}
+              disabled={skill === undefined}
+              onChange={(event) => {
+                setVersion(event.target.value);
+              }}
+            >
+              {(skill?.versions ?? []).map((entry) => (
+                <option key={entry.version} value={String(entry.version)}>
+                  v{entry.version}
+                  {entry.version === skill?.currentVersion ? " (current)" : ""}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <Button
+            variant="outline"
+            disabled={chosen === undefined || skill === undefined}
+            onClick={() => {
+              if (chosen === undefined || skill === undefined) return;
+              const pin: SkillPin = {
+                name: skill.name,
+                version: chosen.version,
+                digest: chosen.digest,
+              };
+              onChange(
+                pins.some((entry) => entry.name === skill.name)
+                  ? pins.map((entry) => (entry.name === skill.name ? pin : entry))
+                  : [...pins, pin],
+              );
+              setName("");
+              setVersion("");
             }}
           >
-            <option value="">choose a skill</option>
-            {(catalog ?? []).map((entry) => (
-              <option key={entry.name} value={entry.name}>
-                {entry.name}
-              </option>
-            ))}
-          </Select>
+            Pin version
+          </Button>
         </div>
-        <div className="flex min-w-32 flex-col gap-1.5">
-          <Label htmlFor="skill-version">Version</Label>
-          <Select
-            id="skill-version"
-            value={version}
-            disabled={skill === undefined}
-            onChange={(event) => {
-              setVersion(event.target.value);
-            }}
-          >
-            {(skill?.versions ?? []).map((entry) => (
-              <option key={entry.version} value={String(entry.version)}>
-                v{entry.version}
-                {entry.version === skill?.currentVersion ? " (current)" : ""}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Button
-          variant="outline"
-          disabled={chosen === undefined || skill === undefined}
-          onClick={() => {
-            if (chosen === undefined || skill === undefined) return;
-            const pin: SkillPin = {
-              name: skill.name,
-              version: chosen.version,
-              digest: chosen.digest,
-            };
-            onChange(
-              pins.some((entry) => entry.name === skill.name)
-                ? pins.map((entry) => (entry.name === skill.name ? pin : entry))
-                : [...pins, pin],
-            );
-            setName("");
-            setVersion("");
-          }}
-        >
-          Pin version
-        </Button>
-      </div>
+      )}
     </Fieldset>
   );
 }

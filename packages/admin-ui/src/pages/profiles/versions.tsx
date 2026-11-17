@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Time } from "@/components/time";
+import { actorName, isEpoch } from "@/lib/actor";
 import { ChangeList } from "@/components/change-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,39 +35,38 @@ export function ProfileVersions({
     <Card>
       <CardHeader>
         <CardTitle>Versions</CardTitle>
-        <CardDescription>
-          Stored definitions, newest first. A diff compares what was stored; an older definition is
-          previewed with the current settings.
-        </CardDescription>
+        <CardDescription>Stored definitions, newest first.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="diff-from">From</Label>
-            <Select
-              id="diff-from"
-              value={fromVersion === undefined ? "" : String(fromVersion.version)}
-              onChange={(event) => {
-                setFrom(event.target.value);
-              }}
-            >
-              {options}
-            </Select>
+        {versions.length > 1 && (
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="diff-from">From</Label>
+              <Select
+                id="diff-from"
+                value={fromVersion === undefined ? "" : String(fromVersion.version)}
+                onChange={(event) => {
+                  setFrom(event.target.value);
+                }}
+              >
+                {options}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="diff-to">To</Label>
+              <Select
+                id="diff-to"
+                value={toVersion === undefined ? "" : String(toVersion.version)}
+                onChange={(event) => {
+                  setTo(event.target.value);
+                }}
+              >
+                {options}
+              </Select>
+            </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="diff-to">To</Label>
-            <Select
-              id="diff-to"
-              value={toVersion === undefined ? "" : String(toVersion.version)}
-              onChange={(event) => {
-                setTo(event.target.value);
-              }}
-            >
-              {options}
-            </Select>
-          </div>
-        </div>
-        {fromVersion !== undefined && toVersion !== undefined && (
+        )}
+        {versions.length > 1 && fromVersion !== undefined && toVersion !== undefined && (
           <div aria-label="Version diff">
             <ChangeList
               changes={diffDefinitions(fromVersion.definition, toVersion.definition)}
@@ -81,11 +82,15 @@ export function ProfileVersions({
               {version.version === profile.currentVersion && (
                 <Badge variant="outline">current</Badge>
               )}
-              <span>{version.createdBy}</span>
-              <span className="text-muted-foreground">{version.createdAt}</span>
+              <span>{actorName(version.createdBy)}</span>
+              {!isEpoch(version.createdAt) && (
+                <span className="text-muted-foreground">
+                  <Time value={version.createdAt} />
+                </span>
+              )}
               {version.invalid !== undefined ? (
                 <Badge variant="destructive">invalid: {version.invalid}</Badge>
-              ) : (
+              ) : version.version === profile.currentVersion ? null : (
                 <Button
                   size="sm"
                   variant="ghost"

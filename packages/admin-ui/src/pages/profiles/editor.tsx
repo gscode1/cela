@@ -11,8 +11,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { AllowedModelSelect } from "@/components/model-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { effectiveAllowlist, reviewProfileSave } from "@/lib/admission";
+import { fieldLabel } from "@/lib/field-labels";
+import { modelLabel, supportsReasoning } from "@/lib/models";
+import { useModelView } from "@/lib/use-models";
 import { isConflict } from "@/lib/api";
 import { putProfile } from "@/lib/api/profiles";
 import type { ProfileDefinition, ProfileDetail } from "@/lib/api/profiles";
@@ -24,6 +28,7 @@ import {
   definitionFromForm,
   definitionProblems,
   executableSkillsWithoutBash,
+  isEmptyForm,
   readProblems,
   referenceProblems,
   withoutBrokenReferences,
@@ -74,6 +79,7 @@ export function ProfileEditor({
   const tools = useToolsQuery();
   const mcp = useMcpPickerQuery();
   const skills = useSkillPickerQuery();
+  const models = useModelView();
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
   const [reloading, setReloading] = useState(false);
   const creating = stored === undefined;
@@ -97,6 +103,8 @@ export function ProfileEditor({
   const broken =
     refs !== undefined && (refs.unknownTools.length > 0 || refs.missingServers.length > 0);
   const needRead = readProblems(definition);
+  const otherProblems = problems.filter((problem) => !needRead.includes(problem));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const noBash = executableSkillsWithoutBash(definition, skills.data ?? []);
   const settingsValues = settings.data === undefined ? undefined : valuesOf(settings.data);
   const review =
@@ -110,6 +118,13 @@ export function ProfileEditor({
         });
   const impact = profileImpact(changes.map((change) => change.field));
   const dirty = creating || changes.length > 0;
+  const modelKey =
+    form.defaultModel.trim() === "" ? settingsValues?.defaultModel : form.defaultModel.trim();
+  const reasoningSupport =
+    modelKey === undefined ? undefined : supportsReasoning(models.models, modelKey);
+  const missingRead = (["tools", "modelTools"] as const)
+    .filter((field) => definition[field] !== undefined && !definition[field].includes("read"))
+    .map((field) => fieldLabel(field));
   const canSave =
     dirty &&
     nameProblem === undefined &&
@@ -182,11 +197,9 @@ export function ProfileEditor({
       <Card>
         <CardHeader>
           <CardTitle>{creating ? "New profile" : `Edit ${name}`}</CardTitle>
-          <CardDescription>
-            {creating
-              ? "A profile names what a session gets. Creating it publishes version 1."
-              : `Changing the definition publishes version ${String(stored.currentVersion + 1)}. Versions never change.`}
-          </CardDescription>
+          {isEmptyForm(form) && (
+            <CardDescription>Inherits everything from Global settings.</CardDescription>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {tools.isError && <Alert variant="destructive">{tools.error.message}</Alert>}
@@ -216,14 +229,14 @@ export function ProfileEditor({
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Added to the system prompt. Empty leaves the field out. {form.instructions.length} of
-              8000 characters.
+              Added to the system prompt.
+              {form.instructions.length > 6400 &&
+                ` ${String(form.instructions.length)} of 8000 characters.`}
             </p>
           </div>
           <ToolList
             idPrefix="tools"
-            legend="Tools"
-            hint="Coding tools enabled for the session. All leaves the field out; a selection is an explicit list, and an empty selection means no tools."
+            legend={fieldLabel("tools")}
             all={form.allTools}
             selected={form.tools}
             offered={installed}
@@ -239,88 +252,93 @@ export function ProfileEditor({
               });
             }}
           />
-          <ToolList
-            idPrefix="model-tools"
-            legend="Model tools"
-            hint="Of the enabled tools, the ones offered to the model. All leaves the field out."
-            all={form.allModelTools}
-            selected={form.modelTools}
-            offered={modelToolsOffered}
-            installed={installed}
-            onChange={(all, selected) => {
-              edit({ allModelTools: all, modelTools: selected });
-            }}
-          />
+          <div className="flex flex-col gap-2 rounded-lg border p-4">
+            <button
+              type="button"
+              className="text-left text-sm font-medium"
+              aria-expanded={advancedOpen || !form.allModelTools}
+              onClick={() => {
+                setAdvancedOpen(!advancedOpen);
+              }}
+            >
+              Advanced
+            </button>
+            {(advancedOpen || !form.allModelTools) && (
+              <ToolList
+                bare
+                idPrefix="model-tools"
+                legend={fieldLabel("modelTools")}
+                all={form.allModelTools}
+                selected={form.modelTools}
+                offered={modelToolsOffered}
+                installed={installed}
+                onChange={(all, selected) => {
+                  edit({ allModelTools: all, modelTools: selected });
+                }}
+              />
+            )}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-model">Model</Label>
-              <Select
+              <Label htmlFor="profile-model">{fieldLabel("defaultModel")}</Label>
+              <AllowedModelSelect
                 id="profile-model"
                 value={form.defaultModel}
-                onChange={(event) => {
-                  edit({ defaultModel: event.target.value });
+                allowed={modelOptions}
+                view={models}
+                inheritLabel={`Inherit (global default${settingsValues === undefined ? "" : `: ${modelLabel(models.models, settingsValues.defaultModel)}`})`}
+                onChange={(key) => {
+                  edit({ defaultModel: key });
                 }}
-              >
-                <option value="">
-                  global default
-                  {settingsValues === undefined ? "" : ` (${settingsValues.defaultModel})`}
-                </option>
-                {form.defaultModel !== "" && !modelOptions.includes(form.defaultModel) && (
-                  <option value={form.defaultModel}>
-                    {form.defaultModel} (not on the allowlist)
-                  </option>
-                )}
-                {modelOptions.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Used when the request names no model. Choosing the global default leaves the field
-                out.
-              </p>
+              />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-reasoning">Reasoning</Label>
-              <Select
-                id="profile-reasoning"
-                value={form.reasoning}
-                onChange={(event) => {
-                  edit({
-                    reasoning: REASONING_LEVELS.find((level) => level === event.target.value) ?? "",
-                  });
-                }}
-              >
-                <option value="">global default</option>
-                {REASONING_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                off is an override that turns reasoning off. The global default leaves the field
-                out.
-              </p>
+              <Label htmlFor="profile-reasoning">{fieldLabel("reasoning")}</Label>
+              {reasoningSupport === false && form.reasoning === "" ? (
+                <p className="text-sm text-muted-foreground">This model has no reasoning levels.</p>
+              ) : (
+                <>
+                  <Select
+                    id="profile-reasoning"
+                    value={form.reasoning}
+                    onChange={(event) => {
+                      edit({
+                        reasoning:
+                          REASONING_LEVELS.find((level) => level === event.target.value) ?? "",
+                      });
+                    }}
+                  >
+                    <option value="">Inherit (global default)</option>
+                    {REASONING_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </Select>
+                  {reasoningSupport === false && (
+                    <p className="text-xs text-muted-foreground">
+                      This model has no reasoning levels.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="profile-turn-budget">Turn budget</Label>
+            <Label htmlFor="profile-turn-budget">{fieldLabel("turnBudget")}</Label>
             <Input
               id="profile-turn-budget"
               inputMode="numeric"
               placeholder={
-                settingsValues === undefined ? "" : `global: ${String(settingsValues.turnBudget)}`
+                settingsValues === undefined
+                  ? ""
+                  : `Inherit (global: ${String(settingsValues.turnBudget)})`
               }
               value={form.turnBudget}
               onChange={(event) => {
                 edit({ turnBudget: event.target.value });
               }}
             />
-            <p className="text-xs text-muted-foreground">
-              Empty leaves the field out: sessions use the global budget.
-            </p>
           </div>
           <McpPicker
             selected={form.mcpServers}
@@ -336,7 +354,7 @@ export function ProfileEditor({
               edit({ skills: pins });
             }}
           />
-          <Fieldset legend="Repository" hint="Both are ignored for a session without a repository.">
+          <Fieldset legend="Repository" hint="Ignored for a session without a repository.">
             <div className="flex items-center gap-2">
               <Checkbox
                 id="repo-skills"
@@ -377,107 +395,103 @@ export function ProfileEditor({
         />
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Review before saving</CardTitle>
-          <CardDescription>
-            {creating
-              ? "A new profile."
-              : `Changes against version ${String(stored.currentVersion)}.`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {!creating && <ChangeList changes={changes} />}
-          {creating && <ChangeList changes={diffDefinitions({}, definition)} />}
-          {problems.map((problem) => (
-            <Alert key={problem} variant="destructive">
-              {problem}
-            </Alert>
-          ))}
-          {needRead.length > 0 && (
-            <Alert variant="warning" data-testid="read-dependency">
-              <p className="font-medium">Skills are loaded by reading their SKILL.md.</p>
-              <p>
-                Add read to the explicit tool list that lacks it, or remove the skills and
-                repository skills. The console does not change tool access for you.
+      {settingsValues !== undefined && review !== undefined && (
+        <AdmissionPreview admission={review.admission} />
+      )}
+
+      {dirty && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{creating ? "Create profile" : "Review before saving"}</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {!creating && <ChangeList changes={changes} />}
+            {otherProblems.map((problem) => (
+              <Alert key={problem} variant="destructive">
+                {problem}
+              </Alert>
+            ))}
+            {needRead.length > 0 && (
+              <Alert variant="warning" data-testid="read-dependency">
+                <p className="font-medium">Skills need the read tool.</p>
+                {missingRead.length > 0 && <p>Missing from: {missingRead.join(", ")}.</p>}
+              </Alert>
+            )}
+            {noBash.length > 0 && (
+              <Alert variant="warning" data-testid="bash-warning">
+                {noBash.join(", ")} ship{noBash.length === 1 ? "s" : ""} executable files, and the
+                model runs them with the bash tool. This profile has no bash in its tool lists.
+              </Alert>
+            )}
+            {broken && (
+              <Alert variant="destructive" data-testid="broken-references">
+                <p className="font-medium">
+                  This definition references things that no longer exist.
+                </p>
+                <Button
+                  className="mt-2"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDraft({ ...draft, form: withoutBrokenReferences(form, refs) });
+                  }}
+                >
+                  Remove all broken references
+                </Button>
+              </Alert>
+            )}
+            {review?.blocking !== undefined && (
+              <Alert variant="destructive" data-testid="blocking">
+                <p className="font-medium">Correct this before saving.</p>
+                <p className="break-words">{review.blocking.message}</p>
+                <p>{review.blocking.fix}</p>
+              </Alert>
+            )}
+            {review !== undefined && review.warnings.length > 0 && (
+              <Alert variant="warning" data-testid="warnings">
+                <p className="font-medium">
+                  This profile is enabled, but a session that picks it would be refused.
+                </p>
+                {review.warnings.map((warning) => (
+                  <p key={warning.name} className="break-words">
+                    {warning.refused.message}. {warning.refused.fix}
+                  </p>
+                ))}
+              </Alert>
+            )}
+            {settings.isError && <Alert variant="destructive">{settings.error.message}</Alert>}
+            {impact.map((note) => (
+              <p key={note} className="text-sm text-muted-foreground">
+                {note}
               </p>
-            </Alert>
-          )}
-          {noBash.length > 0 && (
-            <Alert variant="warning" data-testid="bash-warning">
-              {noBash.join(", ")} ship{noBash.length === 1 ? "s" : ""} executable files, and the
-              model runs them with the bash tool. This profile has no bash in its tool lists.
-            </Alert>
-          )}
-          {broken && (
-            <Alert variant="destructive" data-testid="broken-references">
-              <p className="font-medium">This definition references things that no longer exist.</p>
-              <p>The API refuses a new version until they are removed.</p>
+            ))}
+            {save.isError && !isConflict(save.error) && (
+              <Alert variant="destructive">{save.error.message}</Alert>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
               <Button
-                className="mt-2"
-                size="sm"
-                variant="outline"
+                disabled={!canSave || save.isPending}
                 onClick={() => {
-                  setDraft({ ...draft, form: withoutBrokenReferences(form, refs) });
+                  save.mutate();
                 }}
               >
-                Remove all broken references
+                {save.isPending ? "Saving" : creating ? "Create profile" : "Publish new version"}
               </Button>
-            </Alert>
-          )}
-          {settingsValues !== undefined && review !== undefined && (
-            <AdmissionPreview settings={settingsValues} admission={review.admission} />
-          )}
-          {review?.blocking !== undefined && (
-            <Alert variant="destructive" data-testid="blocking">
-              <p className="font-medium">Correct this before saving.</p>
-              <p className="break-words">{review.blocking.message}</p>
-              <p>{review.blocking.fix}</p>
-            </Alert>
-          )}
-          {review !== undefined && review.warnings.length > 0 && (
-            <Alert variant="warning" data-testid="warnings">
-              <p className="font-medium">
-                This profile is enabled, but a session that picks it would be refused.
-              </p>
-              {review.warnings.map((warning) => (
-                <p key={warning.name} className="break-words">
-                  {warning.refused.message}. {warning.refused.fix}
-                </p>
-              ))}
-            </Alert>
-          )}
-          {settings.isError && <Alert variant="destructive">{settings.error.message}</Alert>}
-          {impact.map((note) => (
-            <p key={note} className="text-sm text-muted-foreground">
-              {note}
-            </p>
-          ))}
-          {save.isError && !isConflict(save.error) && (
-            <Alert variant="destructive">{save.error.message}</Alert>
-          )}
-          <div className="flex gap-2">
-            <Button
-              disabled={!canSave || save.isPending}
-              onClick={() => {
-                save.mutate();
-              }}
-            >
-              {save.isPending ? "Saving" : creating ? "Create profile" : "Publish new version"}
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={save.isPending}
-              onClick={() => {
-                setDraft(undefined);
-                setConflict(undefined);
-              }}
-            >
-              Discard changes
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <Button
+                variant="ghost"
+                disabled={save.isPending}
+                onClick={() => {
+                  setDraft(undefined);
+                  setConflict(undefined);
+                }}
+              >
+                Discard changes
+              </Button>
+              <span className="text-sm text-muted-foreground">Applies to new sessions only.</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

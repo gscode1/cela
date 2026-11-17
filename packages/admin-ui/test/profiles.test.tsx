@@ -54,13 +54,18 @@ describe("profile list", () => {
     const table = await screen.findByRole("table", { name: "Profiles" });
     const coding = within(table).getByRole("link", { name: "coding" }).closest("tr");
     expect(coding).toHaveTextContent("default");
-    expect(coding).toHaveTextContent("v1");
-    expect(coding).toHaveTextContent("enabled");
+    expect(coding).not.toHaveTextContent("v1");
+    expect(coding).not.toHaveTextContent("enabled");
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["Name", "Last changed"]);
     expect(within(table).getByRole("link", { name: "review" }).closest("tr")).toHaveTextContent(
       "disabled",
     );
     expect(screen.getByTestId("invalid-profile")).toHaveTextContent(
-      "stored profile broken is invalid",
+      "This profile's stored definition is invalid; publish a corrected version.",
     );
   });
 });
@@ -70,7 +75,8 @@ describe("profile editor", () => {
     const admin = createFakeAdmin();
     await openProfile(admin, "coding");
     await userEvent.type(screen.getByLabelText("Instructions"), "Be brief.");
-    expect(screen.getByText("instructions", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Instructions", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Applies to new sessions only.")).toBeInTheDocument();
     await userEvent.click(publish());
     await screen.findByText("Published version 2 of coding.");
     expect(admin.writes[0]).toEqual({
@@ -88,7 +94,7 @@ describe("profile editor", () => {
     });
     await openProfile(admin, "deep");
     await waitFor(() => {
-      expect(screen.getByLabelText("Reasoning")).toHaveValue("off");
+      expect(screen.getByLabelText("Default reasoning")).toHaveValue("off");
     });
     // Explicit off survives an edit elsewhere.
     await userEvent.clear(screen.getByLabelText("Turn budget"));
@@ -100,7 +106,10 @@ describe("profile editor", () => {
     });
 
     // Clearing the reasoning override leaves the field out; it is not sent as an empty value.
-    await userEvent.selectOptions(screen.getByLabelText("Reasoning"), "global default");
+    await userEvent.selectOptions(
+      screen.getByLabelText("Default reasoning"),
+      "Inherit (global default)",
+    );
     await userEvent.click(publish());
     await screen.findByText(/Published version 3/);
     expect(admin.writes[1]?.body).toEqual({
@@ -112,13 +121,13 @@ describe("profile editor", () => {
   it("tells all tools (omitted) from none (empty)", async () => {
     const admin = createFakeAdmin();
     await openProfile(admin, "coding");
-    await userEvent.click(screen.getByLabelText("All (field omitted)", { selector: "#tools-all" }));
+    await userEvent.click(screen.getByLabelText("All tools (default)", { selector: "#tools-all" }));
     // Switching to an explicit list starts from every installed tool: the same effective set, but now spelled out.
     expect(screen.getByLabelText("bash", { selector: "#tools-bash" })).toBeChecked();
     for (const tool of ["read", "write", "edit", "bash"])
       await userEvent.click(screen.getByLabelText(tool, { selector: `#tools-${tool}` }));
-    expect(screen.getByText("No tools: an empty list.")).toBeInTheDocument();
-    expect(screen.getByText("(empty list)")).toBeInTheDocument();
+    expect(screen.getByText("No tools.")).toBeInTheDocument();
+    expect(screen.getByText("no tools", { selector: "td" })).toBeInTheDocument();
     await userEvent.click(publish());
     await screen.findByText(/Published version 2/);
     expect(admin.writes[0]?.body).toEqual({ definition: { tools: [] }, expectedRevision: 1 });
@@ -145,7 +154,7 @@ describe("profile editor", () => {
       },
     ];
     await openProfile(admin, "coding");
-    await userEvent.click(screen.getByLabelText("All (field omitted)", { selector: "#tools-all" }));
+    await userEvent.click(screen.getByLabelText("All tools (default)", { selector: "#tools-all" }));
     await userEvent.click(screen.getByLabelText("read", { selector: "#tools-read" }));
     await userEvent.click(screen.getByLabelText("bash", { selector: "#tools-bash" }));
     await waitFor(() => {
@@ -155,10 +164,8 @@ describe("profile editor", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pin version" }));
     expect(await screen.findByTestId("skill-pin")).toHaveTextContent("lint@v1");
     expect(screen.getByTestId("skill-pin")).toHaveTextContent("executable files");
-    expect(screen.getByTestId("read-dependency")).toHaveTextContent("Add read");
-    expect(
-      screen.getByText("skills need the read tool, but tools does not include it"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("read-dependency")).toHaveTextContent("Skills need the read tool.");
+    expect(screen.getByTestId("skill-pin")).not.toHaveTextContent("dddd");
     expect(publish()).toBeDisabled();
     expect(screen.getByLabelText("read", { selector: "#tools-read" })).not.toBeChecked();
 
@@ -178,7 +185,11 @@ describe("profile editor", () => {
     await openProfile(admin, "old");
     expect(await screen.findByTestId("missing-server")).toHaveTextContent("deleted");
     expect(screen.getByTestId("unknown-tool")).toHaveTextContent("oldtool");
-    expect(screen.getByText(/disabled: its tools are unavailable/)).toBeInTheDocument();
+    expect(screen.getByText("disabled")).toBeInTheDocument();
+    expect(screen.getByText("mcp.example.com")).toHaveAttribute(
+      "title",
+      "https://mcp.example.com/mcp",
+    );
     await userEvent.click(screen.getByLabelText("write", { selector: "#tools-write" }));
     expect(screen.getByTestId("broken-references")).toBeInTheDocument();
     expect(publish()).toBeDisabled();
@@ -198,12 +209,12 @@ describe("profile editor", () => {
     const admin = createFakeAdmin();
     await openProfile(admin, "coding");
     await waitFor(() => {
-      expect(screen.getByRole("region", { name: "Admission preview" })).toHaveTextContent(
+      expect(screen.getByRole("region", { name: "What a new session gets" })).toHaveTextContent(
         "scripted/scripted-1 (from the global settings)",
       );
     });
-    await userEvent.selectOptions(screen.getByLabelText("Reasoning"), "high");
-    expect(screen.getByRole("region", { name: "Admission preview" })).toHaveTextContent(
+    await userEvent.selectOptions(screen.getByLabelText("Default reasoning"), "high");
+    expect(screen.getByRole("region", { name: "What a new session gets" })).toHaveTextContent(
       "high (from this profile)",
     );
     // The model drop-down only offers the allowlist; a model that left it is flagged when it is already stored.
@@ -216,9 +227,9 @@ describe("profile editor", () => {
     addProfile(admin, "other", {});
     await openProfile(admin, "coding");
     await waitFor(() => {
-      expect(screen.getByLabelText("Reasoning")).toBeEnabled();
+      expect(screen.getByLabelText("Default reasoning")).toBeEnabled();
     });
-    await userEvent.selectOptions(screen.getByLabelText("Reasoning"), "high");
+    await userEvent.selectOptions(screen.getByLabelText("Default reasoning"), "high");
     expect(await screen.findByTestId("blocking")).toHaveTextContent(
       "reasoning high is above the allowed maximum low",
     );
@@ -260,6 +271,39 @@ describe("profile editor", () => {
   });
 });
 
+describe("editor details", () => {
+  it("shows the review card only for a changed draft, and says an empty profile inherits", async () => {
+    const admin = createFakeAdmin();
+    await openProfile(admin, "coding");
+    expect(screen.getByText("Inherits everything from Global settings.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish new version" })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Instructions"), "x");
+    expect(publish()).toBeInTheDocument();
+    expect(screen.queryByText(/of 8000 characters/)).not.toBeInTheDocument();
+  });
+
+  it("keeps Tools the model can call behind Advanced, and opens it for a custom selection", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "narrow", { modelTools: ["read"] });
+    await openProfile(admin, "coding");
+    expect(screen.queryByText("Tools the model can call")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByText("Tools the model can call")).toBeInTheDocument();
+  });
+
+  it("shows a note instead of reasoning levels for a model without them", async () => {
+    const admin = createFakeAdmin();
+    admin.settings = {
+      ...admin.settings,
+      defaultModel: "openai/gpt-fast",
+      allowlist: ["openai/gpt-fast"],
+    };
+    await openProfile(admin, "coding");
+    expect(await screen.findByText("This model has no reasoning levels.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Default reasoning")).not.toBeInTheDocument();
+  });
+});
+
 describe("enable and disable", () => {
   it("disables a profile without a version and sends the revision", async () => {
     const admin = createFakeAdmin();
@@ -274,16 +318,13 @@ describe("enable and disable", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the API's 409 and the fix when disabling the default profile", async () => {
+  it("cannot disable the default profile: the button says why", async () => {
     const admin = createFakeAdmin();
     await openProfile(admin, "coding");
-    await userEvent.click(screen.getByRole("button", { name: "Disable for new sessions" }));
-    const conflict = await screen.findByTestId("toggle-conflict");
-    expect(conflict).toHaveTextContent('profile "coding" is the default profile for new sessions');
-    expect(conflict).toHaveTextContent(
-      "select another enabled profile as the default in Global settings",
-    );
-    expect(admin.profiles[0]?.enabledForNew).toBe(true);
+    const button = screen.getByRole("button", { name: "Disable for new sessions" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", expect.stringContaining("Select another default"));
+    expect(screen.queryByText(/never changes a session/)).not.toBeInTheDocument();
   });
 
   it("does not turn an edit draft stale by enabling or disabling", async () => {
@@ -300,7 +341,7 @@ describe("enable and disable", () => {
 });
 
 describe("versions", () => {
-  it("diffs two stored definitions, omitted against empty", async () => {
+  it("diffs two stored definitions and offers no draft from the current version", async () => {
     const admin = createFakeAdmin();
     const coding = admin.profiles[0] as FakeAdmin["profiles"][number];
     coding.currentVersion = 2;
@@ -313,11 +354,12 @@ describe("versions", () => {
     await openProfile(admin, "coding");
     await userEvent.click(screen.getByRole("tab", { name: "Versions" }));
     const diff = await screen.findByLabelText("Version diff");
-    expect(diff).toHaveTextContent("tools(omitted)(empty list)");
-    expect(diff).toHaveTextContent("reasoning(omitted)off");
+    expect(diff).toHaveTextContent("Toolsall toolsno tools");
+    expect(diff).toHaveTextContent("Default reasoningglobal defaultoff");
     const list = screen.getByRole("list", { name: "Version list" });
     expect(list).toHaveTextContent("carol");
     expect(list).toHaveTextContent("current");
+    expect(within(list).getAllByRole("button", { name: /as draft/ })).toHaveLength(1);
   });
 });
 
