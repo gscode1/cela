@@ -9,13 +9,14 @@
 #           through the admin API (no restart), a scripted session calls tool_search and a DeepWiki tool, and disabling
 #           the server makes a new call return tool_unavailable. Needs the internet and the OneCLI host rule for
 #           mcp.deepwiki.com. The suite removes the server again at the end. Not part of `all`.
-#   shards  horizontal scaling by schema sharding (docs/decisions/0017-schema-sharding.md): the stack gets a second orchestrator
-#           shard (deploy/add-shard.sh 1) and ingest routes between the two. Not part of `all` (it adds a Deployment and
-#           takes about 20 minutes).
+#   shards  horizontal scaling by schema sharding (docs/decisions/0017-schema-sharding.md): the chart is installed with
+#           orchestrator.shards=2 (a second orchestrator Deployment) and ingest routes between the two. Not part of `all`
+#           (it adds a Deployment and takes about 20 minutes).
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
-# Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres, orchestrator, ingest, sandbox
-# template, RBAC, network policies and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
+# Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (a CloudNativePG cluster, the
+# external database of the chart), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
+# policies) and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
 # same time, and the long-lived namespace pi-durable-poc is never touched: this script refuses any other prefix.
 #   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
 #   KEEP_NS_ON_FAIL=1  keep it only when the run did not pass
@@ -28,7 +29,7 @@
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, in the run namespace), so a
 # result never depends on the laptop's network. The operator machine does only this:
-#   1. create the namespace, stack and secrets using prebuilt images
+#   1. create the namespace, the database and secrets, then install the chart using prebuilt images
 #   2. create the Job
 #   3. wait for it with `kubectl wait` and read the result from the Job status plus the final logs
 # The live log stream is for watching only. If it drops, nothing changes: the verdict comes from the Job status and
@@ -140,7 +141,7 @@ ns_touched=1
 # The label is what the OneCLI ingress policy (docs/e2e.md) and the sweeper select on. It must exist before the
 # first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts. The Pod Security labels
 # are applied here too, on a reused namespace as well (docs/decisions/0019-restricted-pod-security.md); the version is
-# pinned, so keep it equal to deploy/namespace.yaml (a unit test checks).
+# pinned, so keep it equal to deploy/namespace.yaml and hack/install.sh (a unit test checks).
 kc apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Namespace
@@ -160,62 +161,40 @@ metadata:
     pi-durable-e2e/suite: "${1:-}"
 EOF
 
-# One overlay per run: the repository's stack (tests/e2e/deploy, which includes deploy/ and tests/e2e/driver) with
-# `namespace:` set. kustomize wants relative paths and resolves symlinks (a macOS temp dir is one), so both ends are resolved first.
+# The run's own pieces (tests/e2e/deploy, which includes tests/e2e/driver) around the chart: the CNPG database, the
+# ExternalSecrets, the policies of the test-only pods and the driver's identity. One generated overlay sets the namespace.
+# kustomize wants relative paths and resolves symlinks (a macOS temp dir is one), so both ends are resolved first.
 relpath() { python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$1" "$2"; }
 mkdir -p "$work/stack" "$work/cilium"
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$here/deploy" "$work/stack")" >"$work/stack/kustomization.yaml"
-# The orchestrator's OneCLI name prefix, next to the namespace: only this overlay knows the run id.
-cat >>"$work/stack/kustomization.yaml" <<EOF
-patches:
-  # Strategic merge: env entries merge by name, so this replaces the base's prefix instead of adding a duplicate.
-  - target: { kind: Deployment, name: pi-orchestrator }
-    patch: |-
-      { apiVersion: apps/v1, kind: Deployment, metadata: { name: pi-orchestrator }, spec: { template: { spec: { containers: [
-        { name: orchestrator, env: [{ name: PI_ONECLI_NAME_PREFIX, value: "$onecli_prefix" }] } ] } } } }
-EOF
-# Optional cluster-specific overrides. JSON entries are valid YAML; quote values rather than interpolate YAML.
-python3 - "$work/stack/kustomization.yaml" <<'PYOVERLAY'
+# The database's storage class, when the cluster default is not wanted. JSON entries are valid YAML.
+if [[ -n ${STORAGE_CLASS:-} ]]; then
+  python3 - "$work/stack/kustomization.yaml" <<'PYOVERLAY'
 import json, os, sys
-patches = []
-sc = os.environ.get("STORAGE_CLASS")
-if sc:
-    for kind, name, path in [
-        ("Cluster", "pi-pg", "/spec/storage/storageClass"),
-    ]:
-        patches.append((kind, name, path, sc))
-# Workspaces are per-session scratch, so they may use their own (e.g. single-replica) class.
-workspace_sc = os.environ.get("SANDBOX_STORAGE_CLASS") or sc
-if workspace_sc:
-    patches.append(("SandboxTemplate", "pi-env-template", "/spec/volumeClaimTemplates/0/spec/storageClassName", workspace_sc))
-for name, variable in [("pi-orchestrator", "ORCH_IMAGE"), ("pi-ingest", "INGEST_IMAGE")]:
-    patches.append(("Deployment", name, "/spec/template/spec/containers/0/image", os.environ[variable]))
-image = os.environ.get("SANDBOX_IMAGE")
-if image:
-    patches.append(("SandboxTemplate", "pi-env-template", "/spec/podTemplate/spec/containers/0/image", image))
+entry = {"target": {"kind": "Cluster", "name": "pi-pg"},
+         "patch": json.dumps([{"op": "add", "path": "/spec/storage/storageClass", "value": os.environ["STORAGE_CLASS"]}])}
 with open(sys.argv[1], "a") as out:
-    for kind, name, path, value in patches:
-        entry = {"target": {"kind": kind, "name": name},
-                 "patch": json.dumps([{"op": "add", "path": path, "value": value}])}
-        out.write("  - " + json.dumps(entry) + "\n")
+    out.write("patches:\n  - " + json.dumps(entry) + "\n")
 PYOVERLAY
+fi
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
-  "$ns" "$(relpath "$root/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
+  "$ns" "$(relpath "$here/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
 
-log "stack: CiliumNetworkPolicies, network policies, RBAC, Postgres, template, ingest, orchestrator (at 0), driver identity"
-# CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
+log "stack: CiliumNetworkPolicies, database (CNPG), ExternalSecrets, test-only policies, driver identity"
+# CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs.
 kc apply -k "$work/cilium" >/dev/null
 kc apply -k "$work/stack" >/dev/null
 # Remove a Job left by an earlier killed run before redeploying.
 k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=foreground --wait=true >/dev/null
 
 log "secrets"
-# sandboxd-auth and api-auth are random per run, made in the namespace (never copied from pi-durable-poc, never printed).
+# sandboxd-auth and api-auth are random per run, made in the namespace (never copied from the long-lived stack, never
+# printed). The chart only references them (D8).
 NAMESPACE=$ns "$root/deploy/gen-secret.sh" >/dev/null
 NAMESPACE=$ns "$root/deploy/gen-api-secret.sh" >/dev/null
 # pi-onecli, pi-onecli-admin and pi-github-app are ExternalSecrets on the ClusterSecretStore: ESO copies them in. The
-# orchestrator reads them optionally and only once at start, so they must be Ready before it starts (scaled below).
+# orchestrator reads them optionally and only once at start, so they must be Ready before the chart starts it (below).
 if ! k wait --for=condition=Ready externalsecret --all --timeout=120s >/dev/null 2>&1; then
   echo "WARNING: some ExternalSecrets are not Ready (kubectl -n $ns get externalsecret); suites that need OneCLI or GitHub will SKIP or fail" >&2
 fi
@@ -229,6 +208,28 @@ if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/fetch-onecli-ca.sh" >"$work/c
   echo "WARNING: could not fetch the OneCLI CA (ignored: the suites selected do not call OneCLI)" >&2
 fi
 
+# The database (the external one of this run) must exist before the chart: both the orchestrator and ingest read its URI.
+log "database pi-pg"
+k wait --for=condition=Ready cluster/pi-pg --timeout=600s >/dev/null
+[[ -n $(k get secret pi-pg-app -o jsonpath='{.data.uri}' 2>/dev/null) ]] || {
+  echo "secret pi-pg-app has no uri in $ns" >&2
+  exit 1
+}
+
+# The chart, installed exactly as a user installs it. Orchestrator shards: the shards suite needs two (docs/scaling.md);
+# the shard count can only grow, so a reused namespace that already has two keeps them.
+shards=1
+if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then shards=2; fi
+log "helm: charts/pi-durable into $ns (orchestrator shards: $shards)"
+[[ $ns == pi-e2e-* ]] || { echo "refusing to install the chart into $ns" >&2; exit 1; }
+python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
+helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \
+  --values "$work/values.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm.log" 2>&1 || {
+  cat "$work/helm.log" >&2
+  echo "helm install of the chart failed in $ns" >&2
+  exit 1
+}
+
 # Per-sandbox sandboxd tokens (docs/decisions/0001-per-sandbox-sandboxd-token.md): every suite creates claims that
 # carry a token hash, which the template accepts only with envVarsInjectionPolicy Allowed.
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
@@ -239,13 +240,6 @@ fi
   echo "SandboxTemplate pi-env-template in $ns does not allow claim env" >&2
   exit 1
 }
-
-# Start only after optional credentials exist; every shard uses the same baked image.
-if has_phase shards; then
-  log "orchestrator shard 1 and ingest routing (deploy/add-shard.sh 1)"
-  NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/add-shard.sh" 1
-fi
-k scale deployment -l app.kubernetes.io/name=pi-orchestrator --replicas=1 >/dev/null
 k rollout status deployment/pi-orchestrator --timeout=300s >/dev/null
 k rollout status deployment/pi-ingest --timeout=300s >/dev/null
 

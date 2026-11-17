@@ -1,59 +1,14 @@
-# The stack of one e2e run: the base deploy/ plus the e2e driver (tests/e2e/driver), the orchestrator's test-only
-# switches and smaller resource requests. It carries no namespace of its own: tests/e2e/run.sh generates a tiny overlay
-# that sets `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is. The suites
-# pick the scripted default model through PUT /admin/settings (model settings live in Postgres), not through the ConfigMap.
+# What an e2e run adds around the pi-durable chart (tests/e2e/run.sh installs the chart itself with Helm): the run's own
+# CloudNativePG database `pi-pg` as the external database (until the bundled Postgres of install slice 6 replaces it),
+# the ExternalSecrets that bring the shared OneCLI's credentials, the policies of the test-only pods (the e2e driver, the
+# database), and the driver's identity (tests/e2e/driver). It carries no namespace of its own: run.sh generates a tiny
+# overlay that sets `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is.
+# The CiliumNetworkPolicies are in cilium/, applied first. These files copy what deploy/ keeps for the long-lived stack
+# (postgres.yaml, networkpolicy-postgres.yaml, networkpolicy-e2e.yaml, the ExternalSecrets); deploy/ goes in slice 11.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../../deploy
   - ../driver
-patches:
-  # run.sh creates the Namespace itself (labels and an annotation for the sweeper, before any Pod exists).
-  - target: { kind: Namespace }
-    patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: unused
-  # Start at 0: run.sh scales the orchestrator to 1 after the secrets
-  # exist (a Pod that starts before an optional secret does would never see it).
-  - target: { kind: Deployment, name: pi-orchestrator }
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 0
-  # The cluster is small. Requests (what the scheduler reserves) are lowered; limits stay as in production.
-  - target: { kind: Deployment, name: pi-orchestrator }
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests
-        value: { cpu: 50m, memory: 192Mi }
-  - target: { kind: Cluster, name: pi-pg }
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests
-        value: { cpu: 50m, memory: 192Mi }
-  - target: { kind: Deployment, name: pi-orchestrator }
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_ORCH_CONTROL, value: "1" }
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_ORCH_TEST_FAULTS, value: "1" }
-      # Short sweep and suspend settings, so the lifecycle tests of phase4 take minutes, not hours. Bridges are evicted
-      # after 30 s idle (each holds a relay process in the orchestrator Pod, ADR 0016) and sandboxes are suspended after 120 s,
-      # an age the other tests never idle for.
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_SANDBOX_IDLE_EVICT_SECONDS, value: "30" }
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_SWEEP_INTERVAL_SECONDS, value: "15" }
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_SWEEP_GRACE_SECONDS, value: "45" }
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: { name: PI_SANDBOX_IDLE_SUSPEND_SECONDS, value: "120" }
+  - postgres.yaml
+  - networkpolicy.yaml
+  - external-secrets.yaml

@@ -232,7 +232,7 @@ describe("the namespaces enforce the restricted level at a pinned version", () =
       text,
     )?.[1];
 
-  for (const path of ["deploy/namespace.yaml", "tests/e2e/run.sh"]) {
+  for (const path of ["deploy/namespace.yaml", "tests/e2e/run.sh", "hack/install.sh"]) {
     it(`${path} sets enforce, warn and audit to restricted, pinned to ${version}`, () => {
       const text = readFileSync(join(root, path), "utf8");
       for (const level of levels) {

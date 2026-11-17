@@ -1,0 +1,114 @@
+# The CNPG cluster pi-pg (pods labelled cnpg.io/cluster=pi-pg by the operator).
+#
+# Ingress:
+#   5432  the orchestrator and ingest (through the pi-pg-rw service), the operator (it opens SQL connections to
+#         instances for status and switchover), and the other instances (streaming replication; instances: 1 today).
+#   8000  the instance manager's status endpoint (HTTPS). The operator polls every instance on it; without it the
+#         Cluster never reports healthy and rollouts stall. Instances also use it among themselves.
+# Operator: namespace postgres-system, pods app.kubernetes.io/name=cloudnative-pg (the shared operator, untouched).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pi-pg
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-ingest
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: postgres-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pi-pg
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+---
+# Egress: only to its own instances (replication, status). The instance manager also needs the Kubernetes API
+# (deploy/cilium/kube-apiserver.yaml) and DNS (allow-dns-egress). No object-store backup is configured on this cluster;
+# when one is, add an egress rule for that endpoint (a CiliumNetworkPolicy toFQDNs or toCIDR).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-egress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pi-pg
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pi-pg
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+---
+# The e2e driver Job (tests/e2e/job.yaml.tpl, label app.kubernetes.io/name=e2e-driver) and the Phase 1 runner pod
+# (tests/e2e/runner-pod.yaml, which carries the orchestrator label and therefore uses the orchestrator policies).
+#
+# The suites do everything through the Kubernetes API (`kubectl exec` into ingest, orchestrator and pi-pg-1, get, wait,
+# delete, scale), so the driver needs the API (deploy/cilium/kube-apiserver.yaml) and DNS (allow-dns-egress), and nothing
+# else. The orchestrator and ingest ports below are for direct calls a suite may make; remove them if unused.
+# The driver accepts no ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: e2e-driver-allow-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: e2e-driver
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+      ports:
+        - { protocol: TCP, port: 8081 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-ingest
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# The chart's policies admit only ingest to the orchestrator and, with networkPolicy.ingest.clients (chart-values.py),
+# the driver to ingest. The driver also calls the orchestrators directly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: e2e-driver-allow-orchestrator-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: e2e-driver
+      ports:
+        - { protocol: TCP, port: 8081 }

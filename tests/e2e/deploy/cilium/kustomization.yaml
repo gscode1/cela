@@ -1,0 +1,6 @@
+# CiliumNetworkPolicies of the test-only pods (the chart renders its own with networkPolicy.provider=cilium). Applied
+# before the rest of the stack by tests/e2e/run.sh, with `namespace:` set by its generated overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kube-apiserver.yaml
