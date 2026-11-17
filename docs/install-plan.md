@@ -240,6 +240,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
 10. **Bundled OneCLI.**
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
       Prisma migrations on a shared Postgres 17 without superuser; OneCLI Jobs under `restricted`.
+      Done in [research/onecli-bundled-spike.md](research/onecli-bundled-spike.md) (#120), with a prototype `hack/onecli-bootstrap.sh`.
     - Upstream chart as its own release (runner off, one replica, no Redis, `onecli` database); bootstrap step right
       after rollout (account, admin key, orchestrator agent and token Secret, host rules); public CA to a ConfigMap.
     - Done when: kind with `--onecli` runs a session through the gateway (scripted model plus one real-model test with
