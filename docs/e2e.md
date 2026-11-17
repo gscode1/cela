@@ -294,8 +294,10 @@ The specs take `CONSOLE_BASE_URL`, `CONSOLE_ADMIN_TOKEN`, `CONSOLE_NONADMIN_TOKE
 (`pnpm --filter @pi-durable-k8s/admin-ui e2e`), so they also run against any other deployment you can reach. Playwright is
 not part of `pnpm check`, which needs no browser.
 
-Without a cluster, the same specs run against the real ingest server code over a stub that answers only the settings read
-(`packages/admin-ui/e2e/local-server.mjs`), one instance with the console and one without:
+Without a cluster, the same specs run against the real ingest server code over session-core's in-memory fake database
+(`packages/admin-ui/e2e/local-server.mjs`), one instance with the console and one without. The local run also has the
+`settings` and `profiles` specs (edits, review, `409` conflicts, broken references, skill pins), which change global state
+and so run on one worker; the deployed `console` suite keeps to the read-only specs:
 
 ```sh
 pnpm build

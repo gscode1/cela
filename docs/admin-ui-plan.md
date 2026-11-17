@@ -73,6 +73,17 @@ Impact of a save:
   budget fails.
 - MCP changes affect existing sessions whose snapshots reference the server.
 
+Slice 2 as built:
+- The preview lives in `packages/admin-ui/src/lib/admission.ts`, a pure module that cites the ingest and session-core
+  functions it mirrors. The reasoning levels include `max`, as `THINKING_LEVELS` does.
+- A profile in `invalid` has no `revision`, so the console lists it with its errors but does not edit it; publish a complete
+  definition through the API.
+- Creating a profile cannot send `expectedRevision`. The console refuses a name that already exists in the list it loaded,
+  but a create that races another create of the same name becomes a new version.
+- Enable and disable (no new version) update the open draft's revision when the draft is of the same version, so they do not
+  make it stale.
+- The model and reasoning pickers offer the allowlist and the levels; a stored model outside the allowlist is shown flagged.
+
 ### Concurrent edits
 
 Before [ADR 0023](decisions/0023-admin-revisions.md), `PUT /admin/settings` checked `defaultProfile` before its write

@@ -87,6 +87,10 @@ nothing acts on it. A skill version is immutable, so its `source` is set when it
 [plan](admin-ui-plan.md)). They are answered before the bearer gate and before the schema check, because the page holds
 no secret: the operator's token goes from the browser to `/admin/*` only. Other methods are `405`.
 
+- Screens (slice 2): global settings and session profiles. Both send `expectedRevision` on every write and keep the draft on
+  a `409`, with reload and compare. The profile editor reads `GET /admin/tools`, `/admin/mcp-servers` and `/admin/skills`, and
+  previews what a new session would get with the session-creation rules (allowlist with the default model, then profile,
+  then settings; no caller overrides) before saving.
 - Served only when `PI_CONSOLE_DIR` names the built bundle (the chart sets `/app/console` with `console.enabled`, default
   off). Otherwise every console path is `404`.
 - `/console` redirects (`308`) to `/console/`. A path with a file extension is an asset: it is served from the directory
