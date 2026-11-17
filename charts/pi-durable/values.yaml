@@ -40,13 +40,21 @@ database:
       port: 5432
 
 onecli:
+  # bundled: the OneCLI release that hack/onecli.sh installs in this namespace (upstream chart, its own release;
+  #   docs/decisions/0021-bundled-onecli.md). The URLs, the agent token, the admin key and the CA come from onecli.bundled.
   # external: use an existing OneCLI (gateway and management API URLs below).
   # disabled: no OneCLI; the scripted model only (the allowlist may name no other provider).
-  # bundled arrives with install slice 10 and is rejected for now.
   mode: disabled
   # Names of the agents and secrets this install creates in OneCLI. A shared OneCLI needs a distinct prefix per install,
   # because every orchestrator's orphan sweep revokes the agents it does not know (ADR 0013).
   namePrefix: pi-session-
+  # Names the bundled release and its bootstrap (hack/onecli-bootstrap.sh) produce; its defaults are the same. Change
+  # them only together with the bootstrap's ONECLI_* variables.
+  bundled:
+    release: onecli # Helm release name of the upstream chart: Services <release>-api and <release>-gateway
+    caConfigMap: pi-onecli-ca # key ca.pem: the PUBLIC gateway CA
+    agentTokenSecret: pi-onecli # key agent-token (aoc_...): the orchestrator's token
+    adminKeySecret: pi-onecli-admin # key api-key (oc_...): only that key reaches the orchestrator, not the login password
   external:
     apiUrl: "" # required for external, for example http://onecli.onecli:10256 (management API and the CA)
     gatewayUrl: "" # required for external, for example http://onecli.onecli:10255 (the proxy that injects credentials)

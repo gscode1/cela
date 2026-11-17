@@ -29,7 +29,22 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{- define "pi-durable.onecliEnabled" -}}
-{{- if eq .Values.onecli.mode "external" -}}true{{- end -}}
+{{- if ne .Values.onecli.mode "disabled" -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+The OneCLI settings the other templates use, as JSON (read it with `include ... | fromJson`): the `external` values as
+they are, or, for the bundled release (hack/onecli.sh, same namespace), the names that release and its bootstrap
+produce. One place, so the two modes cannot drift apart.
+*/}}
+{{- define "pi-durable.onecli" -}}
+{{- if eq .Values.onecli.mode "bundled" -}}
+{{- $b := .Values.onecli.bundled -}}
+{{- $ns := .Release.Namespace -}}
+{{- dict "apiUrl" (printf "http://%s-api.%s.svc:10256" $b.release $ns) "gatewayUrl" (printf "http://%s-gateway.%s.svc:10255" $b.release $ns) "caConfigMap" $b.caConfigMap "agentTokenSecret" $b.agentTokenSecret "adminKeySecret" $b.adminKeySecret "namespace" $ns "podSelector" (dict "app.kubernetes.io/name" "onecli" "app.kubernetes.io/instance" $b.release) | toJson -}}
+{{- else -}}
+{{- toJson .Values.onecli.external -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Providers that need no OneCLI (config.ts LOCAL_PROVIDERS). */}}
@@ -66,13 +81,17 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if not (and .Values.onecli.external.apiUrl .Values.onecli.external.gatewayUrl) -}}
 {{- fail "onecli.mode is external: set onecli.external.apiUrl and onecli.external.gatewayUrl" -}}
 {{- end -}}
+{{- else if eq .Values.onecli.mode "bundled" -}}
+{{- if not (and .Values.onecli.bundled.release .Values.onecli.bundled.caConfigMap .Values.onecli.bundled.agentTokenSecret .Values.onecli.bundled.adminKeySecret) -}}
+{{- fail "onecli.mode is bundled: onecli.bundled needs release, caConfigMap, agentTokenSecret and adminKeySecret" -}}
+{{- end -}}
 {{- else if eq .Values.onecli.mode "disabled" -}}
 {{- $remote := include "pi-durable.remoteProviders" . -}}
 {{- if $remote -}}
 {{- fail (printf "onecli.mode is disabled but models name the provider(s) %s, which need the OneCLI gateway. Use scripted models only, or set onecli.mode=external." $remote) -}}
 {{- end -}}
 {{- else -}}
-{{- fail (printf "onecli.mode %q is not supported yet (external or disabled; bundled arrives with install slice 10)" .Values.onecli.mode) -}}
+{{- fail (printf "onecli.mode %q is not supported yet (bundled, external or disabled)" .Values.onecli.mode) -}}
 {{- end -}}
 {{- if not (has .Values.networkPolicy.provider (list "cilium" "standard")) -}}
 {{- fail "networkPolicy.provider must be cilium or standard" -}}
@@ -117,10 +136,11 @@ seccompProfile:
 
 {{/* NetworkPolicy `to` entry for the OneCLI pods. */}}
 {{- define "pi-durable.onecliTo" -}}
+{{- $o := include "pi-durable.onecli" . | fromJson -}}
 - namespaceSelector:
     matchLabels:
-      kubernetes.io/metadata.name: {{ .Values.onecli.external.namespace }}
+      kubernetes.io/metadata.name: {{ $o.namespace }}
   podSelector:
     matchLabels:
-      {{- toYaml .Values.onecli.external.podSelector | nindent 6 }}
+      {{- toYaml $o.podSelector | nindent 6 }}
 {{- end -}}
