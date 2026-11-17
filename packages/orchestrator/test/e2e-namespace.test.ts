@@ -23,20 +23,15 @@ const walk = (dir: string): string[] =>
   });
 
 describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
-  // The long-lived deployment's own manifests (its namespace and the kustomizations that set it) and the examples
-  // of policies applied separately in the OneCLI namespace. Markdown documents these defaults; it is not applied.
-  const allowedFiles = new Set([
-    "deploy/namespace.yaml",
-    "deploy/kustomization.yaml",
-    "deploy/cilium/kustomization.yaml",
-  ]);
-  const files = [...walk(join(root, "deploy")), ...walk(join(root, "tests/e2e"))]
+  // The scripts that moved out of deploy/ (hack/) and the e2e files. The examples of policies applied separately in
+  // the OneCLI namespace (hack/onecli-policies) name it on purpose. Markdown documents these defaults; it is not applied.
+  const files = [...walk(join(root, "hack")), ...walk(join(root, "tests/e2e"))]
     .map((p) => relative(root, p))
     .filter((p) => !p.endsWith(".md"))
-    .filter((p) => !allowedFiles.has(p) && !p.startsWith("deploy/onecli-policies/"));
+    .filter((p) => !p.startsWith("hack/onecli-policies/"));
 
-  it("scans the deploy scripts, the manifests and the e2e scripts", () => {
-    expect(files).toContain("deploy/add-shard.sh");
+  it("scans the hack scripts and the e2e scripts", () => {
+    expect(files).toContain("hack/gen-secret.sh");
     expect(files).toContain("tests/e2e/run.sh");
     expect(files).toContain("tests/e2e/driver/driver-rbac.yaml");
   });

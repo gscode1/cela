@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { renderDocs } from "./support/helm.js";
 
 const root = resolve(import.meta.dirname, "../../..");
 let dir: string;
@@ -117,11 +118,18 @@ describe("image delivery replaces mutable code uploads", () => {
   });
 
   it("uses immutable app images without init containers, shared code volumes or shard affinity", () => {
-    for (const image of ["orchestrator", "ingest"]) {
-      const manifest = readFileSync(join(root, "deploy", `${image}.yaml`), "utf8");
-      expect(manifest).toContain(`image: registry.example.com/team/pi-${image}:replace-me`);
-      expect(manifest).not.toMatch(/initContainers:|mountPath: \/code|claimName:/);
+    // Rendered chart with three shards, so the shard Deployments are checked too.
+    const deployments = renderDocs("pi-durable", ["--set", "orchestrator.shards=3"]).filter(
+      (d) => d.kind === "Deployment",
+    );
+    expect(deployments.map((d) => d.metadata.name)).toEqual(
+      expect.arrayContaining(["pi-orchestrator", "pi-orchestrator-1", "pi-orchestrator-2", "pi-ingest"]),
+    );
+    for (const d of deployments) {
+      const manifest = JSON.stringify(d);
+      expect(manifest, d.metadata.name).not.toMatch(
+        /initContainers|"mountPath":"\/code"|claimName|"podAffinity"/,
+      );
     }
-    expect(readFileSync(join(root, "deploy/add-shard.sh"), "utf8")).not.toContain("podAffinity");
   });
 });

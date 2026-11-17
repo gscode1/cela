@@ -47,8 +47,8 @@ async function schemaExists(config: OrchestratorConfig): Promise<boolean> {
 }
 
 /**
- * Creates the shard's schema. `deploy/postgres.yaml` creates only the first one, at initdb, and a shard added later
- * has none. The name was validated in `shardSchema`, so quoting it is enough.
+ * Creates the shard's schema. The install only makes the database (`charts/pi-postgres`), so every shard's schema is
+ * made here. The name was validated in `shardSchema`, so quoting it is enough.
  */
 async function ensureSchema(config: OrchestratorConfig): Promise<void> {
   const pool = createPool(
