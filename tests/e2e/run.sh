@@ -135,7 +135,9 @@ else
 fi
 ns_touched=1
 # The label is what the OneCLI ingress policy (argo-c2, docs/e2e.md) and the sweeper select on. It must exist before the
-# first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts.
+# first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts. The Pod Security labels
+# are applied here too, on a reused namespace as well (docs/decisions/0019-restricted-pod-security.md); the version is
+# pinned, so keep it equal to deploy/namespace.yaml (a unit test checks).
 kc apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Namespace
@@ -144,6 +146,12 @@ metadata:
   labels:
     pi-durable-e2e: "true"
     app.kubernetes.io/managed-by: pi-e2e
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
   annotations:
     pi-durable-e2e/branch: "${branch:-unknown}"
     pi-durable-e2e/suite: "${1:-}"
