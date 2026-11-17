@@ -125,13 +125,13 @@ describe("settings editor", () => {
     admin.settings = { ...admin.settings, turnBudget: 300, revision: 2, updatedBy: "carol" };
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect(await screen.findByText(/Not saved: the settings changed/)).toBeInTheDocument();
-    expect(screen.getByText(/revision 2, not the expected 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/not the expected/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Turn budget")).toHaveValue("150");
     expect(admin.settings.turnBudget).toBe(300);
 
     await userEvent.click(screen.getByRole("button", { name: "Reload and compare" }));
     const compare = await screen.findByTestId("conflict-compare");
-    expect(compare).toHaveTextContent("revision 2, changed by carol");
+    expect(compare).toHaveTextContent(/Changed by carol .* since you opened it/);
     expect(within(compare).getByText("300")).toBeInTheDocument();
     expect(within(compare).getByText("150")).toBeInTheDocument();
 

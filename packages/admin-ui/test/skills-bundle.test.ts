@@ -4,8 +4,11 @@ import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { SkillFileEntry } from "@/lib/api/skills";
 import {
+  changeSummary,
   decodeText,
+  deriveSkillName,
   diffManifest,
+  formatBytes,
   prepareBundle,
   sha256Hex,
   stripWrapper,
@@ -265,5 +268,77 @@ describe("diffManifest and textDiff", () => {
       { kind: "added", text: "B" },
       { kind: "same", text: "c" },
     ]);
+  });
+});
+
+describe("deriveSkillName", () => {
+  const folder = (name: string, skill = SKILL): RawEntry[] => [
+    raw(`${name}/SKILL.md`, skill),
+    raw(`${name}/x.txt`, "x"),
+  ];
+  const noName = "---\ndescription: d\n---\n";
+
+  it("takes the frontmatter name first", () => {
+    expect(
+      deriveSkillName(folder("some-folder"), { expected: undefined, fallback: undefined }),
+    ).toEqual({ ok: true, name: "demo" });
+  });
+
+  it("falls back to the folder, then to the zip's file name", () => {
+    const options = { expected: undefined, fallback: undefined };
+    expect(deriveSkillName(folder("my-skill", noName), options)).toEqual({
+      ok: true,
+      name: "my-skill",
+    });
+    expect(
+      deriveSkillName([raw("SKILL.md", noName)], { expected: undefined, fallback: "from-zip" }),
+    ).toEqual({ ok: true, name: "from-zip" });
+  });
+
+  it("on a skill's own page keeps to that skill and refuses another name", () => {
+    expect(
+      deriveSkillName(folder("v2", noName), { expected: "demo", fallback: undefined }),
+    ).toEqual({
+      ok: true,
+      name: "demo",
+    });
+    const other = deriveSkillName(folder("demo"), { expected: "other", fallback: undefined });
+    expect(other.ok).toBe(false);
+    expect(!other.ok && other.message).toMatch(
+      /names the skill "demo", but this page publishes "other"/,
+    );
+  });
+
+  it("says so when no valid name can be found", () => {
+    const bad = deriveSkillName(folder("My_Skill", noName), {
+      expected: undefined,
+      fallback: undefined,
+    });
+    expect(bad.ok).toBe(false);
+    expect(
+      deriveSkillName([raw("SKILL.md", noName)], { expected: undefined, fallback: undefined }).ok,
+    ).toBe(false);
+  });
+});
+
+describe("summaries for people", () => {
+  it("counts only the kinds that occur", () => {
+    const changes = diffManifest(
+      [{ path: "a", size: 1, sha256: "1", executable: false }],
+      [
+        { path: "a", sha256: "2", executable: false },
+        { path: "b", sha256: "3", executable: false },
+      ],
+    );
+    expect(changeSummary(changes)).toEqual([
+      { kind: "added", count: 1 },
+      { kind: "changed", count: 1 },
+    ]);
+  });
+
+  it("writes sizes in KB and MB", () => {
+    expect(formatBytes(8)).toBe("8 B");
+    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(3 * 1024 * 1024)).toBe("3.00 MB");
   });
 });
