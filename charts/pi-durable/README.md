@@ -70,11 +70,30 @@ per database: the schema `inbox` is fixed.
 | `networkPolicy.ingest.clients`                                                           | who may reach ingest :8080, as raw `from` entries (an ingress controller). Empty: no policy                                                                                                                                                      |
 | `networkPolicy.orchestrator.extraEgress`                                                 | extra raw egress rules (for example `api.github.com:443` with `standard`)                                                                                                                                                                        |
 | `orchestrator.shards`                                                                    | number of orchestrator Deployments (can only grow, see below); `resources`, `noProxy`, `extraEnv`                                                                                                                                                |
+| `console.enabled`                                                                        | serve the admin console under `/console/` from the ingest image (default `false`: `/console/` is a 404). See [Admin console](#admin-console)                                                                                                     |
 | `ingest.replicas`, `resources`                                                           | ingest scale                                                                                                                                                                                                                                     |
 | `api.admins`, `api.existingSecret`                                                       | owners who may call `/admin/*`; Secret with key `tokens`, one `owner:token` line per owner                                                                                                                                                       |
 | `models.default`, `allowlist`, `turnBudget`                                              | seeds Postgres once (ADR 0008); change later with `PUT /admin/settings`                                                                                                                                                                          |
 | `github.app.existingSecret`                                                              | optional GitHub App key and ids; repo sessions are off without it                                                                                                                                                                                |
 | `imagePullSecrets`                                                                       | for private registries                                                                                                                                                                                                                           |
+
+### Admin console
+
+`console.enabled: true` makes ingest serve the console (a React app, [docs/admin-ui-plan.md](../../docs/admin-ui-plan.md))
+at `/console/`. The page and its assets are static and need no token; an operator types their owner token into it (an
+`api.admins` owner with a line in `api.existingSecret`), and the browser sends it as `Authorization: Bearer` to
+`/admin/*` of the same origin. A wrong token is `401`, an owner that is not in `api.admins` is `403`. Console and `/admin/*`
+responses carry `Cache-Control: no-store`, a CSP of `default-src 'self'; frame-ancestors 'none'`,
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+
+Access:
+
+- Prefer a localhost port-forward: `kubectl -n pi-durable port-forward svc/pi-ingest 8080:8080`, then open
+  `http://localhost:8080/console/`.
+- The chart renders no Ingress, and a NetworkPolicy cannot filter by path. If ingest is also reachable by ordinary
+  clients through your ingress, that ingress must route `/console` and `/admin` only through operator access (a
+  restricted HTTPS route, VPN or an authenticating proxy), and must rate-limit failed sign-ins: ingest does not.
+- Tokens are the existing named bearer tokens; a change takes effect after the ingest pods restart.
 
 ### Models and OneCLI
 

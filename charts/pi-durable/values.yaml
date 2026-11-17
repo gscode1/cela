@@ -148,6 +148,13 @@ ingest:
     nodePort: 30080
     sourceCidr: ""
 
+# The admin console: a static web app that ingest serves under /console/ (docs/admin-ui-plan.md). Off by default, and
+# then /console/ is a 404. The page holds no secret; the operator's token (api.admins) is typed into it and goes only
+# to /admin/*. Reach it by `kubectl port-forward svc/pi-ingest 8080` or a route restricted to operators. The chart
+# ships no Ingress: where ingest also serves ordinary clients, route /console and /admin through operator access only.
+console:
+  enabled: false
+
 api:
   # Owners who may call /admin/*. Each needs a token in the Secret.
   admins: [admin]

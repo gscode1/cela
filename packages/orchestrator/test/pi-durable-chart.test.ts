@@ -801,6 +801,31 @@ describe("values are validated", () => {
   }
 });
 
+describe("console.enabled", () => {
+  const ingestEnv = (args: string[]): Record<string, Obj> =>
+    envOf(named(docs([...external, ...args]), "Deployment", "pi-ingest"));
+
+  it("is off by default: ingest gets no console directory", () => {
+    expect(ingestEnv([]).PI_CONSOLE_DIR).toBeUndefined();
+  });
+
+  it("points ingest at the console in the image when on", () => {
+    expect(ingestEnv(["--set", "console.enabled=true"]).PI_CONSOLE_DIR?.value).toBe("/app/console");
+  });
+
+  it("adds no Ingress, route or Service for it", () => {
+    const kinds = docs([...external, "--set", "console.enabled=true"]).map((d) => d.kind);
+    expect(kinds).not.toContain("Ingress");
+    expect(kinds).not.toContain("HTTPRoute");
+  });
+
+  it("rejects a value that is not a boolean", () => {
+    expect(() => helmTemplate(chart, [...external, "--set", "console.enabled=yes please"])).toThrow(
+      /console/,
+    );
+  });
+});
+
 describe("ingest.expose (kind only)", () => {
   const on = [
     "--set",

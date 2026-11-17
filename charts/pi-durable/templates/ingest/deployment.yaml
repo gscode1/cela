@@ -57,6 +57,10 @@ spec:
             - { name: PI_ORCH_URL, value: {{ ternary "http://pi-orchestrator:8081" "http://pi-orchestrator-{shard}:8081" (eq $shards 1) | quote }} }
             # Owners (names from the api Secret, not secrets) who may call /admin/*.
             - { name: PI_API_ADMINS, value: {{ join "," .Values.api.admins | quote }} }
+            {{- if .Values.console.enabled }}
+            # The built console is in the image (images/ingest/Dockerfile); without this variable /console/ is a 404.
+            - { name: PI_CONSOLE_DIR, value: /app/console }
+            {{- end }}
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
