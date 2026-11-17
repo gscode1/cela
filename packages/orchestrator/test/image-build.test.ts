@@ -107,6 +107,12 @@ describe("image delivery replaces mutable code uploads", () => {
     }
   });
 
+  it("builds the admin console into the ingest image", () => {
+    const dockerfile = readFileSync(join(root, "images/ingest/Dockerfile"), "utf8");
+    expect(dockerfile).toContain("--filter @pi-durable-k8s/admin-ui build");
+    expect(dockerfile).toContain("/src/packages/admin-ui/dist ./console");
+  });
+
   it("bakes driver scripts and Phase 1 test dependencies into the driver image", () => {
     const dockerfile = readFileSync(join(root, "images/e2e-driver/Dockerfile"), "utf8");
     expect(dockerfile).toContain("deploy --prod=false");

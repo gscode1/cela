@@ -24,6 +24,8 @@ export interface IngestConfig {
   seed: Settings;
   /** Owner names (`PI_API_ADMINS`) allowed to call `/admin/*`. */
   admins: string[];
+  /** Built console (`PI_CONSOLE_DIR`, set by the chart's `console.enabled`); undefined serves no console. */
+  consoleDir: string | undefined;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -72,5 +74,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     instance: env.POD_NAME ?? `ingest-${String(process.pid)}`,
     seed: settingsFromEnv(env),
     admins: parseAdmins(env.PI_API_ADMINS),
+    consoleDir: env.PI_CONSOLE_DIR?.trim() || undefined,
   };
 }

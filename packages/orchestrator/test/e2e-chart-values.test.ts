@@ -53,6 +53,13 @@ describe("tests/e2e/chart-values.py", () => {
     }
   });
 
+  it("turns the console on only for the console suite", () => {
+    const off = render(values(1));
+    expect(off).not.toContain("PI_CONSOLE_DIR");
+    const on = render(values(1, { CONSOLE_ENABLED: "1" }));
+    expect(on).toContain("PI_CONSOLE_DIR");
+  });
+
   it("splits image references into repository, tag and digest", () => {
     const parsed = JSON.parse(readFileSync(values(1), "utf8"));
     expect(parsed.images.orchestrator).toEqual({

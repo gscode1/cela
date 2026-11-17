@@ -14,3 +14,7 @@ examples/*/raw/
 
 # Local multi-platform image exports
 *.oci.tar
+
+# Playwright output of packages/admin-ui
+test-results/
+playwright-report/

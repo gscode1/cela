@@ -3,6 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import type pg from "pg";
 import { orchestratorUrlFor } from "./config.js";
+import { isConsolePath, serveConsole, setConsoleHeaders } from "./console.js";
 import {
   AdminConflictError,
   BodyError,
@@ -78,6 +79,8 @@ export interface IngestDeps {
   settings: SettingsView;
   /** Owner names allowed to call `/admin/*`. */
   admins: readonly string[];
+  /** Directory of the built console (`PI_CONSOLE_DIR`); undefined: `/console` is a 404. */
+  consoleDir?: string | undefined;
   /** False until the inbox schema is migrated; liveness does not wait for it, readiness and the API do. */
   schemaReady: () => boolean;
 }
@@ -103,6 +106,13 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   const url = new URL(req.url ?? "/", "http://localhost");
   const parts = url.pathname.split("/").filter(Boolean);
   const method = req.method ?? "GET";
+
+  // The console is static and holds no secret, so it is served before the schema check and the bearer gate.
+  if (isConsolePath(url.pathname)) {
+    await serveConsole(req, res, url.pathname, deps.consoleDir);
+    return;
+  }
+  if (parts[0] === "admin") setConsoleHeaders(res);
 
   if (method === "GET" && url.pathname === "/healthz") {
     sendJson(res, 200, { status: "ok" });

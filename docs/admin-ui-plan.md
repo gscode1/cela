@@ -136,7 +136,8 @@ replace `PI_API_ADMINS`.
 ## Implementation slices and acceptance
 
 1. **Console shell and access.** `/console/`, token login, headers, `console.enabled`. A browser suite against a
-   disposable e2e deployment, with two admins and one non-admin: sign-in, direct navigation, assets, sign-out, reload,
+   disposable e2e deployment, with an admin and a non-admin (the run's `api-auth` has `alice` and `bob`; a second admin
+   adds nothing to this slice, see [ADR 0024](decisions/0024-admin-console-serving.md)): sign-in, direct navigation, assets, sign-out, reload,
    distinct `401` and `403`, HTML-like test data rendered as text, and `/console/` 404 when disabled. The existing API
    and probe checks keep passing.
 2. **Settings and profiles.** The default-profile guard and `expectedRevision` in ingest, with an ADR (API done: ADR 0023). Changes show the

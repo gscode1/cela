@@ -100,6 +100,8 @@ def main() -> None:
             ],
         },
         "ingest": {"replicas": 2},
+        # Only the console suite turns the admin console on (tests/e2e/run.sh console).
+        "console": {"enabled": os.environ.get("CONSOLE_ENABLED") == "1"},
     }
     if os.environ.get("DB_TLS") == "1":
         values["database"]["tls"] = {"mode": "verify-full", "existingSecret": "pi-db-tls-ca", "caKey": "ca.crt"}

@@ -12,6 +12,7 @@
     "networkPolicy",
     "orchestrator",
     "ingest",
+    "console",
     "api",
     "models",
     "github"
@@ -235,6 +236,12 @@
           "then": { "properties": { "sourceCidr": { "$ref": "#/definitions/host32" } } }
         }
       }
+    },
+    "console": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": { "enabled": { "type": "boolean" } }
     },
     "api": {
       "type": "object",

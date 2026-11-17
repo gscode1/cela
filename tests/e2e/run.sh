@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all>
+# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|console|all>
 #   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call), Postgres pod restart keeps data
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
@@ -12,6 +12,11 @@
 #   shards  horizontal scaling by schema sharding (docs/decisions/0017-schema-sharding.md): the chart is installed with
 #           orchestrator.shards=2 (a second orchestrator Deployment) and ingest routes between the two. Not part of `all`
 #           (it adds a Deployment and takes about 20 minutes).
+#   console the admin console in a real browser (issue #143, docs/e2e.md "console suite"): the chart is installed with
+#           console.enabled=true, and Playwright on THIS machine (not a Job) drives http://127.0.0.1:<port>/console/ through a
+#           kubectl port-forward to pi-ingest with the run's alice (admin) and bob (owner without admin access) tokens; then
+#           the chart is upgraded with console.enabled=false and /console/ must be a 404. Needs `pnpm install` and
+#           `pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium`. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
 # Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (the charts/pi-postgres release, the
@@ -86,15 +91,17 @@ phase4b) phases=(phase4b) ;;
 phase4c) phases=(phase4c) ;;
 mcp) phases=(mcp) ;;
 shards) phases=(shards) ;;
+console) phases=(console) ;;
 all) phases=(phase1 phase3 phase4 phase4b) ;;
 *)
-  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all>" >&2
+  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|console|all>" >&2
   exit 64
   ;;
 esac
 has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0; done; return 1; }
 
 work=$(mktemp -d)
+pf_pid="" # the console suite's port-forward
 job=""
 keep_job=0
 ns_touched=0 # 1 once this run may have created or reused the namespace; the trap then decides keep or delete
@@ -103,6 +110,7 @@ cleanup() {
   trap - EXIT
   # Match on the namespace too: another run's log follower on this machine must survive.
   pkill -f -- "-n $ns logs -f job/e2e-driver" 2>/dev/null || true
+  [[ -z $pf_pid ]] || kill "$pf_pid" 2>/dev/null || true
   rm -rf "$work"
   [[ $ns_touched -eq 1 ]] || return "$rc"
   # An unfinished Job (keep_job=1) stays for the reader.
@@ -325,6 +333,8 @@ fi
 shards=1
 if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then shards=2; fi
 log "helm: charts/pi-durable into $ns (orchestrator shards: $shards)"
+# The console suite serves the console (CONSOLE_ENABLED is read by chart-values.py); every other suite leaves it off.
+if has_phase console; then export CONSOLE_ENABLED=1; fi
 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \
   --values "$work/values.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm.log" 2>&1 || {
@@ -418,7 +428,85 @@ run_phase() { # phase1|phase3|phase4
   job=""
 }
 
+# The console suite runs a browser on this machine against a port-forward, not a Job in the cluster: a browser needs a
+# display stack the driver image lacks, and the thing under test is what an operator sees through a port-forward
+# (docs/e2e.md). The tokens come from the run's own api-auth Secret into the environment of the one Playwright process;
+# they are never printed or written to a file.
+start_port_forward() {
+  local port=$1 _
+  kc -n "$ns" port-forward svc/pi-ingest "$port:8080" >"$work/port-forward.log" 2>&1 &
+  pf_pid=$!
+  for _ in $(seq 1 30); do
+    curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null && return 0
+    sleep 1
+  done
+  cat "$work/port-forward.log" >&2
+  echo "port-forward to pi-ingest in $ns did not come up" >&2
+  return 1
+}
+stop_port_forward() {
+  [[ -z $pf_pid ]] || kill "$pf_pid" 2>/dev/null || true
+  wait "$pf_pid" 2>/dev/null || true
+  pf_pid=""
+}
+run_console() {
+  local port tokens admin_token owner_token pw=(pnpm --dir "$root" --filter @pi-durable-k8s/admin-ui exec playwright)
+  log "console: browser suite against pi-ingest in $ns"
+  if ! "${pw[@]}" --version >/dev/null 2>&1; then
+    echo "Playwright is not installed: run pnpm install, then pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium" >&2
+    verdicts+=("console: FAIL (Playwright missing)")
+    overall=1
+    return
+  fi
+  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  tokens=$(k get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d)
+  admin_token=$(sed -n 's/^alice://p' <<<"$tokens")
+  owner_token=$(sed -n 's/^bob://p' <<<"$tokens")
+  tokens=""
+  if [[ -z $admin_token || -z $owner_token ]]; then
+    echo "api-auth in $ns has no tokens for alice and bob" >&2
+    verdicts+=("console: FAIL (no tokens)")
+    overall=1
+    return
+  fi
+  # alice is the run's only api.admins owner and bob is a valid owner without admin access (tests/e2e/chart-values.py).
+  start_port_forward "$port" || { verdicts+=("console: FAIL (port-forward)"); overall=1; return; }
+  if CONSOLE_BASE_URL="http://127.0.0.1:$port" CONSOLE_ADMIN_TOKEN=$admin_token CONSOLE_NONADMIN_TOKEN=$owner_token \
+    CONSOLE_EXPECT=enabled "${pw[@]}" test --config "$root/packages/admin-ui/playwright.config.ts"; then
+    verdicts+=("console (enabled): PASS")
+  else
+    verdicts+=("console (enabled): FAIL")
+    overall=1
+  fi
+  stop_port_forward
+
+  # Switched off: the same release with console.enabled=false must answer 404 for /console/.
+  log "console: helm upgrade with console.enabled=false"
+  CONSOLE_ENABLED=0 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values-off.json"
+  if ! helm ${ctx:+--kube-context="$ctx"} upgrade pi-durable "$root/charts/pi-durable" --namespace "$ns" \
+    --values "$work/values-off.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm-off.log" 2>&1; then
+    cat "$work/helm-off.log" >&2
+    verdicts+=("console (disabled): FAIL (helm upgrade)")
+    overall=1
+    return
+  fi
+  k rollout status deployment/pi-ingest --timeout=300s >/dev/null
+  start_port_forward "$port" || { verdicts+=("console (disabled): FAIL (port-forward)"); overall=1; return; }
+  if CONSOLE_BASE_URL="http://127.0.0.1:$port" CONSOLE_ADMIN_TOKEN=$admin_token CONSOLE_NONADMIN_TOKEN=$owner_token \
+    CONSOLE_EXPECT=disabled "${pw[@]}" test --config "$root/packages/admin-ui/playwright.config.ts"; then
+    verdicts+=("console (disabled): PASS")
+  else
+    verdicts+=("console (disabled): FAIL")
+    overall=1
+  fi
+  stop_port_forward
+}
+
 for phase in "${phases[@]}"; do
+  if [[ $phase == console ]]; then
+    run_console
+    continue
+  fi
   run_phase "$phase"
   # An unfinished Job may still use cluster resources; do not start the next phase on top.
   if [[ $keep_job -eq 1 ]]; then
