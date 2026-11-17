@@ -15,20 +15,27 @@ type Registry struct {
 	maxAge time.Duration
 	mu     sync.Mutex
 	conns  map[string]map[*trackedConn]struct{}
-	// revoked holds sessions closed by CloseSession until their next ACL
-	// allow (Grant). A dial whose ACL decision predates the revocation can
-	// still reach Track afterwards; without this it would outlive the close
-	// for up to maxAge. It is bounded by the number of sessions revoked and
-	// not yet re-granted.
-	revoked map[string]struct{}
+	// revokedAt is when CloseSession last ran for a session. A dial whose
+	// ACL decision predates the close can still reach Track afterwards; Track
+	// closes it, so it cannot outlive the close for up to maxAge. A request
+	// authorized after the close has a later time and is unaffected, so no
+	// re-grant step is needed. An entry matters only while such a dial can
+	// still arrive, so entries older than horizon are pruned.
+	revokedAt map[string]time.Time
+	// horizon is the longest span from a request being authorized to its
+	// connection reaching Track. Build derives it from the dial timeouts.
+	horizon time.Duration
+	now     func() time.Time
 }
 
 func NewRegistry(maxAge time.Duration) *Registry {
-	return &Registry{maxAge: maxAge, conns: map[string]map[*trackedConn]struct{}{}, revoked: map[string]struct{}{}}
+	return &Registry{maxAge: maxAge, conns: map[string]map[*trackedConn]struct{}{}, revokedAt: map[string]time.Time{}, horizon: time.Minute, now: time.Now}
 }
 
 // Track registers c under session and returns the wrapper to use in its place.
-func (r *Registry) Track(session string, c net.Conn) net.Conn {
+// authorizedAt is when the request was authorized, taken before the ACL
+// decision: a close at or after that moment revokes this connection too.
+func (r *Registry) Track(session string, authorizedAt time.Time, c net.Conn) net.Conn {
 	t := &trackedConn{Conn: c, session: session, reg: r}
 	// The timer is installed before t is published, under t.mu, so a
 	// concurrent CloseSession (or a very short timer) either sees it and
@@ -39,7 +46,9 @@ func (r *Registry) Track(session string, c net.Conn) net.Conn {
 	}
 	t.mu.Unlock()
 	r.mu.Lock()
-	_, revoked := r.revoked[session]
+	r.prune()
+	at, ok := r.revokedAt[session]
+	revoked := ok && !at.Before(authorizedAt)
 	// Close sets closed before it takes r.mu to remove t, so a t that was
 	// already closed (a very short max age) is never published and leaked.
 	if !revoked && !t.closed.Load() {
@@ -57,18 +66,22 @@ func (r *Registry) Track(session string, c net.Conn) net.Conn {
 	return t
 }
 
-// Grant clears a session's revocation. The ACL calls it when it allows a new
-// tunnel, so a session whose token is still valid works again after a close.
-func (r *Registry) Grant(session string) {
-	r.mu.Lock()
-	delete(r.revoked, session)
-	r.mu.Unlock()
+// prune drops revocations no pending dial can still be subject to. The caller
+// holds r.mu.
+func (r *Registry) prune() {
+	cutoff := r.now().Add(-r.horizon)
+	for session, at := range r.revokedAt {
+		if at.Before(cutoff) {
+			delete(r.revokedAt, session)
+		}
+	}
 }
 
 // CloseSession closes every open tunnel of the session and returns how many.
 func (r *Registry) CloseSession(session string) int {
 	r.mu.Lock()
-	r.revoked[session] = struct{}{}
+	r.prune()
+	r.revokedAt[session] = r.now()
 	set := r.conns[session]
 	conns := make([]*trackedConn, 0, len(set))
 	for c := range set {
