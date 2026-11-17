@@ -236,6 +236,14 @@ Tests:
 2. Example or docs for "Pi Durable orchestrator outside, tools inside" in agent-sandbox, next to the existing Pi-in-sandbox example.
 3. Later, only if tests show the need: detached, reattachable processes in sandboxd.
 
+### Phase 6: Installation (planned, issue #104)
+
+One install path on any cluster: Helm releases behind `hack/install.sh` (app chart, bundled Postgres instead of
+CloudNativePG, bundled OneCLI and agent-sandbox, each optional), gVisor by default with runc for tests, warn-only network
+policy with an isolation probe, and a one-command kind install. Existing `deploy/` stacks are reinstalled, not migrated,
+and the CNPG operator is never touched. Plan, slices and acceptance checks: [install-plan.md](docs/install-plan.md);
+decision: [ADR 0020](docs/decisions/0020-helm-install.md).
+
 ## 5. Security baseline for the PoC
 
 - NetworkPolicy: only the orchestrator may reach sandboxd; default-deny egress from sandboxes with an explicit allowlist.
