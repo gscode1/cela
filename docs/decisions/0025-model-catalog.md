@@ -18,8 +18,9 @@ and ingest already learns the installed tools from it through `inbox.orchestrato
   same code, and the last writer wins.
 - **`GET /admin/models`** returns the catalog (`source: "orchestrator"`) or an empty one (`source: "none"`). 1,645 models are too
   many to pick from, so by default it returns only the providers whose credential hint is `configured` or `unknown`
-  (`filtered: true`), and `scripted`, a test provider, only while the settings or a profile's `defaultModel` name it.
-  When no real provider's hint is known it returns everything with `filtered: false` and a `reason`, so the console can
+  (`filtered: true`). `scripted` is a test provider for CI, e2e and the quickstart and is hidden from the console: the default view and the
+  fallback never include it; only `?all=1` does.
+  When no real provider's hint is known it returns every real provider with `filtered: false` and a `reason`, so the console can
   explain instead of showing an empty picker. `?all=1` returns the full catalog. The filter shapes this view only:
   validation below always uses the full catalog.
 - **Validation only when a catalog is published.** `PUT /admin/settings` and a profile `PUT` answer `400`, naming the entry,

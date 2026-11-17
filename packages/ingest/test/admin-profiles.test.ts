@@ -454,31 +454,23 @@ describe("model catalog", () => {
     const body = await names(base);
     expect(body.filtered).toBe(false);
     expect(body.reason).toMatch(/no credential hint/);
-    expect(body.models).toEqual(["openai", "anthropic", "scripted"]);
+    expect(body.models).toEqual(["openai", "anthropic"]);
   });
 
-  it("offers scripted only while the settings or a profile name it", async () => {
+  it("never offers scripted in the default view, only with ?all=1", async () => {
     const { base, db } = await start(["alice"], {
       ...seed,
-      defaultModel: "openai/m",
-      allowlist: ["openai/m"],
+      defaultModel: "scripted/m",
+      allowlist: ["scripted/m"],
     });
     publish(db, [
       ["openai", "configured"],
       ["scripted", "configured"],
     ]);
-    expect((await names(base)).models).toEqual(["openai"]);
+    const body = await names(base);
+    expect(body.models).toEqual(["openai"]);
+    expect(body.providers.map((p) => p.provider)).toEqual(["openai"]);
     expect((await names(base, "?all=1")).models).toEqual(["openai", "scripted"]);
-    await call(base, "alice", "PUT", "/admin/profiles/t", {
-      definition: { defaultModel: "scripted/m" },
-    });
-    expect((await names(base)).models).toEqual(["openai", "scripted"]);
-    const second = await start(["alice"]);
-    publish(second.db, [
-      ["openai", "configured"],
-      ["scripted", "configured"],
-    ]);
-    expect((await names(second.base)).models).toEqual(["openai", "scripted"]);
   });
 
   it("settings and profile writes check models against the catalog only once one is published", async () => {

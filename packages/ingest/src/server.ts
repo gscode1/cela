@@ -255,16 +255,15 @@ async function publishedModelKeys(deps: IngestDeps): Promise<string[] | undefine
 }
 
 /**
- * The catalog as the console should offer it: only providers whose credential is `configured` or `unknown` (unknown
- * may be real), and `scripted` only when `used` (the settings' and profiles' models) names it. When no provider's hint
- * is known the whole catalog goes out, with a `reason`, so the picker is never empty for want of a hint. `all` lifts
- * every filter. Validation of writes never uses this view (docs/decisions/0025-model-catalog.md).
+ * The catalog as the console should offer it: never `scripted` (a test provider for CI, e2e and the quickstart), and
+ * only providers whose credential is `configured` or `unknown` (unknown may be real). When no real provider's hint is
+ * known the whole catalog goes out (still without `scripted`), with a `reason`, so the picker is never empty for want
+ * of a hint. `all` lifts every filter. Validation of writes never uses this view (docs/decisions/0025-model-catalog.md).
  */
 export function filterModelCatalog(
   models: readonly ModelCatalogEntry[],
   providers: readonly ModelProviderStatus[],
   all: boolean,
-  used: readonly string[],
 ): {
   models: ModelCatalogEntry[];
   providers: ModelProviderStatus[];
@@ -272,29 +271,20 @@ export function filterModelCatalog(
   reason?: string;
 } {
   if (all) return { models: [...models], providers: [...providers], filtered: false };
-  const known = providers.some(
-    (p) =>
-      p.credential !== "unknown" && !(p.provider === "scripted" && p.credential === "configured"),
-  );
+  const real = providers.filter((p) => p.provider !== "scripted");
+  const known = real.some((p) => p.credential !== "unknown");
   if (!known) {
     return {
-      models: [...models],
-      providers: [...providers],
+      models: models.filter((m) => m.provider !== "scripted"),
+      providers: real,
       filtered: false,
       reason:
         "no credential hint is known (the orchestrator has no OneCLI admin key, or listing the secrets failed), so every provider is shown",
     };
   }
-  const scriptedUsed = used.some((entry) => entry.startsWith("scripted/"));
-  const kept = providers.filter(
-    (p) => p.credential !== "missing" && (p.provider !== "scripted" || scriptedUsed),
-  );
+  const kept = real.filter((p) => p.credential !== "missing");
   const names = new Set(kept.map((p) => p.provider));
-  return {
-    models: models.filter((m) => names.has(m.provider)),
-    providers: kept,
-    filtered: true,
-  };
+  return { models: models.filter((m) => names.has(m.provider)), providers: kept, filtered: true };
 }
 
 async function handleAdminRoutes(
@@ -364,13 +354,8 @@ async function handleAdminRoutes(
     }
     const all = ["1", "true"].includes(url.searchParams.get("all") ?? "");
     const providers = capabilities.modelProviders ?? [];
-    // `scripted` is a test provider: offered only where the settings or a profile already name it.
-    const used = [deps.settings.get().defaultModel, ...deps.settings.get().allowlist];
-    for (const profile of (await readProfiles(deps.pool)).profiles) {
-      if (profile.definition.defaultModel !== undefined) used.push(profile.definition.defaultModel);
-    }
     sendJson(res, 200, {
-      ...filterModelCatalog(capabilities.models, providers, all, used),
+      ...filterModelCatalog(capabilities.models, providers, all),
       source: "orchestrator",
     });
     return;
