@@ -64,7 +64,7 @@ only. Skill versions are immutable: a new version reaches a profile only when so
 | A new profile version must reference installed tools and existing MCP servers. A reference to a deleted server or a removed tool blocks any change to the definition until the operator removes or replaces it. The editor marks such references and offers to remove them. A disabled server is still in the catalog: references to it save, and its tools are unavailable until it is enabled. | API |
 | Pinned skills and repository skills need `read` in both tool lists when those lists are explicit. The editor explains the dependency and leaves tool access to the operator. | API |
 | `readOnly` must be declared on create. The console also asks for it again when the URL changes, and before enabling a server without it. | API on create, console otherwise |
-| To disable the current default profile, select another enabled one first. A missing, invalid or disabled default is flagged with the same fix. | Console now, API after slice 2 |
+| To disable the current default profile, select another enabled one first. A missing, invalid or disabled default is flagged with the same fix. | API (`409` on disable, `400` on selecting a bad default, [ADR 0023](decisions/0023-admin-revisions.md)); the console shows the fix |
 
 Impact of a save:
 - Profile versions and skill pins apply to new sessions.
@@ -75,16 +75,17 @@ Impact of a save:
 
 ### Concurrent edits
 
-Today `PUT /admin/settings` checks `defaultProfile` before its write transaction, and disabling a profile does not
-check whether it is the default. Two admins can therefore leave a disabled default. Writes to one profile or one MCP
-server already serialise per name, and an unknown body key is `400`.
+Before [ADR 0023](decisions/0023-admin-revisions.md), `PUT /admin/settings` checked `defaultProfile` before its write
+transaction and disabling a profile did not check whether it was the default, so two admins could leave a disabled default.
+Writes to one profile or one MCP server already serialised per name, and an unknown body key is `400`.
 
-For v1:
+Done in the API by ADR 0023:
 - Ingest checks the default-profile selection and the disable of the default inside the write transaction, under one
-  lock. This changes API behaviour, so the implementing PR records it in `docs/decisions/` and the Session API.
-- Settings, profiles and MCP servers return a revision. A write may send `expectedRevision`. A mismatch is `409` and
-  changes nothing. The console always sends it, keeps the draft on a conflict, and offers to reload and compare. API
-  clients may omit it.
+  lock. Disabling the default is `409`; selecting a disabled or missing default is `400`.
+- Settings, profiles and MCP servers return a `revision`. A write may send `expectedRevision`. A mismatch is `409` and
+  changes nothing. API clients may omit it.
+
+For the console: always send `expectedRevision`, keep the draft on a conflict, and offer to reload and compare.
 
 Out of scope: contract versioning between console and ingest, pausing admin access during rollouts, and revisions
 that survive delete-and-recreate (a stale MCP draft can overwrite a server deleted and created again under the same
@@ -105,8 +106,8 @@ build, and a reload after an upgrade is enough.
   `Referrer-Policy: no-referrer`.
 - **Switch.** The chart gets `console.enabled`, default `false`. When it is off, `/console/` is 404.
 - **API.** Reuse `/admin/settings`, `/admin/profiles`, `/admin/mcp-servers`, `/admin/skills`, and `/admin/status`.
-  Add one read, `GET /admin/tools`, that returns the tool names the profile validator accepts (from the orchestrator's
-  last publication or the built-in fallback).
+  `GET /admin/tools` returns the tool names the profile validator accepts (from the orchestrator's last publication or
+  the built-in fallback), and `GET /admin/skills/{name}/versions/{v}/zip` downloads a version (both added by ADR 0023).
 
 ## Admin credentials and login
 
@@ -138,7 +139,7 @@ replace `PI_API_ADMINS`.
    disposable e2e deployment, with two admins and one non-admin: sign-in, direct navigation, assets, sign-out, reload,
    distinct `401` and `403`, HTML-like test data rendered as text, and `/console/` 404 when disabled. The existing API
    and probe checks keep passing.
-2. **Settings and profiles.** The default-profile guard and `expectedRevision` in ingest, with an ADR. Changes show the
+2. **Settings and profiles.** The default-profile guard and `expectedRevision` in ingest, with an ADR (API done: ADR 0023). Changes show the
    right actor in history and diffs. Round trips for cleared overrides, explicit `off`, omitted and empty tool lists,
    and skills that need `read`. The admission preview matches real session creation, accepted and rejected. A stale
    draft gets `409` and keeps its contents. Concurrent default selection and disable leave an enabled default.
@@ -176,8 +177,8 @@ copies:
 
 So the repository is the source and the database the published store. A sync step reads the repository at a commit,
 publishes each changed skill through `POST /admin/skills/{name}/versions` (an unchanged skill creates no version), and
-applies `mcp-servers.yaml` through `PUT /admin/mcp-servers/{name}`. Recording the commit SHA on a skill version or
-MCP server needs a new optional API field.
+applies `mcp-servers.yaml` through `PUT /admin/mcp-servers/{name}`. The commit SHA goes in the optional `source` field of a skill version or
+MCP server (reserved by ADR 0023).
 
 | Sync runs in | Pros | Cons |
 | --- | --- | --- |
@@ -194,9 +195,10 @@ sync is a thin client of the admin API.
 
 **Commitments now**, so the repository stays cheap to add:
 1. The console writes skills and MCP servers only through the public admin API.
-2. Each skill version can be downloaded as a zip that keeps the executable bit.
+2. Each skill version can be downloaded as a zip that keeps the executable bit (done: `GET /admin/skills/{name}/versions/{v}/zip`).
 3. The skill and MCP screens have a read-only mode from the start.
-4. Skill versions and MCP servers reserve an optional `source` (repository and commit), kept out of the digest.
+4. Skill versions and MCP servers reserve an optional `source` (repository and commit), kept out of the digest (done in the
+   API, ADR 0023; identical files with another `source` create no version).
 5. Retiring a skill is defined before the repository lands: versions cannot be deleted and skills have no disable flag
    today, so a skill removed from the repository would stay published and pinnable.
 6. A publish never moves profile pins. Pinning in the console stays the gate for what sessions get.

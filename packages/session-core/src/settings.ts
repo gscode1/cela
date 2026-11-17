@@ -8,7 +8,14 @@ import {
   THINKING_LEVELS,
 } from "./models.js";
 import type { ModelPolicy, ThinkingLevel } from "./models.js";
-import { DEFAULT_PROFILE_NAME, PROFILE_NAME, profileNameError } from "./profiles.js";
+import {
+  DEFAULT_PROFILE_NAME,
+  DEFAULT_PROFILE_LOCK,
+  PROFILE_NAME,
+  profileNameError,
+  readProfile,
+} from "./profiles.js";
+import { checkRevision } from "./revision.js";
 
 /** Notification channel a writer signals on, in the same transaction as the write. */
 export const SETTINGS_CHANNEL = "pi_settings";
@@ -34,6 +41,8 @@ export interface Settings {
 
 export interface StoredSettings {
   settings: Settings;
+  /** Counts the writes; `expectedRevision` of the next write must equal it. */
+  revision: number;
   updatedAt: Date;
   updatedBy: string;
 }
@@ -191,6 +200,7 @@ interface SettingsRow {
   max_reasoning: string | null;
   default_profile: string | null;
   turn_budget: number;
+  revision: number;
   updated_at: Date;
   updated_by: string;
 }
@@ -206,11 +216,11 @@ function fromRow(row: SettingsRow): StoredSettings {
     turnBudget: row.turn_budget,
   });
   if (typeof settings === "string") throw new Error(`stored settings are invalid: ${settings}`);
-  return { settings, updatedAt: row.updated_at, updatedBy: row.updated_by };
+  return { settings, revision: row.revision, updatedAt: row.updated_at, updatedBy: row.updated_by };
 }
 
 const COLUMNS =
-  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_at, updated_by";
+  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, revision, updated_at, updated_by";
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -280,23 +290,47 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
   });
 }
 
+/** The default profile must exist and be open to new sessions, or every `POST /sessions` without `profile` would fail. */
+async function defaultProfileProblem(db: Db, name: string): Promise<string | undefined> {
+  let profile;
+  try {
+    profile = await readProfile(db, name);
+  } catch {
+    return `defaultProfile: profile "${name}" is invalid`;
+  }
+  if (profile === undefined) return `defaultProfile: profile "${name}" does not exist`;
+  return profile.enabledForNew
+    ? undefined
+    : `defaultProfile: profile "${name}" is disabled for new sessions`;
+}
+
 /**
  * Applies a full or partial update from `by` (the owner name): validates it over the current row (locked, so two
  * admins cannot interleave), writes the row and the history entry and notifies, in one transaction. A change that
- * alters nothing writes nothing. Resolves to the stored settings or the message for a 400.
+ * alters nothing writes nothing. A `defaultProfile` in the patch is checked in the same transaction, under the lock
+ * `putProfile` takes before it disables a profile, so a default can never be disabled behind the check
+ * (docs/decisions/0023-admin-revisions.md). Resolves to the stored settings or the message for a 400; throws
+ * `AdminConflictError` when `expectedRevision` is not the stored one.
  */
 export async function updateSettings(
   pool: pg.Pool,
   patch: unknown,
   by: string,
+  expectedRevision?: number,
 ): Promise<StoredSettings | string> {
   return inTransaction(pool, async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [DEFAULT_PROFILE_LOCK]);
     const { rows } = await client.query<SettingsRow>(
       `select ${COLUMNS} from inbox.settings for update`,
     );
+    checkRevision("settings", expectedRevision, rows[0]?.revision);
     const current = rows[0] === undefined ? undefined : fromRow(rows[0]);
     const next = validateSettings(patch, current?.settings);
     if (typeof next === "string") return next;
+    if (typeof patch === "object" && patch !== null && "defaultProfile" in patch) {
+      const problem = await defaultProfileProblem(client, next.defaultProfile);
+      if (problem !== undefined) return problem;
+    }
     if (current !== undefined && settingsEqual(current.settings, next)) return current;
     const { rows: written } = await client.query<SettingsRow>(
       `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_by)
@@ -305,6 +339,7 @@ export async function updateSettings(
          default_model = excluded.default_model, allowlist = excluded.allowlist,
          default_reasoning = excluded.default_reasoning, max_reasoning = excluded.max_reasoning,
          default_profile = excluded.default_profile, turn_budget = excluded.turn_budget,
+         revision = inbox.settings.revision + 1,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
       [
@@ -319,7 +354,12 @@ export async function updateSettings(
     );
     await writeHistoryAndNotify(client, by, current?.settings ?? null, next);
     return written[0] === undefined
-      ? { settings: next, updatedAt: new Date(), updatedBy: by }
+      ? {
+          settings: next,
+          revision: (current?.revision ?? 0) + 1,
+          updatedAt: new Date(),
+          updatedBy: by,
+        }
       : fromRow(written[0]);
   });
 }

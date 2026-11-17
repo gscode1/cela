@@ -166,7 +166,8 @@ describe("admin profiles", () => {
 
   it("enabledForNew toggles without a version; DELETE is not offered", async () => {
     const { base } = await start();
-    const off = await call(base, "alice", "PUT", "/admin/profiles/coding", {
+    await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
+    const off = await call(base, "alice", "PUT", "/admin/profiles/research", {
       enabledForNew: false,
     });
     expect(await off.json()).toMatchObject({
@@ -174,7 +175,7 @@ describe("admin profiles", () => {
       currentVersion: 1,
       versionCreated: false,
     });
-    expect((await call(base, "alice", "DELETE", "/admin/profiles/coding")).status).toBe(405);
+    expect((await call(base, "alice", "DELETE", "/admin/profiles/research")).status).toBe(405);
   });
 
   it("answers 400 for bad input, unknown tools, an MCP server not in the catalog, and writes nothing", async () => {
@@ -222,6 +223,7 @@ describe("admin profiles", () => {
     expect((await put("Bad Name")).status).toBe(400);
     await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
     expect((await put("research")).status).toBe(200);
+    expect((await put("coding")).status).toBe(200);
     await call(base, "alice", "PUT", "/admin/profiles/research", { enabledForNew: false });
     expect((await put("research")).status).toBe(400);
     expect((await put("coding")).status).toBe(200);
@@ -299,7 +301,9 @@ describe("POST /sessions with profiles", () => {
     );
     await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
     expect((await post(base)).status).toBe(201);
-    await call(base, "alice", "PUT", "/admin/profiles/research", { enabledForNew: false });
+    // The API no longer lets the default be disabled (ADR 0023); a row edited by hand still fails closed.
+    const row = db.profiles.get("research");
+    if (row !== undefined) row.enabled_for_new = false;
     expect((await post(base)).status).toBe(503);
     expect(db.sessions.size).toBe(1);
   });

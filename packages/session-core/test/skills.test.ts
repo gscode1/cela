@@ -4,6 +4,7 @@ import {
   createSession,
   getSession,
   listSkillVersions,
+  manifestOf,
   putProfile,
   putSkillVersion,
   readProfile,
@@ -614,5 +615,57 @@ describe("profiles pin skills", () => {
     });
     // The old version is still readable, byte for byte.
     expect(await readSkillBundle(pool, "pdf", 1)).toMatchObject({ digest: v1Digest });
+  });
+});
+
+describe("skill source", () => {
+  const source = { repository: "github.com/acme/catalog", commit: "0123abcdef" };
+
+  it("is stored and returned with the version, and is not part of the digest", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    const plain = validate(skill());
+    const withSource = validate(skill({ source }));
+    expect(plain).toMatchObject({ source: null });
+    expect(withSource).toMatchObject({ source });
+    if (typeof plain === "string" || typeof withSource === "string") throw new Error("invalid");
+    expect(skillDigest("pdf", plain.description, manifestOf(plain))).toBe(
+      skillDigest("pdf", withSource.description, manifestOf(withSource)),
+    );
+    const first = await putSkillVersion(pool, "pdf", skill({ source }), "alice");
+    expect(first.ok && [first.created, first.version.source]).toEqual([true, source]);
+    expect((await readSkillBundle(pool, "pdf", 1))?.source).toEqual(source);
+  });
+
+  it("identical files with another source publish nothing and keep the stored source", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    await putSkillVersion(pool, "pdf", skill({ source }), "alice");
+    const again = await putSkillVersion(
+      pool,
+      "pdf",
+      skill({ source: { ...source, commit: "fedcba9" } }),
+      "alice",
+    );
+    expect(again.ok && [again.created, again.version.version, again.version.source]).toEqual([
+      false,
+      1,
+      source,
+    ]);
+    expect(db.skillVersions).toHaveLength(1);
+  });
+
+  it.each([
+    ["x"],
+    [[]],
+    [{}],
+    [{ repository: "r" }],
+    [{ repository: "has space", commit: "0123abc" }],
+    [{ repository: "r".repeat(201), commit: "0123abc" }],
+    [{ repository: "r", commit: "0123ABC" }],
+    [{ repository: "r", commit: "abc" }],
+    [{ repository: "r", commit: "0123abc", branch: "main" }],
+  ])("refuses the source %j", (bad) => {
+    expect(validate(skill({ source: bad }))).toMatch(/source/);
   });
 });

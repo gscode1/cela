@@ -4,6 +4,7 @@ import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./
 import type { ThinkingLevel } from "./models.js";
 import { isSkillDigest, pinSkillRefs, SKILL_LIMITS, SKILL_NAME } from "./skills.js";
 import type { SkillRef } from "./skills.js";
+import { AdminConflictError, checkRevision } from "./revision.js";
 
 /**
  * Session profiles (docs/decisions/0010-session-profiles.md): named, versioned definitions of what a session gets.
@@ -15,6 +16,8 @@ export const PROFILE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** The profile a session without a stored one runs as: today's behaviour (every coding tool, no MCP). */
 export const LEGACY_PROFILE = { name: "coding", version: 1 } as const;
 export const DEFAULT_PROFILE_NAME = "coding";
+/** Transaction lock key shared by the writes that choose the default profile and the ones that disable a profile. */
+export const DEFAULT_PROFILE_LOCK = "settings:default-profile";
 
 /**
  * The coding tools the orchestrator installs. Used to validate tool names only while the orchestrator has not published
@@ -285,6 +288,8 @@ export function checkProfileNames(
 export interface StoredProfile {
   name: string;
   currentVersion: number;
+  /** Counts the writes, enable and disable included (they add no version); the next write's `expectedRevision`. */
+  revision: number;
   enabledForNew: boolean;
   definition: ProfileDefinition;
   createdAt: Date;
@@ -303,6 +308,7 @@ export interface ProfileVersion {
 interface ProfileRow {
   name: string;
   current_version: number;
+  revision: number;
   enabled_for_new: boolean;
   definition: unknown;
   created_at: Date;
@@ -312,7 +318,7 @@ interface ProfileRow {
 }
 
 const PROFILE_COLUMNS =
-  "p.name, p.current_version, p.enabled_for_new, v.definition, p.created_at, p.created_by, p.updated_at, p.updated_by";
+  "p.name, p.current_version, p.revision, p.enabled_for_new, v.definition, p.created_at, p.created_by, p.updated_at, p.updated_by";
 const PROFILE_FROM =
   "from inbox.profiles p join inbox.profile_versions v on v.name = p.name and v.version = p.current_version";
 
@@ -325,6 +331,7 @@ function fromRow(row: ProfileRow): StoredProfile {
   return {
     name: row.name,
     currentVersion: row.current_version,
+    revision: row.revision,
     enabledForNew: row.enabled_for_new,
     definition,
     createdAt: row.created_at,
@@ -423,12 +430,16 @@ export interface PutProfileInput {
   definition?: unknown;
   /** Default true on create; a change is written to the profile row (versions are untouched). */
   enabledForNew?: unknown;
+  /** The revision the caller saw; any other (or none stored) throws `AdminConflictError` and writes nothing. */
+  expectedRevision?: number;
 }
 
 /**
  * Creates a profile or updates it from `by`. A changed definition is a new version (the old rows stay, immutable); an
  * identical one is a no-op. `known` is what the names are checked against, only when a new version would be written.
- * One transaction under a lock per name.
+ * One transaction under a lock per name. Disabling the settings' default profile throws `AdminConflictError`: the
+ * check runs under `DEFAULT_PROFILE_LOCK`, the lock `updateSettings` holds while it checks a new default
+ * (docs/decisions/0023-admin-revisions.md).
  */
 export async function putProfile(
   pool: pg.Pool,
@@ -454,6 +465,10 @@ export async function putProfile(
   return inTransaction(pool, async (client): Promise<PutProfileResult> => {
     // Serialises writers per name, also for a create (no row to lock yet).
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`profile:${name}`]);
+    // Always in this order (profile, then default), and `updateSettings` takes only the second: no cycle.
+    if (input.enabledForNew === false) {
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [DEFAULT_PROFILE_LOCK]);
+    }
     if (definition?.skills !== undefined) {
       // Skill versions are immutable, so the digests filled in here stay true: the stored definition pins content.
       const pinned = await pinSkillRefs(client, definition.skills);
@@ -464,6 +479,7 @@ export async function putProfile(
       `select ${PROFILE_COLUMNS} ${PROFILE_FROM} where p.name = $1`,
       [name],
     );
+    checkRevision(`profile ${name}`, input.expectedRevision, rows[0]?.revision);
     let current: StoredProfile | undefined;
     try {
       current = rows[0] === undefined ? undefined : fromRow(rows[0]);
@@ -503,10 +519,24 @@ export async function putProfile(
         [name, version, JSON.stringify(definition), by],
       );
     }
-    const enabled = input.enabledForNew ?? rows[0]?.enabled_for_new ?? true;
+    // Checked to be a boolean at the top of the function.
+    const enabled =
+      (input.enabledForNew as boolean | undefined) ?? rows[0]?.enabled_for_new ?? true;
+    if (!enabled && rows[0]?.enabled_for_new === true) {
+      const { rows: chosen } = await client.query<{ default_profile: string | null }>(
+        "select default_profile from inbox.settings",
+      );
+      const defaultName =
+        chosen[0] === undefined ? undefined : (chosen[0].default_profile ?? DEFAULT_PROFILE_NAME);
+      if (defaultName === name) {
+        throw new AdminConflictError(
+          `profile "${name}" is the default profile for new sessions: select another enabled profile as the default first`,
+        );
+      }
+    }
     if (versionCreated || enabled !== rows[0]?.enabled_for_new) {
       await client.query(
-        `update inbox.profiles set current_version = $2, enabled_for_new = $3,
+        `update inbox.profiles set current_version = $2, enabled_for_new = $3, revision = revision + 1,
            updated_at = clock_timestamp(), updated_by = $4 where name = $1`,
         [name, version, enabled, by],
       );

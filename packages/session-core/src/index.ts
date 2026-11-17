@@ -20,6 +20,11 @@ export {
   THINKING_LEVELS,
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
+export { AdminConflictError, parseExpectedRevision } from "./revision.js";
+export { sourceFromColumn, validateSource } from "./source.js";
+export type { CatalogSource } from "./source.js";
+export { buildZip } from "./zip.js";
+export type { ZipEntry } from "./zip.js";
 export { McpCatalogCache } from "./mcp-cache.js";
 export type { McpCatalogCacheOptions, McpCatalogListener } from "./mcp-cache.js";
 export {
@@ -45,6 +50,7 @@ export type {
 export {
   BUILTIN_TOOL_NAMES,
   checkProfileNames,
+  DEFAULT_PROFILE_LOCK,
   DEFAULT_PROFILE_NAME,
   LEGACY_PROFILE,
   listProfileVersions,
