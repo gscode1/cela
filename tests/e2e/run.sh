@@ -168,20 +168,12 @@ printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamesp
   "$ns" "$(relpath "$here/deploy" "$work/stack")" >"$work/stack/kustomization.yaml"
 # The orchestrator's OneCLI name prefix, next to the namespace: only this overlay knows the run id.
 cat >>"$work/stack/kustomization.yaml" <<EOF
-configMapGenerator:
-  - name: e2e-install-config
-    literals:
-      - onecli-prefix=$onecli_prefix
-replacements:
-  - source:
-      kind: ConfigMap
-      name: e2e-install-config
-      fieldPath: data.onecli-prefix
-    targets:
-      - select: { kind: Deployment, name: pi-orchestrator }
-        fieldPaths:
-          - spec.template.spec.containers.[name=orchestrator].env.[name=PI_ONECLI_NAME_PREFIX].value
 patches:
+  # Strategic merge: env entries merge by name, so this replaces the base's prefix instead of adding a duplicate.
+  - target: { kind: Deployment, name: pi-orchestrator }
+    patch: |-
+      { apiVersion: apps/v1, kind: Deployment, metadata: { name: pi-orchestrator }, spec: { template: { spec: { containers: [
+        { name: orchestrator, env: [{ name: PI_ONECLI_NAME_PREFIX, value: "$onecli_prefix" }] } ] } } } }
 EOF
 # Optional cluster-specific overrides. JSON entries are valid YAML; quote values rather than interpolate YAML.
 python3 - "$work/stack/kustomization.yaml" <<'PYOVERLAY'
