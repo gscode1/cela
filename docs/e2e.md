@@ -29,7 +29,10 @@ tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 h
    by name prefix `pi-e2e-`, by the label `pi-durable-e2e=true` and by age, so `pi-durable-poc` cannot match.
 2. **Namespace.** Creates `pi-e2e-<id>` with the label `pi-durable-e2e=true` (the OneCLI ingress policy and the sweeper
    select on it) and the annotations `pi-durable-e2e/branch` and `/suite`. The label exists before the first Pod does,
-   because Cilium takes a Pod's identity from its namespace labels when the Pod starts.
+   because Cilium takes a Pod's identity from its namespace labels when the Pod starts. The same `apply` (also on a reused
+   namespace) sets the Pod Security labels: `enforce`, `warn` and `audit` = `restricted`, version `v1.36`, as in
+   `deploy/namespace.yaml` ([decision 0019](decisions/0019-restricted-pod-security.md)). Every Pod the run creates,
+   including the loader pods and the driver Job, must meet that profile.
 3. **Stack.** A generated overlay (`kustomization.yaml` in a temp dir with `namespace: pi-e2e-<id>`) over
    `tests/e2e/deploy`, which is `deploy/` (without its `Namespace` object) plus `tests/e2e/driver` (driver
    ServiceAccount, Roles, code volume), the test switches of the orchestrator and lower resource requests. That gives:
