@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsCache } from "../src/settings-cache.ts";
 import type { Settings } from "../src/settings.ts";
-import { FakeSettingsDb } from "./fake-settings-db.ts";
+import { FakeListener, FakeSettingsDb } from "./fake-settings-db.ts";
 
 const fallback: Settings = {
   defaultModel: "env/model",
@@ -137,5 +137,20 @@ describe("SettingsCache", () => {
     await vi.waitFor(() => expect(client?.released).toBe(true));
     await expect(c.stop()).resolves.toBeUndefined();
     await expect(c.stop()).resolves.toBeUndefined();
+  });
+
+  it("releases a client whose connect resolves after stop(), and keeps no listener", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    let resolveConnect: (client: FakeListener) => void = () => undefined;
+    db.connect = () => new Promise<FakeListener>((resolve) => (resolveConnect = resolve));
+    const c = cache(db);
+    await c.start();
+    await c.stop();
+    const late = new FakeListener(db);
+    resolveConnect(late);
+    await vi.waitFor(() => expect(late.released).toBe(true));
+    expect(late.channels.size).toBe(0);
+    expect(db.listeners.size).toBe(0);
   });
 });

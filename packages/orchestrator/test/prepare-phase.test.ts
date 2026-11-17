@@ -40,7 +40,7 @@ class FakePool {
   #run(sql: string, params: unknown[]): { rows: unknown[] } {
     if (sql === "begin") this.txOpen = true;
     if (sql === "commit" || sql === "rollback") this.txOpen = false;
-    if (sql.includes("select distinct e.session_id")) {
+    if (sql.includes("select e.session_id")) {
       return {
         rows: this.rows.some((r) => r.status === "pending") ? [{ session_id: SESSION }] : [],
       };

@@ -47,6 +47,19 @@ export function tokenAuthenticator(spec: string): Authenticator {
       return { owner, hash: digest(token) };
     });
   if (entries.length === 0) throw new Error("no API tokens configured");
+  // The match loop below keeps the last hit, so a token shared by two owners would silently authenticate as one of
+  // them. Refuse it at load; the message names the owners, never the token.
+  const ownerOfHash = new Map<string, string>();
+  for (const entry of entries) {
+    const key = entry.hash.toString("hex");
+    const first = ownerOfHash.get(key);
+    if (first !== undefined && first !== entry.owner) {
+      throw new Error(
+        `API tokens of owners ${first} and ${entry.owner} are identical; every token must be unique`,
+      );
+    }
+    ownerOfHash.set(key, entry.owner);
+  }
 
   return (headers) => {
     const header = headers.authorization;

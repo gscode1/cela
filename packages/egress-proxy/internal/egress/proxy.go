@@ -69,6 +69,13 @@ func Build(o Options) (*Proxy, error) {
 		opts:        o,
 		upstreamURL: "http://" + o.UpstreamAddr,
 	}
+	// From authorization (stamped in serve) to Track a request spends at most
+	// the connect timeout (which also bounds Smokescreen's resolve-and-dial)
+	// plus, on the onecli route, the upstream handshake. The margin covers the
+	// ACL decision and scheduling. The span is not strictly bounded: if a
+	// stage outlasts its timeout the revocation entry may expire first and
+	// that one tunnel then lives to maxAge.
+	p.Registry.horizon = o.ConnectTimeout + o.UpstreamHandshakeTimeout + 30*time.Second
 
 	cfg := smokescreen.NewConfig()
 	if o.Log != nil {
@@ -116,6 +123,9 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	// A client must never choose the next hop. Del removes every value.
 	r.Header.Del(upstreamHeader)
+	// Stamped before the ACL decision, never in dial, so a close that lands
+	// between the two still revokes this request.
+	r = r.WithContext(context.WithValue(r.Context(), authorizedAtKey{}, p.Registry.now()))
 	p.inner.ServeHTTP(w, r)
 }
 
@@ -214,7 +224,22 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 	if err != nil {
 		return nil, err
 	}
-	return p.Registry.Track(d.Role, c), nil
+	at, ok := authorizedAtOf(pctx)
+	if !ok {
+		_ = c.Close()
+		return nil, errors.New("tunnel has no authorization time")
+	}
+	return p.Registry.Track(d.Role, at, c), nil
+}
+
+type authorizedAtKey struct{}
+
+func authorizedAtOf(pctx *goproxy.ProxyCtx) (time.Time, bool) {
+	if pctx.Req == nil {
+		return time.Time{}, false
+	}
+	at, ok := pctx.Req.Context().Value(authorizedAtKey{}).(time.Time)
+	return at, ok
 }
 
 func decisionOf(pctx *goproxy.ProxyCtx) (*smokescreen.ACLDecision, error) {

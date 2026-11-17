@@ -10,6 +10,8 @@ class FakeInbox {
   rows: EventDbRow[] = [];
   /** Statements run on a transaction client, and on the pool outside one, in order. */
   readonly log: string[] = [];
+  /** The pending-session polls (sql and parameters), in order. */
+  readonly polls: { sql: string; params: unknown[] }[] = [];
 
   add(kind: EventDbRow["kind"], id = String(this.rows.length + 1)): EventDbRow {
     const row: EventDbRow = {
@@ -41,9 +43,11 @@ class FakeInbox {
       else if (this.#sessionLocked) this.blocked.push(sql);
     }
     if (sql === "commit" || sql === "rollback") this.#sessionLocked = false;
-    if (sql.includes("select distinct e.session_id")) {
+    if (sql.includes("select e.session_id")) {
+      this.polls.push({ sql, params });
+      const skipped = (params[1] as string[]).includes(SESSION);
       const any = this.rows.some((r) => r.status === "pending");
-      return { rows: any ? [{ session_id: SESSION }] : [] };
+      return { rows: any && !skipped ? [{ session_id: SESSION }] : [] };
     }
     if (sql.includes("select * from inbox.events")) {
       return { rows: this.rows.filter((r) => r.status === "pending") };
@@ -147,6 +151,56 @@ describe("a failing delete", () => {
     }
     expect(row.status).toBe("failed");
     expect(row.attempts).toBe(5);
+  });
+});
+
+describe("the pending poll", () => {
+  it("leaves backed-off sessions out and serves the oldest pending event first", async () => {
+    const inbox = new FakeInbox();
+    inbox.add("delete");
+    const loop = new InboxLoop(inbox.pool(), 0, () =>
+      Promise.reject(new Error("kubernetes unavailable")),
+    );
+    loop.wake();
+    await flush();
+    // The failed delete put the session into backoff, so the next poll must pass it as skipped.
+    loop.wake();
+    await flush();
+    expect(inbox.polls).toHaveLength(2);
+    expect(inbox.polls[0]?.params[1]).toEqual([]);
+    expect(inbox.polls[1]?.params[1]).toEqual([SESSION]);
+    for (const { sql } of inbox.polls) {
+      expect(sql).toContain("order by min(e.created_at)");
+      expect(sql).toContain("limit 100");
+    }
+    // Once the backoff has passed the session is polled (and retried) again.
+    vi.setSystemTime(Date.now() + 61_000);
+    loop.wake();
+    await flush();
+    expect(inbox.polls[2]?.params[1]).toEqual([]);
+  });
+});
+
+describe("the LISTEN connection", () => {
+  it("is released when stop() ran while the connect was pending", async () => {
+    let resolveConnect: (client: pg.PoolClient) => void = () => undefined;
+    const pool = {
+      connect: () => new Promise<pg.PoolClient>((resolve) => (resolveConnect = resolve)),
+      query: () => Promise.resolve({ rows: [] }),
+    } as unknown as pg.Pool;
+    const loop = new InboxLoop(pool, 0, () => Promise.resolve());
+    loop.start();
+    await loop.stop();
+    const release = vi.fn();
+    const on = vi.fn();
+    resolveConnect({
+      release,
+      on,
+      query: vi.fn(),
+      removeAllListeners: vi.fn(),
+    } as unknown as pg.PoolClient);
+    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(true), { timeout: 2_000 });
+    expect(on).not.toHaveBeenCalled();
   });
 });
 
