@@ -11,6 +11,7 @@ import {
   settingsFromEnv,
   tokenAuthenticator,
 } from "@pi-durable-k8s/session-core";
+import { bridgeCapFields } from "./bridge-cap.js";
 import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";
 import { OneCliAdmin } from "./onecli-admin.js";
@@ -32,6 +33,8 @@ import { OrphanSweeper } from "./sweeper.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
+  const { maxOpenBridges, bridgeCap } = config.sandbox;
+  log("bridge-cap", bridgeCapFields(maxOpenBridges, bridgeCap.source, bridgeCap.memoryLimitBytes));
   const lifecycle: Lifecycle = { state: "waiting-for-lock", instance: config.instance };
   // A second, independent connection pool for the inbox and the owner check: the Pi Durable adapter pins its
   // own connection and holds the ownership lock on it, and neither may share it.

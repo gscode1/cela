@@ -78,6 +78,30 @@ export function summarizeRss(samples) {
   }));
 }
 
+/**
+ * Least-squares line of container memory against open bridges, from `memory-sample` events: base (memory with none
+ * open) and slope (memory per open bridge), both in MiB. Undefined with fewer than two distinct bridge counts, where a
+ * slope means nothing. Samples whose `memorySource` is `rss` miss the relay processes, so they are left out.
+ */
+export function fitMemory(samples) {
+  const points = samples
+    .filter((s) => s.memorySource === "cgroup")
+    .map((s) => [s.open, s.memoryCurrentBytes / 1048576]);
+  if (new Set(points.map(([open]) => open)).size < 2) return undefined;
+  const n = points.length;
+  const meanX = points.reduce((a, [x]) => a + x, 0) / n;
+  const meanY = points.reduce((a, [, y]) => a + y, 0) / n;
+  const sxx = points.reduce((a, [x]) => a + (x - meanX) ** 2, 0);
+  const sxy = points.reduce((a, [x, y]) => a + (x - meanX) * (y - meanY), 0);
+  const slope = sxy / sxx;
+  return {
+    n,
+    baseMiB: meanY - slope * meanX,
+    perBridgeMiB: slope,
+    maxOpen: Math.max(...points.map(([x]) => x)),
+  };
+}
+
 function table(rows, columns) {
   const cells = rows.map((row) =>
     columns.map((c) => String(typeof row[c] === "number" ? Math.round(row[c] * 10) / 10 : row[c])),
@@ -134,6 +158,20 @@ function main() {
     );
     console.log("ms since the turn started (phase:*) or between two phases (span:*)");
     console.log(table(summarize(turns), ["state", "name", "n", "p50", "p90", "max"]));
+  }
+  const memory = eventsOf(text, "memory-sample");
+  if (memory.length > 0) {
+    const fit = fitMemory(memory);
+    console.log("\ncontainer memory against open bridges (memory-sample)");
+    if (fit === undefined) {
+      console.log(
+        `${memory.length} samples, but fewer than two distinct open counts, or no cgroup source: no fit`,
+      );
+    } else {
+      console.log(
+        `n=${fit.n} base=${fit.baseMiB.toFixed(0)} MiB per-bridge=${fit.perBridgeMiB.toFixed(1)} MiB (up to ${fit.maxOpen} open); defaults assume 256 MiB and 24 MiB`,
+      );
+    }
   }
   const rss = eventsOf(text, "bridge-rss");
   if (rss.length > 0) {

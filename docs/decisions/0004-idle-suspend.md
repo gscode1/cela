@@ -94,3 +94,7 @@ With [0016](0016-in-process-broker.md) a slot is still an entry in `#envs`, but 
 and an in-process broker, not a 100 MiB bridge. The rules above (LRU eviction, FIFO queue, abort while waiting, slot
 released by close, eviction, teardown and failed open) and `PI_MAX_OPEN_BRIDGES` = 12 are unchanged; the cap is to be
 re-measured, not changed, until the #58 numbers say what an open env costs now.
+
+## Addendum: the cap is derived since ADR 0018 (issue #91)
+
+`PI_MAX_OPEN_BRIDGES` no longer defaults to 12: it is derived from the memory limit, and `0` means no cap; see [0018](0018-derived-bridge-cap.md).

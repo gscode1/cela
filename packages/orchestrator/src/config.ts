@@ -1,5 +1,7 @@
 import { loadModelPolicy } from "@pi-durable-k8s/session-core";
 import type { ModelPolicy } from "@pi-durable-k8s/session-core";
+import { memoryLimitBytes, resolveBridgeCap } from "./bridge-cap.js";
+import type { BridgeCapSource } from "./bridge-cap.js";
 import { GITHUB_APP_DIR } from "./github-app.js";
 import type { OneCliCallPolicy } from "./onecli-admin.js";
 import { DEFAULT_ONECLI_NAME_PREFIX, validateNamePrefix } from "./onecli-names.js";
@@ -50,10 +52,13 @@ export interface OrchestratorConfig {
     /** A sandbox idle this long is suspended (Pod deleted, PVC kept) and resumed by the next tool call. 0 = never. */
     idleSuspendMs: number;
     /**
-     * Most envs open or opening at once. Each is a Node bridge process of about 100 MiB, so this is what keeps the
-     * orchestrator under its memory limit; see docs/decisions/0004-idle-suspend.md.
+     * Most envs open or opening at once; `Infinity` for no cap. Each costs a relay process and its broker state, so
+     * this is what keeps the orchestrator under its memory limit. Derived from that limit unless set; see
+     * docs/decisions/0018-derived-bridge-cap.md.
      */
     maxOpenBridges: number;
+    /** Where `maxOpenBridges` came from, and the memory limit it was derived from (undefined: none). Logged at start. */
+    bridgeCap: { source: BridgeCapSource; memoryLimitBytes: number | undefined };
     /** How often the RSS of each open bridge is logged (`bridge-rss`, docs/metrics.md). 0 = never. */
     bridgeRssIntervalMs: number;
   };
@@ -141,7 +146,15 @@ function seconds(
   return value * 1000;
 }
 
-export function loadConfig(env: Readonly<Record<string, string | undefined>>): OrchestratorConfig {
+/**
+ * `readMemoryLimit` lets tests pick the container limit, including "none". It is a function rather than a
+ * `number | undefined` parameter because a default parameter cannot tell an explicit "no limit" from an omitted one.
+ */
+export function loadConfig(
+  env: Readonly<Record<string, string | undefined>>,
+  readMemoryLimit: () => number | undefined = () => memoryLimitBytes(process.constrainedMemory()),
+): OrchestratorConfig {
+  const memoryLimit = readMemoryLimit();
   const databaseUrl = env.PI_DURABLE_DATABASE_URL;
   if (!databaseUrl) throw new Error("PI_DURABLE_DATABASE_URL is required");
   const apiTokens = env.PI_API_TOKENS;
@@ -159,9 +172,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
     throw new Error(
       "PI_SANDBOX_IDLE_SUSPEND_SECONDS must not be below PI_SANDBOX_IDLE_EVICT_SECONDS",
     );
-  const maxOpenBridges = Number(env.PI_MAX_OPEN_BRIDGES ?? "12");
-  if (!Number.isInteger(maxOpenBridges) || maxOpenBridges < 1)
-    throw new Error("PI_MAX_OPEN_BRIDGES must be an integer of 1 or more");
+  const bridgeCap = resolveBridgeCap(env.PI_MAX_OPEN_BRIDGES, memoryLimit);
   const maxActions = Number(env.PI_SWEEP_MAX_ACTIONS ?? "10");
   if (!Number.isInteger(maxActions) || maxActions < 1)
     throw new Error("PI_SWEEP_MAX_ACTIONS must be an integer of 1 or more");
@@ -188,7 +199,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): O
     sandbox: {
       idleEvictMs,
       idleSuspendMs,
-      maxOpenBridges,
+      maxOpenBridges: bridgeCap.max,
+      bridgeCap: { source: bridgeCap.source, memoryLimitBytes: memoryLimit },
       bridgeRssIntervalMs: seconds(env, "PI_BRIDGE_RSS_INTERVAL_SECONDS", 60),
     },
     sweep: {
