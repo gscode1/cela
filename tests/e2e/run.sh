@@ -14,8 +14,8 @@
 #           (it adds a Deployment and takes about 20 minutes).
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
 #
-# Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (a CloudNativePG cluster, the
-# external database of the chart), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
+# Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (the charts/pi-postgres release, the
+# external database of pi-durable), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
 # policies) and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
 # same time, and the long-lived namespace pi-durable-poc is never touched: this script refuses any other prefix.
 #   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
@@ -107,7 +107,7 @@ cleanup() {
       "$ns" "${ctx:+--context=$ctx}" "$ns" "${SWEEP_MAX_AGE_HOURS:-6}" >&2
     return "$rc"
   fi
-  # Deleting the namespace removes the Job and its pods, the CNPG cluster, the PVCs, sandboxes and secrets with it.
+  # Deleting the namespace removes the Job and its pods, the Postgres release, the PVCs, sandboxes and secrets with it.
   log "delete namespace $ns"
   kc delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || echo "could not delete namespace $ns; run tests/e2e/sweep.sh" >&2
   for _ in $(seq 1 "${NS_DELETE_WAIT_SECONDS:-300}"); do
@@ -161,27 +161,17 @@ metadata:
     pi-durable-e2e/suite: "${1:-}"
 EOF
 
-# The run's own pieces (tests/e2e/deploy, which includes tests/e2e/driver) around the chart: the CNPG database, the
+# The run's own pieces (tests/e2e/deploy, which includes tests/e2e/driver) around the chart: the
 # ExternalSecrets, the policies of the test-only pods and the driver's identity. One generated overlay sets the namespace.
 # kustomize wants relative paths and resolves symlinks (a macOS temp dir is one), so both ends are resolved first.
 relpath() { python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$1" "$2"; }
 mkdir -p "$work/stack" "$work/cilium"
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$here/deploy" "$work/stack")" >"$work/stack/kustomization.yaml"
-# The database's storage class, when the cluster default is not wanted. JSON entries are valid YAML.
-if [[ -n ${STORAGE_CLASS:-} ]]; then
-  python3 - "$work/stack/kustomization.yaml" <<'PYOVERLAY'
-import json, os, sys
-entry = {"target": {"kind": "Cluster", "name": "pi-pg"},
-         "patch": json.dumps([{"op": "add", "path": "/spec/storage/storageClass", "value": os.environ["STORAGE_CLASS"]}])}
-with open(sys.argv[1], "a") as out:
-    out.write("patches:\n  - " + json.dumps(entry) + "\n")
-PYOVERLAY
-fi
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$here/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
 
-log "stack: CiliumNetworkPolicies, database (CNPG), ExternalSecrets, test-only policies, driver identity"
+log "stack: CiliumNetworkPolicies, ExternalSecrets, test-only policies, driver identity"
 # CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs.
 kc apply -k "$work/cilium" >/dev/null
 kc apply -k "$work/stack" >/dev/null
@@ -208,20 +198,44 @@ if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/fetch-onecli-ca.sh" >"$work/c
   echo "WARNING: could not fetch the OneCLI CA (ignored: the suites selected do not call OneCLI)" >&2
 fi
 
-# The database (the external one of this run) must exist before the chart: both the orchestrator and ingest read its URI.
-log "database pi-pg"
-k wait --for=condition=Ready cluster/pi-pg --timeout=600s >/dev/null
-[[ -n $(k get secret pi-pg-app -o jsonpath='{.data.uri}' 2>/dev/null) ]] || {
-  echo "secret pi-pg-app has no uri in $ns" >&2
+# The database of this run: the charts/pi-postgres release, installed as a user installs it. It must be Ready before
+# pi-durable, whose orchestrator and ingest read the URI secret. The passwords are random per run and only ever written
+# to files in the private temp dir and read by kubectl (never an argument, never printed); a reused namespace keeps its
+# secret, because the retained data directory was initialised with it.
+log "database: charts/pi-postgres into $ns"
+[[ $ns == pi-e2e-* ]] || { echo "refusing to install the chart into $ns" >&2; exit 1; }
+chmod 700 "$work"
+if ! k get secret pi-postgres-auth >/dev/null 2>&1; then
+  mkdir -p "$work/pgauth"
+  for key in postgres-password pi-password onecli-password; do openssl rand -hex 24 | tr -d '\n' >"$work/pgauth/$key"; done
+  k create secret generic pi-postgres-auth --from-file="$work/pgauth" >/dev/null
+  rm -rf "$work/pgauth"
+fi
+pg_values=(--set persistence.size=1Gi --set persistence.retain=false
+  --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"}]')
+[[ -z ${STORAGE_CLASS:-} ]] || pg_values+=(--set "persistence.storageClass=$STORAGE_CLASS")
+helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-postgres "$root/charts/pi-postgres" --namespace "$ns" \
+  "${pg_values[@]}" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm-pg.log" 2>&1 || {
+  cat "$work/helm-pg.log" >&2
+  echo "helm install of charts/pi-postgres failed in $ns" >&2
   exit 1
 }
+# The URI of the pi database for the pi-durable chart (database.external). Direct to the Service, no pooler.
+umask 077
+{
+  printf 'postgres://pi:'
+  k get secret pi-postgres-auth -o jsonpath='{.data.pi-password}' | base64 -d
+  printf '@pi-postgres.%s.svc:5432/pi' "$ns"
+} >"$work/uri"
+k create secret generic pi-db-uri --from-file=uri="$work/uri" --dry-run=client -o yaml | k apply -f - >/dev/null
+rm -f "$work/uri"
+k wait --for=condition=Ready pod/pi-postgres-0 --timeout=300s >/dev/null
 
 # The chart, installed exactly as a user installs it. Orchestrator shards: the shards suite needs two (docs/scaling.md);
 # the shard count can only grow, so a reused namespace that already has two keeps them.
 shards=1
 if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then shards=2; fi
 log "helm: charts/pi-durable into $ns (orchestrator shards: $shards)"
-[[ $ns == pi-e2e-* ]] || { echo "refusing to install the chart into $ns" >&2; exit 1; }
 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \
   --values "$work/values.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm.log" 2>&1 || {
