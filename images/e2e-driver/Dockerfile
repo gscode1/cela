@@ -21,7 +21,7 @@ RUN apt-get update \
 COPY --from=tools /usr/bin/kubectl /usr/local/bin/kubectl
 COPY --from=build --chown=1000:1000 /out /opt/phase1
 COPY tests/e2e /driver/tests/e2e
-COPY deploy/gen-api-secret.sh /driver/deploy/gen-api-secret.sh
+COPY hack/gen-api-secret.sh /driver/hack/gen-api-secret.sh
 USER 1000:1000
 WORKDIR /driver
 CMD ["bash"]

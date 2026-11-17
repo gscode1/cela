@@ -10,8 +10,8 @@
 !tests/
 !tests/e2e/
 !tests/e2e/**
-!deploy/
-!deploy/gen-api-secret.sh
+!hack/
+!hack/gen-api-secret.sh
 !images/
 !images/**
 **/node_modules

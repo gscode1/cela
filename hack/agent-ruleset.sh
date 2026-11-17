@@ -3,10 +3,10 @@
 # Session tokens are GitHub App installation tokens with contents: write; GitHub cannot scope a token by ref, so
 # this ruleset is what stops an agent from pushing, force-pushing or deleting main. See docs/repo-workspace.md.
 #
-#   deploy/agent-ruleset.sh owner/repo            apply (POST, or PUT when a ruleset of that name exists)
-#   deploy/agent-ruleset.sh --check owner/repo    read-only: exit 0 when present and correct, 1 otherwise
+#   hack/agent-ruleset.sh owner/repo            apply (POST, or PUT when a ruleset of that name exists)
+#   hack/agent-ruleset.sh --check owner/repo    read-only: exit 0 when present and correct, 1 otherwise
 #
-# Needs `gh` logged in as a repo admin, and `jq`. The payload is deploy/agent-ruleset.json.
+# Needs `gh` logged in as a repo admin, and `jq`. The payload is hack/agent-ruleset.json.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

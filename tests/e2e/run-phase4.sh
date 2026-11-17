@@ -31,7 +31,7 @@ set -euo pipefail
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
+root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and hack/gen-api-secret.sh
 work=$(mktemp -d)
 sessions_file=$work/sessions
 : >"$sessions_file"
@@ -700,10 +700,10 @@ t_orphan_sweep() {
 if [[ ${SKIP_SETUP:-0} != 1 ]]; then
 log "setup: wait for the database, the orchestrator and ingest (overlay and code were pushed by run.sh)"
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
-  echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
+  echo "secret sandboxd-auth has no master key: run hack/gen-secret.sh" >&2
   exit 1
 }
-"$root/deploy/gen-api-secret.sh" >/dev/null
+"$root/hack/gen-api-secret.sh" >/dev/null
 e2e_db_start
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 k rollout status deployment/pi-ingest --timeout=240s >/dev/null

@@ -19,7 +19,7 @@
 #                  NETPOL_ENFORCED=1 a `not-enforced` verdict fails the run before any test.
 #
 # Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the secret sandboxd-auth
-# (deploy/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
+# (hack/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
 # Run by hand from a Mac with your current kubectl context it works the same, but use tests/e2e/run.sh.
 # Exit code: 0 when every test passed (isolation may be KNOWN-FAIL while enforcement is absent), 1 otherwise.
 set -euo pipefail
@@ -27,7 +27,7 @@ set -euo pipefail
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
+root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and hack/gen-api-secret.sh
 work=$(mktemp -d)
 claims_file=$work/claims
 : >"$claims_file"
@@ -502,10 +502,10 @@ log "setup: wait for the database and the orchestrator (overlay and code were pu
 e2e_db_start
 if [[ ${SKIP_SETUP:-0} == 1 ]]; then wait_owner; else
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
-  echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
+  echo "secret sandboxd-auth has no master key: run hack/gen-secret.sh" >&2
   exit 1
 }
-"$root/deploy/gen-api-secret.sh" >/dev/null
+"$root/hack/gen-api-secret.sh" >/dev/null
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 wait_owner
 fi

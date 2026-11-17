@@ -2,8 +2,8 @@
 # Apply the OneCLI v2 host allowlist (docs/onecli-host-rules.md): one `allow` org rule per host, then `block *`.
 # Default is a dry run that only prints the plan and makes no request. --apply writes through the OneCLI API.
 #
-#   deploy/onecli-host-rules.sh            # plan only
-#   deploy/onecli-host-rules.sh --apply    # create the missing rules, block last
+#   hack/onecli-host-rules.sh            # plan only
+#   hack/onecli-host-rules.sh --apply    # create the missing rules, block last
 #
 # The admin key (`oc_...`) is read from Secret secret-store/pi-onecli-admin, key api-key, with kubectl (read only), or
 # from ONECLI_API_KEY. It is passed to curl through a config on stdin: never printed, never on a command line.
@@ -23,7 +23,7 @@ base=${ONECLI_URL:?set ONECLI_URL to the OneCLI API base, e.g. https://onecli.ex
 ctx=${KUBE_CONTEXT:-}
 rules_path=/v1/org/policy/rules
 
-# Keep in step with deploy/onecli-policies/egress.yaml (the pod's FQDN allowlist).
+# Keep in step with hack/onecli-policies/egress.yaml (the pod's FQDN allowlist).
 hosts=(
   chatgpt.com '*.chatgpt.com' auth.openai.com api.openai.com openrouter.ai
   github.com api.github.com codeload.github.com objects.githubusercontent.com

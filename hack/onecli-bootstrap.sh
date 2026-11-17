@@ -60,7 +60,7 @@ admin_secret=${ONECLI_ADMIN_SECRET:-pi-onecli-admin}
 agent_secret=${ONECLI_AGENT_SECRET:-pi-onecli}
 agent_id=${ONECLI_AGENT_ID:-pi-orchestrator}
 ca_cm=${ONECLI_CA_CONFIGMAP:-pi-onecli-ca}
-# Keep in step with docs/onecli-host-rules.md and deploy/onecli-policies/egress.yaml (a unit test compares the first).
+# Keep in step with docs/onecli-host-rules.md and hack/onecli-policies/egress.yaml (a unit test compares the first).
 default_hosts="chatgpt.com *.chatgpt.com auth.openai.com api.openai.com openrouter.ai github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org pypi.org files.pythonhosted.org mcp.deepwiki.com"
 hosts=${ONECLI_HOSTS-$default_hosts}
 block_name=pi-block-all
