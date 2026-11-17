@@ -22,7 +22,15 @@ kubectl -n pi-durable-poc rollout status deployment/pi-orchestrator-1
 
 `add-shard.sh` clones the live `pi-orchestrator`, so it carries the same env and image. Shards can run on different nodes. It is safe to run again. `PI_ORCH_SHARDS` must never decrease.
 
-Ingest: `PI_ORCH_SHARDS` (default 1) is the shard count for new sessions; `PI_ORCH_URL` holds `{shard}` when it is above 1.
+Ingest requires `PI_ORCH_URL`: an explicit http(s) URL, with `{shard}` when `PI_ORCH_SHARDS` (default 1) is above 1.
+For example, `PI_ORCH_URL=http://orchestrator-{shard}:8081` and `PI_ORCH_SHARDS=3` route shards 0, 1 and 2.
+A fixed URL is valid only for shard 0. There is no service-name default and no automatic derivation of service names.
+All shards from 0 through `PI_ORCH_SHARDS - 1` must have a Service matching that template.
+
+After migrations, before readiness, ingest queries every distinct `inbox.sessions.shard` (including deleted sessions).
+If any shard is outside that range, it exits with an error listing the missing routes. Restore the shard count and
+its Services; do not delete sessions to bypass the check. Database/migration failures still retry while unready.
+The check runs at startup, not on every request; shard counts must never decrease during a rolling deployment.
 The manifest in `deploy/ingest.yaml` stays single-shard; `kubectl apply` of it again resets both, so run `add-shard.sh`
 after a re-apply.
 

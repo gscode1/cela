@@ -4,6 +4,10 @@ import { poolConfig } from "../src/storage.ts";
 import { claimNameFor } from "../src/lifecycle.ts";
 
 const env = {
+  PI_ORCH_NAMESPACE: "test-ns",
+  PI_ORCH_WARMPOOL: "test-pool",
+  PI_ONECLI_GATEWAY: "http://gateway:10255",
+  PI_ONECLI_API: "http://gateway-api:10256",
   PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
   PI_API_TOKENS: "alice:0123456789abcdef0123",
   POD_NAME: "pi-orchestrator-abc",
@@ -44,10 +48,18 @@ describe("config: OneCLI name prefix", () => {
 describe("config", () => {
   it("requires the database URL and API tokens and defaults the rest", () => {
     expect(() => loadConfig({})).toThrow(/PI_DURABLE_DATABASE_URL/);
-    expect(() => loadConfig({ PI_DURABLE_DATABASE_URL: "x" })).toThrow(/PI_API_TOKENS/);
+    expect(() =>
+      loadConfig({
+        PI_ORCH_NAMESPACE: "test-ns",
+        PI_ORCH_WARMPOOL: "test-pool",
+        PI_ONECLI_GATEWAY: "http://gateway:10255",
+        PI_ONECLI_API: "http://gateway-api:10256",
+        PI_DURABLE_DATABASE_URL: "x",
+      }),
+    ).toThrow(/PI_API_TOKENS/);
     expect(loadConfig(env)).toMatchObject({
-      namespace: "pi-durable-poc",
-      warmPool: "pi-env-pool",
+      namespace: "test-ns",
+      warmPool: "test-pool",
       port: 8081,
       control: false,
       testFaults: false,
@@ -102,4 +114,26 @@ describe("config", () => {
       0,
     );
   });
+});
+
+describe("required install configuration", () => {
+  it("names each missing or empty install variable", () => {
+    for (const name of [
+      "PI_ORCH_NAMESPACE",
+      "PI_ORCH_WARMPOOL",
+      "PI_ONECLI_GATEWAY",
+      "PI_ONECLI_API",
+    ]) {
+      for (const value of [undefined, "", "   "]) {
+        expect(() => loadConfig({ ...env, [name]: value })).toThrow(`${name} is required`);
+      }
+    }
+  }, 5_000);
+
+  it("uses PGHOST when the database URI omits a host", () => {
+    expect(
+      loadConfig({ ...env, PI_DURABLE_DATABASE_URL: "postgres:///app", PGHOST: "database" }).onecli
+        .noProxy,
+    ).toContain("database");
+  }, 5_000);
 });

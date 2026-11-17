@@ -8,7 +8,7 @@ export interface IngestConfig {
   apiTokens: string;
   /**
    * Base URL of the orchestrator's stream endpoint. With several shards it holds `{shard}`, which becomes the
-   * session's shard (`http://pi-orchestrator-{shard}:8081`); without it every stream goes to the one URL.
+   * session's shard (`http://orchestrator-{shard}:8081`); without it every stream goes to the one URL.
    */
   orchestratorUrl: string;
   /** How many orchestrator shards exist (`PI_ORCH_SHARDS`); a new session goes to the one with the fewest active. */
@@ -52,7 +52,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
   const portText = env.PI_INGEST_PORT ?? "8080";
   const port = /^\d{1,5}$/.test(portText) ? Number(portText) : 0;
   if (port < 1 || port > 65535) throw new Error("PI_INGEST_PORT must be a port from 1 to 65535");
-  const orchestratorUrl = env.PI_ORCH_URL ?? "http://pi-orchestrator:8081";
+  const orchestratorUrl = env.PI_ORCH_URL;
+  if (!orchestratorUrl?.trim()) throw new Error("PI_ORCH_URL is required");
   assertHttpUrl(orchestratorUrlFor(orchestratorUrl, 0));
   const shardsText = env.PI_ORCH_SHARDS ?? "1";
   const shards = /^\d{1,3}$/.test(shardsText) ? Number(shardsText) : 0;

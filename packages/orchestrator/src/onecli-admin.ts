@@ -2,7 +2,7 @@ import type { FetchLike } from "./github-app.js";
 import { Redacted } from "./onecli.js";
 
 /**
- * Client for the OneCLI v2 management API (`onecli.onecli:10256`, `Authorization: Bearer oc_...`), used only to
+ * Client for the OneCLI v2 management API (`gateway.example:10256`, `Authorization: Bearer oc_...`), used only to
  * provision and revoke per-session agents. Paths and bodies come from `docs/research/onecli-spike.md` and
  * `onecli-v2-recheck.md`; every shape that was not seen live is marked UNVERIFIED and parsed defensively.
  * Error messages carry the status and path, never a response body: `GET /v1/agents` returns every agent token.

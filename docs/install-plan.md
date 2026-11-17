@@ -91,9 +91,11 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 
 ## 5. Code changes the chart needs (verified in the repo)
 
-- **Names from config, not code.** `packages/orchestrator/src/config.ts` defaults to `pi-durable-poc`,
-  `pi-env-pool`, `onecli.onecli` and a `NO_PROXY` that contains `pi-pg-rw`. Ingest routes to
-  `pi-orchestrator[-{shard}]`. Make all of them rendered values. Namespace comes from the downward API.
+- **Names from config, not code (implemented in slice 3).** Orchestrator requires namespace, warm pool and both
+  OneCLI URLs. Namespace comes from the downward API; `NO_PROXY` combines cluster suffixes, configured DB/API hosts
+  and operator additions. Ingest requires `PI_ORCH_URL` (with `{shard}` for multiple shards) and checks stored session
+  shards against `PI_ORCH_SHARDS` before readiness. The chart renders these values; no install-name defaults remain
+  in code except the intentionally retained OneCLI prefix.
 - **One install per database.** session-core hard-codes the schema `inbox` (`packages/session-core/src/migrate.ts`
   and the SQL). Two installs therefore cannot share a database. Document this, or parameterize the schema; documenting
   is the proposal.
@@ -202,7 +204,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
      checksum per architecture. Multi-arch (amd64, arm64) images published with digests.
    - `deploy/` runs the images; runtime code-upload scripts, the code PVC and the bundle ConfigMap are removed.
    - Done when: both architectures build in CI; `run.sh smoke` passes from images only.
-3. **Config cleanup.**
+3. **Config cleanup (implemented; cluster smoke requires reviewer verification).**
    - Every name listed in section 5 comes from config: OneCLI API and gateway URLs, namespace and pod selector, warm
      pool, `NO_PROXY`, the external DB egress selector, the OneCLI name prefix, ingest's shard routes.
    - Ingest refuses to start when sessions exist on a shard it has no route for.

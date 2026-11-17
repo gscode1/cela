@@ -42,6 +42,9 @@ spec:
             - { name: REPO_B, value: "__REPO_B__" }
             # The orchestrator's OneCLI name prefix in this run (docs/e2e.md): the suites look up agents by it.
             - { name: PI_ONECLI_NAME_PREFIX, value: "__ONECLI_NAME_PREFIX__" }
+            - { name: PI_ONECLI_API, value: "http://onecli.onecli:10256" }
+            - name: PI_ORCH_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - name: NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
           resources:

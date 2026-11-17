@@ -48,6 +48,7 @@ spec:
           env:
             - { name: HOME, value: /tmp }
             - { name: PI_INGEST_PORT, value: "8080" }
+            - { name: PI_ORCH_SHARDS, value: "1" }
             - { name: PI_ORCH_URL, value: "http://pi-orchestrator:8081" }
             # Owners (names from api-auth, not secrets) who may call /admin/*. Empty: nobody.
             - { name: PI_API_ADMINS, value: "alice" }

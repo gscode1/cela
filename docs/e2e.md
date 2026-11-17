@@ -226,3 +226,13 @@ The local phase4b adapter still uses `LOCAL_DB_URL`. Test-only client policies a
 plus ingress to today's CNPG Pods; a different backend must admit that client label too. CNPG creation remains in
 `run.sh` until installation slice 6. The runtime guard reads the real template; insecure test stacks must explicitly
 set `PI_ALLOW_INSECURE_RUNTIME=1` on their orchestrator Deployments.
+
+### Install-name configuration
+
+The e2e overlay inherits explicit warm-pool and OneCLI URLs and ingest's `PI_ORCH_URL` / `PI_ORCH_SHARDS` from
+`deploy/`. Orchestrator namespace always comes from its Pod's `metadata.namespace`, including cloned shards;
+short Service URLs and the generated database Secret resolve inside that run's namespace, never the lab namespace.
+`run.sh` replaces the base OneCLI prefix with `pi-e2e-<run id>-`. The driver explicitly sets its OneCLI API URL and
+gets `PI_ORCH_NAMESPACE` from its own metadata for sandbox probes. Adapt external OneCLI endpoints in both the
+orchestrator manifest and driver template. Ingest stays unready until stored session shards have configured routes,
+and exits listing missing shards instead of silently sending them to shard 0.
