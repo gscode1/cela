@@ -2,7 +2,7 @@ import { diffLines } from "diff";
 import type { PublishFile, SkillFileEntry } from "@/lib/api/skills";
 import { readSkillMeta } from "@/lib/skills/frontmatter";
 import type { SkillMeta } from "@/lib/skills/frontmatter";
-import { SEGMENT, SKILL_ENTRY, SKILL_LIMITS } from "@/lib/skills/limits";
+import { SEGMENT, SKILL_ENTRY, SKILL_LIMITS, SKILL_NAME } from "@/lib/skills/limits";
 
 /** A file as read from a folder or a zip, before any check. */
 export interface RawEntry {
@@ -247,6 +247,55 @@ export function textDiff(before: string, after: string): DiffLine[] {
 
 export function formatBytes(size: number): string {
   if (size < 1024) return `${String(size)} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(2)} MiB`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** The changes worth a word in a summary: only kinds that occur, so "0 removed" never shows. */
+export function changeSummary(
+  changes: readonly FileChange[],
+): { kind: "added" | "removed" | "changed"; count: number }[] {
+  return (["added", "changed", "removed"] as const)
+    .map((kind) => ({ kind, count: changes.filter((change) => change.kind === kind).length }))
+    .filter(({ count }) => count > 0);
+}
+
+export type SkillName = { ok: true; name: string } | { ok: false; message: string };
+
+/**
+ * The skill's name for a chosen folder or zip. The API takes it from the URL and requires SKILL.md's frontmatter `name`,
+ * when there is one, to equal it, so the order is: the frontmatter `name`; else, on a skill's own page, that skill;
+ * else the folder (or the zip's file name without `.zip`). `expected` is the skill whose page is open, if any.
+ */
+export function deriveSkillName(
+  raw: readonly RawEntry[],
+  options: { expected: string | undefined; fallback: string | undefined },
+): SkillName {
+  const present = raw.filter((entry) => !IGNORED(entry.path));
+  const kept = stripWrapper(present);
+  const wrapper =
+    present.length > 0 && kept[0]?.path !== present[0]?.path
+      ? present[0]?.path.split("/")[0]
+      : undefined;
+  const entry = kept.find((file) => file.path === SKILL_ENTRY);
+  const text = entry === undefined ? null : decodeText(entry.bytes);
+  const meta = text === null ? undefined : readSkillMeta(text);
+  const declared = meta?.ok === true ? meta.name : undefined;
+  if (declared !== undefined && options.expected !== undefined && declared !== options.expected)
+    return {
+      ok: false,
+      message: `SKILL.md names the skill "${declared.slice(0, 80)}", but this page publishes "${options.expected}".`,
+    };
+  const name = declared ?? options.expected ?? wrapper ?? options.fallback;
+  if (name === undefined)
+    return {
+      ok: false,
+      message: "Could not tell the skill's name: put a name in the SKILL.md frontmatter.",
+    };
+  if (!SKILL_NAME.test(name))
+    return {
+      ok: false,
+      message: `"${name.slice(0, 80)}" is not a valid skill name (lowercase letters, digits and hyphens, starting with a letter). Put a valid name in the SKILL.md frontmatter.`,
+    };
+  return { ok: true, name };
 }

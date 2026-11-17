@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { Link } from "react-router";
 import { useAuth } from "@/auth";
+import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,23 +25,6 @@ import type { ProfileRef } from "@/lib/api/profile-refs";
 import { useCatalogMode } from "@/lib/use-catalog-mode";
 import { McpForm, ReadOnlyChoice } from "@/pages/mcp-form";
 import type { Declared } from "@/pages/mcp-form";
-
-function ProfileLinks({ profiles }: { profiles: readonly ProfileRef[] }) {
-  return (
-    <span className="inline-flex flex-wrap gap-x-2">
-      {profiles.map((profile) => (
-        <Link
-          key={profile.name}
-          className="underline"
-          to={`/profiles/${encodeURIComponent(profile.name)}`}
-        >
-          {profile.name}
-          {profile.enabledForNew ? "" : " (disabled)"}
-        </Link>
-      ))}
-    </span>
-  );
-}
 
 type Pending =
   | { kind: "edit"; server: McpServer }

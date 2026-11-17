@@ -22,11 +22,11 @@ import {
 
 const publishButton = (page: Page, name: string) =>
   page.getByRole("button", { name: `Publish ${name}` });
-const confirm = (page: Page) =>
-  page.getByLabel("I have reviewed these files and want to publish them");
+const chooseZip = (page: Page, name: string, buffer: Buffer) =>
+  page.getByLabel("Zip").setInputFiles({ name, mimeType: "application/zip", buffer });
 
 test.describe("skills", () => {
-  test("publishes a folder: review, executable toggle, confirmation, then a pin link", async ({
+  test("publishes a folder from the list: the name comes from SKILL.md, no confirmation, then a pin link", async ({
     page,
   }, info) => {
     const name = unique("folder");
@@ -36,29 +36,39 @@ test.describe("skills", () => {
       "scripts/run.sh": SCRIPT,
       "notes.txt": "plain notes\n",
     });
-    await signInAndGo(page, `/console/skills/${name}/publish`);
+    await signInAndGo(page, "/console/skills");
+    await page.getByRole("link", { name: "Publish a skill" }).click();
+    // One control, no name to type first, no confirmation, no limits text.
+    await expect(page.getByRole("button", { name: "Choose a folder or a .zip" })).toBeVisible();
+    await expect(page.getByLabel("Skill name")).toHaveCount(0);
+    // The one button offers both kinds of source.
+    await page.getByRole("button", { name: "Choose a folder or a .zip" }).click();
+    await expect(page.getByText("Folder", { exact: true })).toBeVisible();
+    await expect(page.getByText("Zip file", { exact: true })).toBeVisible();
+    await expect(page.getByText(/at most 128 files/)).toHaveCount(0);
     await page.getByLabel("Folder").setInputFiles(dir);
 
     await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+    await expect(page.getByLabel("Parsed SKILL.md")).toContainText(name);
     await expect(page.getByLabel("Parsed SKILL.md")).toContainText("Greets the user");
     await expect(page.getByText("This is the first version")).toBeVisible();
-    await expect(
-      page.getByText("Publishing deploys code that runs in every session that pins"),
-    ).toBeVisible();
+    await expect(page.getByLabel(/I have reviewed/)).toHaveCount(0);
+    await expect(page.getByText("sha256")).toHaveCount(0);
     // The folder name wrapped every path and is gone; a folder cannot tell the executable bit.
     const script = page.getByTestId("file-scripts/run.sh");
     await expect(script).toContainText("scripts/run.sh");
     await expect(script.getByRole("checkbox")).not.toBeChecked();
-    await expect(publishButton(page, name)).toBeDisabled();
+    await expect(script.getByText("executable")).toBeVisible();
+    await expect(publishButton(page, name)).toBeEnabled();
 
     await script.getByRole("checkbox").check();
     await script.getByRole("button", { name: "View" }).click();
     await expect(page.locator("pre").filter({ hasText: "hello from the skill" })).toBeVisible();
-    await shot(page, "skill-upload-review.png");
-    await confirm(page).check();
+    await shot(page, "skill-publish-review.png");
     await publishButton(page, name).click();
 
-    await expect(page.getByRole("heading", { name: "Published v1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: `Published ${name} v1.` })).toBeVisible();
+    await expect(page.getByText(/digest/i)).toHaveCount(0);
     const pin = page.getByRole("link", { name: `Pin ${name} v1 in a profile` });
     await expect(pin).toHaveAttribute("href", `/console/profiles?pinSkill=${name}@1`);
 
@@ -76,6 +86,24 @@ test.describe("skills", () => {
     expect(info.errors).toEqual([]);
   });
 
+  test("without a name in SKILL.md the folder or the zip names the skill", async ({ page }) => {
+    const name = unique("named");
+    const noName = `---\ndescription: No name inside\n---\n# x\n`;
+    await signInAndGo(page, `/console/skills/_new/publish`);
+    await chooseZip(page, `${name}.zip`, makeZip({ "SKILL.md": { data: noName } }));
+    await expect(page.getByLabel("Parsed SKILL.md")).toContainText(name);
+    await publishButton(page, name).click();
+    await expect(page.getByRole("heading", { name: `Published ${name} v1.` })).toBeVisible();
+
+    // A name that cannot be a skill's: the page says where to put one.
+    await signInAndGo(page, "/console/skills/_new/publish");
+    await chooseZip(page, "Bad_Name.zip", makeZip({ "SKILL.md": { data: noName } }));
+    await expect(
+      page.getByRole("alert").filter({ hasText: "is not a valid skill name" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review" })).toHaveCount(0);
+  });
+
   test("publishes a zip with a script and a binary, and a zip download keeps the bit", async ({
     page,
   }) => {
@@ -85,45 +113,52 @@ test.describe("skills", () => {
       "run.sh": { data: SCRIPT, executable: true },
       "bin/tool.bin": { data: BINARY, executable: true },
     });
-    await signInAndGo(page, `/console/skills/${name}/publish`);
-    await page
-      .getByLabel("Zip")
-      .setInputFiles({ name: `${name}.zip`, mimeType: "application/zip", buffer: zip });
+    await signInAndGo(page, `/console/skills/_new/publish`);
+    await chooseZip(page, `${name}.zip`, zip);
 
     await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
     // The bit comes from the zip: both are preset.
     await expect(page.getByTestId("file-run.sh").getByRole("checkbox")).toBeChecked();
     const binary = page.getByTestId("file-bin/tool.bin");
     await expect(binary.getByRole("checkbox")).toBeChecked();
-    await expect(binary).toContainText("binary: digest only");
+    await expect(binary).toContainText("Binary file (8 B), not shown.");
     await expect(binary.getByRole("button", { name: "View" })).toHaveCount(0);
-    await confirm(page).check();
     await publishButton(page, name).click();
-    await expect(page.getByRole("heading", { name: "Published v1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: `Published ${name} v1.` })).toBeVisible();
 
     const stored = await storedVersion(page.request, name, 1);
     const tool = stored.files.find((f) => f.path === "bin/tool.bin");
     expect(Buffer.from(tool?.contentBase64 ?? "", "base64")).toEqual(Buffer.from(BINARY));
     expect(tool?.executable).toBe(true);
 
-    // Versions screen: manifest, a text file on demand, a binary by digest only, and the zip.
+    // Version table: files behind an expander, hashes only in Details and on hover.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
-    await expect(page.getByTestId("version-1")).toContainText("Has a script and a binary");
-    await page.getByRole("button", { name: "Show files" }).click();
-    await expect(page.getByRole("cell", { name: "bin/tool.bin" })).toBeVisible();
-    await expect(page.getByText("executable").first()).toBeVisible();
-    await shot(page, "skill-versions-manifest.png");
+    const row = page.getByTestId("version-1");
+    await expect(row).toContainText("Has a script and a binary");
+    await expect(row).toContainText("3 files");
+    await expect(page.getByText(tool?.sha256 ?? "missing")).toHaveCount(0);
+    await row.getByRole("button", { name: "Files" }).click();
+    await expect(page.getByText("sha256", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("cell", { name: "bin/tool.bin executable", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("bin/tool.bin")).toHaveAttribute(
+      "title",
+      `sha256 ${tool?.sha256 ?? "missing"}`,
+    );
+    await shot(page, "skill-detail.png");
     await page
-      .getByRole("row", { name: /SKILL\.md/ })
+      .getByRole("row", { name: /^SKILL\.md/ })
       .getByRole("button", { name: "View" })
       .click();
     await expect(page.locator("pre").filter({ hasText: "Say hello." })).toBeVisible();
     await page
-      .getByRole("row", { name: /bin\/tool\.bin/ })
+      .getByRole("row", { name: /^bin\/tool\.bin/ })
       .getByRole("button", { name: "View" })
       .click();
-    await expect(page.getByText(/Binary file, 8 B/)).toBeVisible();
-    await expect(page.getByText(tool?.sha256 ?? "missing")).toBeVisible();
+    await expect(page.getByText("Binary file (8 B), not shown.")).toBeVisible();
+    await row.getByRole("button", { name: "Details" }).click();
+    await expect(page.getByText(/^[0-9a-f]{64}$/)).toBeVisible();
 
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download zip" }).click();
@@ -138,7 +173,7 @@ test.describe("skills", () => {
     });
   });
 
-  test("an identical upload creates no version; a changed one shows a diff and makes v2", async ({
+  test("an identical upload cannot be published; a changed one shows a diff and makes v2", async ({
     page,
   }) => {
     const name = unique("again");
@@ -146,84 +181,69 @@ test.describe("skills", () => {
       "SKILL.md": { data: skillMd(name) },
       "run.sh": { data: SCRIPT, executable: true },
     };
-    await signInAndGo(page, `/console/skills/${name}/publish`);
-    await page
-      .getByLabel("Zip")
-      .setInputFiles({ name: "a.zip", mimeType: "application/zip", buffer: makeZip(files) });
-    await confirm(page).check();
+    await signInAndGo(page, `/console/skills/_new/publish`);
+    await chooseZip(page, "a.zip", makeZip(files));
     await publishButton(page, name).click();
-    await expect(page.getByRole("heading", { name: "Published v1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: `Published ${name} v1.` })).toBeVisible();
 
-    // The same content again: the review says so, and so does the answer.
+    // The same content again: the review says so and there is nothing to press.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
     await page.getByRole("link", { name: "Publish a new version" }).click();
-    await page
-      .getByLabel("Zip")
-      .setInputFiles({ name: "a.zip", mimeType: "application/zip", buffer: makeZip(files) });
-    await expect(
-      page.getByText("Identical to v1: publishing will create no new version."),
-    ).toBeVisible();
-    await confirm(page).check();
-    await publishButton(page, name).click();
-    await expect(page.getByRole("heading", { name: "Nothing was published" })).toBeVisible();
-    await expect(page.getByText("the API created no new version")).toBeVisible();
+    await chooseZip(page, "a.zip", makeZip(files));
+    await expect(page.getByTestId("identical")).toHaveText("No changes \u2014 nothing to publish.");
+    await expect(publishButton(page, name)).toBeDisabled();
+    await expect(page.getByTestId("diff-summary")).toHaveCount(0);
     expect(await versionCount(page.request, name)).toBe(1);
 
-    // A changed script: the diff against v1.
-    await page.getByRole("link", { name: `Back to ${name}` }).click();
-    await page.getByRole("link", { name: "Publish a new version" }).click();
+    // A changed script: only the non-zero counts, and the diff without a click.
     const changed = {
       ...files,
       "run.sh": { data: `${SCRIPT}echo more\n`, executable: true },
       "new.txt": { data: "n" },
     };
-    await page
-      .getByLabel("Zip")
-      .setInputFiles({ name: "b.zip", mimeType: "application/zip", buffer: makeZip(changed) });
-    await expect(page.getByTestId("diff-summary")).toHaveText(
-      "Against v1: 1 added, 0 removed, 1 changed, 1 unchanged",
-    );
-    await page.getByTestId("file-run.sh").getByRole("button", { name: "Diff" }).click();
+    await chooseZip(page, "b.zip", makeZip(changed));
+    await expect(page.getByTestId("diff-summary")).toHaveText("Against v1: 1 added, 1 changed");
     await expect(page.locator("pre div", { hasText: "+ echo more" })).toBeVisible();
     await expect(page.locator("pre div", { hasText: "echo hello from the skill" })).toBeVisible();
-    await confirm(page).check();
     await publishButton(page, name).click();
-    await expect(page.getByRole("heading", { name: "Published v2" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: `Published ${name} v2.` })).toBeVisible();
+
+    // The detail page lists the current version and keeps the older one behind a button.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
     await expect(page.getByTestId("version-2")).toContainText("current");
+    await expect(page.getByTestId("version-1")).toHaveCount(0);
+    await page.getByRole("button", { name: "Show 1 older version" }).click();
     await expect(page.getByTestId("version-1")).toBeVisible();
   });
 
-  test("a bad frontmatter or an oversized bundle blocks the publish and says why", async ({
+  test("a bad frontmatter or an oversized bundle blocks the publish and says why; another skill's name is refused", async ({
     page,
   }) => {
     const name = unique("bad");
     await signInAndGo(page, `/console/skills/${name}/publish`);
-    await page.getByLabel("Zip").setInputFiles({
-      name: "bad.zip",
-      mimeType: "application/zip",
-      buffer: makeZip({ "SKILL.md": { data: "# no frontmatter at all\n" } }),
-    });
+    await chooseZip(
+      page,
+      "bad.zip",
+      makeZip({ "SKILL.md": { data: "# no frontmatter at all\n" } }),
+    );
     await expect(page.getByText("SKILL.md must start with a YAML frontmatter block")).toBeVisible();
-    await confirm(page).check();
     await expect(publishButton(page, name)).toBeDisabled();
 
     const many: Record<string, { data: string }> = { "SKILL.md": { data: skillMd(name) } };
     for (let i = 0; i < 128; i++) many[`f${String(i)}.txt`] = { data: "x" };
-    await page
-      .getByLabel("Zip")
-      .setInputFiles({ name: "many.zip", mimeType: "application/zip", buffer: makeZip(many) });
+    await chooseZip(page, "many.zip", makeZip(many));
     await expect(
       page.getByText(/a skill may hold at most 128 files \(this has 129\)/),
     ).toBeVisible();
     await expect(publishButton(page, name)).toBeDisabled();
 
-    await page.getByLabel("Zip").setInputFiles({
-      name: "name.zip",
-      mimeType: "application/zip",
-      buffer: makeZip({ "SKILL.md": { data: skillMd("someone-else") } }),
-    });
-    await expect(page.getByText(/differs from the skill name/)).toBeVisible();
+    await chooseZip(page, "name.zip", makeZip({ "SKILL.md": { data: skillMd("someone-else") } }));
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: `names the skill "someone-else", but this page publishes "${name}"` }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review" })).toHaveCount(0);
     expect((await page.request.get(`/admin/skills/${name}`, { headers: bearer })).status()).toBe(
       404,
     );
@@ -241,13 +261,12 @@ test.describe("skills", () => {
       route.fulfill({ status: 400, json: { error: '<b>"boom"</b>: files must include SKILL.md' } }),
     );
     await signInAndGo(page, `/console/skills/${name}/publish`);
-    await page.getByLabel("Zip").setInputFiles({
-      name: "x.zip",
-      mimeType: "application/zip",
-      buffer: makeZip({ "SKILL.md": { data: skillMd(name, `"${hostile}"`) } }),
-    });
+    await chooseZip(
+      page,
+      "x.zip",
+      makeZip({ "SKILL.md": { data: skillMd(name, `"${hostile}"`) } }),
+    );
     await expect(page.getByLabel("Parsed SKILL.md")).toContainText(hostile);
-    await confirm(page).check();
     await publishButton(page, name).click();
     await expect(
       page.getByRole("alert").filter({ hasText: "The API refused the publish" }),
@@ -256,7 +275,10 @@ test.describe("skills", () => {
     expect(await page.evaluate(() => (window as { __xss?: number }).__xss)).toBeUndefined();
   });
 
-  test("lists skills and shows which profiles pin each version", async ({ page, request }) => {
+  test("lists skills with who uses them, and shows which profiles pin each version", async ({
+    page,
+    request,
+  }) => {
     const name = unique("pinned");
     const profile = unique("prof");
     const res = await request.post(`/admin/skills/${name}/versions`, {
@@ -275,11 +297,15 @@ test.describe("skills", () => {
       data: { definition: { skills: [{ name, version: 1 }] } },
     });
     await signInAndGo(page, "/console/skills");
+    await expect(
+      page.getByText("A profile uses a skill only when it pins a version."),
+    ).toBeVisible();
     const row = page.getByTestId(`skill-${name}`);
     await expect(row).toContainText("Pinned thing");
-    await expect(row).toContainText("not in model catalog");
+    await expect(row).toContainText("manual only");
+    await expect(row.getByRole("link", { name: profile })).toBeVisible();
     await row.getByRole("link", { name }).click();
-    await expect(page.getByTestId("version-1")).toContainText("model invocation disabled");
+    await expect(page.getByTestId("version-1")).toContainText("manual only");
     await expect(page.getByTestId("version-1").getByRole("link", { name: profile })).toBeVisible();
   });
 });

@@ -1,5 +1,6 @@
 import { adminJson, adminRequest } from "@/lib/api/raw";
 import type { CatalogSource } from "@/lib/api/mcp";
+import type { ProfileRef } from "@/lib/api/profile-refs";
 
 export interface SkillFileEntry {
   path: string;
@@ -124,3 +125,7 @@ export async function downloadSkillZip(
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 }
+
+/** The profiles that pin any version of a skill. */
+export const profilesPinningAny = (profiles: readonly ProfileRef[], skill: string): ProfileRef[] =>
+  profiles.filter((profile) => profile.skills.some((pin) => pin.name === skill));
