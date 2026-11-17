@@ -328,13 +328,13 @@ describe("bridge cap", () => {
       PI_DURABLE_DATABASE_URL: "postgres://u:p@db:5432/app",
       PI_API_TOKENS: "alice:0123456789abcdef0123",
     };
-    const twoGi = loadConfig(env, 2 * 1024 ** 3).sandbox;
+    const twoGi = loadConfig(env, () => 2 * 1024 ** 3).sandbox;
     expect(twoGi.maxOpenBridges).toBe(74);
     expect(twoGi.bridgeCap).toEqual({ source: "derived", memoryLimitBytes: 2 * 1024 ** 3 });
-    const none = loadConfig(env, undefined).sandbox;
+    const none = loadConfig(env, () => undefined).sandbox;
     expect(none.maxOpenBridges).toBe(Infinity);
-    expect(none.bridgeCap.source).toBe("unlimited");
-    const explicit = loadConfig({ ...env, PI_MAX_OPEN_BRIDGES: "5" }, 2 * 1024 ** 3).sandbox;
+    expect(none.bridgeCap).toEqual({ source: "unlimited", memoryLimitBytes: undefined });
+    const explicit = loadConfig({ ...env, PI_MAX_OPEN_BRIDGES: "5" }, () => 2 * 1024 ** 3).sandbox;
     expect(explicit.bridgeCap.source).toBe("explicit");
   });
 

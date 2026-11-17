@@ -85,7 +85,7 @@ the line has `"level":"warn"` and a `warning` when that is because the container
 ```
 
 On the same interval as `bridge-rss` (also when no bridge is open), one `memory-sample` line: `memoryCurrentBytes` is the
-container's cgroup `memory.current` (v1: `memory.usage_in_bytes`) when readable, with `memorySource` `cgroup`; otherwise it is
+container's own cgroup `memory.current` (v1: `memory.usage_in_bytes`), located through `/proc/self/cgroup` so a host cgroup tree is never read as the container's, when readable, with `memorySource` `cgroup`; otherwise it is
 the orchestrator process's RSS, `memorySource` `rss`, which leaves out the relay processes. `open` and `max` are the open
 bridges and the cap. The cgroup number includes page cache, so it reads a little high.
 

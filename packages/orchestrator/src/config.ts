@@ -146,11 +146,15 @@ function seconds(
   return value * 1000;
 }
 
-/** `memoryLimit` is a parameter so tests can pick the container limit; the default is this process's own. */
+/**
+ * `readMemoryLimit` lets tests pick the container limit, including "none". It is a function rather than a
+ * `number | undefined` parameter because a default parameter cannot tell an explicit "no limit" from an omitted one.
+ */
 export function loadConfig(
   env: Readonly<Record<string, string | undefined>>,
-  memoryLimit: number | undefined = memoryLimitBytes(process.constrainedMemory()),
+  readMemoryLimit: () => number | undefined = () => memoryLimitBytes(process.constrainedMemory()),
 ): OrchestratorConfig {
+  const memoryLimit = readMemoryLimit();
   const databaseUrl = env.PI_DURABLE_DATABASE_URL;
   if (!databaseUrl) throw new Error("PI_DURABLE_DATABASE_URL is required");
   const apiTokens = env.PI_API_TOKENS;
