@@ -8,7 +8,6 @@ import { Select } from "@/components/ui/select";
 import {
   currentNote,
   groupKeys,
-  idOf,
   isScripted,
   keyOf,
   modelLabel,

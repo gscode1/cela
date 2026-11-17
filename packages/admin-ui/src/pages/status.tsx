@@ -139,15 +139,17 @@ export function ShardStatusPage() {
             ))}
           </div>
         )}
-        {summary.healthy && summary.runtimes.length > 0 && (
+        {summary.healthy && (
           <>
-            <p
-              className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
-              data-testid="isolation-ok"
-            >
-              Sandboxes run under {summary.runtimes.map(runtimeName).join(" and ")} and network
-              isolation is enforced.
-            </p>
+            {summary.runtimes.length > 0 && (
+              <p
+                className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
+                data-testid="isolation-ok"
+              >
+                Sandboxes run under {summary.runtimes.map(runtimeName).join(" and ")} and network
+                isolation is enforced.
+              </p>
+            )}
             <details>
               <summary className="cursor-pointer text-sm font-medium">Details</summary>
               <div className="mt-2">
@@ -156,9 +158,7 @@ export function ShardStatusPage() {
             </details>
           </>
         )}
-        {!(summary.healthy && summary.runtimes.length > 0) && shards.length > 0 && (
-          <ShardTable shards={shards} />
-        )}
+        {!summary.healthy && shards.length > 0 && <ShardTable shards={shards} />}
         {shards.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <Button

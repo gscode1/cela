@@ -54,12 +54,22 @@ const MODELS = [
   },
   { provider: "scripted", id: "scripted-1", reasoning: false },
   { provider: "scripted", id: "scripted-2", reasoning: false },
+  // A provider the size of OpenRouter's (about 400 models), to show the pickers stay short.
+  ...Array.from({ length: 300 }, (_, index) => ({
+    provider: "bulk",
+    id: `vendor-${String(index % 7)}/model-${String(index).padStart(3, "0")}`,
+    name: `Bulk Model ${String(index).padStart(3, "0")}`,
+    reasoning: index % 3 === 0,
+    contextWindow: 128000,
+    maxTokens: 4096,
+  })),
 ];
 const PROVIDERS = {
   default: [
     { provider: "openai", credential: "configured" },
     { provider: "anthropic", credential: "missing" },
     { provider: "scripted", credential: "configured" },
+    { provider: "bulk", credential: "configured" },
   ],
   "none-configured": [
     { provider: "openai", credential: "missing" },
