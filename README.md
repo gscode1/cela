@@ -85,8 +85,17 @@ the [session API](docs/session-api.md)). It needs docker, kind 0.24 or newer, he
 hack/kind-up.sh                 # published images for this commit (IMAGE_TAG=<tag> picks another)
 hack/kind-up.sh --build         # or build the images here (native architecture) and load them into the node
 hack/kind-smoke.sh              # a session, a message, a tool call in the sandbox, a replaced Pod, deletion
+hack/kind-up.sh --build --onecli  # the same plus the bundled OneCLI (credential gateway), for real models
+hack/kind-smoke.sh --onecli     # also: the orchestrator's way through the gateway, and the OneCLI API closed to everyone else
 hack/kind-down.sh               # delete the cluster
 ```
+
+`--onecli` adds three to five minutes (it pulls the OneCLI images, several hundred MB). It installs the upstream OneCLI chart, a bootstrap
+(account, orchestrator agent token, host allowlist, public CA) and network policies that keep OneCLI's API open only to the
+orchestrator. The dashboard has no Ingress; sign in over `kubectl port-forward`, with the login from a Secret
+([how, and what works that way](docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)). OneCLI cannot close its
+sign-up, so never put its API or dashboard behind an Ingress without blocking `/auth/signup` and `/auth/sign-up*`
+([ADR 0022](docs/decisions/0022-bundled-onecli.md)).
 
 It takes about five minutes (the first run pulls the node image and the application images). It prints where the API token
 is (it never prints the token) and how to port-forward, and shows the isolation probe from `GET /admin/status`. The

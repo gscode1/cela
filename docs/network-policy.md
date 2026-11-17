@@ -204,3 +204,30 @@ it never gates readiness, sessions or tools.
   `pods/log`, in the release namespace only (chart `rbac.yaml` and `deploy/orchestrator-rbac.yaml`).
 - **Live-verified:** not yet. To see `not-enforced`, remove the policies in a scratch namespace (`kubectl -n <ns> delete
   networkpolicy --all`) or install on a CNI that ignores them (flannel alone), then `POST /admin/status/probe`.
+
+## Bundled OneCLI
+
+With `onecli.mode: bundled` the OneCLI pods run in the app's namespace and `charts/pi-onecli` (release `pi-onecli`,
+installed by `hack/onecli.sh` before the upstream chart) supplies their policies ([ADR 0022](decisions/0022-bundled-onecli.md)).
+They hold from the first minute, before `pi-durable` and its namespace-wide `default-deny-all` exist. Pods are selected by
+the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release>`, `component`).
+
+| From | To | Port | Why |
+| --- | --- | --- | --- |
+| orchestrator | OneCLI api | 10256 | per-session agents, grants, secrets |
+| a pod labelled `app.kubernetes.io/name=pi-onecli-bootstrap` | api, gateway | 10256, 10255 | the bootstrap as a Job (the script from a laptop uses `kubectl port-forward`, which no policy filters) |
+| OneCLI web, gateway | api | 10256 | the dashboard and the gateway read config |
+| orchestrator, sandboxes | OneCLI gateway | 10255 | model and MCP calls, sandbox traffic |
+| OneCLI api, web | gateway | 10255 | the dashboard's and the API's own calls |
+| nobody | OneCLI web (dashboard) | 10254 | port-forward only; `web.allowFrom` opens it to chosen peers |
+| OneCLI pods | `pi-postgres` | 5432 | the `onecli` database (pi-postgres admits `app.kubernetes.io/name=onecli`) |
+| OneCLI pods | CoreDNS | 53 | |
+| OneCLI gateway | public internet (not private, CGNAT, link-local, loopback) | any | model, GitHub and package hosts, as for sandboxes |
+| the CA Job | any address | 443, 6443 | the Kubernetes API cannot be named in a plain policy |
+
+Everything else is denied (`<release>-default-deny`). **Why it matters more than for other services:** OneCLI's
+management API accepts a sign-up from anyone who can reach it, there is no switch to stop that, and the organization such
+an account creates is not covered by our host rules; its agent tokens work on the gateway (the spike measured an
+`example.com` fetch that the first organization's rules blocked). Reaching `:10256` is the whole attack, so this table is the
+control, and it only works on a CNI that enforces NetworkPolicy. `hack/kind-smoke.sh --onecli` checks it live: the
+orchestrator gets HTTP 200 from the API, the ingest pod and a sandbox do not connect, and a sandbox does reach the gateway.

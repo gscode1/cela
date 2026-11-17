@@ -4,7 +4,7 @@ the schema durable_s<k> (docs/decisions/0017-schema-sharding.md). Shard 0 keeps 
 (pi-orchestrator, instance label pi-orchestrator); shard k > 0 is pi-orchestrator-<k>.
 */ -}}
 {{- $root := . -}}
-{{- $onecli := .Values.onecli.external -}}
+{{- $onecli := include "pi-durable.onecli" . | fromJson -}}
 {{- range $shard := until (int .Values.orchestrator.shards) }}
 {{- $name := ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0) }}
 ---
@@ -16,6 +16,9 @@ metadata:
     app.kubernetes.io/name: pi-orchestrator
     app.kubernetes.io/instance: {{ $name }}
     {{- include "pi-durable.labels" $root | nindent 4 }}
+  annotations:
+    # hack/install.sh reads this to run the OneCLI step before the install when it is bundled.
+    pi-durable/onecli-mode: {{ $root.Values.onecli.mode }}
 spec:
   replicas: 1
   strategy:
@@ -65,15 +68,15 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ $root.Values.sandbox.masterSecret }}, key: master } }
             - name: PI_API_TOKENS
               valueFrom: { secretKeyRef: { name: {{ $root.Values.api.existingSecret }}, key: tokens } }
-            {{- if eq $root.Values.onecli.mode "external" }}
+            {{- if ne $root.Values.onecli.mode "disabled" }}
             {{- if $onecli.agentTokenSecret }}
             # Model credentials stay here: the orchestrator is the only pod that holds the agent token.
             - name: ONECLI_AGENT_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ $onecli.agentTokenSecret }}, key: agent-token, optional: true } }
+              valueFrom: { secretKeyRef: { name: {{ $onecli.agentTokenSecret }}, key: agent-token, optional: {{ ne $root.Values.onecli.mode "bundled" }} } }
             {{- end }}
             {{- if $onecli.adminKeySecret }}
             - name: ONECLI_API_KEY
-              valueFrom: { secretKeyRef: { name: {{ $onecli.adminKeySecret }}, key: api-key, optional: true } }
+              valueFrom: { secretKeyRef: { name: {{ $onecli.adminKeySecret }}, key: api-key, optional: {{ ne $root.Values.onecli.mode "bundled" }} } }
             {{- end }}
             - { name: PI_ONECLI_API, value: {{ $onecli.apiUrl | quote }} }
             - { name: PI_ONECLI_GATEWAY, value: {{ $onecli.gatewayUrl | quote }} }
@@ -111,7 +114,7 @@ spec:
           securityContext:
             {{- include "pi-durable.containerSecurityContext" $root | nindent 12 }}
           volumeMounts:
-            {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
+            {{- if and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap }}
             - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
             {{- end }}
             {{- if include "pi-durable.databaseTlsEnabled" $root }}
@@ -120,15 +123,16 @@ spec:
             {{- if $root.Values.github.app.existingSecret }}
             - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
             {{- end }}
-      {{- if or (and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) }}
+      {{- if or (and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) }}
       volumes:
         {{- if include "pi-durable.databaseTlsEnabled" $root }}
         {{- include "pi-durable.databaseTlsVolume" $root | nindent 8 }}
         {{- end }}
-        {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
-        # Optional so the orchestrator starts before the CA is fetched.
+        {{- if and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap }}
+        # External: optional, so the orchestrator starts before the CA is fetched. Bundled: required, the bootstrap runs
+        # before this chart is installed, and a missing CA must stop the pod, not silently leave it without OneCLI.
         - name: onecli-ca
-          configMap: { name: {{ $onecli.caConfigMap }}, optional: true }
+          configMap: { name: {{ $onecli.caConfigMap }}, optional: {{ ne $root.Values.onecli.mode "bundled" }} }
         {{- end }}
         {{- if $root.Values.github.app.existingSecret }}
         - name: github-app

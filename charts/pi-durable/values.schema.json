@@ -96,10 +96,21 @@
     "onecli": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "namePrefix", "external"],
+      "required": ["mode", "namePrefix", "bundled", "external"],
       "properties": {
-        "mode": { "enum": ["external", "disabled"] },
+        "mode": { "enum": ["bundled", "external", "disabled"] },
         "namePrefix": { "type": "string", "pattern": "^[a-z0-9-]{1,39}-$" },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["release", "caConfigMap", "agentTokenSecret", "adminKeySecret"],
+          "properties": {
+            "release": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" },
+            "caConfigMap": { "$ref": "#/definitions/objectName" },
+            "agentTokenSecret": { "$ref": "#/definitions/objectName" },
+            "adminKeySecret": { "$ref": "#/definitions/objectName" }
+          }
+        },
         "external": {
           "type": "object",
           "additionalProperties": false,
@@ -322,6 +333,7 @@
         "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
       }
     },
+    "objectName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" },
     "labels": { "type": "object", "additionalProperties": { "type": "string" } },
     "cidr": { "type": "string", "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$" },
     "resources": {

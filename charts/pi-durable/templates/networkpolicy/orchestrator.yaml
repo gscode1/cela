@@ -45,12 +45,13 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 9090 }
-    {{- if eq .Values.onecli.mode "external" }}
+    {{- if ne .Values.onecli.mode "disabled" }}
     - to:
         {{- include "pi-durable.onecliTo" . | nindent 8 }}
       ports:
-        {{- $gateway := include "pi-durable.urlPort" .Values.onecli.external.gatewayUrl }}
-        {{- $api := include "pi-durable.urlPort" .Values.onecli.external.apiUrl }}
+        {{- $o := include "pi-durable.onecli" . | fromJson }}
+        {{- $gateway := include "pi-durable.urlPort" $o.gatewayUrl }}
+        {{- $api := include "pi-durable.urlPort" $o.apiUrl }}
         - { protocol: TCP, port: {{ $gateway }} }
         {{- if ne $api $gateway }}
         - { protocol: TCP, port: {{ $api }} }

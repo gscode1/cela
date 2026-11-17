@@ -7,15 +7,16 @@ RBAC and the network policies.
 It does **not** contain the database, OneCLI or agent-sandbox. They are separate and only referenced, so uninstalling
 the app never removes a database, a credential gateway or cluster-wide CRDs. This slice supports:
 
-| Part          | Mode                     | You provide                                                                                         |
-| ------------- | ------------------------ | --------------------------------------------------------------------------------------------------- |
-| Postgres      | external                 | a Secret with the connection URI, and the pods that serve it (for the network policy)               |
-| OneCLI        | `external` or `disabled` | gateway and API URLs, optional CA ConfigMap and token Secrets; `disabled` runs scripted models only |
-| agent-sandbox | external                 | the controller and CRDs, v1.0.11 or newer (`hack/agent-sandbox.sh external` checks them)            |
-| gVisor        | `RuntimeClass gvisor`    | on the nodes, or `security.allowInsecureRuntime=true`                                               |
+| Part          | Mode                                | You provide                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres      | external                            | a Secret with the connection URI, and the pods that serve it (for the network policy)                                                                                                                                         |
+| OneCLI        | `bundled`, `external` or `disabled` | `bundled`: nothing (`hack/onecli.sh` installs the upstream chart, its policies and the bootstrap, see below). `external`: gateway and API URLs, optional CA ConfigMap and token Secrets. `disabled` runs scripted models only |
+| agent-sandbox | external                            | the controller and CRDs, v1.0.11 or newer (`hack/agent-sandbox.sh external` checks them)                                                                                                                                      |
+| gVisor        | `RuntimeClass gvisor`               | on the nodes, or `security.allowInsecureRuntime=true`                                                                                                                                                                         |
 
-Bundled Postgres (`charts/pi-postgres`), bundled OneCLI (slice 10) and bundled agent-sandbox come in later slices; the
-schema rejects `onecli.mode=bundled` and `agentSandbox.mode=bundled` until then.
+Bundled Postgres (`charts/pi-postgres`) and bundled OneCLI (`charts/pi-onecli` plus the upstream chart, slice 10) are
+separate releases; bundled agent-sandbox comes in a later slice, and the schema rejects `agentSandbox.mode=bundled` until
+then.
 
 The chart creates no CRD, no CloudNativePG resource, nothing cluster-scoped and nothing outside the release namespace. It
 never generates a Secret and uses no `lookup`, so `helm template`, render tests and GitOps work.
@@ -57,7 +58,8 @@ per database: the schema `inbox` is fixed.
 | `database.external.existingSecret`, `uriKey`                                             | Secret holding the Postgres URI (direct or session mode, never a transaction pooler)                                                                                                                                                             |
 | `database.tls.*`                                                                         | TLS towards the database, verified: `mode` (`disable`, `verify-ca`, `verify-full`), `existingSecret`, `caKey`, optional `certKey`/`keyKey`. See [docs/database-tls.md](../../docs/database-tls.md)                                               |
 | `database.external.egress`                                                               | where the orchestrator and ingest may connect: `podSelector` (in `namespace`, default the release namespace) and/or `cidrs`, `port`. Required, or `default-deny-all` makes the database unreachable                                              |
-| `onecli.mode`                                                                            | `external` or `disabled` (scripted models only; the model allowlist may name no other provider)                                                                                                                                                  |
+| `onecli.mode`                                                                            | `bundled` (the release `hack/onecli.sh` installed in this namespace), `external` or `disabled` (scripted models only; the model allowlist may name no other provider)                                                                            |
+| `onecli.bundled.*`                                                                       | `release` (default `onecli`), `caConfigMap` (`pi-onecli-ca`), `agentTokenSecret` (`pi-onecli`), `adminKeySecret` (`pi-onecli-admin`): the names the bootstrap writes. In bundled mode the references are required: no bootstrap, no orchestrator |
 | `onecli.external.*`                                                                      | `apiUrl`, `gatewayUrl` (required for external); optional `caConfigMap` (key `ca.pem`), `agentTokenSecret` (key `agent-token`), `adminKeySecret` (key `api-key`); `namespace` and `podSelector` for the policies. Policy ports come from the URLs |
 | `onecli.namePrefix`                                                                      | prefix of the agents and secrets this install creates in OneCLI; distinct per install on a shared OneCLI (ADR 0013)                                                                                                                              |
 | `sandbox.runtimeClassName`                                                               | default `gvisor`. Anything else, including empty (the node default), needs `security.allowInsecureRuntime`                                                                                                                                       |
@@ -90,6 +92,13 @@ models:
   default: { provider: openai-codex, id: gpt-6.1-terra, reasoning: medium }
   allowlist: [openai-codex/gpt-6.1-terra, scripted/scripted-1]
 ```
+
+Or let `hack/install.sh` bring OneCLI with `--set onecli.mode=bundled` (`hack/kind-up.sh --onecli` does that on kind). Before
+the chart is installed, `hack/onecli.sh` installs `charts/pi-onecli` (network policies: the management API is reachable only
+from the orchestrator and a bootstrap Pod), the upstream chart `oci://ghcr.io/onecli/charts/onecli` 2.20.0 as release
+`onecli` (runner off, one replica, no Redis, the `onecli` database of `charts/pi-postgres`, or `ONECLI_DATABASE_URL`), and
+the bootstrap. OneCLI cannot close sign-up, so keep the API and dashboard off every Ingress
+([ADR 0022](../../docs/decisions/0022-bundled-onecli.md), sign-in: [model credentials](../../docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)).
 
 Model credentials stay in the orchestrator; they are never mounted into a sandbox.
 
@@ -129,7 +138,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status/pr
 
 ## Tests
 
-`packages/orchestrator/test/pi-durable-chart.test.ts` renders every mode (cilium/standard, OneCLI external/disabled,
+`packages/orchestrator/test/pi-durable-chart.test.ts` renders every mode (cilium/standard, OneCLI bundled/external/disabled,
 insecure runtime, one and three shards), checks the runtime guard, the kinds, the network-policy invariants and the
 schema. `pod-security.test.ts` checks the rendered pods against the restricted profile. `tests/e2e/run.sh` installs this
 chart for every run.

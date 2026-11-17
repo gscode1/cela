@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--timeout 10m]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--timeout 10m]
 #
 #   1. checks docker, kind (>= 0.24: kindnet enforces NetworkPolicy from there), helm, kubectl and openssl
 #   2. creates the kind cluster (hack/kind-config.yaml: pinned node image, kindnet); an existing cluster of that name is
@@ -11,8 +11,14 @@
 #   4. hack/agent-sandbox.sh bundled (controller and CRDs; skipped when they exist)
 #   5. the namespace, random Secrets (never printed) and charts/pi-postgres
 #   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
-#      network policies, OneCLI disabled, the scripted model only
+#      network policies, OneCLI disabled (or, with --onecli, bundled: install.sh runs hack/onecli.sh first), the scripted
+#      model only
 #   7. prints the isolation probe (hack/kind-smoke.sh --status), where the API token is and how to port-forward
+#
+# --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254, for
+# a port-forward trial. It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
+# scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
+# gateway. A real model: docs/model-credentials.md.
 #
 # Images: IMAGE_TAG (default as above) applies to all three; ORCH_IMAGE, INGEST_IMAGE and SANDBOX_IMAGE (a tag or digest
 # reference, for example ghcr.io/gscode1/pi-ingest@sha256:...) override one image. IMAGE_REPO (default ghcr.io/gscode1)
@@ -25,11 +31,12 @@ name=${KIND_CLUSTER_NAME:-pi-durable}
 namespace=pi-durable
 timeout=10m
 build=0
+onecli=0
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
 min_kind=0.24.0
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--timeout 10m]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--timeout 10m]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1" >&2
   exit 64
 }
@@ -45,6 +52,7 @@ while [[ $# -gt 0 ]]; do
   --name) [[ $# -ge 2 ]] || usage; name=$2; shift 2 ;;
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
+  --onecli) onecli=1; shift ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -86,6 +94,8 @@ ref_orchestrator=${ORCH_IMAGE:-$repo/pi-orchestrator:$tag}
 ref_ingest=${INGEST_IMAGE:-$repo/pi-ingest:$tag}
 ref_sandbox=${SANDBOX_IMAGE:-$repo/pi-sandbox:$tag}
 set_args=()
+extra_args=()
+[[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
 add_image_sets() { # key ref: --set images.<key>.repository/tag/digest from a "repo:tag" or "repo@sha256:..." reference
   local key=$1 ref=$2 repository tag="" digest=""
   case $ref in
@@ -196,7 +206,7 @@ export DATABASE_URL
 # ------------------------------------------------------------------ 6. pi-durable
 log "install pi-durable (hack/install.sh)"
 KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/pi-durable/values-kind.yaml" \
-  ${set_args[@]+"${set_args[@]}"} --timeout "$timeout"
+  ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} --timeout "$timeout"
 unset DATABASE_URL pi_password
 
 # ------------------------------------------------------------------ 7. report
@@ -219,6 +229,25 @@ Reach the session API on localhost:8080:
 Smoke test:   hack/kind-smoke.sh --name $name --namespace $namespace
 Remove it:    hack/kind-down.sh --name $name
 
-This is a trial: sandboxes run under runc, not gVisor, and only the scripted model is available (the message text is the
-script, see docs/session-api.md). A real model needs OneCLI (docs/model-credentials.md).
+This is a trial: sandboxes run under runc, not gVisor. The scripted model is the default (the message text is the
+script, see docs/session-api.md).
 TXT
+if [[ $onecli -eq 0 ]]; then
+  echo "A real model needs OneCLI: rerun with --onecli (docs/model-credentials.md)."
+fi
+if [[ $onecli -eq 1 ]]; then
+  cat <<TXT
+
+Bundled OneCLI runs in $namespace; its API and dashboard have no Ingress and only the orchestrator reaches the API.
+Prove that the orchestrator routes through the gateway:  hack/kind-smoke.sh --name $name --namespace $namespace --onecli
+Sign in to the dashboard (two port-forwards; the login is in the Secret pi-onecli-admin and is not printed):
+
+  kubectl --context $ctx -n $namespace port-forward svc/onecli-web 10254:10254 &
+  kubectl --context $ctx -n $namespace port-forward svc/onecli-api 10256:10256 &
+  open http://localhost:10254/auth/login
+  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
+  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # or xclip
+
+Then connect a provider there (docs/model-credentials.md) and set models in your values to use it.
+TXT
+fi

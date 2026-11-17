@@ -74,7 +74,7 @@ The operator machine does not build or ship code during a run. Node is used only
    CiliumNetworkPolicies in `tests/e2e/deploy/cilium` first, see `docs/network-policy.md`) and `tests/e2e/driver` (driver
    ServiceAccount and Roles). The files that mirror `deploy/` (the driver egress policy, the
    ExternalSecrets) are copies, removed with `deploy/` in slice 11.
-4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI), then
+4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI; e2e runs use the external OneCLI, not the bundled one of [ADR 0022](decisions/0022-bundled-onecli.md), which `hack/kind-smoke.sh --onecli` covers), then
    the **database**: random passwords in `pi-postgres-auth` (made here, never printed; a reused namespace keeps its
    secret), `helm upgrade --install pi-postgres charts/pi-postgres` (1 Gi, `STORAGE_CLASS`, PVC not retained,
    `networkPolicy.clientSelectors` = orchestrator, ingest and the `e2e-db-client` pod), wait for `pi-postgres-0`, and the

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PROTOTYPE (spike #120, docs/research/onecli-bundled-spike.md). Not wired into install.sh or any chart yet; slice 10
-# of docs/install-plan.md turns it into the real bootstrap step.
+# The bootstrap step of the bundled OneCLI (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md; the
+# behaviour was worked out in docs/research/onecli-bundled-spike.md). hack/onecli.sh runs it right after the upstream
+# chart is rolled out. It is idempotent: a second run reports `changed=0` and writes nothing.
 #
 # Bootstrap a freshly installed bundled OneCLI (upstream chart, release `onecli`) through its HTTP API only:
 #   1. sign up the first account (email + password), or sign in if it exists;
@@ -10,6 +11,11 @@
 #   5. optionally create one generic secret and grant it to the agent;
 #   6. copy only the PUBLIC gateway CA certificate to a ConfigMap.
 # Results go to Kubernetes Secrets and a ConfigMap; nothing secret is printed. A second run changes nothing.
+#
+# It does NOT close sign-up: OneCLI has no switch for that (ADR 0022). Whoever can reach the API can still create an
+# account in an organization of their own, whose agents are not bound by the host rules below. The control is the
+# network: hack/onecli.sh installs charts/pi-onecli first, so only the orchestrator (and a bootstrap Pod) reach the API.
+# This script reaches it with `kubectl port-forward`, which those policies do not touch.
 #
 #   hack/onecli-bootstrap.sh -n pi
 #
@@ -22,12 +28,13 @@
 #   ONECLI_ADMIN_SECRET  Secret for the account login and admin key (default pi-onecli-admin; keys email, password, api-key)
 #   ONECLI_AGENT_SECRET  Secret for the agent token (default pi-onecli; key agent-token)
 #   ONECLI_AGENT_ID      agent identifier (default pi-orchestrator)
-#   ONECLI_CA_CONFIGMAP  ConfigMap for the public CA (default pi-onecli-ca; key ca.crt)
+#   ONECLI_CA_CONFIGMAP  ConfigMap for the public CA (default pi-onecli-ca; key ca.pem, the key charts/pi-durable mounts)
 #   ONECLI_HOSTS         space-separated allowlist hosts (default: docs/onecli-host-rules.md); empty: no rules
 #   ONECLI_SECRET_NAME / ONECLI_SECRET_HOST / ONECLI_SECRET_VALUE
 #                        create one generic secret (header `authorization: Bearer {value}`) and grant it to the agent.
 #                        The value is read from the environment only. All three or none.
 #
+# Defaults of the three object names equal onecli.bundled in charts/pi-durable/values.yaml (a unit test checks it).
 # Requires kubectl, curl, jq and openssl. Runs on macOS bash 3.2.
 set -euo pipefail
 umask 077
@@ -53,7 +60,7 @@ admin_secret=${ONECLI_ADMIN_SECRET:-pi-onecli-admin}
 agent_secret=${ONECLI_AGENT_SECRET:-pi-onecli}
 agent_id=${ONECLI_AGENT_ID:-pi-orchestrator}
 ca_cm=${ONECLI_CA_CONFIGMAP:-pi-onecli-ca}
-# Keep in step with docs/onecli-host-rules.md and deploy/onecli-policies/egress.yaml.
+# Keep in step with docs/onecli-host-rules.md and deploy/onecli-policies/egress.yaml (a unit test compares the first).
 default_hosts="chatgpt.com *.chatgpt.com auth.openai.com api.openai.com openrouter.ai github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org pypi.org files.pythonhosted.org mcp.deepwiki.com"
 hosts=${ONECLI_HOSTS-$default_hosts}
 block_name=pi-block-all
@@ -69,6 +76,9 @@ fi
 unset ONECLI_SECRET_VALUE
 
 log() { echo "onecli-bootstrap: $*" >&2; }
+# Every write to OneCLI or to the cluster counts, so that a rerun can prove it changed nothing.
+changes=0
+changed() { changes=$((changes + 1)); }
 die() {
   log "$*"
   exit 1
@@ -199,10 +209,10 @@ if [[ -z $key ]]; then
   password=$(secret_get "$admin_secret" password)
   if [[ -z $password ]]; then
     password=$(openssl rand -hex 24)
-    secret_put "$admin_secret" password "$password" || true
+    secret_put "$admin_secret" password "$password" && changed
     log "generated the first account's password into Secret $admin_secret"
   fi
-  secret_put "$admin_secret" email "$email" || true
+  if secret_put "$admin_secret" email "$email"; then changed; fi
   email=$(secret_get "$admin_secret" email)
 
   jq -n --arg e "$email" --arg p "$password" '{email:$e, password:$p, name:"pi-admin"}' >"$work/cred.json"
@@ -211,7 +221,10 @@ if [[ -z $key ]]; then
   auth=none
   call_retry POST /auth/sign-up/email "$work/cred.json"
   case $status in
-    200) log "first account created" ;;
+    200)
+      changed
+      log "first account created"
+      ;;
     *)
       jq -e '.code == "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"' "$work/body" >/dev/null 2>&1 ||
         die "sign-up refused: HTTP $status"
@@ -234,7 +247,7 @@ if [[ -z $key ]]; then
   expect "GET /v1/user/api-key" 200
   key=$(jq -r '.apiKey // empty' "$work/body")
   [[ $key == oc_* ]] || die "no oc_ admin key in the answer"
-  secret_put "$admin_secret" api-key "$key" || true
+  if secret_put "$admin_secret" api-key "$key"; then changed; fi
   log "admin key stored in Secret $admin_secret"
   rm -f "$work/jar"
   auth=bearer
@@ -256,6 +269,7 @@ if [[ -z $agent ]]; then
   expect "POST /v1/agents" 201 409
   agent=$(agent_row)
   [[ -n $agent ]] || die "agent $agent_id was created but is not listed"
+  changed
   log "agent $agent_id created"
 else
   log "agent $agent_id exists"
@@ -264,7 +278,12 @@ agent_uuid=$(jq -r .id <<<"$agent")
 token=$(jq -r '.accessToken // empty' <<<"$agent")
 unset agent
 [[ $token == aoc_* ]] || die "no aoc_ token for agent $agent_id"
-if secret_put "$agent_secret" agent-token "$token"; then log "agent token stored in Secret $agent_secret"; else log "agent token unchanged"; fi
+if secret_put "$agent_secret" agent-token "$token"; then
+  changed
+  log "agent token stored in Secret $agent_secret"
+else
+  log "agent token unchanged"
+fi
 unset token
 
 # ---- 4. host rules (allow each host, block everything else LAST) -------------------------------------------------
@@ -298,6 +317,7 @@ if [[ -n $hosts ]]; then
     expect "POST block rule" 201
     created=$((created + 1))
   fi
+  [[ $created -eq 0 ]] || changed
   log "host rules: $created written"
 fi
 
@@ -314,6 +334,7 @@ if [[ -n $sec_name ]]; then
     expect "POST /v1/secrets" 201
     sec_id=$(jq -r .id "$work/body")
     rm -f "$work/req.json"
+    changed
     log "secret $sec_name created"
   else
     log "secret $sec_name exists (value not rotated here)"
@@ -325,14 +346,16 @@ fi
 
 # ---- 6. public CA certificate -> ConfigMap ------------------------------------------------------------------------
 
-kc get secret "$release-gateway-ca" -o 'jsonpath={.data.GATEWAY_CA_CERT}' | base64 -d >"$work/ca.crt"
-openssl x509 -in "$work/ca.crt" -noout 2>/dev/null || die "Secret $release-gateway-ca has no readable GATEWAY_CA_CERT"
-! grep -q 'PRIVATE KEY' "$work/ca.crt" || die "GATEWAY_CA_CERT holds a private key; refusing to copy it"
-if [[ $(kc get configmap "$ca_cm" -o 'jsonpath={.data.ca\.crt}' 2>/dev/null || true) == "$(cat "$work/ca.crt")" ]]; then
+kc get secret "$release-gateway-ca" -o 'jsonpath={.data.GATEWAY_CA_CERT}' | base64 -d >"$work/ca.pem"
+openssl x509 -in "$work/ca.pem" -noout 2>/dev/null || die "Secret $release-gateway-ca has no readable GATEWAY_CA_CERT"
+! grep -q 'PRIVATE KEY' "$work/ca.pem" || die "GATEWAY_CA_CERT holds a private key; refusing to copy it"
+if [[ $(kc get configmap "$ca_cm" -o 'jsonpath={.data.ca\.pem}' 2>/dev/null || true) == "$(cat "$work/ca.pem")" ]]; then
   log "CA ConfigMap $ca_cm unchanged"
 else
-  kc create configmap "$ca_cm" --from-file="ca.crt=$work/ca.crt" --dry-run=client -o yaml | kc apply -f - >/dev/null
+  kc create configmap "$ca_cm" --from-file="ca.pem=$work/ca.pem" --dry-run=client -o json | kc apply -f - >/dev/null
+  changed
   log "CA ConfigMap $ca_cm written"
 fi
 
-log "done"
+log "sign-up stays open (OneCLI has no switch); keep the API reachable only through charts/pi-onecli's policies"
+log "done: changed=$changes"

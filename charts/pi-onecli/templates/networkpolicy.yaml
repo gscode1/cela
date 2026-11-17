@@ -1,0 +1,203 @@
+{{- /*
+The OneCLI pods of release {{ .Values.release }} (upstream chart labels: app.kubernetes.io/name=onecli, instance=<release>,
+component = api | web | gateway | migrations | gateway-ca-generate). Everything is denied first; what follows is the whole
+allow list. The management API on :10256 accepts sign-ups from anyone who reaches it, and an organization created that
+way is not covered by our host rules, so who may reach it is the security boundary (docs/decisions/0022-bundled-onecli.md).
+*/ -}}
+{{- $r := .Values.release -}}
+{{- $onecli := dict "app.kubernetes.io/name" "onecli" "app.kubernetes.io/instance" $r -}}
+{{- define "pi-onecli.peer" -}}
+- podSelector:
+    matchLabels:
+      {{- toYaml . | nindent 6 }}
+{{- end -}}
+{{- define "pi-onecli.component" -}}
+- podSelector:
+    matchLabels:
+      {{- toYaml .selector | nindent 6 }}
+      app.kubernetes.io/component: {{ .component }}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-default-deny
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+---
+# DNS for the OneCLI pods (pi-durable's allow-dns-egress comes later and covers every pod).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-dns-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.dns.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.dns.podSelector | nindent 14 }}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Management API :10256, the one that must stay closed: the orchestrator, a bootstrap Pod, the dashboard and the gateway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-api-allow-ingress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "pi-onecli.peer" .Values.clients.orchestrator | nindent 8 }}
+        {{- include "pi-onecli.peer" .Values.clients.bootstrap | nindent 8 }}
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "web") | nindent 8 }}
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "gateway") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 10256 }
+---
+# Gateway :10255 (CONNECT proxy): sandboxes and the orchestrator, plus the API and the dashboard.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-gateway-allow-ingress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "pi-onecli.peer" .Values.clients.sandbox | nindent 8 }}
+        {{- include "pi-onecli.peer" .Values.clients.orchestrator | nindent 8 }}
+        {{- include "pi-onecli.peer" .Values.clients.bootstrap | nindent 8 }}
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "api") | nindent 8 }}
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "web") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 10255 }
+{{- with .Values.web.allowFrom }}
+---
+# Dashboard :10254, only from the peers listed in web.allowFrom (empty by default: use kubectl port-forward).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-web-allow-ingress
+  labels:
+    {{- include "pi-onecli.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 10254 }
+{{- end }}
+---
+# The database. The pi-postgres policy admits app.kubernetes.io/name=onecli on its side.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-database-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-onecli.peer" .Values.database.podSelector | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.database.port }} }
+---
+# The api, dashboard and gateway call each other.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-internal-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [onecli] }
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ $r }}] }
+      - { key: app.kubernetes.io/component, operator: In, values: [api, web, gateway] }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "api") | nindent 8 }}
+        {{- include "pi-onecli.component" (dict "selector" $onecli "component" "gateway") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 10255 }
+        - { protocol: TCP, port: 10256 }
+---
+# The gateway reaches model, GitHub and package hosts. The host rules in OneCLI (docs/onecli-host-rules.md) decide which.
+# The migrations and CA Jobs need nothing but the database, and the Kubernetes API for the CA Job: a plain policy cannot
+# name the API server, so 443 and 6443 are open to any destination for that Job's pods only.
+{{- if .Values.gateway.egressInternet }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-gateway-allow-internet-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8]
+        - ipBlock:
+            cidr: "::/0"
+            except: ["fc00::/7", "fe80::/10", "::1/128"]
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-ca-job-allow-kube-api-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: gateway-ca-generate
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }

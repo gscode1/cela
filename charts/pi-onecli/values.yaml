@@ -1,0 +1,34 @@
+# Network policies for the bundled OneCLI (docs/decisions/0022-bundled-onecli.md). They exist from the first minute, before
+# charts/pi-durable (and its namespace-wide default deny) is installed, because OneCLI's management API accepts a sign-up
+# from anyone who can reach it and nothing in OneCLI can turn that off.
+
+# The Helm release name of the upstream OneCLI chart. Its pods carry app.kubernetes.io/instance=<release>.
+release: onecli
+
+# Pods of this namespace that may reach the management API (:10256), gateway (:10255) and database. The orchestrator
+# reaches both OneCLI ports; sandboxes reach the gateway only. `bootstrap` is for running hack/onecli-bootstrap.sh as a Pod
+# (a Job): the script run from your machine uses `kubectl port-forward`, which is not subject to these policies.
+clients:
+  orchestrator: { app.kubernetes.io/name: pi-orchestrator }
+  sandbox: { app.kubernetes.io/name: pi-sandbox }
+  bootstrap: { app.kubernetes.io/name: pi-onecli-bootstrap }
+
+database:
+  podSelector: { app.kubernetes.io/name: pi-postgres }
+  port: 5432
+
+dns:
+  namespace: kube-system
+  podSelector: { k8s-app: kube-dns }
+
+# The dashboard (:10254) has no ingress at all by default: reach it with kubectl port-forward. To expose it on purpose,
+# list the peers that may connect, for example your ingress controller's pods:
+#   - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+# and block /auth/signup and /auth/sign-up* at your route (docs/model-credentials.md).
+web:
+  allowFrom: []
+
+# The gateway forwards to public model, GitHub and package hosts. Private, link-local, CGNAT and loopback ranges stay
+# blocked, as for sandboxes, so a rebinding host name cannot reach the cluster.
+gateway:
+  egressInternet: true

@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   chartsDir,
   helmTemplate,
   renderDocs,
+  repoRoot,
   requiredValuesArgs,
   type Obj,
 } from "./support/helm.js";
@@ -85,7 +87,7 @@ interface Mode {
 }
 const modes: Mode[] = [];
 for (const provider of ["cilium", "standard"])
-  for (const onecli of ["external", "disabled"])
+  for (const onecli of ["external", "bundled", "disabled"])
     for (const insecureRuntime of [false, true])
       for (const shards of [1, 3])
         modes.push({ provider, onecli, insecure: insecureRuntime, shards });
@@ -94,6 +96,7 @@ const argsFor = (m: Mode): string[] => [
   "--set",
   `networkPolicy.provider=${m.provider}`,
   ...(m.onecli === "external" ? external : []),
+  ...(m.onecli === "bundled" ? ["--set", "onecli.mode=bundled"] : []),
   ...(m.insecure ? insecure : []),
   "--set",
   `orchestrator.shards=${String(m.shards)}`,
@@ -565,6 +568,90 @@ describe("network policy invariants", () => {
   });
 });
 
+describe("bundled OneCLI (install slice 10, ADR 0022)", () => {
+  const bundled = ["--set", "onecli.mode=bundled"];
+  const list = docs(bundled);
+  const orchestrator = named(list, "Deployment", "pi-orchestrator");
+  const env = envOf(orchestrator);
+
+  it("points the orchestrator at the release in its own namespace, with every reference required", () => {
+    expect(env.PI_ONECLI_API?.value).toBe("http://onecli-api.ns.svc:10256");
+    expect(env.PI_ONECLI_GATEWAY?.value).toBe("http://onecli-gateway.ns.svc:10255");
+    // Only the one key of each Secret is exposed: the login password next to the admin key stays out of the pod.
+    expect(env.ONECLI_AGENT_TOKEN?.valueFrom.secretKeyRef).toEqual({
+      name: "pi-onecli",
+      key: "agent-token",
+      optional: false,
+    });
+    expect(env.ONECLI_API_KEY?.valueFrom.secretKeyRef).toEqual({
+      name: "pi-onecli-admin",
+      key: "api-key",
+      optional: false,
+    });
+    expect(orchestrator.spec.template.spec.volumes).toEqual([
+      { name: "onecli-ca", configMap: { name: "pi-onecli-ca", optional: false } },
+    ]);
+    expect(orchestrator.metadata.annotations["pi-durable/onecli-mode"]).toBe("bundled");
+  });
+
+  it("follows the release name and the object names in values", () => {
+    const custom = docs([
+      ...bundled,
+      "--set",
+      "onecli.bundled.release=gw",
+      "--set",
+      "onecli.bundled.caConfigMap=my-ca",
+    ]);
+    const o = named(custom, "Deployment", "pi-orchestrator");
+    expect(envOf(o).PI_ONECLI_GATEWAY?.value).toBe("http://gw-gateway.ns.svc:10255");
+    expect(o.spec.template.spec.volumes[0].configMap.name).toBe("my-ca");
+    const rule = named(custom, "NetworkPolicy", "sandbox-allow-onecli-egress").spec.egress[0];
+    expect(rule.to[0].podSelector.matchLabels).toEqual({
+      "app.kubernetes.io/name": "onecli",
+      "app.kubernetes.io/instance": "gw",
+    });
+  });
+
+  it("admits the orchestrator to the API and gateway, and a sandbox to the gateway port only", () => {
+    const policies = ofKind(list, "NetworkPolicy");
+    const to = {
+      namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "ns" } },
+      podSelector: {
+        matchLabels: {
+          "app.kubernetes.io/name": "onecli",
+          "app.kubernetes.io/instance": "onecli",
+        },
+      },
+    };
+    const orch = named(policies, "NetworkPolicy", "orchestrator-allow-egress").spec.egress;
+    expect(orch.find((r: Obj) => r.to?.[0]?.namespaceSelector !== undefined)).toEqual({
+      to: [to],
+      ports: [
+        { protocol: "TCP", port: 10255 },
+        { protocol: "TCP", port: 10256 },
+      ],
+    });
+    expect(named(policies, "NetworkPolicy", "sandbox-allow-onecli-egress").spec.egress).toEqual([
+      { to: [to], ports: [{ protocol: "TCP", port: 10255 }] },
+    ]);
+  });
+
+  it("renders no Secret, Ingress or HTTPRoute for OneCLI", () => {
+    for (const d of list) expect(["Secret", "Ingress", "HTTPRoute"]).not.toContain(d.kind);
+  });
+
+  it("takes the object names from the same defaults as the bootstrap script", () => {
+    const script = readFileSync(`${repoRoot}/hack/onecli-bootstrap.sh`, "utf8");
+    const fallback = (variable: string): string | undefined =>
+      new RegExp(`\\$\\{${variable}:-([^}]+)\\}`).exec(script)?.[1];
+    expect(fallback("ONECLI_RELEASE")).toBe("onecli");
+    expect(fallback("ONECLI_ADMIN_SECRET")).toBe("pi-onecli-admin");
+    expect(fallback("ONECLI_AGENT_SECRET")).toBe("pi-onecli");
+    expect(fallback("ONECLI_CA_CONFIGMAP")).toBe("pi-onecli-ca");
+    expect(fallback("ONECLI_AGENT_ID")).toBe("pi-orchestrator");
+  });
+});
+
 const tlsOn = (mode: string): string[] => [
   "--set",
   `database.tls.mode=${mode}`,
@@ -648,7 +735,17 @@ describe("database TLS", () => {
 
 describe("values are validated", () => {
   const bad: [string, string[], RegExp][] = [
-    ["bundled OneCLI (a later slice)", ["--set", "onecli.mode=bundled"], /onecli\/mode|one of/],
+    ["an unknown OneCLI mode", ["--set", "onecli.mode=sidecar"], /onecli\/mode|one of/],
+    [
+      "a bundled OneCLI release with a bad name",
+      ["--set", "onecli.mode=bundled", "--set", "onecli.bundled.release=Bad_Name"],
+      /release|pattern/,
+    ],
+    [
+      "a bundled OneCLI without a token Secret",
+      ["--set", "onecli.mode=bundled", "--set", "onecli.bundled.agentTokenSecret="],
+      /agentTokenSecret|pattern/,
+    ],
     [
       "bundled agent-sandbox (a later slice)",
       ["--set", "agentSandbox.mode=bundled"],
