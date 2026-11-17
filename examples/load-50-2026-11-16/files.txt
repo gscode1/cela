@@ -31,7 +31,7 @@ deploy/onecli-host-rules.sh
 packages/orchestrator/src/watcher.ts
 packages/orchestrator/src/bridge-launcher.ts
 packages/sandbox-env/src/start-gate.ts
-deploy/retired-orchestrator-delivery
+deploy/push-code.sh
 packages/sandbox-env/src/sandbox-client.ts
 packages/sandbox-env/src/config.ts
 packages/sandbox-env/src/index.ts
@@ -45,6 +45,6 @@ packages/orchestrator/src/storage.ts
 packages/session-core/src/index.ts
 packages/session-core/src/http.ts
 packages/ingest/src/events.ts
-deploy/retired-ingest-delivery
+deploy/push-ingest.sh
 packages/orchestrator/src/failure.ts
 packages/ingest/src/config.ts

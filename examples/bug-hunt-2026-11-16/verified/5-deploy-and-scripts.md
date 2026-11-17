@@ -1,7 +1,7 @@
 ### 1. Orchestrator code deployment can leave the service stopped and its code incomplete
 - Verdict: CONFIRMED
 - Severity (verified): medium
-- Location (verified): deploy/retired-orchestrator-delivery:24 (scale to 0), :54 (rm -rf then tar), :58 (only scale-up)
+- Location (verified): deploy/push-code.sh:24 (scale to 0), :54 (rm -rf then tar), :58 (only scale-up)
 - Reasoning: Line 24 runs `k scale deployment "$d" --replicas=0`; the EXIT trap (line 16) only removes the temp dir and the loader pod, never scales back up. If the loader pod never becomes Ready (line 52 `k wait` times out at 240s, e.g. image pull failure) or `k cp`/`k exec` at 53-54 fails, `set -e` exits with the orchestrator at 0 replicas. Line 54 runs `rm -rf /code/app && mkdir ... && tar xzf` in place, so a failed extraction leaves a partial or empty /code/app. Impact is limited because a rerun of the script repairs both; this is a lab PoC, so medium rather than high.
 
 ### 2. Secret-generation scripts expose credentials in process arguments

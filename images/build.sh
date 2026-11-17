@@ -37,7 +37,8 @@ if [[ ${#output[@]} -eq 0 ]]; then
 fi
 for image in "${images[@]}"; do
   ref="${IMAGE_REPO:+${IMAGE_REPO%/}/}pi-$image:$tag"
-  action=("${output[@]}")
+  # ${a[@]+...} keeps an empty array legal under set -u in bash 3.2 (macOS).
+  action=(${output[@]+"${output[@]}"})
   [[ ${#action[@]} -gt 0 ]] || action=(--output "type=oci,dest=pi-$image-$tag.oci.tar")
   docker buildx build --platform "$platform" -f "$root/images/$image/Dockerfile" \
     -t "$ref" --metadata-file "$work/$image.json" "${action[@]}" "$root"

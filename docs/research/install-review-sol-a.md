@@ -242,14 +242,14 @@ Reference runtime images by digest, including OneCLI’s web/API/gateway/migrati
 
 Remove:
 
-- `retired-code-volume` PVC and loader pods.
+- `orchestrator-code` PVC and loader pods.
 - Ingest code ConfigMap and unpack init container.
 - Push locks/retries from the installation path.
 - Shard pod affinity imposed solely by the shared RWO code volume.
 
 Built images eliminate that unnecessary single-node constraint. Keep per-shard `Recreate` and a controlled upgrade procedure: ADR 0017 currently says mixed shard versions are unsupported.
 
-**Multi-architecture is a release requirement.** the former arm64-only sandbox build script currently packages only the Linux **arm64** pi-env binary and builds `linux/arm64`. That will not deliver an ordinary amd64 kind experience. Build and verify each architecture, then publish a multi-architecture index.
+**Multi-architecture is a release requirement.** `images/sandbox/build.sh` currently packages only the Linux **arm64** pi-env binary and builds `linux/arm64`. That will not deliver an ordinary amd64 kind experience. Build and verify each architecture, then publish a multi-architecture index.
 
 ### Secret ownership
 
@@ -305,7 +305,7 @@ For enabled features, wait for required credentials before startup. Today severa
 | `deploy/onecli-host-rules.sh` | Reads management key from `secret-store/pi-onecli-admin`; fixed org-wide host rules. Do not automatically mutate policies on an existing shared gateway. |
 | `deploy/namespace.yaml`, `deploy/kustomization.yaml`, `deploy/cilium/kustomization.yaml` | Fixed namespace; PSA version `v1.36`. Use release namespace and a documented supported/pinned PSA profile. |
 | `deploy/{gen-secret,gen-api-secret,push-code,push-ingest,fetch-onecli-ca,add-shard}.sh` | Default namespace `pi-durable-poc`. These defaults are overridable already, but should disappear from the supported install path. |
-| `deploy/sandbox-template.yaml`, `deploy/retired-code-volume-pvc.yaml`, `tests/e2e/driver/driver-pvc.yaml` | `<lab-storage-class>`; sandbox also requires RuntimeClass `gvisor`. Make storage/runtime choices explicit. |
+| `deploy/sandbox-template.yaml`, `deploy/orchestrator-code-pvc.yaml`, `tests/e2e/driver/driver-pvc.yaml` | `<lab-storage-class>`; sandbox also requires RuntimeClass `gvisor`. Make storage/runtime choices explicit. |
 | `images/sandbox/{Dockerfile,build.sh}`, `pnpm-workspace.yaml` | arm64-oriented binary/build/dependency preparation. Add amd64 release coverage. |
 | `tests/e2e/run.sh`, `tests/e2e/deploy/kustomization.yaml` | Unconditional Cilium resources, CNPG patches, ESO wait, CA fetch and code pushing. Exercise the chart instead. |
 | `tests/e2e/run-{phase3,phase4,phase4b,phase4c,mcp,shards}.sh` | SQL helpers exec into `pi-pg-1`, container `postgres`, database `app`; several await CNPG readiness. Introduce backend-independent test helpers. |

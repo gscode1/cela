@@ -31,7 +31,7 @@
 4 31-packages_orchestrator_src_watcher.ts.md
 4 32-packages_orchestrator_src_bridge-launcher.ts.md
 4 33-packages_sandbox-env_src_start-gate.ts.md
-4 34-deploy_retired-orchestrator-delivery.md
+4 34-deploy_push-code.sh.md
 4 35-packages_sandbox-env_src_sandbox-client.ts.md
 4 36-packages_sandbox-env_src_config.ts.md
 4 37-packages_sandbox-env_src_index.ts.md
@@ -45,6 +45,6 @@
 5 45-packages_session-core_src_index.ts.md
 5 46-packages_session-core_src_http.ts.md
 5 47-packages_ingest_src_events.ts.md
-5 48-deploy_retired-ingest-delivery.md
+5 48-deploy_push-ingest.sh.md
 5 49-packages_orchestrator_src_failure.ts.md
 5 50-packages_ingest_src_config.ts.md
