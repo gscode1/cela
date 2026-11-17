@@ -26,7 +26,7 @@ spec:
         {{- end }}
       annotations:
         # A change to the init script restarts the Pod, so it runs again.
-        checksum/init: {{ printf "%s%s" (.Files.Get "files/init.sh") (.Files.Get "files/init.sql") | sha256sum }}
+        checksum/init: {{ printf "%s%s%v%v" (.Files.Get "files/init.sh") (.Files.Get "files/init.sql") .Values.tls.existingSecret .Values.tls.requireTls | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -46,6 +46,19 @@ spec:
         - name: postgres
           image: {{ include "pi-postgres.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.tls.existingSecret }}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/pg-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/pg-tls/tls.key
+            {{- if .Values.tls.requireTls }}
+            - -c
+            - hba_file=/config/pg_hba.conf
+            {{- end }}
+          {{- end }}
           ports:
             - { name: postgres, containerPort: 5432 }
           env:
@@ -76,6 +89,12 @@ spec:
             - { name: data, mountPath: /var/lib/postgresql/data }
             - { name: run, mountPath: /var/run/postgresql }
             - { name: tmp, mountPath: /tmp }
+            {{- if .Values.tls.existingSecret }}
+            - { name: tls, mountPath: /etc/pg-tls, readOnly: true }
+            {{- if .Values.tls.requireTls }}
+            - { name: config, mountPath: /config, readOnly: true }
+            {{- end }}
+            {{- end }}
         # Creates the databases and roles on every Pod start (docker-entrypoint only does it on an empty data
         # directory). The Pod is Ready only after this container is, which is after init.sql succeeded.
         - name: init
@@ -111,6 +130,16 @@ spec:
         - name: config
           configMap:
             name: {{ include "pi-postgres.fullname" . }}-init
+        {{- if .Values.tls.existingSecret }}
+        # Postgres refuses a key that others can read; root-owned with group-read only (fsGroup) is allowed.
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+            defaultMode: 288 # 0440, in decimal so no YAML parser reads it as 440
+            items:
+              - { key: {{ .Values.tls.certKey }}, path: tls.crt }
+              - { key: {{ .Values.tls.keyKey }}, path: tls.key }
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

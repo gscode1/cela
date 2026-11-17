@@ -7,5 +7,12 @@ metadata:
 data:
   init.sh: |
     {{- .Files.Get "files/init.sh" | nindent 4 }}
+  {{- if and .Values.tls.existingSecret .Values.tls.requireTls }}
+  # Replaces the image's default rules (which also admit plain TCP). The unix socket stays trusted inside the Pod.
+  pg_hba.conf: |
+    local all all trust
+    hostssl all all all scram-sha-256
+    host all all all reject
+  {{- end }}
   init.sql: |
     {{- .Files.Get "files/init.sql" | nindent 4 }}

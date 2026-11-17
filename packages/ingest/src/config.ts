@@ -1,9 +1,11 @@
-import { parseAdmins, settingsFromEnv } from "@pi-durable-k8s/session-core";
-import type { Settings } from "@pi-durable-k8s/session-core";
+import { loadDatabaseTls, parseAdmins, settingsFromEnv } from "@pi-durable-k8s/session-core";
+import type { DatabaseTls, Settings } from "@pi-durable-k8s/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
 export interface IngestConfig {
   databaseUrl: string;
+  /** TLS towards Postgres (`PI_DURABLE_DATABASE_TLS_*`); undefined leaves the URI's own `sslmode` alone. */
+  databaseTls: DatabaseTls | undefined;
   /** `owner:token` entries, see session-core `tokenAuthenticator`. */
   apiTokens: string;
   /**
@@ -62,6 +64,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     throw new Error("PI_ORCH_URL must contain {shard} when PI_ORCH_SHARDS is above 1");
   return {
     databaseUrl,
+    databaseTls: loadDatabaseTls(env),
     apiTokens,
     orchestratorUrl,
     shards,

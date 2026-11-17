@@ -565,6 +565,87 @@ describe("network policy invariants", () => {
   });
 });
 
+const tlsOn = (mode: string): string[] => [
+  "--set",
+  `database.tls.mode=${mode}`,
+  "--set",
+  "database.tls.existingSecret=pi-database-ca",
+];
+
+describe("database TLS", () => {
+  const deployments = (args: string[]): Obj[] => {
+    const all = docs(args);
+    return [named(all, "Deployment", "pi-ingest"), named(all, "Deployment", "pi-orchestrator")];
+  };
+  const envOf = (d: Obj): Record<string, string | undefined> =>
+    Object.fromEntries(
+      d.spec.template.spec.containers[0].env.map((e: Obj) => [e.name, e.value] as const),
+    );
+  const volume = (d: Obj): Obj | undefined =>
+    d.spec.template.spec.volumes?.find((v: Obj) => v.name === "database-tls");
+  const mount = (d: Obj): Obj | undefined =>
+    d.spec.template.spec.containers[0].volumeMounts?.find((m: Obj) => m.name === "database-tls");
+
+  it("is off by default: no env, no volume, the URI keeps its own sslmode", () => {
+    for (const d of deployments([])) {
+      expect(Object.keys(envOf(d)).filter((n) => n.includes("DATABASE_TLS"))).toEqual([]);
+      expect(volume(d)).toBeUndefined();
+      expect(mount(d)).toBeUndefined();
+    }
+  });
+
+  it("mounts the CA read-only and sets the env in both deployments", () => {
+    for (const d of deployments(tlsOn("verify-full"))) {
+      expect(envOf(d)).toMatchObject({
+        PI_DURABLE_DATABASE_TLS_MODE: "verify-full",
+        PI_DURABLE_DATABASE_TLS_CA_FILE: "/etc/pi-database-tls/ca.crt",
+      });
+      expect(envOf(d).PI_DURABLE_DATABASE_TLS_CERT_FILE).toBeUndefined();
+      expect(mount(d)).toEqual({
+        name: "database-tls",
+        mountPath: "/etc/pi-database-tls",
+        readOnly: true,
+      });
+      expect(volume(d)?.secret).toMatchObject({
+        secretName: "pi-database-ca",
+        items: [{ key: "ca.crt", path: "ca.crt" }],
+      });
+    }
+  });
+
+  it("projects a custom CA key and the client cert and key only when asked", () => {
+    const args = [
+      ...tlsOn("verify-ca"),
+      "--set",
+      "database.tls.caKey=root.pem",
+      "--set",
+      "database.tls.certKey=client.crt",
+      "--set",
+      "database.tls.keyKey=client.key",
+    ];
+    for (const d of deployments(args)) {
+      expect(envOf(d)).toMatchObject({
+        PI_DURABLE_DATABASE_TLS_MODE: "verify-ca",
+        PI_DURABLE_DATABASE_TLS_CERT_FILE: "/etc/pi-database-tls/tls.crt",
+        PI_DURABLE_DATABASE_TLS_KEY_FILE: "/etc/pi-database-tls/tls.key",
+      });
+      expect(volume(d)?.secret.items).toEqual([
+        { key: "root.pem", path: "ca.crt" },
+        { key: "client.crt", path: "tls.crt" },
+        { key: "client.key", path: "tls.key" },
+      ]);
+    }
+  });
+
+  it("verify-full may use the system roots (empty caKey)", () => {
+    for (const d of deployments([...tlsOn("verify-full"), "--set", "database.tls.caKey="])) {
+      expect(envOf(d).PI_DURABLE_DATABASE_TLS_CA_FILE).toBeUndefined();
+      expect(envOf(d).PI_DURABLE_DATABASE_TLS_MODE).toBe("verify-full");
+      expect(volume(d)).toBeUndefined();
+    }
+  });
+});
+
 describe("values are validated", () => {
   const bad: [string, string[], RegExp][] = [
     ["bundled OneCLI (a later slice)", ["--set", "onecli.mode=bundled"], /onecli\/mode|one of/],
@@ -598,6 +679,23 @@ describe("values are validated", () => {
     ["no admins", ["--set-json", "api.admins=[]"], /admins/],
     ["a bad CIDR", ["--set-json", 'networkPolicy.kubeApiCidrs=["nope"]'], /kubeApiCidrs|pattern/],
     ["a model without a provider", ["--set-json", 'models.allowlist=["x"]'], /allowlist|pattern/],
+    ["an unknown database TLS mode", [...tlsOn("require")], /mode|require/],
+    ["database TLS without a Secret", ["--set", "database.tls.mode=verify-full"], /existingSecret/],
+    [
+      "verify-ca without a CA key",
+      [...tlsOn("verify-ca"), "--set", "database.tls.caKey="],
+      /caKey|minLength|length/,
+    ],
+    [
+      "a client cert without its key",
+      [...tlsOn("verify-full"), "--set", "database.tls.certKey=c"],
+      /keyKey/,
+    ],
+    [
+      "a client key without its cert",
+      [...tlsOn("verify-full"), "--set", "database.tls.keyKey=k"],
+      /certKey/,
+    ],
   ];
   for (const [name, args, message] of bad) {
     it(`rejects ${name}`, () => {

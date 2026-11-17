@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   const lifecycle: Lifecycle = { state: "waiting-for-lock", instance: config.instance };
   // A second, independent connection pool for the inbox and the owner check: the Pi Durable adapter pins its
   // own connection and holds the ownership lock on it, and neither may share it.
-  const pool = createPool(config.databaseUrl, `${config.instance}-inbox`, 10);
+  const pool = createPool(config.databaseUrl, `${config.instance}-inbox`, 10, config.databaseTls);
   const server = createOrchestratorServer({
     lifecycle,
     authenticate: tokenAuthenticator(config.apiTokens),

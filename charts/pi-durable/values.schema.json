@@ -39,8 +39,38 @@
     "database": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["external"],
+      "required": ["external", "tls"],
       "properties": {
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "existingSecret", "caKey", "certKey", "keyKey"],
+          "properties": {
+            "mode": { "enum": ["disable", "verify-ca", "verify-full"] },
+            "existingSecret": { "type": "string" },
+            "caKey": { "type": "string" },
+            "certKey": { "type": "string" },
+            "keyKey": { "type": "string" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "mode": { "enum": ["verify-ca", "verify-full"] } } },
+              "then": { "properties": { "existingSecret": { "minLength": 1 } } }
+            },
+            {
+              "if": { "properties": { "mode": { "const": "verify-ca" } } },
+              "then": { "properties": { "caKey": { "minLength": 1 } } }
+            },
+            {
+              "if": { "properties": { "certKey": { "minLength": 1 } }, "required": ["certKey"] },
+              "then": { "properties": { "keyKey": { "minLength": 1 } } }
+            },
+            {
+              "if": { "properties": { "keyKey": { "minLength": 1 } }, "required": ["keyKey"] },
+              "then": { "properties": { "certKey": { "minLength": 1 } } }
+            }
+          ]
+        },
         "external": {
           "type": "object",
           "additionalProperties": false,

@@ -124,3 +124,47 @@ seccompProfile:
     matchLabels:
       {{- toYaml .Values.onecli.external.podSelector | nindent 6 }}
 {{- end -}}
+
+{{/*
+Database TLS (database.tls). The Secret is mounted read-only at /etc/pi-database-tls and only the keys that are used are
+projected, so a client key in a shared Secret is not mounted when mTLS is off. Without `optional` a missing Secret keeps
+the pod from starting, which is wanted: a pod that cannot verify the server must not start.
+*/}}
+{{- define "pi-durable.databaseTlsEnabled" -}}
+{{- /* verify-full with the system roots and no client cert needs no files, so no volume. */}}
+{{- if and (ne .Values.database.tls.mode "disable") (or .Values.database.tls.caKey .Values.database.tls.certKey) }}true{{ end -}}
+{{- end }}
+
+{{- define "pi-durable.databaseTlsEnv" -}}
+{{- $tls := .Values.database.tls }}
+{{- /* disable sets nothing: the URI keeps its own sslmode, as before this value existed. */}}
+{{- if ne $tls.mode "disable" }}
+- { name: PI_DURABLE_DATABASE_TLS_MODE, value: {{ $tls.mode | quote }} }
+{{- if $tls.caKey }}
+- { name: PI_DURABLE_DATABASE_TLS_CA_FILE, value: /etc/pi-database-tls/ca.crt }
+{{- end }}
+{{- if $tls.certKey }}
+- { name: PI_DURABLE_DATABASE_TLS_CERT_FILE, value: /etc/pi-database-tls/tls.crt }
+- { name: PI_DURABLE_DATABASE_TLS_KEY_FILE, value: /etc/pi-database-tls/tls.key }
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "pi-durable.databaseTlsMount" -}}
+- { name: database-tls, mountPath: /etc/pi-database-tls, readOnly: true }
+{{- end }}
+
+{{- define "pi-durable.databaseTlsVolume" -}}
+- name: database-tls
+  secret:
+    secretName: {{ .Values.database.tls.existingSecret }}
+    defaultMode: 288 # 0440, in decimal so no YAML parser reads it as 440
+    items:
+      {{- if .Values.database.tls.caKey }}
+      - { key: {{ .Values.database.tls.caKey }}, path: ca.crt }
+      {{- end }}
+      {{- if .Values.database.tls.certKey }}
+      - { key: {{ .Values.database.tls.certKey }}, path: tls.crt }
+      - { key: {{ .Values.database.tls.keyKey }}, path: tls.key }
+      {{- end }}
+{{- end }}

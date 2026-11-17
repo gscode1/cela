@@ -59,6 +59,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ $root.Values.database.external.existingSecret }}, key: {{ $root.Values.database.external.uriKey }} } }
+            {{- include "pi-durable.databaseTlsEnv" $root | nindent 12 }}
             # Master key of the per-sandbox sandboxd tokens: HMAC(master, claim). Never reaches a bridge or a sandbox.
             - name: PI_SANDBOX_MASTER_KEY
               valueFrom: { secretKeyRef: { name: {{ $root.Values.sandbox.masterSecret }}, key: master } }
@@ -113,11 +114,17 @@ spec:
             {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
             - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
             {{- end }}
+            {{- if include "pi-durable.databaseTlsEnabled" $root }}
+            {{- include "pi-durable.databaseTlsMount" $root | nindent 12 }}
+            {{- end }}
             {{- if $root.Values.github.app.existingSecret }}
             - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
             {{- end }}
-      {{- if or (and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap) $root.Values.github.app.existingSecret }}
+      {{- if or (and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) }}
       volumes:
+        {{- if include "pi-durable.databaseTlsEnabled" $root }}
+        {{- include "pi-durable.databaseTlsVolume" $root | nindent 8 }}
+        {{- end }}
         {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
         # Optional so the orchestrator starts before the CA is fetched.
         - name: onecli-ca
