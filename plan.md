@@ -69,17 +69,17 @@ Findings that change this plan:
 
 1. Port the adapter to current Pi Durable: `Storage.commit(batches, receive, context)`, tightened `mintId`, watch changes.
 2. Run the upstream storage conformance suite on PostgreSQL 17 via CloudNativePG.
-3. Open a PR upstream to the adapter repo.
+3. Open a PR upstream to the adapter repo (done: https://github.com/j-koester/pi-durable-postgres/pull/20, from the fork https://github.com/gscode1/pi-durable-postgres).
 
 - Exit: conformance green on the pinned Pi Durable version.
 - Constraint: connect to the `-rw` service or a session-mode pooler only.
 
-**Phase 2 result (2026-11-15): port done, upstream PR pending.**
-- The port is consumed as the packed adapter under `vendor/` (version `0.2.0`). It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
+**Phase 2 result (2026-11-15): port done, upstream PR open (j-koester/pi-durable-postgres#20, awaiting review).**
+- The port is consumed as the packed adapter under `vendor/` (version `0.2.0`), traced to the fork tag and checked by sha256 in `vendor/README.md`. It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
 - The upstream storage conformance suite passes 32/32 on PostgreSQL 17, plus 32 adapter tests: lock, fail-closed on `pg_terminate_backend`, batched refusals, and the v2 migration. The contract diff is in that repo's `docs/port-1.5.md`.
 - Schema migration v2 adds the `sleeping` status, and older adapter builds cannot open a migrated database.
 - Watch/changes needs no storage work: conversation views and `observeCommits` live in Session/Harness.
-- Still open: testing on real CNPG and a session pooler (Phase 3), TCP keepalive and statement timeouts against silent drops, and the GitHub fork and PR once gh works.
+- Still open: testing on real CNPG and a session pooler (Phase 3), TCP keepalive and statement timeouts against silent drops, and the upstream PR review.
 - Chord 1.5.2 ships type errors under `exactOptionalPropertyTypes`. Report this upstream.
 
 ### Phase 3: Integration and failure tests (2–3 days)
@@ -278,7 +278,7 @@ About 2–3 weeks part-time to a working PoC. This is an estimate, not a measure
 ## 9. Open questions
 
 - Is `commands.start()` stdio binary-clean and unbuffered enough for pi-env's framed protocol? (Answered yes, Phase 1.)
-- Does the adapter maintainer want the 1.5 port, or is a fork needed? (Open: the port is consumed as the packed tarball `vendor/netzlabor-pi-durable-postgres-0.2.0.tgz`; the upstream PR is pending.)
+- Does the adapter maintainer want the 1.5 port, or is a fork needed? (Open: the port is published as the fork https://github.com/gscode1/pi-durable-postgres and proposed upstream in https://github.com/j-koester/pi-durable-postgres/pull/20; it is consumed as the packed tarball `vendor/netzlabor-pi-durable-postgres-0.2.0.tgz` until a maintainer answers.)
 - Which Pi Durable version to pin: 1.5.x now, or wait for the churn to slow? (Pinned 1.5.2.)
 - Is `in-cluster-service` DNS staleness after Pod recreation a problem in practice? (Not seen, Phase 1 and 3.)
 
@@ -288,7 +288,7 @@ Split by where the code ends up, not by phase.
 
 | Repo | Contents | When |
 |---|---|---|
-| Fork of `pi-durable-postgres` | Port to current Pi Durable; goes back as a PR | Phase 2 |
+| Fork of `pi-durable-postgres` (`gscode1/pi-durable-postgres`) | Port to current Pi Durable; goes back as a PR (upstream PR #20 open) | Phase 2 |
 | Main repo `pi-durable-k8s` (own) | Orchestrator, pi-env bridge, session API, sandbox image, manifests, tests | Phase 1 onward |
 | Fork of `agent-sandbox` | Example or sandboxd change | Phase 5, only when contributing |
 
