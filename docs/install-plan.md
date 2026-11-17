@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -154,7 +154,8 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
   stay KNOWN-FAIL and the suite still passes.
 - Sandboxes have open public internet egress (decided 2026-11-15). OneCLI's host rules do not limit it. Gateway-only
   egress (#47) is a separate policy profile.
-- kind: kindnet enforces plain NetworkPolicy since kind v0.24.0 (kube-network-policies; checked in the release notes).
+- kind: kindnet enforces plain NetworkPolicy since kind v0.24.0 (kube-network-policies; checked in the release notes), except for
+  traffic to hostNetwork Pods such as the API server (measured, issue #131; see slice 8).
   It has no FQDN rules and no kube-apiserver entity, so it runs `networkPolicy.provider: standard`.
 
 ## 7. kind all-in-one (`hack/kind-up.sh`)
@@ -233,6 +234,20 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - kind with kindnet, runc, `standard` policy, bundled Postgres and agent-sandbox, OneCLI disabled, scripted model.
    - Done when: `hack/kind-up.sh` passes on an arm64 Mac and in amd64 CI, including the smoke steps of section 7, in
      under 15 minutes in CI.
+   - Status: implemented (issue #131): `hack/kind-up.sh`, `hack/kind-down.sh`, `hack/kind-config.yaml` (one node, kindnet,
+     pinned node image), `charts/pi-durable/values-kind.yaml`, `hack/kind-smoke.sh` and `.github/workflows/kind.yml`.
+     Choices: the CI job builds the three images for linux/amd64 itself and `kind load`s them (`--build`) instead of waiting
+     for `images.yml`: no ordering between workflows, it works for fork PRs, and it tests exactly the commit. A local run
+     pulls the published images of HEAD (`IMAGE_TAG`, `ORCH_IMAGE`, ...) or builds with `--build`. The smoke test covers
+     the status read, a session, a message, one tool call that writes a workspace marker, a replaced sandbox Pod that
+     keeps the marker, and session deletion with claim and PVC cleanup; orchestrator restart is not covered.
+     **Measured on kind v0.33 (kindnet): the probe reports `not-enforced`, not `enforced`.** kindnet drops a sandbox's traffic
+     to Postgres and the orchestrator but lets it reach hostNetwork Pods on any node (the API server at 10.96.0.1:443, the
+     kubelet, etcd), although the policy excepts the private ranges. The probe's `kube-api` target is therefore `reachable`.
+     A second node does not change that. So "enforced on kindnet" in the slice 9 text does not hold for the API server;
+     the smoke test fails on any other reachable target and warns about `kube-api`, and `NETPOL_ENFORCED=1` stays for
+     Cilium (the nightly lane). Whether the probe should treat that target as not applicable on a CNI that does not
+     filter hostNetwork Pods is an open point for the probe (slice 9).
 9. **Isolation probe.**
    - The orchestrator runs the probe at start and on `POST /admin/status/probe`, and writes `enforced | not-enforced |
      inconclusive` to its status row. NOTES.txt, `install.sh` and `kind-up.sh` print it.
@@ -241,8 +256,8 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - Status: implemented (issue #126). The design choices that section 6 left open are in
      [network policy](network-policy.md#isolation-probe): a plain Pod with the sandbox labels instead of a SandboxClaim,
      the orchestrator itself as the positive control for denied targets, shard 0 as the only runner, and a request
-     column that ingest sets. Not yet checked live: kind (kindnet), Cilium, and the policies-removed case. `kind-up.sh`
-     (slice 8) does not exist yet and will only read `/admin/status`.
+     column that ingest sets. Checked live on kind (kindnet, issue #131): `not-enforced` because of the `kube-api` target (see slice 8). Checked live on Cilium (`enforced`) and with the namespace's policies removed (`not-enforced`), 2026-11-17. `kind-up.sh`
+     (slice 8) only reads `/admin/status`.
 10. **Bundled OneCLI.**
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
       Prisma migrations on a shared Postgres 17 without superuser; OneCLI Jobs under `restricted`.

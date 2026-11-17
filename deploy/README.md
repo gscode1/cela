@@ -3,7 +3,8 @@
 > The supported install is now the Helm chart [`charts/pi-durable`](../charts/pi-durable/README.md) with
 > [`hack/install.sh`](../hack/install.sh) (install slice 4); `tests/e2e/run.sh` installs it too. The kustomize base in
 > this directory and its scripts still work for the existing long-lived stack and are removed once the chart replaces
-> them (slice 11). The image build instructions below apply to both.
+> them (slice 11). The image build instructions below apply to both. To try the chart without a cluster,
+> `hack/kind-up.sh` installs it on kind ([Quick start](../README.md#quick-start-on-kind)).
 
 The base uses namespace `pi-durable-poc`, the current kubectl context, and the cluster's default StorageClass (storage class fields are omitted, not set to `""`). Use a dedicated test cluster, not production. PVCs need dynamic provisioning and ReadWriteOnce support; choose a `Delete` reclaim policy for disposable e2e volumes. Retained volumes need manual cleanup.
 

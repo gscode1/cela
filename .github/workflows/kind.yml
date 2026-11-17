@@ -1,0 +1,63 @@
+# Installs pi-durable on a kind cluster (kindnet, runc, bundled Postgres, scripted model; docs/install-plan.md section 8)
+# through hack/kind-up.sh and runs hack/kind-smoke.sh. The images are built IN this job for linux/amd64 from the commit under
+# test and loaded into the node (--build), not pulled from ghcr.io: the job does not wait for the images workflow, works for
+# fork pull requests (no registry write) and tests exactly this commit. The multi-arch publish stays in images.yml.
+name: kind
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kind-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned kind release binary, verified by sha256 (the release's own kind-linux-amd64.sha256sum). Upgrade on purpose, with
+  # the node image in hack/kind-config.yaml.
+  KIND_VERSION: v0.33.0
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+
+jobs:
+  kind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # images/build.sh tags with the short sha of HEAD; on a pull request that must be the branch head, not the merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Install kind
+        run: |
+          curl -fsSL --retry 3 -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  /tmp/kind" | sha256sum --check
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+      - name: Create the cluster and install (builds the images)
+        run: hack/kind-up.sh --build
+      - name: Smoke test
+        run: hack/kind-smoke.sh
+      - name: Dump the cluster state
+        if: failure()
+        run: |
+          ctx=kind-pi-durable
+          kubectl --context "$ctx" get nodes,pods,pvc,sandboxclaims,sandboxes -A -o wide || true
+          kubectl --context "$ctx" -n pi-durable describe pods || true
+          for pod in $(kubectl --context "$ctx" -n pi-durable get pods -o name); do
+            echo "::group::logs $pod"
+            kubectl --context "$ctx" -n pi-durable logs "$pod" --all-containers --tail=300 || true
+            echo "::endgroup::"
+          done
+          kubectl --context "$ctx" -n agent-sandbox-system logs deploy/agent-sandbox-controller --tail=200 || true
+          kubectl --context "$ctx" -n pi-durable get events --sort-by=.lastTimestamp || true

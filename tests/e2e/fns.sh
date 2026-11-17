@@ -146,7 +146,7 @@ spec:
       env:
         - name: DATABASE_URL
           valueFrom:
-            secretKeyRef: {name: "${E2E_DB_SECRET:-pi-pg-app}", key: "${E2E_DB_URI_KEY:-uri}"}
+            secretKeyRef: {name: "${E2E_DB_SECRET:-pi-db-uri}", key: "${E2E_DB_URI_KEY:-uri}"}
       securityContext:
         allowPrivilegeEscalation: false
         capabilities: {drop: [ALL]}

@@ -2,7 +2,7 @@
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh (ServiceAccount kubeconfig, no context).
 # The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and image deployment are done by
 # run.sh on the Mac before the Job starts; this script only waits for them and runs the tests.
-# Phase 4 acceptance tests of the session API on the real cluster: ingest + orchestrator + CNPG + sandboxes,
+# Phase 4 acceptance tests of the session API on the real cluster: ingest + orchestrator + Postgres + sandboxes,
 # scripted fake model, no LLM. All API calls run inside an ingest pod (tests/e2e/client.mjs), so API tokens never
 # leave the cluster and nothing is exposed outside it.
 #
@@ -20,6 +20,8 @@
 #   recycle-on-restart   the same after the orchestrator is killed mid-command
 #   idle-suspend         an idle sandbox is Suspended (Pod gone, PVC kept) and the next message resumes it, file intact
 #   orphan-sweep         orphaned labelled claims and their PVCs are removed; unlabelled claims and live sessions stay
+#   postgres-restart     deleting the Postgres Pod (pi-postgres-0) keeps the data: a row and the session rows survive; the
+#                        orchestrator takes the schema again
 #
 # Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Secrets stay in the
 # cluster: nothing here reads or prints them. Throwaway sessions, claims and PVCs are deleted on exit.
@@ -336,6 +338,30 @@ t_dedup() {
   assert_jq "the same sourceEventId on another session is refused (409)" \
     "$(post alice "$(new_session alice)" message "x" "same-id-$id")" '.status==409'
   note "EVIDENCE dedup: two POSTs -> eventId $(jq -r '.body.eventId' <<<"$r1") twice, inbox rows=1, user messages=1, answers=1"
+}
+
+pg_pod_uid() { k get pod pi-postgres-0 -o jsonpath='{.metadata.uid}'; }
+pg_pod_replaced() { [[ -n $(pg_pod_uid) && $(pg_pod_uid) != "$1" ]]; }
+pg_pod_ready() { [[ $(k get pod pi-postgres-0 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == True ]]; }
+
+# The bundled Postgres (charts/pi-postgres) keeps its data on a PVC: a Pod that is deleted comes back on the same volume.
+t_postgres_restart() {
+  local uid0 marker sessions0
+  marker=restart-$(now)
+  pg -c "create table if not exists public.e2e_pg_restart (marker text primary key)" >/dev/null
+  pg -c "insert into public.e2e_pg_restart values ('$marker')" >/dev/null
+  sessions0=$(pg -c "select count(*) from inbox.sessions")
+  uid0=$(pg_pod_uid)
+  note "deleting Postgres pod pi-postgres-0 ($uid0) with its marker row and $sessions0 session rows written"
+  k delete pod pi-postgres-0 --wait=false >/dev/null
+  wait_for "a new pi-postgres-0 pod exists" 120 pg_pod_replaced "$uid0"
+  wait_for "pi-postgres-0 is Ready again" 300 pg_pod_ready
+  assert_eq "the marker row survived the restart" "$marker" "$(pg -c "select marker from public.e2e_pg_restart where marker='$marker'")"
+  assert_eq "the session rows survived the restart" "$sessions0" "$(pg -c "select count(*) from inbox.sessions")"
+  pg -c "drop table public.e2e_pg_restart" >/dev/null
+  # The ownership lock died with the connection, so the orchestrator fails closed and takes the schema again.
+  wait_orch
+  note "EVIDENCE postgres-restart: pod $uid0 deleted and replaced, marker row and $sessions0 session rows kept, orchestrator owns the schema again"
 }
 
 t_orchestrator_down() {
@@ -672,7 +698,7 @@ t_orphan_sweep() {
 
 # ---------------------------------------------------------------- setup
 if [[ ${SKIP_SETUP:-0} != 1 ]]; then
-log "setup: wait for CNPG, the orchestrator and ingest (overlay and code were pushed by run.sh)"
+log "setup: wait for the database, the orchestrator and ingest (overlay and code were pushed by run.sh)"
 [[ -n $(k get secret sandboxd-auth -o jsonpath='{.data.master}' 2>/dev/null) ]] || {
   echo "secret sandboxd-auth has no master key: run deploy/gen-secret.sh" >&2
   exit 1
@@ -711,6 +737,7 @@ e2e_serial orchestrator-down t_orchestrator_down
 e2e_serial crash-before-mark t_crash_before_mark
 e2e_serial reconnect t_reconnect
 e2e_serial recycle-on-restart t_recycle_on_restart
+e2e_serial postgres-restart t_postgres_restart
 
 log "RESULT"
 printf '%s\n' "${summary[@]}"
