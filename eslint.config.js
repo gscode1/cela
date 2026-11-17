@@ -21,4 +21,9 @@ export default tseslint.config(
     files: ["**/*.js", "**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
+  {
+    // Node scripts that are not TypeScript: the browser suite's local server.
+    files: ["packages/admin-ui/e2e/*.mjs"],
+    languageOptions: { globals: { process: "readonly", URL: "readonly" } },
+  },
 );
