@@ -233,7 +233,7 @@ while read -r kind shard configured _ network; do
   fi
   if [[ ${network#networkPolicy=} != enforced ]]; then
     case ${network#networkPolicy=} in
-    not-enforced) echo "WARNING: network policy is NOT ENFORCED (isolation probe): a sandbox can reach cluster services. The CNI ignores NetworkPolicy; nothing is blocked" >&2 ;;
+    not-enforced) echo "WARNING: network policy is NOT ENFORCED (isolation probe): a sandbox can reach cluster services. The CNI does not enforce NetworkPolicy, or the policies are missing; nothing is blocked" >&2 ;;
     *) echo "WARNING: shard $shard network policy is ${network#networkPolicy=}: isolation is not verified. NetworkPolicies work only on a CNI that enforces them (nothing is blocked)" >&2 ;;
     esac
     warned=1

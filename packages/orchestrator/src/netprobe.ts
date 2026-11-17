@@ -142,7 +142,7 @@ export class NetworkProbeLoop {
           ...fields,
           message:
             result.state === "not-enforced"
-              ? "NETWORK ISOLATION IS NOT ENFORCED: a sandbox can reach cluster services. The CNI ignores NetworkPolicy."
+              ? "NETWORK ISOLATION IS NOT ENFORCED: a sandbox can reach cluster services. The CNI does not enforce NetworkPolicy, or the policies are missing."
               : "Network isolation could not be verified. Nothing is blocked; sessions run.",
         });
       }
