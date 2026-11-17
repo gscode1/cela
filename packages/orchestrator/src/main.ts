@@ -124,12 +124,17 @@ async function main(): Promise<void> {
   });
   const skills = new SkillLibrary(pool, config.shard);
   const hooks: SandboxHooks = {
+    // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {
-      await observeShardRuntime(
-        pool,
-        config.shard,
-        await observedRuntime(config.namespace, claimName),
-      );
+      try {
+        await observeShardRuntime(
+          pool,
+          config.shard,
+          await observedRuntime(config.namespace, claimName),
+        );
+      } catch (error) {
+        log("runtime-observe-failed", { claim: claimName, error: errorMessage(error) });
+      }
     },
     shellEnv: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);

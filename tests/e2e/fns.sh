@@ -141,7 +141,7 @@ spec:
     seccompProfile: {type: RuntimeDefault}
   containers:
     - name: psql
-      image: postgres:17-bookworm
+      image: postgres:17-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
       command: [sleep, "infinity"]
       env:
         - name: DATABASE_URL
