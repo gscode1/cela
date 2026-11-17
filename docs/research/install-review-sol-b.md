@@ -290,7 +290,7 @@ Bootstrap credentials need stable lifecycle rules. Helm upgrade must not acciden
 
 ### arm64 Macs and amd64 CI
 
-There is an immediate concrete blocker: **`images/sandbox/build.sh` builds only `linux/arm64`, and its Dockerfile consumes an arm64 `pi-env` binary with an arm64-specific checksum.**
+There is an immediate concrete blocker: **the former arm64-only sandbox build script builds only `linux/arm64`, and its Dockerfile consumes an arm64 `pi-env` binary with an arm64-specific checksum.**
 
 Change it to:
 

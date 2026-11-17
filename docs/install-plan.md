@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Nothing here is built yet. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan (image delivery implemented in slice 2; Helm and the other slices remain separate), 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). The image delivery slice is implemented; the remaining work is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -18,11 +18,9 @@ must run in a fixed order:
 | External Secrets Operator + `cluster-secret-store` | by hand | `deploy/*externalsecret*.yaml` fail without it |
 | OneCLI (own namespace, own Postgres) | by hand or GitOps | not in this repo; agent token, admin key, CA and host rules are manual |
 
-The scripts are `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `push-code.sh` and
-`push-ingest.sh`, then `kubectl apply -k deploy`. Code ships by copying a bundle onto a PVC or into a ConfigMap and
-running it on `node:22-bookworm-slim`, so there is no image to install. Many names are fixed: namespace
+Before slice 2, secret/CA setup and code-upload scripts preceded `kubectl apply -k deploy`. Slice 2 replaces runtime code upload with multi-arch application images. Many names are fixed: namespace
 `pi-durable-poc`, `pi-pg-rw`/`pi-pg-app`, `onecli.onecli:10255/10256`, `cnpg.io/cluster=pi-pg` selectors,
-admin `alice`. The sandbox image is built for linux/arm64 only (`images/sandbox/build.sh`). (#101 already removed the
+admin `alice`. The sandbox image was arm64-only before slice 2; `images/build.sh` now builds both architectures. (#101 already removed the
 storage class from the base and made the OneCLI CA fetch configurable.)
 
 ## 2. Goal
@@ -41,7 +39,7 @@ storage class from the base and made the OneCLI CA fetch configurable.)
 | # | Decision | Choice | Why |
 |---|---|---|---|
 | D1 | Packaging | Chart **`pi-durable`** holds the app only: orchestrator shards, ingest, sandbox template/pool, RBAC, policies. The other parts are **separate releases**: `charts/pi-postgres` (bundled Postgres), the upstream OneCLI chart, and the agent-sandbox release manifest. One install command (`hack/install.sh`, also used by the kind script) installs them in order. Every part has the same modes: `bundled \| external`, and OneCLI also `disabled` (scripted model only) | One command does not need one release. Uninstalling the app must never uninstall a credential gateway, a database or cluster-wide CRDs |
-| D2 | Images | Digest-pinned multi-arch images for orchestrator, ingest, sandbox and the e2e driver. Retire `push-code.sh`, `push-ingest.sh`, the code PVC and the `ingest-code` ConfigMap; code push stays a dev shortcut at most | A chart cannot push code onto a PVC. Without the shared RWO code volume, shards also no longer need to share a node |
+| D2 | Images | Digest-pinned multi-arch images for orchestrator, ingest, sandbox and the e2e driver. Runtime code upload, its PVC and its ConfigMap are removed in slice 2 | A chart cannot push code onto a PVC. Without the shared RWO code volume, shards also no longer need to share a node |
 | D3 | Database | Drop CNPG from the package. Default: a bundled single Postgres StatefulSet (evaluation, no HA, no backup). Production: `database.external` (any Postgres, CNPG included) through a Secret with the URI. Direct or session-mode connections only, never transaction pooling | Our needs are small. The CNPG features we lose (failover, backups, certificates) were not configured in `deploy/postgres.yaml` anyway: one instance, no backups |
 | D4 | OneCLI | Use the **upstream OneCLI chart** (`oci://ghcr.io/onecli/charts/onecli`, v2.20.0, Apache-2.0) as a separate release, `runner.enabled=false`, one replica, no Redis. Its own Postgres is off (`database.enabled=false`); `database.external.existingSecret` points at a Secret with `DATABASE_URL` for a separate **database and role `onecli`** on our Postgres instance, not a schema in ours. The chart also requires `externalUrl` (https, or `allowInsecureExternalUrl=true` for port-forward trials) and `secrets.existingSecret` or `secrets.generate.enabled`. Its Services are `<release>-gateway:10255` and `<release>-api:10256`. `onecli.mode: external` points at an existing gateway; `disabled` runs the scripted model only | Upstream already packages it. Its hosted-agent runner duplicates our orchestrator. Redis is needed only for multi-replica (licensed) setups. A separate database keeps its Prisma migrations apart from ours |
 | D5 | agent-sandbox | `agentSandbox.mode: bundled \| external`. `bundled` applies the pinned v1.0.11 release manifest with extensions (`kubectl apply --server-side`; the version the vendored SDK targets). Upstream's `helm/` chart is not published. `external` checks first that `v1beta1` is served for Sandbox, SandboxClaim, SandboxTemplate and SandboxWarmPool. Never adopt, upgrade or delete an existing controller or its CRDs as a side effect | CRDs are cluster-wide. Deleting them deletes every Sandbox and, through claims, workspace PVCs |
@@ -116,8 +114,7 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 - **OneCLI CA.** OneCLI's chart creates its gateway CA in Secret `<release>-gateway-ca`, with key and certificate
   together. The bootstrap (which can read that Secret) copies only the public certificate to a ConfigMap for us (replaces `fetch-onecli-ca.sh`). The orchestrator reads the CA once at start, so a rotation needs a
   restart.
-- **Multi-arch sandbox.** `images/sandbox/build.sh` packages only `pi-env-linux-arm64` with one checksum. Select the
-  binary by `TARGETARCH` and keep a checksum per architecture.
+- **Multi-arch sandbox.** Implemented in slice 2: select the pi-env binary by `TARGETARCH`, with a verified checksum per architecture (see deploy/README.md).
 - **Policies rewritten, not just templated.** Replace the CNPG selectors and the CNPG operator rules
   (`networkpolicy-{ingest,orchestrator,postgres}.yaml`, `cilium/kube-apiserver.yaml`). Match the OneCLI chart's labels
   (it has separate web/api/gateway Deployments). Add OneCLI-to-database egress. Sandboxes may reach gateway :10255
@@ -200,10 +197,10 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - A backend-neutral e2e DB helper replaces `kubectl exec pi-pg-1 ... psql` in every suite.
    - Done when: unit tests cover the guard and the status route; `run.sh phase3` with `NETPOL_ENFORCED=1` fails on a
      namespace without policies and passes with them; every suite uses the DB helper.
-2. **Images.**
+2. **Images (implemented; architecture builds and cluster smoke still require reviewer verification).**
    - Dockerfiles for orchestrator, ingest and the e2e driver; the sandbox build selects `pi-env` by `TARGETARCH` with a
      checksum per architecture. Multi-arch (amd64, arm64) images published with digests.
-   - `deploy/` runs the images; `push-code.sh`, `push-ingest.sh`, the code PVC and `ingest-code` are removed.
+   - `deploy/` runs the images; runtime code-upload scripts, the code PVC and the bundle ConfigMap are removed.
    - Done when: both architectures build in CI; `run.sh smoke` passes from images only.
 3. **Config cleanup.**
    - Every name listed in section 5 comes from config: OneCLI API and gateway URLs, namespace and pod selector, warm

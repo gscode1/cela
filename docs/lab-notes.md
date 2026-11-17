@@ -1,5 +1,8 @@
 # Historical lab notes
 
+Historical delivery findings below use descriptive `retired-*` names for tooling removed by installation slice 2; they are not current deploy commands.
+
+
 These are dated observations from **one example arm64 test environment**, not deployment prerequisites or a runbook.
 Measured numbers and findings are retained for comparison; they are not capacity guarantees. Use the current
 [deploy guide](../deploy/README.md) and [e2e suites](e2e.md) on your own cluster.
@@ -112,7 +115,7 @@ important ones were spot-checked by hand.
 | API       | A client-chosen `sourceEventId` can block deletion                | high       | confirmed    | medium            |
 | API       | An event can be accepted while the session is being deleted       | medium     | confirmed    | low               |
 | API       | A delete that fails 5 times in a few seconds can never be retried | high       | confirmed    | **high**          |
-| deploy    | `push-code.sh` can leave the orchestrator scaled to 0             | high       | confirmed    | medium            |
+| deploy    | `retired-orchestrator-delivery` can leave the orchestrator scaled to 0             | high       | confirmed    | medium            |
 | deploy    | Secret scripts pass values on the kubectl command line            | high       | confirmed    | low               |
 | deploy    | A failed host-rules update leaves the OneCLI allowlist off        | high       | confirmed    | medium            |
 | deploy    | Test cleanup deletes rows before resources are gone               | medium     | confirmed    | low               |
@@ -142,7 +145,7 @@ that fails without it, then run on the lab cluster (phase 4: 15 e2e tests, phase
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [#21](https://github.com/gscode1/pi-durable-k8s/pull/21) | Deletes retry with backoff until done, and a repeated `DELETE` re-queues a failed one (the high one). The server's delete key can no longer be taken by a client id. Event admission is one conditional insert. No session-row update inside the batch transaction. A failed session's abort is retried. |
 | [#15](https://github.com/gscode1/pi-durable-k8s/pull/15) | Repo clones go through the tracked sandbox env. A failed pod recycle is retried before the next call, never skipped. A closed connection gives up its start-gate turn. SSE backpressure removes its listeners.                                                                                           |
-| [#17](https://github.com/gscode1/pi-durable-k8s/pull/17) | `push-code.sh` always scales back and swaps code only after a good extract. Secret scripts pass values through private files, not argv. Host-rules update creates allow rules before touching the block rule and restores it on failure. Test cleanup only drops rows of deleted sessions.               |
+| [#17](https://github.com/gscode1/pi-durable-k8s/pull/17) | `retired-orchestrator-delivery` always scales back and swaps code only after a good extract. Secret scripts pass values through private files, not argv. Host-rules update creates allow rules before touching the block rule and restores it on failure. Test cleanup only drops rows of deleted sessions.               |
 
 Checked live after #21: a message using the id `delete:<session>` followed by `DELETE` reached `deleted` in 3 s. A
 message and a delete sent back to back finished in 3 s with no statement timeout. An event posted after the delete got
@@ -287,7 +290,7 @@ Medium findings after verification:
 | 23      | A GitHub rate limit (403) permanently fails a session                                    | confirmed | `packages/orchestrator/src/github-app.ts:104`     | #33       |
 | 30      | A lost DELETE response can leave the OneCLI gateway without its block rule               | plausible | `deploy/onecli-host-rules.sh:84`                  | not fixed |
 | 32      | A bridge could read the launcher's master key through `/proc`                            | plausible | `packages/orchestrator/src/bridge-launcher.ts:72` | #34       |
-| 34      | Two concurrent code pushes interfere                                                     | confirmed | `deploy/push-code.sh:21`                          | #31       |
+| 34      | Two concurrent code pushes interfere                                                     | confirmed | `deploy/retired-orchestrator-delivery:21`                          | #31       |
 | 37      | A failed bridge start delays unrelated sandboxes                                         | confirmed | `packages/sandbox-env/src/index.ts:51`            | #34       |
 | 38      | Removing a provider from the allowlist breaks existing conversations                     | confirmed | `packages/orchestrator/src/providers.ts:44`       | #34       |
 

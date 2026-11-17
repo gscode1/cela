@@ -3,7 +3,7 @@
 ### 1. Orchestrator code deployment can leave the service stopped and its code incomplete
 - Severity: high
 - Confidence: high
-- Location: deploy/push-code.sh:23
+- Location: deploy/retired-orchestrator-delivery:23
 - What happens: The script scales the orchestrator to zero before loading code. If the loader fails to start, copying fails, or extraction fails, `set -e` exits without scaling the deployment back up. An extraction failure can also leave `/code/app` incomplete because the old bundle was deleted first.
 - Evidence: `k scale deployment "$d" --replicas=0`; later, `rm -rf /code/app ... && tar xzf ...`; scaling back occurs only at line 58.
 - Fix idea: Stage and validate the new bundle separately, then atomically replace the old bundle. Restore the previous replica counts on failure as well as success.

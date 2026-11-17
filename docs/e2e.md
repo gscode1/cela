@@ -37,8 +37,8 @@ for `mcp.deepwiki.com`.
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
 | `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
 
-Requires the [cluster prerequisites and settings](../README.md#deploy-on-your-cluster), Node/pnpm,
-`kubectl`, Python 3, curl, jq, OpenSSL and tar on the operator machine. The supplied policies require Cilium CRDs;
+Requires the [cluster prerequisites and settings](../README.md#deploy-on-your-cluster), Node 22.19+, Git,
+`kubectl`, Python 3, curl, jq and OpenSSL on the operator machine. The supplied policies require Cilium CRDs;
 with another enforcing CNI, supply equivalent API and DNS/FQDN policies. Local `local/` overlays are not used
 by the runner: adapt `deploy/` or `tests/e2e/deploy/` for network identities, secret stores and OneCLI endpoints.
 
