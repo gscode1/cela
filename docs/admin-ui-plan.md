@@ -11,10 +11,10 @@ authorization, and writes. The [Session API](session-api.md) is the contract.
 | Option | Workflow |
 | --- | --- |
 | A. Defaults and profiles | Manage global settings and publish profile versions. Browse MCP servers and available skill versions. |
-| B. Runtime configuration (proposed) | Also register, edit, enable, and disable MCP servers. Include read-only shard status. Choose this scope if operators need to register and attach MCP endpoints from the console. |
+| B. Runtime configuration (proposed) | Also manage the catalogs: register, edit, enable, disable, and delete MCP servers, and publish skill versions. Attach both to profiles. Include read-only shard status. |
 | C. Session operations | Add cross-owner session search, diagnostics, and actions such as cancel or delete. This requires a separate API and permission design because sessions are owner-scoped today. |
 
-Use B as the planning baseline, with skill publishing through the existing API. Deployment and credential tooling
+Use B as the baseline. Deployment and credential tooling
 manages admin access, model credentials, OneCLI egress rules, images, shard scaling, and sandbox resources. MCP
 registration targets endpoints covered by existing OneCLI host rules that require no server credentials under the
 [current MCP integration](decisions/0007-native-remote-mcp.md).
@@ -28,14 +28,31 @@ its own console and admin list, and scope C becomes a tenant-admin scope within 
 | --- | --- |
 | Global settings | `defaultModel`, `allowlist`, `reasoning` and `maxReasoning`, `defaultProfile`, and `turnBudget`. Show previous and new values, actor, and time from recent history. |
 | Session profiles | Create a profile, publish a version, and enable or disable it for new sessions. Edit instructions, `tools` and `modelTools`, model and reasoning overrides, `turnBudget`, MCP references, and exact skill pins. Toggle loading instructions and skills from the repository checkout. Show invalid profiles with their validation errors, diff stored definitions, and show the last actor and timestamp. Enable and disable update this metadata without a new version. |
-| MCP servers | Register an HTTPS endpoint, edit its `url`, `timeoutMs` and `maxOutputBytes`, and enable or disable it. Transport is fixed to Streamable HTTP. `onecliSecret` is shown read-only until #42. Show recent changes and current profile references. Reachability is `unknown`. |
-| Skills | Browse available versions and file manifests and fetch a version's file contents on demand. Pin exact versions from the profile editor. Mark versions with model invocation disabled, which can be pinned but are omitted from the model's skill catalog. |
+| MCP servers | Register an HTTPS endpoint, edit its `url`, `timeoutMs` and `maxOutputBytes`, enable or disable it, and delete it. Transport is fixed to Streamable HTTP. `onecliSecret` is shown read-only until #42. Show recent changes and current profile references. Delete names the profiles that still reference the server and suggests disabling instead. Reachability is `unknown`. After a save, offer to add the server to a profile. |
+| Skills | Publish a new version (see [Skill upload](#skill-upload)). Browse versions and file manifests and fetch a version's file contents on demand. Pin exact versions from the profile editor, and show which profiles pin each version. Mark versions with model invocation disabled, which can be pinned but are omitted from the model's skill catalog. After a publish, offer to pin the new version in a profile. |
 | Shard status | Show the last reports from shards: configured runtime, observed sandbox runtime, network policy state, and publish time. An empty list means no reports yet. Distinguish an unobserved runtime (`null`) from the node default (empty string), and show `unknown` policy explicitly. Reports persist through downtime. Offer to run the isolation probe again (`POST /admin/status/probe`). |
 
 Settings and MCP history show at most the newest 500 entries returned by their APIs. Profile diffs compare stored
-definitions. An effective preview of an older definition uses current settings. V1 defers MCP deletion
-(`DELETE /admin/mcp-servers/{name}` stays API-only), browser skill publishing, connectivity probes, credential
-management, and cross-owner session operations.
+definitions. An effective preview of an older definition uses current settings. V1 defers connectivity probes,
+credential management, and cross-owner session operations.
+
+Attaching a skill or an MCP server to a profile always publishes a new profile version, so it applies to new sessions
+only. Skill versions are immutable: a new version reaches a profile only when someone pins it.
+
+### Skill upload
+
+- **Input.** A folder (directory picker) or a `.zip`, unpacked in the browser. The console sends the files to
+  `POST /admin/skills/{name}/versions`: text as `content`, everything else as `contentBase64`, with the executable bit
+  taken from the zip or set in the review step (a folder picker cannot read it). The API enforces the limits:
+  `SKILL.md` with a `description` in its frontmatter, at most 128 files and 5 MiB, regular files only.
+- **Review before publishing.** Show the parsed name and description, and per file the path, size, sha256 and
+  executable flag. Text files are readable inline, binaries by digest only. Show the diff against the current version.
+  Publishing deploys code that runs in every session that pins it, so the step names that and asks to confirm.
+- **Scripts and binaries.** Files marked executable are `chmod 755` in the sandbox, and the model runs them with the
+  bash tool. The editor warns when a profile pins such a skill without `bash` in its tool lists. Runtimes such as
+  Python come from the sandbox image, not from skills. Binaries must match the nodes' architecture; the console only
+  states that.
+- **Identical content** returns `200` with no new version. The console says so instead of reporting a publish.
 
 ### Review before saving
 
@@ -70,7 +87,8 @@ For v1:
   clients may omit it.
 
 Out of scope: contract versioning between console and ingest, pausing admin access during rollouts, and revisions
-that survive delete-and-recreate. The console ships in the ingest image, so a page and its API come from the same
+that survive delete-and-recreate (a stale MCP draft can overwrite a server deleted and created again under the same
+name). The console ships in the ingest image, so a page and its API come from the same
 build, and a reload after an upgrade is enough.
 
 ## Stack and delivery
@@ -124,16 +142,51 @@ replace `PI_API_ADMINS`.
    right actor in history and diffs. Round trips for cleared overrides, explicit `off`, omitted and empty tool lists,
    and skills that need `read`. The admission preview matches real session creation, accepted and rejected. A stale
    draft gets `409` and keeps its contents. Concurrent default selection and disable leave an enabled default.
-3. **Catalogs and status.** Browse and pin skills. A profile that references a deleted MCP server shows it and offers
-   to remove it. For B, register and attach an MCP endpoint and re-confirm `readOnly` on a URL change. Truthful states
-   for disabled MCP servers, unknown reachability and policy, and empty shard reports. For A, catalogs are read-only
-   and the status screen is omitted.
+3. **Catalogs and status.**
+   - Skills: upload a folder and a zip with a script and a small binary, review, publish, pin to a profile; a new
+     session finds the files under `/workspace/.skills/` with the executable bit set and runs the script. Identical
+     content creates no version. A bad frontmatter or an oversized bundle shows the API error and publishes nothing.
+   - MCP: register, attach to a profile, re-confirm `readOnly` on a URL change, disable, and delete with the
+     referencing profiles named. A profile that references a deleted server shows it and offers to remove it.
+   - Truthful states for disabled MCP servers, unknown reachability and policy, and empty shard reports. For A,
+     catalogs are read-only and the status screen is omitted.
 4. **Release check.** `pnpm check` and the browser suite. An upgrade and a rollback on a populated disposable database
    keep ordinary session clients working.
 
 ## Decisions to confirm
 
-- **MCP registration.** Choose B if operators need to register pre-provisioned endpoints in the console. Choose A if
-  they only need to select from an existing catalog.
+- **Scope.** B, with skill upload and MCP management in the console (owner's choice, 2026-11-17).
 - **Access.** Start with named tokens on a private route, or require SSO for a shared rollout.
-- **Skills.** Keep publication in the API workflow unless operators need to upload new bundles from the console.
+- **Catalog repository.** Whether an install can take its skills and MCP servers from a Git repository (below).
+
+## Option: a catalog repository
+
+An install could name a Git repository as the source of its skills and MCP servers:
+
+```text
+skills/<name>/SKILL.md, scripts, binaries
+mcp-servers.yaml        # name, url, readOnly, timeoutMs, maxOutputBytes, enabled
+```
+
+Git gives versioning, review by pull request, history, and rollback for free. The database still keeps the published
+copies:
+- A session must get the same bytes on every reopen (after a suspend, a Pod recycle or a restart), for its whole life.
+  A commit can disappear after a force-push, and GitHub can be down or rate-limited when a sandbox opens.
+- Profiles pin by digest, and the orchestrator already writes skills from the database without network access.
+
+So the repository is the source and the database the published store. A sync step reads the repository at a commit,
+publishes each changed skill through `POST /admin/skills/{name}/versions` (an unchanged skill creates no version), and
+applies `mcp-servers.yaml` through `PUT /admin/mcp-servers/{name}`. Recording the commit SHA on a skill version or
+MCP server needs a new optional API field.
+
+| Sync runs in | Pros | Cons |
+| --- | --- | --- |
+| The repository's CI, with an admin token | No new code in the stack; works with any Git host | The admin token lives in CI |
+| An ingest job or button, using the GitHub App | One place to configure; the console shows the synced commit | New code and egress to GitHub from ingest |
+
+With a catalog repository, the console shows skills and MCP servers read-only with their commit, and still pins them
+in profiles. One writer per catalog avoids the console and the repository overwriting each other. This is separate
+from repo skills ([ADR 0014](decisions/0014-repo-skills.md)), which come from the session's own repository.
+
+Recommendation: ship console management first. Add the catalog repository later as a per-install switch, starting
+with CI sync, which needs no change to ingest.
