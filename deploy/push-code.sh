@@ -60,7 +60,15 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/app.tgz" -C "$work/app" .
 # An expired lock (crashed run, failed delete) is taken over with a resourceVersion precondition.
 push_lock_acquire || exit 1
 locked=1
-k apply -f "$here/orchestrator-code-pvc.yaml" >/dev/null
+# Create the code PVC only when it is missing, never re-apply it: an overlay may have set its storage class, and an
+# apply of the base (which names none) would try to remove that immutable field and fail.
+if ! err=$(k get pvc orchestrator-code -o name 2>&1 >/dev/null); then
+  if [[ $err != *NotFound* ]]; then
+    echo "could not look up PVC orchestrator-code: $err" >&2
+    exit 1
+  fi
+  k create -f "$here/orchestrator-code-pvc.yaml" >/dev/null
+fi
 for d in "${deployments[@]}"; do
   if k get deployment "$d" >/dev/null 2>&1; then
     scaled+=("$d")
