@@ -36,7 +36,7 @@ for `mcp.deepwiki.com`.
 
 Requires the [cluster prerequisites and settings](../README.md#deploy-on-your-cluster), Node/pnpm,
 `kubectl`, Python 3, curl, jq, OpenSSL and tar on the operator machine. The supplied policies require Cilium CRDs;
-with another enforcing CNI, supply equivalent API and DNS/FQDN policies. Local `deploy/local` overlays are not used
+with another enforcing CNI, supply equivalent API and DNS/FQDN policies. Local `local/` overlays are not used
 by the runner: adapt `deploy/` or `tests/e2e/deploy/` for network identities, secret stores and OneCLI endpoints.
 
 ## What a run does

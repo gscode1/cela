@@ -24,13 +24,13 @@ Adapt the base or use a local Kustomize overlay before applying:
 | Client ingress | `networkpolicy-ingest.yaml`: optional Envoy Gateway selectors. Replace with your controller or use port-forward. No HTTPRoute/hostname is required. |
 | Models | `model-config.yaml` seeds Postgres once; select providers/models you have configured in OneCLI. Later use the admin API. |
 
-For example, a local overlay at `deploy/local/` can choose storage and an image (do not commit your local settings):
+For example, a local overlay at `local/` in the repository root (outside `deploy/`: kustomize refuses an overlay inside its base) can choose storage and an image (do not commit your local settings):
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ..
+  - ../deploy
 patches:
   - target: { kind: Cluster, name: pi-pg }
     patch: |-
@@ -56,4 +56,4 @@ Build with `IMAGE_REPO=registry.example.com/team/pi-sandbox images/sandbox/build
 
 Apply the adapted Cilium policies first, then the stack. Generate `sandboxd-auth` and `api-auth` with `gen-secret.sh` and `gen-api-secret.sh`; provision the OneCLI Secrets and fetch its CA with `fetch-onecli-ca.sh` (`ONECLI_NAMESPACE=onecli`, `ONECLI_SERVICE=onecli`, `ONECLI_API_PORT=10256` by default). Run `push-code.sh` and `push-ingest.sh` to build and upload code. These scripts use `NAMESPACE` (default `pi-durable-poc`) and `KUBE_CONTEXT` (unset = current context); they require Node/pnpm locally. See [model credentials](../docs/model-credentials.md) and [network policy](../docs/network-policy.md) for setup and verification.
 
-E2e uses the same base, not `deploy/local`. `STORAGE_CLASS` overrides all four storage resources (including its driver PVC) and `SANDBOX_STORAGE_CLASS` the workspace class alone; `SANDBOX_IMAGE` overrides its sandbox image. Other base customizations must be made in `deploy/` or `tests/e2e/deploy/` before running. See [e2e](../docs/e2e.md).
+E2e uses the same base, not `local/`. `STORAGE_CLASS` overrides all four storage resources (including its driver PVC) and `SANDBOX_STORAGE_CLASS` the workspace class alone; `SANDBOX_IMAGE` overrides its sandbox image. Other base customizations must be made in `deploy/` or `tests/e2e/deploy/` before running. See [e2e](../docs/e2e.md).
