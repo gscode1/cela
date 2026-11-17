@@ -43,7 +43,7 @@ patches:
         path: /spec/template/spec/containers/0/env/-
         value: { name: PI_ORCH_TEST_FAULTS, value: "1" }
       # Short sweep and suspend settings, so the lifecycle tests of phase4 take minutes, not hours. Bridges are evicted
-      # after 30 s idle (each is a Node process inside the orchestrator's 1 Gi) and sandboxes are suspended after 120 s,
+      # after 30 s idle (each holds a relay process in the orchestrator Pod, ADR 0016) and sandboxes are suspended after 120 s,
       # an age the other tests never idle for.
       - op: add
         path: /spec/template/spec/containers/0/env/-

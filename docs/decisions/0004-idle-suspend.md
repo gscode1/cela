@@ -62,6 +62,12 @@ sandbox. The next tool call resumes it. No deadline, no deletion, no renewal.
   (`RepoAccess.beforeUse`) renews its token at the next call as it does after an eviction.
 - Not done: suspending a sandbox that is busy but silent for 30 minutes (a model thinking). Its next command resumes it.
 
+## Addendum: shard claim names (issue #84)
+
+"Only `pi-conv-<n>` Sandboxes" is per shard since [0017](0017-schema-sharding.md): `planSuspend` and the idle timer match
+the shard's own names (`pi-conv-<n>` on shard 0, `pi-s<k>-conv-<n>` on shard k, `conversationOfName`), so a shard never
+suspends another's sandbox.
+
 ## Addendum: cap on open bridges (issue #43)
 
 Idle eviction is a time rule, not a bound: sessions that all run tools within two minutes keep one bridge each, about

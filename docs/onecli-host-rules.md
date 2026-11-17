@@ -23,7 +23,7 @@ Rule shape (recheck doc): `{"name", "action": "allow|block", "targets": [{"kind"
 | 4 | allow | `api.openai.com` | OpenAI API |
 | 5 | allow | `openrouter.ai` | OpenRouter models |
 | 6 | allow | `github.com` | git clone and push over HTTPS (Phase 4c) |
-| 7 | allow | `api.github.com` | GitHub API, installation-token mint if it goes through the gateway |
+| 7 | allow | `api.github.com` | GitHub API for credentialed sandbox traffic. The orchestrator's installation-token mint does not use it: that call goes direct (`docs/network-policy.md`) |
 | 8 | allow | `codeload.github.com` | archive downloads |
 | 9 | allow | `objects.githubusercontent.com` | release and LFS objects |
 | 10 | allow | `registry.npmjs.org` | npm |

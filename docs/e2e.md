@@ -13,6 +13,10 @@ RUN_ID=ab12cd tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept n
 tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 hours (DRY_RUN=1 lists them)
 ```
 
+Suites: `smoke`, `phase1`, `phase3`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards`, `all` (phase1, phase3, phase4, phase4b).
+`phase4c`, `mcp` and `shards` are not part of `all`; `phase4c` needs `REPO_A` and `REPO_B`, `mcp` needs the internet and the OneCLI host rule
+for `mcp.deepwiki.com`.
+
 | Variable            | Meaning                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------- |
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
@@ -22,6 +26,10 @@ tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 h
 | `SKIP_SWEEP=1`      | do not run the sweeper at the start                                                                       |
 | `SWEEP_MAX_AGE_HOURS` | age limit of the sweeper (default 6)                                                                    |
 | `NS_DELETE_WAIT_SECONDS` | how long the end of a run waits for the namespace to be gone (default 300)                           |
+| `E2E_PARALLEL`      | independent tests of a suite that run side by side (default 4; 1 = one by one). Tests that restart or kill the orchestrator run alone afterwards (`tests/e2e/fns.sh`) |
+| `ONLY`              | `ONLY="a,b"` runs just those tests of the phase                                                           |
+| `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
+| `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
 
 ## What a run does
 
@@ -42,7 +50,7 @@ tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 h
 4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI).
 5. **Code.** `deploy/push-code.sh` and `deploy/push-ingest.sh` with `NAMESPACE=pi-e2e-<id>` (build on the Mac, copy to the
    code volume and ConfigMap of this namespace). `push-code.sh` scales every orchestrator Deployment (the ones labelled
-   `app.kubernetes.io/name=pi-orchestrator`) from 0 to 1, after the secrets exist. The `shards` suite first runs
+   `app.kubernetes.io/name=pi-orchestrator`) from 0 to 1, after the secrets exist; both push scripts hold a ConfigMap lock (`deploy/push-lock.sh`) so two pushes into one namespace cannot interleave. The `shards` suite first runs
    `deploy/add-shard.sh 1`, which adds the second shard (`pi-orchestrator-1`, schema `durable_s1`) and points ingest at both
    ([decision 0017](decisions/0017-schema-sharding.md), [scaling](scaling.md)); `run-shards.sh` is not part of `all`.
 6. **Driver.** Stages the driver scripts and loads them onto the namespace's `e2e-driver` volume, then creates one
@@ -97,18 +105,17 @@ holds no OneCLI management key (only the orchestrator pods do).
 | CNPG operator (`postgres-system`)             | shared                               | watches all namespaces (no `WATCH_NAMESPACE`); its ingress to the run's Postgres is in `networkpolicy-postgres.yaml` |
 | agent-sandbox controller, `gvisor` RuntimeClass | shared                             | cluster-wide, unchanged                                                                          |
 | ESO `ClusterSecretStore/cluster-secret-store` | cluster                              | unchanged, usable from every namespace                                                           |
-| OneCLI ingress policy `onecli/onecli-ingress` | `onecli` namespace, argo-c2 repo     | **needs the argo-c2 change below**                                                               |
+| OneCLI ingress policy `onecli/onecli-ingress` | `onecli` namespace, argo-c2 repo     | the argo-c2 change below (argo-c2#55, merged and live)                                           |
 | OneCLI host rules (`deploy/onecli-host-rules.sh`) | OneCLI, global                   | unchanged, global to all agents                                                                  |
 
-## The argo-c2 change (separate PR, not made here)
+## The argo-c2 change (argo-c2#55, merged and live)
 
-Without it a run namespace is a stranger to OneCLI: `onecli-ingress` admits only `k8s:io.kubernetes.pod.namespace:
-pi-durable-poc`. Suites that use no OneCLI (smoke, phase1, phase4, most of phase3) still pass; what fails is everything that calls the
+It is needed because without it a run namespace is a stranger to OneCLI: `onecli-ingress` admits only `k8s:io.kubernetes.pod.namespace:
+pi-durable-poc`. A stack without this rule (another cluster, or argo-c2 reverted) still passes the suites that use no OneCLI (smoke, phase1, phase4, most of phase3) but fails everything that calls the
 gateway or the API from the run namespace (phase4b `real-model`, phase4c, mcp, and the phase3 probe that expects the gateway to be reachable from a sandbox).
 
-In argo-c2, `applications/onecli`, file of `CiliumNetworkPolicy onecli-ingress` (the reference copy is
-`deploy/onecli-policies/ingress.yaml`), **add two ingress entries and change nothing else**. The existing
-`pi-durable-poc` entries stay as they are:
+In argo-c2, `applications/onecli`, file of `CiliumNetworkPolicy onecli-ingress`, the change added two ingress entries and nothing else. The existing
+`pi-durable-poc` entries are unchanged:
 
 ```yaml
     # e2e run namespaces (tests/e2e/run.sh, docs/e2e.md): any namespace labelled pi-durable-e2e=true
@@ -129,12 +136,11 @@ In argo-c2, `applications/onecli`, file of `CiliumNetworkPolicy onecli-ingress` 
             - { port: "10255", protocol: TCP }
 ```
 
-Nothing else in argo-c2 changes: `onecli-egress` is about where OneCLI may go, the host rules are global, and the ESO store
-and the CNPG operator are cluster-wide already. After it is synced, copy the two entries into
-`deploy/onecli-policies/ingress.yaml` (that copy is kept in step with argo-c2, so it is not changed before).
+Nothing else in argo-c2 changed: `onecli-egress` is about where OneCLI may go, the host rules are global, and the ESO store
+and the CNPG operator are cluster-wide already. The reference copy `deploy/onecli-policies/ingress.yaml` does not hold the two entries yet and should be brought in step with argo-c2.
 
-Cilium matches namespace labels with the prefix `io.cilium.k8s.namespace.labels.`. That form is UNVERIFIED on c2. Check
-it after the sync: run `KEEP_NS=1 tests/e2e/run.sh phase4b` and look at `hubble observe --to-pod onecli/<pod>
+Cilium matches namespace labels with the prefix `io.cilium.k8s.namespace.labels.`. That form was not separately checked here. To check
+it: run `KEEP_NS=1 tests/e2e/run.sh phase4b` and look at `hubble observe --to-pod onecli/<pod>
 --from-namespace pi-e2e-<id>`, or run `curl http://onecli.onecli:10256/v1/gateway/ca` from the orchestrator pod. If the label form does not
 select, the equivalent standard NetworkPolicy in the `onecli` namespace works (policies add up) and is
 unambiguous:
@@ -169,7 +175,7 @@ the production ones. Storage: three 1 Gi Longhorn volumes (database, orchestrato
 ## Scripts that take the namespace
 
 Every deploy script reads `NAMESPACE` (default `pi-durable-poc`, the long-lived deployment) and `KUBE_CONTEXT`:
-`push-code.sh`, `push-ingest.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The manifests carry no namespace
+`push-code.sh`, `push-ingest.sh`, `add-shard.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The manifests carry no namespace
 except `deploy/kustomization.yaml` and `deploy/cilium/kustomization.yaml`, which set the long-lived one and are overridden by
 the run's overlay; the orchestrator gets `PI_ORCH_NAMESPACE` from the downward API and `PI_ONECLI_NAME_PREFIX` (`pi-e2e-<run id>-`) from the overlay. The `run-*.sh` suites require
 `NAMESPACE` (the Job sets it). `packages/orchestrator/test/e2e-namespace.test.ts` fails if a new hard-coded `pi-durable-poc`

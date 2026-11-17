@@ -9,7 +9,7 @@ consumes it. Terms follow `plan.md`: one session = one Pi conversation = one nam
 | Process | Replicas | Role |
 |---|---|---|
 | `ingest` (`packages/ingest`) | 2, stateless | Authenticates, checks the session owner, writes `inbox.events`, serves `GET /sessions/{id}`, proxies the SSE stream. Keeps accepting events while the orchestrator restarts: its readiness depends on the database only. |
-| orchestrator (`packages/orchestrator`) | 1, `Recreate` | Owns the Pi Durable storage schema. Claims inbox rows and submits them to Pi Durable. Serves the SSE stream. |
+| orchestrator (`packages/orchestrator`) | 1 per shard, `Recreate` | Owns the Pi Durable storage schema of its shard (`PI_ORCH_SHARD`, default 0, schema `<PI_DURABLE_SCHEMA>_s<k>` for k > 0; ADR 0017, `docs/scaling.md`). Claims inbox rows and submits them to Pi Durable. Serves the SSE stream. |
 
 **The orchestrator serves the SSE stream.** Ingest only authenticates the caller and proxies the bytes; it holds no
 stream state. A client talks to ingest only.
@@ -29,9 +29,9 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | Call | Success | Notes |
 |---|---|---|
 | `POST /sessions` body `{ profile?, provider?, model?, reasoning?, repo?, branch? }` | `201 { sessionId, profile: { name, version }, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default profile and the default model. `profile` (optional) is the name of a session profile (see Session profiles): an unknown, malformed or disabled-for-new profile is `400`; omitted, the settings' `defaultProfile` applies (`coding` unless changed; if that profile is gone or disabled the answer is `503`, never another profile). The profile's definition is stored with the session as a snapshot. `provider` and `model` default to the profile's `defaultModel`, `reasoning` to its `reasoning`, and then to the settings; a request value always wins, and the result is checked against the allowlist and cap as below. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `reasoning` (optional) is the effort of the session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; anything else is `400 { "error": "reasoning must be one of ..." }`, and a level above the operator cap `maxReasoning` is `400 { "error": "reasoning <level> is above the allowed maximum <cap>" }` (see Models). Omitted, the session gets the settings default (none stored when there is none). `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
-| `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
-| `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted session. |
-| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], repoSkills?: true, repoContext?: true, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `repoSkills: true` and `repoContext: true` are present only when the snapshot turned them on and the session has a repo. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
+| `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 65,536 characters, i.e. JavaScript string length; the whole JSON body is separately limited to 128 KiB in bytes). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
+| `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted or deleting session. Ingest picks the orchestrator by the session's shard (`PI_ORCH_URL` with `{shard}`); an orchestrator of another shard answers `421`, which a client does not see. |
+| `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], repoSkills?: true, repoContext?: true, repo?, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `repoSkills: true` and `repoContext: true` are present only when the snapshot turned them on and the session has a repo. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
 | `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, defaultProfile, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
 | `PUT /admin/settings` body `{ defaultModel?, allowlist?, reasoning?, maxReasoning?, defaultProfile?, turnBudget? }` | `200`, the new settings as in GET | Admins only. Full or partial: omitted fields keep their value; `reasoning: null` clears it, `maxReasoning: null` removes the cap, and `reasoning` above `maxReasoning` is `400`. `defaultModel` is `provider/model`, `allowlist` an array of them (at most 100; the default is always allowed and put first), `reasoning` one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `null`, `defaultProfile` the name of an existing profile that is enabled for new sessions (else `400`), `turnBudget` an integer from 1 to 1000000. A bad value or an unknown key is `400` and changes nothing. Writes a history entry and notifies the other processes. |
 | `GET /admin/settings/history` (`?limit=`, default 50, at most 500) | `200 { history: [{ id, changedAt, changedBy, old, new }] }` | Admins only. Newest first; `old` is null for the seed. |
@@ -150,8 +150,9 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   `pi-model-config`; `insert ... on conflict do nothing`, so two replicas are safe). After that the table wins and a
   differing environment logs `settings-env-ignored` once at ingest start. The committed seed is OpenAI Codex
   `gpt-6.1-terra` (`gpt-6.1-sol` is allowlisted too, and the scripted models, which the e2e suites select through
-  `PUT /admin/settings` and restore afterwards). The orchestrator still reads `PI_MODEL_ALLOWLIST` at start to install
-  providers, so adding a new provider needs an orchestrator restart.
+  `PUT /admin/settings` and restore afterwards). With an OneCLI token the orchestrator installs every built-in provider at start, whatever
+  the allowlist says, so adding a built-in provider through settings needs no restart. Without a token it installs only the
+  allowlisted providers, and a provider the orchestrator code does not ship needs a new release.
 - **Storage.** The chosen model is stored with the session (`inbox.sessions.model_provider`, `model_id`, `model_reasoning`; migrations
   `002_models.sql`, `003_reasoning.sql`), so changing the default later does not change existing sessions. The orchestrator creates the Pi
   conversation with it; Pi Durable keeps it in the conversation across restarts (`docs/model-credentials.md`).
@@ -204,7 +205,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 
 - `POST /sessions` only inserts `inbox.sessions`. The orchestrator creates the Pi conversation on the first event or
   stream (`inbox.sessions.conversation_id`) and the SandboxClaim `pi-conv-<conversation id>` lazily at the first tool
-  call, through the Harness `env` callback, as before. A session that only chats never gets a sandbox or a PVC.
+  call, through the Harness `env` callback, as before. A session that only chats never gets a sandbox or a PVC. A
+  repository session is the exception: `prepare` provisions the sandbox and clones before the first input is submitted.
 - Ingest does not need Kubernetes access. Only the orchestrator ServiceAccount has `delete` on `sandboxclaims` and
   `persistentvolumeclaims`, namespace-scoped.
 
@@ -243,7 +245,7 @@ retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per sessi
 ### Orphan sweep
 
 What deletion missed is removed by a periodic sweep in the orchestrator (`docs/decisions/0002-orphan-sweep.md`): every
-`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off; every seconds setting is at most 2147483, a larger one is refused at start) it removes SandboxClaims `pi-conv-<n>` labelled with a session UUID, workspace
+`PI_SWEEP_INTERVAL_SECONDS` (300; 0 = off; every seconds setting is at most 2147483, a larger one is refused at start) it removes SandboxClaims `pi-conv-<n>` (`pi-s<k>-conv-<n>` on shard k; each shard sweeps its own) labelled with a session UUID, workspace
 PVCs `workspace-pi-conv-<n>` without a claim, and OneCLI agents `<prefix><uuid>` (`PI_ONECLI_NAME_PREFIX`, default `pi-session-`) with their secrets, when the session
 is `deleted` or has no row, and the object is older than `PI_SWEEP_GRACE_SECONDS` (600). At most `PI_SWEEP_MAX_ACTIONS`
 (10) per run; each action is one `sweep-action` log line. Unlabelled claims, `control-<n>` labels and every other name are
@@ -252,7 +254,7 @@ never touched, and neither is a session that is `active`, `failed` or `deleting`
 ## Test-only surface
 
 The orchestrator still has the Phase 3 scripted-session surface, now under `/control/...`, behind the same bearer
-token, and only when `PI_ORCH_CONTROL=1` (the manifest sets it so `tests/e2e/run-phase3.sh` keeps running). It
+token, and only when `PI_ORCH_CONTROL=1` (the production manifest leaves it unset; the e2e overlay `tests/e2e/deploy/kustomization.yaml` sets it so `tests/e2e/run-phase3.sh` keeps running). It
 bypasses the inbox. `PI_ORCH_TEST_FAULTS=1` makes the orchestrator honour `payload.testFault` on an inbox row, which
 only SQL can write; the Phase 4 crash test uses it to exit between submit and mark.
 
@@ -264,8 +266,8 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   ConfigMap `ingest-code`; an initContainer unpacks it into an emptyDir. Chosen over a code PVC because a
   ReadWriteOnce Longhorn volume cannot be mounted on two nodes, which would pin both replicas to one node. The limit
   is the ConfigMap size (1 MiB); the script refuses a bundle above 900 KB.
-- The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC).
-- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `013_coding_repo_context.sql`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
+- The orchestrator is delivered as before (`deploy/push-code.sh`, code PVC). Both push scripts hold a ConfigMap lock (`deploy/push-lock.sh`); `push-ingest.sh` records the bundle hash only after the pods restarted onto it.
+- The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `014_shard.sql`, which adds `inbox.sessions.shard`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
   and `lock_timeout = 3s` (a blocked migration fails and is retried, it never queues ahead of traffic). The first
@@ -281,16 +283,16 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
 
 ## Known limits
 
-- One orchestrator replica. The inbox claim is safe for more claimers (`SKIP LOCKED`), but the Pi Durable storage
-  allows one owner.
+- One orchestrator replica per shard: the Pi Durable storage allows one owner per schema. Capacity grows by adding shards
+  (`deploy/add-shard.sh`, `PI_ORCH_SHARDS` at ingest; a session never moves), see ADR 0017 and `docs/scaling.md`.
 - Conversation state of deleted sessions stays until the maintenance job.
 - A crash between creating a Pi conversation and storing its id in `inbox.sessions` leaves one empty, unreferenced
   conversation.
 - A steer posted when the session is idle starts a turn (it is not dropped or rejected).
 - `live` events are best effort, not cursor-addressable (see Reconnect semantics).
 - Backpressure: a slow SSE client delays its own watch only; Pi Durable folds commits meanwhile.
-- No rate limits, quotas, per-token scopes, or CORS. Plaintext HTTP inside the cluster. c2 runs flannel, which does not
-  enforce NetworkPolicy, so the bearer token is the only control between pods.
+- No rate limits, quotas, per-token scopes, or CORS. Plaintext HTTP inside the cluster. NetworkPolicy and CiliumNetworkPolicy
+  limit which pods can reach ingest and the orchestrator (`docs/network-policy.md`); the bearer token is the control beyond that.
 - `GET /sessions/{id}` reports inbox counts and last activity, not whether a turn is running; the stream's `live`
   event does.
 

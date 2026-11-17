@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 4c acceptance tests: the optional repository workspace through OneCLI and a repo-scoped GitHub App token.
-# Runs IN the cluster as the e2e-driver Job started by `tests/e2e/run.sh phase4c`. WRITTEN, NOT YET RUN: it needs the new
+# Runs IN the cluster as the e2e-driver Job started by `tests/e2e/run.sh phase4c`. Run live on 2026-11-16 (plan.md). It needs the new
 # sandbox image (git + ca-certificates) in the SandboxTemplate, the ExternalSecrets pi-github-app and pi-onecli-admin
 # synced, the OneCLI CA ConfigMap, and the NetworkPolicies that let the orchestrator reach api.github.com.
 #

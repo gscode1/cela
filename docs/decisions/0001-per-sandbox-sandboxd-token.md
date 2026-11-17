@@ -57,6 +57,13 @@ recreate, with a clear error and no silent fallback.**
 - The static `deploy/sandbox-claim.yaml` (`sample-session`) is removed: a manifest cannot carry a per-claim hash. The
   Phase 1 suite creates and deletes its own claim `e2e-phase1`.
 
+## Addendum: claim names are per shard since ADR 0017 (issue #84)
+
+`claimName` in the derivation is the shard's claim name: `pi-conv-<n>` on shard 0 and `pi-s<k>-conv-<n>` on shard k
+(`claimNameFor` in `packages/orchestrator/src/lifecycle.ts`), so two shards never derive the same token for the same
+conversation id. See [0017](0017-schema-sharding.md). The relay and broker part of the master-key paragraph is
+[0016](0016-in-process-broker.md).
+
 ## Consequences
 
 - A leaked token or hash opens one sandbox only. The master is the crown jewel: it can open every sandbox, so it stays

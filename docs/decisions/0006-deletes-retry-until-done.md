@@ -34,3 +34,10 @@ leaked for good.
   could never close its tombstone.)
 - Rejected alternative: letting the sweep finish `deleting` sessions after a grace period. It would duplicate the delete
   path in a second process loop and needs a time-based guess at "stuck".
+
+## Addendum: backed-off sessions stay out of the poll (issue #95)
+
+The in-memory backoff above (`#notBefore` in `InboxLoop`) is now also applied in the poll query itself: sessions in flight
+or waiting out a backoff are excluded from the `limit 100` page and the oldest pending event is served first
+(`InboxLoop.#tick`), so many deleting sessions cannot starve the others. The retry rule is unchanged. The loop is per
+shard since [0017](0017-schema-sharding.md) (the query filters on `s.shard`).

@@ -86,13 +86,13 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).
    Ingest seeds them once from ConfigMap `pi-model-config` (the keys below) when the row is absent; **after that the
    table wins** and a differing ConfigMap value only logs `settings-env-ignored`. Change them with
-   `PUT /admin/settings` (`docs/session-api.md`), no restart. The orchestrator reads `PI_MODEL_ALLOWLIST` at start to
-   install the providers it may need: restart it after adding a provider that was not installed before.
+   `PUT /admin/settings` (`docs/session-api.md`), no restart. With an OneCLI token the orchestrator installs every built-in
+   provider at start, so adding a built-in provider needs no restart (without a token only allowlisted providers are installed).
 
 | Key (seed only)          | Setting (admin API)                                                                                       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `PI_MODEL_PROVIDER`, `PI_MODEL_ID` | `defaultModel` (`provider/model`) for sessions that name none.                                  |
-| `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `null`.  |
+| `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `null`. |
 | `PI_MODEL_ALLOWLIST`     | `allowlist`: `provider/model` pairs; the model id may contain slashes. The default is always allowed.     |
 | `PI_SESSION_TURN_BUDGET` | `turnBudget`: model turns one session may use in total (default 100).                                     |
 
@@ -131,7 +131,7 @@ model.
   `unanswered` with the reason and text), not through `onReport`. The orchestrator's run watcher polls the
   submissions it handed over until they settle, and re-adds the last 24 hours of submitted events at start, so a run
   a previous process started is still seen.
-- **Turn budget.** `PI_SESSION_TURN_BUDGET` is checked before each input; a session that used all its turns becomes
+- **Turn budget.** The budget is checked before each input: the session profile's `turnBudget` if it has one, else the live `turnBudget` setting in Postgres (`PI_SESSION_TURN_BUDGET` only seeds that setting). A session that used all its turns becomes
   `failed` with "turn budget exhausted". It is the first spend limit; a token budget and a concurrency cap come later.
 - **Revoking access.** Deleting the grant, the agent, or regenerating its token makes the next model call fail with
   401/403/407 and fails the sessions that hit it. A simulated 401 is covered by `tests/e2e/run-phase4b.sh`; the live

@@ -49,6 +49,12 @@ fails, the record stays and the next start tries again.
   position, and its output is already unreliable.
 - A recycle of a Pod that is not there (a suspended sandbox) is a no-op.
 
+## Addendum: per shard (issue #84)
+
+The exec markers are read per shard: `inbox.sessions` has a `shard` column since [0017](0017-schema-sharding.md), and each
+orchestrator recycles only the Pods of its own shard's conversations at start. Nothing else here changed; the bridge
+that the recycle reconnects is the broker and relay of [0016](0016-in-process-broker.md).
+
 ## Rejected
 
 - *Kill the escapees from inside.* The agent can start processes in any session or process group; there is no list
