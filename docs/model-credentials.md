@@ -12,10 +12,11 @@ orchestrator (pi-ai, apiKey = placeholder)
   gateway: checks the agent token, MITMs TLS with the OneCLI CA, swaps in the real credential --> provider
 ```
 
-- **Scoped to model calls.** `createGatewayFetch` (`packages/orchestrator/src/onecli.ts`) is a `fetch` bound to a
-  `ProxyAgent`; `withFetch` hands it to pi-ai on every `streamSimple`/`stream` call. There is no `HTTPS_PROXY`, no
+- **Scoped to model and MCP calls.** `createGatewayFetch` (`packages/orchestrator/src/onecli.ts`) is a `fetch` bound to a
+  `ProxyAgent`; `withFetch` hands it to pi-ai on every `streamSimple`/`stream` call, and the remote MCP client
+  (`packages/orchestrator/src/mcp.ts`, ADR 0007) gets the same fetch. There is no `HTTPS_PROXY`, no
   `NODE_USE_ENV_PROXY` and no global dispatcher, so the Kubernetes client, Postgres, bridges and sandboxd are never
-  proxied. Hosts matching `NO_PROXY` skip the gateway even for model calls: the deployment lists `.svc`,
+  proxied. Hosts matching `NO_PROXY` skip the gateway even for those calls: the deployment lists `.svc`,
   `.cluster.local`, `kubernetes.default`, `pi-pg-rw` and `10.0.0.0/8`, and the code adds the cluster ranges itself.
 - **Placeholders.** `placeholderAuthContext` answers every `*_API_KEY`/`*_API_TOKEN` lookup with
   `onecli-managed-placeholder` and ignores the real environment. The gateway replaces the SDK's key (spike Q7), so a
