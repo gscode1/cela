@@ -34,7 +34,11 @@ test.describe("console enabled", () => {
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();
-    await expect(page.getByLabel("Default model", { exact: true })).toBeVisible();
+    // A picker when the orchestrator published a catalog with credentials; without one (a kind cluster without OneCLI)
+    // the screen shows the current model as text and says why there is no list. Either is a working Settings screen.
+    await expect(
+      page.getByLabel("Default model", { exact: true }).or(page.getByTestId("current-model")),
+    ).toBeVisible();
 
     expect(assets.length).toBeGreaterThanOrEqual(2);
     expect(assets.filter((asset) => asset.status !== 200)).toEqual([]);
