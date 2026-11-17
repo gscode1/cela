@@ -392,3 +392,57 @@ describe("POST /sessions with profiles", () => {
 });
 
 const RESEARCH_PLAIN = { tools: ["read"] };
+
+describe("model catalog", () => {
+  it("GET /admin/models: none before a publish, then the catalog with the credential hints; admin only", async () => {
+    const { base, db } = await start(["alice"]);
+    expect(await json(await call(base, "alice", "GET", "/admin/models"))).toEqual({
+      models: [],
+      providers: [],
+      source: "none",
+    });
+    const models = [{ provider: "openai", id: "gpt-x", name: "GPT X", reasoning: true }];
+    db.capabilities = {
+      tools: ["read"],
+      extensions: [],
+      instance: "o",
+      models,
+      model_providers: [{ provider: "openai", credential: "missing" }],
+    };
+    expect(await json(await call(base, "alice", "GET", "/admin/models"))).toEqual({
+      models,
+      providers: [{ provider: "openai", credential: "missing" }],
+      source: "orchestrator",
+    });
+    expect((await call(base, "bob", "GET", "/admin/models")).status).toBe(403);
+    expect((await call(base, "alice", "POST", "/admin/models", {})).status).toBe(405);
+  });
+
+  it("settings and profile writes check models against the catalog only once one is published", async () => {
+    const { base, db } = await start();
+    const put = (body: unknown) => call(base, "alice", "PUT", "/admin/settings", body);
+    expect((await put({ defaultModel: "openai/gpt-x", allowlist: ["openai/gpt-x"] })).status).toBe(
+      200,
+    );
+    db.capabilities = {
+      tools: ["read"],
+      extensions: [],
+      instance: "o",
+      models: [
+        { provider: "scripted", id: "scripted-1", reasoning: false },
+        { provider: "openai", id: "gpt-y", reasoning: true },
+      ],
+    };
+    const bad = await put({ defaultModel: "openai/gpt-z" });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toMatch(/"openai\/gpt-z"/);
+    expect((await put({ allowlist: ["openai/gpt-x", "openai/gpt-q"] })).status).toBe(400);
+    expect((await put({ defaultModel: "openai/gpt-y", allowlist: ["openai/gpt-y"] })).status).toBe(
+      200,
+    );
+    const profile = (model: string) =>
+      call(base, "alice", "PUT", "/admin/profiles/m", { definition: { defaultModel: model } });
+    expect((await profile("openai/gpt-z")).status).toBe(400);
+    expect((await profile("openai/gpt-y")).status).toBe(201);
+  });
+});

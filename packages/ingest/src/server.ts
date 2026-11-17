@@ -36,6 +36,7 @@ import {
   verifySkillBundle,
   validateProfileDefinition,
   putProfile,
+  catalogKeys,
   readCapabilities,
   readMcpServers,
   readProfile,
@@ -245,6 +246,12 @@ async function installedTools(
     : { tools: capabilities.tools, source: "orchestrator" };
 }
 
+/** The published model catalog's `provider/model` keys, or undefined while none is published (no check then). */
+async function publishedModelKeys(deps: IngestDeps): Promise<string[] | undefined> {
+  const capabilities = await readCapabilities(deps.pool);
+  return capabilities?.models === undefined ? undefined : catalogKeys(capabilities.models);
+}
+
 async function handleAdminRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -298,6 +305,25 @@ async function handleAdminRoutes(
       return;
     }
     sendJson(res, 200, await installedTools(deps));
+    return;
+  }
+  if (parts[1] === "models" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const capabilities = await readCapabilities(deps.pool);
+    sendJson(
+      res,
+      200,
+      capabilities?.models === undefined
+        ? { models: [], providers: [], source: "none" }
+        : {
+            models: capabilities.models,
+            providers: capabilities.modelProviders ?? [],
+            source: "orchestrator",
+          },
+    );
     return;
   }
   if (parts[1] === "mcp-servers") {
@@ -361,6 +387,7 @@ async function handleAdminRoutes(
       taken.rest,
       principal.owner,
       taken.expectedRevision,
+      await publishedModelKeys(deps),
     );
     if (typeof stored === "string") {
       sendJson(res, 400, { error: stored });
@@ -678,6 +705,7 @@ async function handleAdminProfiles(
       return;
     }
     const installed = await installedTools(deps);
+    const models = await publishedModelKeys(deps);
     const catalog = await readMcpServers(deps.pool);
     const result = await putProfile(
       deps.pool,
@@ -692,6 +720,7 @@ async function handleAdminProfiles(
       {
         tools: installed.tools,
         mcpServers: catalog.servers.map((stored) => stored.server.name),
+        ...(models === undefined ? {} : { models }),
       },
     );
     if (!result.ok) {
