@@ -351,3 +351,42 @@ export async function recyclePod(
     await sleep(1_000);
   }
 }
+
+/** Resolve the pool reference so changing templates cannot leave the startup guard checking a stale name. */
+export async function configuredRuntime(namespace: string, warmPool: string): Promise<string> {
+  const { custom } = clients();
+  const ref = { group: "extensions.agents.x-k8s.io", version: "v1beta1", namespace };
+  const pool = (await custom.getNamespacedCustomObject({
+    ...ref,
+    plural: "sandboxwarmpools",
+    name: warmPool,
+  })) as {
+    spec?: { sandboxTemplateRef?: { name?: string } };
+  };
+  const name = pool.spec?.sandboxTemplateRef?.name;
+  if (!name) throw new Error(`SandboxWarmPool ${warmPool} has no sandboxTemplateRef`);
+  const template = (await custom.getNamespacedCustomObject({
+    ...ref,
+    plural: "sandboxtemplates",
+    name,
+  })) as {
+    spec?: { podTemplate?: { spec?: { runtimeClassName?: string } } };
+  };
+  return template.spec?.podTemplate?.spec?.runtimeClassName ?? "";
+}
+
+export async function observedRuntime(namespace: string, claimName: string): Promise<string> {
+  const { core, custom } = clients();
+  const claim = (await custom.getNamespacedCustomObject({
+    ...CLAIM_REF,
+    namespace,
+    name: claimName,
+  })) as { status?: { sandbox?: { name?: string } } };
+  const name = claim.status?.sandbox?.name;
+  if (!name) throw new Error(`SandboxClaim ${claimName} has no resolved Sandbox`);
+  const sandbox = (await custom.getNamespacedCustomObject({ ...SANDBOX_REF, namespace, name })) as {
+    metadata?: { annotations?: Record<string, string> };
+  };
+  const podName = sandbox.metadata?.annotations?.["agents.x-k8s.io/pod-name"] ?? name;
+  return (await core.readNamespacedPod({ namespace, name: podName })).spec?.runtimeClassName ?? "";
+}

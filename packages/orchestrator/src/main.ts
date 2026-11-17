@@ -1,5 +1,7 @@
 import {
   applyMigrations,
+  startShardStatus,
+  observeShardRuntime,
   conversationsWithExecInFlight,
   createPool,
   errorMessage,
@@ -22,7 +24,8 @@ import { Host } from "./host.js";
 import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
 import { InboxLoop } from "./inbox.js";
-import { listClaims, listPvcs } from "./kube.js";
+import { checkRuntime } from "./runtime.js";
+import { observedRuntime, listClaims, listPvcs } from "./kube.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -33,6 +36,7 @@ import { OrphanSweeper } from "./sweeper.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
+  const runtime = await checkRuntime(config.namespace, config.warmPool);
   const { maxOpenBridges, bridgeCap } = config.sandbox;
   log("bridge-cap", bridgeCapFields(maxOpenBridges, bridgeCap.source, bridgeCap.memoryLimitBytes));
   const lifecycle: Lifecycle = { state: "waiting-for-lock", instance: config.instance };
@@ -85,6 +89,13 @@ async function main(): Promise<void> {
   await mcpCatalog.start();
 
   const storage = await openStorageWhenFree(config, stop.signal);
+  await startShardStatus(pool, config.shard, runtime);
+  log("network-policy-unknown", {
+    level: "warn",
+    shard: config.shard,
+    networkPolicy: "unknown",
+    message: "Network isolation has not been verified",
+  });
   log("lock-acquired", { instance: config.instance });
   const sessionKeyOf = async (conversationId: number): Promise<string> => {
     const session = await sessionByConversation(pool, config.shard, conversationId);
@@ -113,6 +124,13 @@ async function main(): Promise<void> {
   });
   const skills = new SkillLibrary(pool, config.shard);
   const hooks: SandboxHooks = {
+    attached: async (claimName) => {
+      await observeShardRuntime(
+        pool,
+        config.shard,
+        await observedRuntime(config.namespace, claimName),
+      );
+    },
     shellEnv: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);
       return session === undefined ? undefined : repos.shellEnv(session, conversationId);

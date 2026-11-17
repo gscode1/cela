@@ -32,6 +32,19 @@ async function start(
   const sessions: unknown[][] = [];
   const query = db.query.bind(db);
   db.query = (sql, params) => {
+    if (sql.includes("from inbox.shard_status"))
+      return Promise.resolve({
+        rows: [
+          {
+            shard: 0,
+            configuredRuntime: "gvisor",
+            observedRuntime: null,
+            networkPolicy: "unknown",
+            updatedAt: new Date(0),
+          },
+        ],
+        rowCount: 1,
+      });
     if (sql.startsWith("insert into inbox.sessions")) {
       sessions.push(params ?? []);
       return Promise.resolve({ rows: [], rowCount: 0 });
@@ -81,6 +94,7 @@ describe("admin settings authorization", () => {
   it("answers 401 without a token, 403 to a non-admin and 200 to an admin, on every route", async () => {
     const { base } = await start();
     const routes: [string, string, unknown?][] = [
+      ["GET", "/admin/status"],
       ["GET", "/admin/settings"],
       ["PUT", "/admin/settings", { turnBudget: 5 }],
       ["GET", "/admin/settings/history"],
@@ -240,4 +254,25 @@ describe("admin settings", () => {
     ).toBe(400);
     expect(db.history).toHaveLength(before + 1);
   });
+});
+
+describe("admin shard status", () => {
+  it("returns persisted status with no Kubernetes access, and rejects writes", async () => {
+    const { base } = await start();
+    const response = await call(base, "alice", "GET", "/admin/status");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      shards: [
+        {
+          shard: 0,
+          configuredRuntime: "gvisor",
+          observedRuntime: null,
+          networkPolicy: "unknown",
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
+    expect((await call(base, "alice", "GET", "/admin/status/extra")).status).toBe(404);
+  }, 10000);
 });
