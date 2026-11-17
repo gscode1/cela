@@ -49,3 +49,6 @@ needs to detect that. The console also needs a few reads and reserved fields tha
 - The race test runs on the in-memory fake, which models advisory locks per client: it holds the lock, starts both writes,
   releases it and checks that the default is enabled for both start orders. There is no real Postgres in the unit tests.
 - Migration 017 only adds columns with defaults and is idempotent; rolling back the images leaves the columns unused.
+  Admin writes made while rolled back do not add a revision, so after upgrading again a console draft opened before such
+  a write is not refused with a `409`. Reload the console after a rollback and again after the upgrade that follows it.
+  Checked on kind (2026-11-17): upgrade from 3bd1585 to main, `helm rollback` and forward again kept sessions working.
