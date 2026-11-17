@@ -50,7 +50,9 @@ k get deployment pi-orchestrator -o json |
     | .spec.template.metadata.labels["app.kubernetes.io/instance"] = $name
     | .spec.strategy = {type: "Recreate"}
     | .spec.template.spec.containers[0].env |=
-        (map(select(.name != "PI_ORCH_SHARD")) + [{name: "PI_ORCH_SHARD", value: $shard}])' |
+        (map(select(.name != "PI_ORCH_SHARD" and .name != "PI_ORCH_NAMESPACE")) + [
+          {name: "PI_ORCH_SHARD", value: $shard},
+          {name: "PI_ORCH_NAMESPACE", valueFrom: {fieldRef: {fieldPath: "metadata.namespace"}}}])' |
   k apply -f - >/dev/null
 {
   service pi-orchestrator-0 pi-orchestrator

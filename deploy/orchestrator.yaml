@@ -69,12 +69,13 @@ spec:
             # PI_MAX_OPEN_BRIDGES is not set: the cap on open sandbox bridges is derived from the memory limit below
             # ((limit - 256 MiB) / 24 MiB, 74 at 2Gi), so changing the limit changes the cap. Keep the request equal
             # to the limit. docs/decisions/0018-derived-bridge-cap.md, docs/scaling.md.
+            - { name: PI_ONECLI_NAME_PREFIX, value: "pi-session-" }
             - { name: PI_ONECLI_API, value: "http://onecli.onecli:10256" }
             - { name: PI_ONECLI_GATEWAY, value: "http://onecli.onecli:10255" }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
             # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway. NO_PROXY
-            # is the belt and braces list (cluster, Kubernetes API, Postgres) the orchestrator also applies itself.
-            - { name: NO_PROXY, value: "localhost,127.0.0.1,.svc,.cluster.local,kubernetes.default,pi-pg-rw,10.0.0.0/8" }
+            # extends the built-in cluster suffixes and configured database/API hosts.
+            - { name: NO_PROXY, value: "" }
             # Remote MCP servers are not configured here: they live in Postgres (inbox.mcp_servers) and are managed through
             # ingest's /admin/mcp-servers, no restart (docs/decisions/0009-mcp-catalog-in-postgres.md). An empty catalog means
             # no tool_search and no MCP tools. The orchestrator calls a server through the OneCLI gateway: it needs

@@ -25,6 +25,7 @@ ctx=${KUBE_CONTEXT:-}
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 # The OneCLI name prefix of this run's orchestrator (PI_ONECLI_NAME_PREFIX, set by run.sh in the Job and in the overlay).
 # The OneCLI workspace is shared with other stacks, so the suite finds only its own stack's agents and secrets by it.
+: "${PI_ONECLI_API:?PI_ONECLI_API is required; tests/e2e/job.yaml.tpl sets it}"
 onecli_prefix=${PI_ONECLI_NAME_PREFIX:?PI_ONECLI_NAME_PREFIX is the OneCLI name prefix of the run; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
@@ -57,7 +58,7 @@ orch_log() { k logs deploy/pi-orchestrator --tail=2000; }
 onecli() { # METHOD PATH
   k exec deploy/pi-orchestrator -c orchestrator -- node -e '
     const [method, path] = process.argv.slice(1);
-    fetch((process.env.PI_ONECLI_API ?? "http://onecli.onecli:10256") + path, {
+    fetch(process.env.PI_ONECLI_API + path, {
       method, headers: { authorization: `Bearer ${process.env.ONECLI_API_KEY}` } })
       .then(async (r) => {
         // An HTTP error body would parse as "nothing found" and make a negative assertion pass.

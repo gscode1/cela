@@ -8,6 +8,23 @@ Its PVC is kept across idle suspend and deleted with the session, so the class m
 every deleted session leaves a volume behind. Postgres needs a replicated, durable class. Application code lives in images,
 not persistent volumes. Preserve an existing database's storage class in your overlay before applying changes.
 
+## Required application names
+
+Orchestrator requires `PI_ORCH_NAMESPACE`, `PI_ORCH_WARMPOOL`, `PI_ONECLI_GATEWAY` and `PI_ONECLI_API`;
+missing or blank values stop startup with the variable name. The base supplies the namespace from `metadata.namespace`
+(the downward API), the warm pool and both OneCLI URLs explicitly. Shards inherit these settings; `add-shard.sh`
+also sets the downward API reference. Configure the URLs even for scripted-only installs (they are unused there).
+`PI_ONECLI_NAME_PREFIX` is explicitly `pi-session-` in the base and remains the code default; give each install sharing
+OneCLI a distinct prefix. A future chart can set it directly without code changes.
+
+The model dispatcher bypasses the gateway for the configured database host (URI host/query `host`, then `PGHOST`,
+then localhost), the OneCLI API host, localhost, cluster suffixes (`.svc`, `.cluster.local`), Kubernetes API and private
+CIDRs. `NO_PROXY` adds entries; it does not replace these protections. For a nonstandard cluster domain add its suffix
+there. This is dispatcher-local, not a process-wide proxy setting.
+
+Ingest requires an explicit `PI_ORCH_URL`; the base supplies its single-shard Service URL and `PI_ORCH_SHARDS=1`.
+See [scaling](../docs/scaling.md) for the template contract and the startup check against stored session shards.
+
 ## Build images
 
 From the repository root (Docker buildx and Node 22.19+ required):
