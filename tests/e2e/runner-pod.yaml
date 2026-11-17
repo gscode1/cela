@@ -17,7 +17,13 @@ spec:
   containers:
     - name: node
       image: __DRIVER_IMAGE__
-      command: [bash, -c, "cp -a /opt/phase1 /work/app && sleep 86400"]
+      # Copy then rename: /work/app appears complete or not at all, and readiness waits for it. A plain copy let
+      # run-phase1.sh exec node while node_modules was still being copied (ERR_MODULE_NOT_FOUND).
+      command: [bash, -c, "cp -a /opt/phase1 /work/app.tmp && mv /work/app.tmp /work/app && sleep 86400"]
+      readinessProbe:
+        exec:
+          command: [test, -f, /work/app/package.json]
+        periodSeconds: 1
       env:
         - name: HOME
           value: /work
