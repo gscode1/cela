@@ -324,6 +324,52 @@ describe("the runtime guard", () => {
     expect(notes([])).toMatch(/GET \/admin\/status/);
     expect(notes([])).toMatch(/NetworkPolicies isolate sandboxes only if/);
   });
+
+  it("tells the installer about the isolation probe and how to run it again", () => {
+    const text = execNotes([]);
+    expect(text).toMatch(/isolation probe/);
+    expect(text).toMatch(/enforced \| not-enforced \| inconclusive/);
+    expect(text).toMatch(/-X POST .*\/admin\/status\/probe/);
+  });
+});
+
+describe("isolation probe RBAC", () => {
+  const rules = (args: string[] = []): Obj[] => named(docs(args), "Role", "pi-orchestrator").rules;
+  const grant = (list: Obj[], resource: string): string[] =>
+    list.filter((r) => r.resources.includes(resource)).flatMap((r) => r.verbs);
+
+  it("lets the orchestrator create, list, read and delete its probe Pod and read its log, in the namespace only", () => {
+    const list = rules();
+    expect(grant(list, "pods").sort()).toEqual(["create", "delete", "get", "list"]);
+    expect(grant(list, "pods/log")).toEqual(["get"]);
+    // No wildcard, no write beyond pods: the probe needs nothing else.
+    for (const rule of list) {
+      expect(rule.verbs).not.toContain("*");
+      expect(rule.resources).not.toContain("*");
+    }
+  });
+
+  it("stays a namespaced Role with no ClusterRole", () => {
+    for (const args of [[], external, insecure]) {
+      expect(ofKind(docs(args), "ClusterRole")).toEqual([]);
+    }
+    const binding = named(docs(), "RoleBinding", "pi-orchestrator");
+    expect(binding.subjects).toEqual([
+      { kind: "ServiceAccount", name: "pi-orchestrator", namespace: "ns" },
+    ]);
+  });
+
+  it("keeps the sandbox policies the probe Pod inherits through its label", () => {
+    // The probe Pod wears app.kubernetes.io/name=pi-sandbox: it is judged by exactly these policies.
+    const policies = ofKind(docs(external), "NetworkPolicy");
+    const sandbox = policies.filter(
+      (p) => p.spec.podSelector.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
+    );
+    expect(sandbox.map((p) => p.metadata.name)).toContain("sandbox-default-deny");
+    expect(
+      named(docs(external), "SandboxTemplate", "pi-env-template").spec.podTemplate.metadata.labels,
+    ).toMatchObject({ "app.kubernetes.io/name": "pi-sandbox" });
+  });
 });
 
 describe("network policy invariants", () => {

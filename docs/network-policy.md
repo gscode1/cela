@@ -159,5 +159,48 @@ phase3 now has a TCP reachability control from the driver or orchestrator before
 Postgres, orchestrator, ingest and sandboxd use Service DNS and ready endpoint Pod IPs. Kubernetes and external
 OneCLI APIs use Service DNS because the driver cannot read endpoints outside its run namespace. A dead target,
 failed DNS lookup or failed control is FAIL, never a successful block or KNOWN-FAIL. Public internet is allowed,
-not a denied target. The production `/admin/status` reports `networkPolicy: unknown` until the later isolation-probe
-slice; it does not infer enforcement from policy objects being present.
+not a denied target. The production `/admin/status` never infers enforcement from policy objects being present: it
+reports what the isolation probe below measured. With `NETPOL_ENFORCED=1`, `tests/e2e/run-phase3.sh` also fails
+before any test when the probe says `not-enforced` (`inconclusive` and `enforced` never fail it; without the variable the
+verdict is only printed).
+
+## Isolation probe
+
+The orchestrator measures whether the policies block what they claim (docs/install-plan.md section 6, D7). It reports;
+it never gates readiness, sessions or tools.
+
+- **Who runs it.** Only shard 0's orchestrator, and only the process that holds the shard's schema lock (a standby holds no
+  status row and runs nothing). The policies select sandboxes by label and are namespace-wide, so one measurement covers
+  every shard; N shards would start N identical Pods. Shards above 0 show shard 0's verdict in their rows.
+- **When.** In the background right after the lock is acquired (the orchestrator is already serving), and on
+  `POST /admin/status/probe`. Ingest cannot reach Kubernetes, so that route only sets `probe_requested_at` on shard 0's
+  row; the orchestrator polls it every 5 s, claims it atomically, and runs at most one probe at a time. A request while a
+  probe runs is answered `202 {"requested": false, "state": "running"}`.
+- **How.** A short-lived Pod (`pi-netprobe-<shard>-<id>`, label `pi-durable-k8s/netprobe`) with the label
+  `app.kubernetes.io/name=pi-sandbox`, so every policy that selects sandboxes applies to it. It runs the orchestrator's own
+  image (`node`, already pullable), the sandbox runtime class, the restricted Pod Security profile, no service account
+  token, no volume, a 120 s `activeDeadlineSeconds`, and is deleted when the probe ends. Leftovers are deleted at the
+  next start. It is a plain Pod, not a SandboxClaim: no PVC, no per-sandbox token and no warm-pool slot, and the
+  network position is the same (same label, namespace and runtime).
+- **Denied targets** (IP addresses, resolved by the orchestrator, so DNS is not a variable): Postgres, the orchestrator's
+  Service IP and its Pod IP, the Kubernetes API (`KUBERNETES_SERVICE_HOST`), the OneCLI management API (when OneCLI is
+  not disabled) and, when one exists, another sandbox's sandboxd (:8080). Not covered: ingest, node, private and
+  metadata addresses (no allowed source can show that they are up; the CIDR exceptions are asserted on the rendered chart).
+- **Positive controls.** For every denied target the orchestrator, an allowed source, first connects to it; only a target
+  that is up from there can count as blocked. From the Pod the allowed controls are a DNS lookup and a TCP connection to
+  the OneCLI gateway (without OneCLI: `1.1.1.1:443`, which sandboxes may reach, so an air-gapped cluster reports
+  `inconclusive`).
+- **Verdict.** `not-enforced`: any denied target accepted a connection from the Pod. `inconclusive`: no report (Pod failed,
+  no RBAC, image not pullable), or an allowed control failed, or no denied target was up from the orchestrator.
+  `enforced`: the controls work, at least one verified target was blocked and none got through. A refusal, a timeout
+  or an unreachable error all count as blocked. `unknown` until the first run, `running` during one. Targets nobody
+  could reach are listed as `unverified` and ignored.
+- **Where it shows.** `networkPolicy` per shard (shard 0's value on all rows), and `networkPolicy` at the top level
+  with `state`, `checkedAt` and `detail` (reason, controls, one row per target) in `GET /admin/status`
+  ([session API](session-api.md)). The orchestrator logs `network-policy-not-verified` at `warn` level, with the reason, on
+  every run that is not `enforced`; NOTES.txt tells the installer and `hack/install.sh` waits up to two minutes for the
+  first result and prints it.
+- **RBAC.** The orchestrator's Role gets `create` and `list` on `pods` (it already had `get` and `delete`) and `get` on
+  `pods/log`, in the release namespace only (chart `rbac.yaml` and `deploy/orchestrator-rbac.yaml`).
+- **Live-verified:** not yet. To see `not-enforced`, remove the policies in a scratch namespace (`kubectl -n <ns> delete
+  networkpolicy --all`) or install on a CNI that ignores them (flannel alone), then `POST /admin/status/probe`.

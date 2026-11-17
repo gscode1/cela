@@ -109,8 +109,11 @@ sessions on a shard without a route. Never put an HPA on a shard.
 - **Network policy.** `default-deny-all` plus explicit allows, always rendered. A sandbox can reach DNS, the OneCLI
   gateway port and the public internet (not the private, link-local or loopback ranges); it cannot reach the
   orchestrator, ingest, the database, the Kubernetes API, the OneCLI management API or another sandbox. Policies only work on
-  a CNI that enforces them: the chart cannot tell, so read the state, never assume it. See
-  [network policy](../../docs/network-policy.md).
+  a CNI that enforces them: the chart cannot tell, so the orchestrator (shard 0) runs an **isolation probe** at start and
+  on `POST /admin/status/probe`: a short-lived Pod with the sandbox's labels tries the denied targets, with positive
+  controls, and the result (`enforced | not-enforced | inconclusive`) is in `GET /admin/status`. It only warns; it needs
+  `create`/`list` on pods and `get` on pods/log, which the chart's Role grants in the namespace. Read the state, never
+  assume it. See [network policy](../../docs/network-policy.md#isolation-probe).
 - Changing the runtime or security settings later does not reach existing Sandboxes (ADR 0019): the template is copied
   into each Sandbox. Recycle them.
 
@@ -120,6 +123,7 @@ Read the state:
 kubectl -n pi-durable port-forward svc/pi-ingest 8080:8080 &
 TOKEN=$(kubectl -n pi-durable get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p')
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status/probe   # run the isolation probe again
 ```
 
 ## Tests
