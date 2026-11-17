@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { useAuth } from "@/auth";
 import { GlobalSettings } from "@/pages/settings";
 import { Placeholder } from "@/pages/placeholder";
+import { Profiles } from "@/pages/profiles";
 import { SignIn } from "@/pages/sign-in";
 import { SECTIONS, Shell } from "@/shell";
 
@@ -17,7 +18,10 @@ export function App() {
       <Route element={<Shell />}>
         <Route index element={<Navigate to="settings" replace />} />
         <Route path="settings" element={<GlobalSettings />} />
-        {SECTIONS.filter((section) => section.path !== "settings").map((section) => (
+        <Route path="profiles/*" element={<Profiles />} />
+        {SECTIONS.filter(
+          (section) => section.path !== "settings" && section.path !== "profiles",
+        ).map((section) => (
           <Route
             key={section.path}
             path={`${section.path}/*`}
