@@ -74,7 +74,7 @@ database:
   mode: bundled                 # bundled | external (any mode change is a reinstall)
   bundled: { image: postgres:17@sha256:..., persistence: { size: 10Gi, storageClass: "", retain: true } }
   external: { existingSecret: "", uriKey: uri }
-  tls: { mode: disable, existingSecret: "", caKey: ca.crt }       # verify-full once the code exists (slice 11)
+  tls: { mode: disable, existingSecret: "", caKey: ca.crt, certKey: "", keyKey: "" } # disable | verify-ca | verify-full (slice 11a, done)
 onecli:
   mode: bundled                 # bundled | external | disabled
   externalUrl: ""              # required by the OneCLI chart when bundled
@@ -102,8 +102,9 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 - **OneCLI name prefix.** The default prefix is `pi-session-` (`onecli-names.ts`). On a shared OneCLI, one install's
   orphan sweep could revoke another install's agents. Make it a value that `install.sh` defaults from release and
   namespace; a reinstalled stack keeps `pi-session-` (section 9a).
-- **DB TLS.** `session-core/src/db.ts` and `orchestrator/src/storage.ts` build separate `pg` pools with no CA/cert
-  contract. Add TLS to both, with verification, before `database.external` is called production-ready.
+- **DB TLS (implemented in slice 11a).** Both pools take their `ssl` options from `session-core/src/db-tls.ts`; modes
+  `disable`, `verify-ca`, `verify-full` (no `require`), CA and optional client cert from files of a mounted Secret.
+  See [ADR 0021](decisions/0021-database-tls.md) and [database-tls.md](database-tls.md).
 - **Shards.** Shard count can only grow: sessions stay on their shard (ADR 0017). `deploy/add-shard.sh` becomes the
   `orchestrator.shards` value, and ingest refuses to start when it sees sessions on a shard it has no route for.
 - **OneCLI bootstrap.** Installing OneCLI does not create a user, an org, an `oc_` admin key, the orchestrator agent,
@@ -251,7 +252,9 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
     - Done when: kind with `--onecli` runs a session through the gateway (scripted model plus one real-model test with
       protected credentials), and a second bootstrap run changes nothing.
 11. **DB TLS and cleanup.**
-    - TLS with verification for both `pg` pools; `database.tls` values. Remove the `deploy/` scripts and manifests that
+    - 11a (done, issue #132): TLS with verification for both `pg` pools; `database.tls` values; `pi-postgres` can serve
+      TLS. Open: the e2e run against a Postgres that requires TLS (needs the e2e driver, issue #132 follow-up).
+    - 11b: Remove the `deploy/` scripts and manifests that
       the chart replaced; update README, `deploy/README.md`, `docs/e2e.md`, `docs/model-credentials.md` and plan.md.
     - Done when: e2e passes against an external Postgres that requires TLS; no doc points at a removed script.
 
