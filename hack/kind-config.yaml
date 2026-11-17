@@ -1,0 +1,10 @@
+# One control-plane node with the default CNI (kindnet). kindnet enforces plain NetworkPolicy since kind v0.24
+# (kube-network-policies), which is why PR CI runs it with networkPolicy.provider standard (docs/install-plan.md section 6).
+# It does not filter traffic to hostNetwork Pods (API server, kubelet, etcd), on any node, so the isolation probe reports
+# not-enforced here because of the kube-api target while Postgres and the orchestrator are blocked (docs/install-plan.md).
+# The node image is pinned by digest, the default of the kind release hack/kind-up.sh and the kind workflow require.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
