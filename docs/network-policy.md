@@ -144,3 +144,14 @@ delete it from the cluster (no prune), it is harmless and can be deleted.
   `ciliumnetworkpolicies.yaml`) with a field-and-enum validator: no unknown fields, `kube-apiserver` is a valid entity. Client dry-run on your cluster requires the Cilium CRDs.
 - Enforcement itself is verified (plan.md, "Enforcement result": the sandbox isolation test passes and phases 1, 3, 4, 4b are green). UNVERIFIED here: FQDN behaviour, the `egressDeny` and endpoint-identity interaction, the CNPG port list,
   the host-rule API's delete and list shapes, and rule evaluation order in OneCLI.
+
+### Honest e2e verdicts
+
+`NETPOL_ENFORCED` is forwarded by `tests/e2e/run.sh` into the driver Job (unset keeps today's automatic behavior;
+`1` fails missing enforcement, `0` forces KNOWN-FAIL only after positive controls succeed). Each denied target in
+phase3 now has a TCP reachability control from the driver or orchestrator before it is tested from a sandbox.
+Postgres, orchestrator, ingest and sandboxd use Service DNS and ready endpoint Pod IPs. Kubernetes and external
+OneCLI APIs use Service DNS because the driver cannot read endpoints outside its run namespace. A dead target,
+failed DNS lookup or failed control is FAIL, never a successful block or KNOWN-FAIL. Public internet is allowed,
+not a denied target. The production `/admin/status` reports `networkPolicy: unknown` until the later isolation-probe
+slice; it does not infer enforcement from policy objects being present.

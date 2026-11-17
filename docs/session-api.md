@@ -413,3 +413,39 @@ A file over 32 KiB is cut at a character boundary with a note, and one over 1 Mi
 profile's `instructions`, the project instructions, then the skills catalog (Pi's order). It is read in the same pass, at the same
 times and under the same rules as repo skills (after the clone and at each new message while the sandbox is open; unchanged text
 writes nothing; a failure keeps the instructions), and needs no `read` tool.
+
+## Isolation status (admins only)
+
+`GET /admin/status` uses the same bearer authentication and `PI_API_ADMINS` allowlist as the other admin routes
+(401 without authentication, 403 for non-admins). It reads Postgres only; ingest has no Kubernetes access.
+
+```json
+{
+  "shards": [
+    {
+      "shard": 0,
+      "configuredRuntime": "gvisor",
+      "observedRuntime": null,
+      "networkPolicy": "unknown",
+      "updatedAt": "2026-11-17T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+Rows are ordered by shard. An empty list means no shard has published status yet, not verified isolation.
+Each orchestrator publishes after acquiring its shard's ownership lock. At every start it resolves the configured
+SandboxWarmPool's SandboxTemplate and checks `spec.podTemplate.spec.runtimeClassName` directly, so editing the
+manifest cannot bypass the guard via a stale duplicate environment value. Anything other than exactly `gvisor`
+(including absent/empty, reported as `""`) refuses startup unless `PI_ALLOW_INSECURE_RUNTIME=1`; an override emits a
+prominent structured warning on every start. RBAC grants `get` on pools and templates.
+
+`observedRuntime` resets to null at start, then records the latest attached sandbox Pod's `spec.runtimeClassName`
+(empty string means the node default). The claim's resolved Sandbox and Pod-name annotation identify that Pod,
+including warm-pool allocations. This is the latest observation, not a guarantee that every existing sandbox has the
+configured runtime; template changes do not update existing sandboxes (ADR 0019).
+`networkPolicy` is currently always `unknown`, with a startup warning: the production isolation probe is a later
+installation-plan slice. Neither a configured runtime nor an unknown policy proves network isolation. `updatedAt`
+is the last start/attach write, not a heartbeat; rows persist through downtime and may be stale.
+The new `inbox.shard_status` migration uses the recorded-migration mechanism (ADR 0005), so current-schema restarts
+perform no DDL. Status is read-only (405 for other methods); no probe endpoint exists yet.

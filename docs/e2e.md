@@ -207,3 +207,22 @@ no `Namespace` object and no `pi-durable-poc`):
 ```sh
 d=$(mktemp -d) && printf 'namespace: pi-e2e-test\nresources:\n  - %s\n' "$(python3 -c 'import os,sys;print(os.path.relpath(os.path.realpath(sys.argv[1]),os.path.realpath(sys.argv[2])))' tests/e2e/deploy "$d")" >"$d/kustomization.yaml" && kustomize build "$d" | grep -c pi-durable-poc
 ```
+
+### Isolation enforcement and database client
+
+`NETPOL_ENFORCED=1 tests/e2e/run.sh phase3` forwards the setting into the driver Job and makes missing enforcement a
+FAIL rather than KNOWN-FAIL. Unset preserves automatic detection; `0` explicitly requests KNOWN-FAIL when controls
+succeed. Positive-control failures always fail. The isolation test checks ingest as well as Postgres, orchestrator,
+another sandbox's sandboxd (REST and gRPC), Kubernetes API and OneCLI API. Every denied address must first accept a
+TCP connection from an allowed source. In-namespace targets use both Service DNS and a ready endpoint Pod IP;
+external OneCLI and the Kubernetes API use Service DNS (the driver has no cross-namespace endpoint permissions).
+Public internet and the OneCLI gateway remain allowed controls.
+
+All SQL suites use `e2e_db` / `e2e_db_start` in `tests/e2e/fns.sh`, not a database-server Pod name or CNPG readiness.
+The helper creates a restricted, tokenless `e2e-psql` client Pod in the throwaway namespace, waits for `select 1`,
+and execs psql using a Secret URI. It uses `E2E_DB_SECRET` / `E2E_DB_URI_KEY` (defaults `pi-pg-app` / `uri`); no URI
+is printed. The Pod lives until namespace cleanup and supports concurrent client sessions and lock-holder queries.
+The local phase4b adapter still uses `LOCAL_DB_URL`. Test-only client policies allow DNS and database TCP egress,
+plus ingress to today's CNPG Pods; a different backend must admit that client label too. CNPG creation remains in
+`run.sh` until installation slice 6. The runtime guard reads the real template; insecure test stacks must explicitly
+set `PI_ALLOW_INSECURE_RUNTIME=1` on their orchestrator Deployments.

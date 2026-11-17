@@ -32,6 +32,8 @@ export type SessionKeyOf = (conversationId: number) => Promise<string>;
 
 /** Per-session hooks for repo sessions (Phase 4c). Plain sessions ignore them: both answer "nothing". */
 export interface SandboxHooks {
+  /** Record the resolved Pod runtime before the attached sandbox serves tools. */
+  attached?: (claimName: string) => Promise<void>;
   /** Extra environment for this conversation's tool commands (pi-env `shellEnv`), set when its env is opened. */
   shellEnv?: (conversationId: number) => Promise<Record<string, string> | undefined>;
   /** Runs before every call on an open env; renews credentials that are about to expire. */
@@ -576,6 +578,7 @@ export class Sandboxes {
       });
       throw error;
     }
+    await this.#hooks.attached?.(claimName);
     this.timings.mark(conversationId, "claim-ready");
     log("claim-ready", { ...this.timings.fields(conversationId), claim: claimName });
     // Credentials for a repo session's commands only; plain sessions get nothing here. The token travels through the

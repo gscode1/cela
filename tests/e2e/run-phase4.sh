@@ -44,7 +44,7 @@ now() { date +%s; }
 # shellcheck source=fns.sh
 . "$here/fns.sh"
 
-pg() { k exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -v ON_ERROR_STOP=1 "$@"; }
+pg() { e2e_db "$@"; }
 
 # Sessions the suite created, as "owner id" lines. They are deleted through the API on exit (the path a user takes:
 # tombstone, OneCLI revoke, claim, PVC), then their rows are dropped. Only if that does not finish in time are the
@@ -678,7 +678,7 @@ log "setup: wait for CNPG, the orchestrator and ingest (overlay and code were pu
   exit 1
 }
 "$root/deploy/gen-api-secret.sh" >/dev/null
-k wait --for=condition=Ready cluster.postgresql.cnpg.io/pi-pg --timeout=300s >/dev/null
+e2e_db_start
 k rollout status deployment/pi-orchestrator --timeout=240s >/dev/null
 k rollout status deployment/pi-ingest --timeout=240s >/dev/null
 fi

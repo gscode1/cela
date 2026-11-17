@@ -37,6 +37,7 @@ import {
   readProfiles,
   readJsonObject,
   readSettings,
+  readShardStatus,
   updateSettings,
   beginDelete,
   requeueFailedDelete,
@@ -200,6 +201,14 @@ async function handleAdmin(
     return;
   }
   const method = req.method ?? "GET";
+  if (parts[1] === "status" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    sendJson(res, 200, { shards: await readShardStatus(deps.pool) });
+    return;
+  }
   if (parts[1] === "mcp-servers") {
     await handleAdminMcpServers(req, res, deps, principal, url, parts);
     return;

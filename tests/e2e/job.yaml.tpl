@@ -36,6 +36,7 @@ spec:
             - { name: NO_COLOR, value: "1" }
             - { name: ONLY, value: "__ONLY__" }
             - { name: E2E_PARALLEL, value: "__E2E_PARALLEL__" }
+            - { name: NETPOL_ENFORCED, value: "__NETPOL_ENFORCED__" }
             - { name: REAL_MODEL, value: "__REAL_MODEL__" }
             - { name: REPO_A, value: "__REPO_A__" }
             - { name: REPO_B, value: "__REPO_B__" }
