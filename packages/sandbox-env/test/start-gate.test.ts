@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BRIDGE_READY } from "../src/bridge.ts";
 import { freeGateOnBridgeLog } from "../src/index.ts";
 import { StartGate, gatedStart } from "../src/start-gate.ts";
@@ -27,11 +27,23 @@ describe("StartGate", () => {
   });
 
   it("frees the turn on its own if the holder never reports ready", async () => {
-    const gate = new StartGate(30);
-    await gate.acquire();
-    const started = Date.now();
-    await gate.acquire();
-    expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+    // Fake timers: a wall-clock bound flaked on busy runners (a 30 ms timer measured as 24 ms, #149).
+    vi.useFakeTimers();
+    try {
+      const gate = new StartGate(30);
+      await gate.acquire();
+      let freed = false;
+      const second = gate.acquire().then(() => {
+        freed = true;
+      });
+      await vi.advanceTimersByTimeAsync(29);
+      expect(freed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await second;
+      expect(freed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("treats a second release as a no-op", async () => {
