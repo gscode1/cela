@@ -21,6 +21,9 @@ for m in \${STUB_MISSING:-}; do
 done
 if [[ $args == *" rollout restart "* && -n \${STUB_RESTART_FAIL:-} ]]; then echo "restart failed" >&2; exit 1; fi
 if [[ -n \${STUB_LOCK_HELD:-} && $args == *" create -f - "* ]]; then echo "AlreadyExists" >&2; exit 1; fi
+# A taken lock remembers its holder, so a release finds itself the holder and deletes it.
+if [[ $args == *" create -f - "* ]]; then sed -n 's/^  holder: "\\(.*\\)"$/\\1/p' >"$STUB_DIR/lock-holder"; exit 0; fi
+if [[ $args == *" get configmap ingest-code-push-lock --ignore-not-found "* ]]; then cat "$STUB_DIR/lock-holder" 2>/dev/null; exit 0; fi
 if [[ -n \${STUB_LOCK_HELD:-} && $args == *" get configmap ingest-code-push-lock -o "* ]]; then echo "1 9999999999 other-host"; exit 0; fi
 if [[ $args == *" annotate configmap "* && -n \${STUB_ANNOTATE_FAIL:-} ]]; then echo "connection refused" >&2; exit 1; fi
 if [[ $args == *" create configmap "* ]]; then echo "kind: ConfigMap"; exit 0; fi
@@ -138,7 +141,16 @@ exit 0
     const lock = calls.indexOf("create -f -");
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(lock).toBeLessThan(calls.indexOf("get configmap ingest-code -o jsonpath"));
-    expect(calls).toContain("get configmap ingest-code-push-lock --ignore-not-found");
+    expect(calls).toContain("delete configmap ingest-code-push-lock");
+    expect(calls.indexOf("delete configmap ingest-code-push-lock")).toBeGreaterThan(
+      calls.indexOf("rollout restart"),
+    );
+  });
+
+  it("releases the lock when the restart fails too", () => {
+    const r = run("push-ingest.sh", [], { STUB_RESTART_FAIL: "1" });
+    expect(r.status).toBe(1);
+    expect(log()).toContain("delete configmap ingest-code-push-lock");
   });
 
   it("stops before touching the ConfigMap when another push holds the lock", () => {
