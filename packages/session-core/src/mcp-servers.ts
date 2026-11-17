@@ -1,4 +1,7 @@
 import type pg from "pg";
+import { checkRevision } from "./revision.js";
+import { sourceFromColumn, sourcesEqual, validateSource } from "./source.js";
+import type { CatalogSource } from "./source.js";
 
 /** Notification channel a writer signals on, in the same transaction as the write. */
 export const MCP_SERVERS_CHANNEL = "pi_mcp_servers";
@@ -27,6 +30,10 @@ export interface McpServerConfig {
 
 export interface StoredMcpServer {
   server: McpServerConfig;
+  /** Counts the writes, enable and disable included; the next write's `expectedRevision`. */
+  revision: number;
+  /** Reserved for a catalog repository sync; not part of `server`, so no orchestrator reacts to it. */
+  source: CatalogSource | null;
   createdAt: Date;
   createdBy: string;
   updatedAt: Date;
@@ -185,6 +192,8 @@ interface McpRow {
   timeout_ms: number;
   max_output_bytes: number;
   onecli_secret: string | null;
+  revision: number;
+  source: unknown;
   created_at: Date;
   created_by: string;
   updated_at: Date;
@@ -192,7 +201,7 @@ interface McpRow {
 }
 
 const COLUMNS =
-  "name, url, transport, enabled, read_only, timeout_ms, max_output_bytes, onecli_secret, created_at, created_by, updated_at, updated_by";
+  "name, url, transport, enabled, read_only, timeout_ms, max_output_bytes, onecli_secret, revision, source, created_at, created_by, updated_at, updated_by";
 
 /** A stored row, validated like input: a bad row throws (or is reported by `readMcpServers`), never used. */
 function fromRow(row: McpRow): StoredMcpServer {
@@ -210,6 +219,8 @@ function fromRow(row: McpRow): StoredMcpServer {
   }
   return {
     server,
+    revision: row.revision,
+    source: sourceFromColumn(row.source),
     createdAt: row.created_at,
     createdBy: row.created_by,
     updatedAt: row.updated_at,
@@ -296,7 +307,21 @@ export async function putMcpServer(
   name: string,
   input: unknown,
   by: string,
+  expectedRevision?: number,
 ): Promise<PutResult | string> {
+  // `source` is not part of the server: it is split off, checked on its own and stored beside the row.
+  let body = input;
+  let source: CatalogSource | null | undefined;
+  if (typeof input === "object" && input !== null && !Array.isArray(input) && "source" in input) {
+    const { source: given, ...rest } = input as Record<string, unknown>;
+    body = rest;
+    if (given === null) source = null;
+    else {
+      const checked = validateSource(given);
+      if (typeof checked === "string") return checked;
+      source = checked;
+    }
+  }
   return inTransaction(pool, async (client) => {
     // `for update` locks nothing while the row does not exist, so two creates of one name would both see "no row", and
     // the second would overwrite the first with create defaults. The advisory lock serialises writers per name.
@@ -305,6 +330,7 @@ export async function putMcpServer(
       `select ${COLUMNS} from inbox.mcp_servers where name = $1 for update`,
       [name],
     );
+    checkRevision(`MCP server ${name}`, expectedRevision, rows[0]?.revision);
     // A stored row that no longer validates is replaced by the body alone, which must then be complete.
     let current: StoredMcpServer | undefined;
     try {
@@ -312,19 +338,26 @@ export async function putMcpServer(
     } catch {
       current = undefined;
     }
-    const next = validateMcpServer(name, input, current?.server);
+    const next = validateMcpServer(name, body, current?.server);
     if (typeof next === "string") return next;
-    if (current !== undefined && mcpServersEqual(current.server, next)) {
+    // An omitted `source` keeps the stored one (the body lays over the row), `null` clears it.
+    const nextSource = source === undefined ? (current?.source ?? null) : source;
+    if (
+      current !== undefined &&
+      mcpServersEqual(current.server, next) &&
+      sourcesEqual(current.source, nextSource)
+    ) {
       return { stored: current, created: false };
     }
     const { rows: written } = await client.query<McpRow>(
       `insert into inbox.mcp_servers
-         (name, url, transport, enabled, read_only, timeout_ms, max_output_bytes, onecli_secret, created_by, updated_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+         (name, url, transport, enabled, read_only, timeout_ms, max_output_bytes, onecli_secret, source, created_by, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
        on conflict (name) do update set
          url = excluded.url, transport = excluded.transport, enabled = excluded.enabled,
          read_only = excluded.read_only, timeout_ms = excluded.timeout_ms,
          max_output_bytes = excluded.max_output_bytes, onecli_secret = excluded.onecli_secret,
+         source = excluded.source, revision = inbox.mcp_servers.revision + 1,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
       [
@@ -336,6 +369,7 @@ export async function putMcpServer(
         next.timeoutMs,
         next.maxOutputBytes,
         next.onecliSecret,
+        nextSource === null ? null : JSON.stringify(nextSource),
         by,
       ],
     );
@@ -350,22 +384,44 @@ export async function putMcpServer(
     );
     const row = written[0];
     return {
-      stored: row === undefined ? fromStored(next, by) : fromRow(row),
+      stored:
+        row === undefined
+          ? fromStored(next, nextSource, (rows[0]?.revision ?? 0) + 1, by)
+          : fromRow(row),
       created,
     };
   });
 }
 
-function fromStored(server: McpServerConfig, by: string): StoredMcpServer {
+function fromStored(
+  server: McpServerConfig,
+  source: CatalogSource | null,
+  revision: number,
+  by: string,
+): StoredMcpServer {
   const now = new Date();
-  return { server, createdAt: now, createdBy: by, updatedAt: now, updatedBy: by };
+  return { server, revision, source, createdAt: now, createdBy: by, updatedAt: now, updatedBy: by };
 }
 
-/** Removes the row (a real delete: the history keeps what it was). False if there was none. */
-export async function deleteMcpServer(pool: pg.Pool, name: string, by: string): Promise<boolean> {
+/**
+ * Removes the row (a real delete: the history keeps what it was). False if there was none; throws
+ * `AdminConflictError` when `expectedRevision` is not the stored one.
+ */
+export async function deleteMcpServer(
+  pool: pg.Pool,
+  name: string,
+  by: string,
+  expectedRevision?: number,
+): Promise<boolean> {
   if (mcpServerNameError(name) !== undefined) return false;
   return inTransaction(pool, async (client) => {
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`mcp:${name}`]);
+    const { rows: found } = await client.query<McpRow>(
+      `select ${COLUMNS} from inbox.mcp_servers where name = $1 for update`,
+      [name],
+    );
+    if (found[0] === undefined) return false;
+    checkRevision(`MCP server ${name}`, expectedRevision, found[0].revision);
     const { rows } = await client.query<McpRow>(
       `delete from inbox.mcp_servers where name = $1 returning ${COLUMNS}`,
       [name],

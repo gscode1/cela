@@ -8,6 +8,7 @@ interface Row {
   max_reasoning: string | null;
   default_profile: string | null;
   turn_budget: number;
+  revision: number;
   updated_at: Date;
   updated_by: string;
 }
@@ -29,6 +30,8 @@ export interface McpRow {
   timeout_ms: number;
   max_output_bytes: number;
   onecli_secret: string | null;
+  revision?: number;
+  source?: unknown;
   created_at: Date;
   created_by: string;
   updated_at: Date;
@@ -48,6 +51,7 @@ interface McpHistoryRow {
 export interface ProfileRowF {
   name: string;
   current_version: number;
+  revision?: number;
   enabled_for_new: boolean;
   created_at: Date;
   created_by: string;
@@ -80,6 +84,7 @@ export interface SkillVersionRowF {
   digest: string;
   size_bytes: number;
   manifest: unknown;
+  source?: unknown;
   created_at: Date;
   created_by: string;
 }
@@ -116,6 +121,7 @@ export class FakeSettingsDb {
       {
         name: "coding",
         current_version: 1,
+        revision: 1,
         enabled_for_new: true,
         created_at: new Date(0),
         created_by: "seed",
@@ -163,6 +169,7 @@ export class FakeSettingsDb {
       max_reasoning: null,
       default_profile: null,
       turn_budget: 100,
+      revision: 1,
       updated_at: new Date(0),
       updated_by: "seed",
       ...partial,
@@ -227,6 +234,9 @@ export class FakeSettingsDb {
     if (/inbox\.(profiles|profile_versions|orchestrator_capabilities|sessions)\b/.test(text)) {
       return this.#profileQuery(text, params, done);
     }
+    if (text.startsWith("select default_profile from inbox.settings")) {
+      return done(this.row === undefined ? [] : [{ default_profile: this.row.default_profile }]);
+    }
     if (text.startsWith("select default_model")) {
       if (this.failReads) return Promise.reject(new Error("connection lost"));
       return done(this.row === undefined ? [] : [{ ...this.row }]);
@@ -248,6 +258,7 @@ export class FakeSettingsDb {
         max_reasoning: maxReasoning,
         default_profile: defaultProfile,
         turn_budget: budget,
+        revision: text.includes("do nothing") ? 1 : (this.row?.revision ?? 0) + 1,
         updated_at: new Date(),
         updated_by: by ?? "seed",
       };
@@ -352,8 +363,8 @@ export class FakeSettingsDb {
       return done();
     }
     if (text.startsWith("insert into inbox.skill_versions")) {
-      const [name, version, description, disableModelInvocation, digest, size, manifest, by] =
-        params as [string, number, string, boolean, string, number, string, string];
+      const [name, version, description, disableModelInvocation, digest, size, manifest, by, src] =
+        params as [string, number, string, boolean, string, number, string, string, string | null];
       if (!this.skills.has(name)) throw new Error("foreign key violation (skill_versions)");
       if (this.skillVersions.some((v) => v.name === name && v.version === version)) {
         throw new Error("duplicate key value (skill_versions)");
@@ -366,6 +377,7 @@ export class FakeSettingsDb {
         digest,
         size_bytes: size,
         manifest: JSON.parse(manifest) as unknown,
+        source: src === null ? null : (JSON.parse(src) as unknown),
         created_at: new Date(),
         created_by: by,
       });
@@ -417,6 +429,7 @@ export class FakeSettingsDb {
       this.profiles.set(name, {
         name,
         current_version: 1,
+        revision: 1,
         enabled_for_new: enabled,
         created_at: now,
         created_by: by,
@@ -446,6 +459,7 @@ export class FakeSettingsDb {
       if (row === undefined) return done();
       Object.assign(row, {
         current_version: version,
+        revision: (row.revision ?? 0) + 1,
         enabled_for_new: enabled,
         updated_at: new Date(),
         updated_by: by,
@@ -524,17 +538,19 @@ export class FakeSettingsDb {
       );
     }
     if (text.startsWith("insert into inbox.mcp_servers (")) {
-      const [name, url, transport, enabled, readOnly, timeoutMs, maxOut, secret, by] = params as [
-        string,
-        string,
-        string,
-        boolean,
-        boolean,
-        number,
-        number,
-        string | null,
-        string,
-      ];
+      const [name, url, transport, enabled, readOnly, timeoutMs, maxOut, secret, src, by] =
+        params as [
+          string,
+          string,
+          string,
+          boolean,
+          boolean,
+          number,
+          number,
+          string | null,
+          string | null,
+          string,
+        ];
       const before = this.mcp.get(name);
       const now = new Date();
       const row: McpRow = {
@@ -546,6 +562,8 @@ export class FakeSettingsDb {
         timeout_ms: timeoutMs,
         max_output_bytes: maxOut,
         onecli_secret: secret,
+        revision: (before?.revision ?? 0) + 1,
+        source: src === null ? null : (JSON.parse(src) as unknown),
         created_at: before?.created_at ?? now,
         created_by: before?.created_by ?? by,
         updated_at: now,

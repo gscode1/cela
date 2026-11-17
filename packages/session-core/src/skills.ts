@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import { parseFrontmatter } from "./frontmatter.js";
+import { sourceFromColumn, validateSource } from "./source.js";
+import type { CatalogSource } from "./source.js";
 
 /**
  * Skills (docs/decisions/0011-skills-in-postgres.md): immutable, numbered versions of a SKILL.md (whose frontmatter
@@ -61,6 +63,8 @@ export interface SkillContent {
   description: string;
   /** `disable-model-invocation: true`: published and pinnable, but not in the catalog the model sees. */
   disableModelInvocation: boolean;
+  /** Reserved for a catalog repository sync. Not in the digest: the same files with another source are the same skill. */
+  source: CatalogSource | null;
   files: { path: string; content: Buffer; executable: boolean }[];
 }
 
@@ -125,7 +129,7 @@ function decodeFileBytes(entry: Record<string, unknown>, path: string): Buffer |
 }
 
 /**
- * The one validator for admin input: `{ files: [{ path, content | contentBase64, executable? }] }`. The description
+ * The one validator for admin input: `{ files: [{ path, content | contentBase64, executable? }], source? }`. The description
  * (required) and optionally the name come from the YAML frontmatter of SKILL.md, so a skill folder is the same in a repo
  * and here; `name` must equal `name` (the URL's) when present. Only regular files can be said, so symlinks, devices and
  * modes other than the executable bit cannot be expressed; any other field, `description` included, is refused.
@@ -142,7 +146,13 @@ export function validateSkillContent(input: unknown, name: string): SkillContent
     if (key === "description") {
       return `unknown field "description": it is read from the ${SKILL_ENTRY} frontmatter`;
     }
-    if (key !== "files") return `unknown field "${key.slice(0, 50)}"`;
+    if (key !== "files" && key !== "source") return `unknown field "${key.slice(0, 50)}"`;
+  }
+  let source: CatalogSource | null = null;
+  if (body.source !== undefined && body.source !== null) {
+    const checked = validateSource(body.source);
+    if (typeof checked === "string") return checked;
+    source = checked;
   }
   const { files } = body;
   if (!Array.isArray(files) || files.length === 0 || files.length > SKILL_LIMITS.files) {
@@ -199,7 +209,7 @@ export function validateSkillContent(input: unknown, name: string): SkillContent
   const meta = skillMetaFromFrontmatter(text, name);
   if (typeof meta === "string") return meta;
   out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { name, ...meta, files: out };
+  return { name, ...meta, source, files: out };
 }
 
 /** The name, description and model-invocation flag of a SKILL.md, or the message for a 400. */
@@ -306,6 +316,8 @@ export interface SkillVersionMeta {
   digest: string;
   size: number;
   files: SkillFileEntry[];
+  /** Set when the version was published and never changed; null when none was given. */
+  source: CatalogSource | null;
   createdAt: Date;
   createdBy: string;
 }
@@ -337,6 +349,7 @@ interface VersionRow {
   digest: string;
   size_bytes: number;
   manifest: unknown;
+  source?: unknown;
   created_at: Date;
   created_by: string;
 }
@@ -375,13 +388,14 @@ function metaFromRow(row: VersionRow): SkillVersionMeta {
     digest: row.digest,
     size: row.size_bytes,
     files: manifestFromRow(row),
+    source: sourceFromColumn(row.source),
     createdAt: row.created_at,
     createdBy: row.created_by,
   };
 }
 
 const VERSION_COLUMNS =
-  "name, version, description, disable_model_invocation, digest, size_bytes, manifest, created_at, created_by";
+  "name, version, description, disable_model_invocation, digest, size_bytes, manifest, source, created_at, created_by";
 
 /** One version's metadata (no bytes); undefined if there is none. A manifest that does not parse is thrown. */
 export async function readSkillVersion(
@@ -483,7 +497,7 @@ function storedFromRow(row: SkillRow): StoredSkill {
 
 const SKILL_SELECT = `select s.name, s.current_version, s.created_at as s_created_at, s.created_by as s_created_by,
        s.updated_at as s_updated_at, s.updated_by as s_updated_by,
-       v.version, v.description, v.disable_model_invocation, v.digest, v.size_bytes, v.manifest, v.created_at, v.created_by
+       v.version, v.description, v.disable_model_invocation, v.digest, v.size_bytes, v.manifest, v.source, v.created_at, v.created_by
   from inbox.skills s join inbox.skill_versions v on v.name = s.name and v.version = s.current_version`;
 
 /** Every skill at its current version. */
@@ -522,7 +536,7 @@ export type PutSkillResult =
 
 /**
  * Publishes a version of a skill from `by`. Identical to the current version (same digest): nothing is written and
- * `created` is false. Otherwise the next number is stored with its files; rows are never changed afterwards. One
+ * `created` is false, whatever `source` says (it is not part of the digest, and a stored version never changes). Otherwise the next number is stored with its files; rows are never changed afterwards. One
  * transaction under a lock per name, so two publishers get two different numbers.
  */
 export async function putSkillVersion(
@@ -554,8 +568,8 @@ export async function putSkillVersion(
       );
     }
     await client.query(
-      `insert into inbox.skill_versions (name, version, description, disable_model_invocation, digest, size_bytes, manifest, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `insert into inbox.skill_versions (name, version, description, disable_model_invocation, digest, size_bytes, manifest, created_by, source)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         name,
         version,
@@ -565,6 +579,7 @@ export async function putSkillVersion(
         size,
         JSON.stringify(files),
         by,
+        content.source === null ? null : JSON.stringify(content.source),
       ],
     );
     for (const file of content.files) {
