@@ -301,13 +301,17 @@ export class OneCliAdmin {
     await this.#call("DELETE", `/v1/agents/${encodeURIComponent(id)}`, undefined, [200, 204, 404]);
   }
 
-  async listSecrets(): Promise<{ id: string; name: string }[]> {
+  /** `hostPattern` is only set when the API gives one (the typed and generic secrets do, spike Q7). */
+  async listSecrets(): Promise<{ id: string; name: string; hostPattern?: string }[]> {
     const { body } = await this.#call("GET", "/v1/secrets");
     return listOf(body, ["secrets", "data"], "the secret list").map((entry) => {
       const record = asRecord(entry, "a secret");
       return {
         id: idOf(entry, "a secret"),
         name: typeof record.name === "string" ? record.name : "",
+        ...(typeof record.hostPattern === "string" && record.hostPattern !== ""
+          ? { hostPattern: record.hostPattern }
+          : {}),
       };
     });
   }

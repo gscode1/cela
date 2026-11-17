@@ -43,6 +43,26 @@ function admin(fetch: FetchLike, retries = 3): { admin: OneCliAdmin; sleeps: num
   };
 }
 
+describe("OneCliAdmin listSecrets", () => {
+  it("returns the host pattern when the API gives one, and none otherwise", async () => {
+    const body = [
+      { id: "s1", name: "openai", hostPattern: "api.openai.com" },
+      { id: "s2", name: "bare" },
+    ];
+    const fetch: FetchLike = () =>
+      Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    const { admin: a } = admin(fetch);
+    expect(await a.listSecrets()).toEqual([
+      { id: "s1", name: "openai", hostPattern: "api.openai.com" },
+      { id: "s2", name: "bare" },
+    ]);
+  });
+});
+
 describe("OneCliAdmin retry and timeout", () => {
   it("retries a network error and a 5xx with doubling, capped backoff, then succeeds", async () => {
     const { fetch, calls } = scripted(["network", 503, 500, 200]);

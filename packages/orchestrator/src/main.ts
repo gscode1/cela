@@ -18,6 +18,7 @@ import { bridgeCapFields } from "./bridge-cap.js";
 import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";
 import { OneCliAdmin } from "./onecli-admin.js";
+import { modelCatalog, providerCredentials } from "./providers.js";
 import { RepoAccess } from "./repo-access.js";
 import type { SandboxHooks } from "./sandboxes.js";
 import { liveConversationProfiles, publishAndCheckProfiles } from "./capabilities.js";
@@ -190,7 +191,20 @@ async function main(): Promise<void> {
   running.host = host;
   if (shuttingDown()) return;
   // Before the first input: ingest validates profile writes against what is installed here.
-  await publishAndCheckProfiles(pool, host.capabilities(), config.instance);
+  // Also the model catalog and, from OneCLI's secrets, a credential hint per provider; refreshed at start only.
+  await publishAndCheckProfiles(
+    pool,
+    {
+      ...host.capabilities(),
+      models: modelCatalog(host.models),
+      modelProviders: await providerCredentials(
+        host.models,
+        config,
+        onecli?.listSecrets.bind(onecli),
+      ),
+    },
+    config.instance,
+  );
   const service = new SessionService(pool, host, {
     shard: config.shard,
     testFaults: config.testFaults,

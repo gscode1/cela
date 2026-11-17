@@ -392,3 +392,136 @@ describe("POST /sessions with profiles", () => {
 });
 
 const RESEARCH_PLAIN = { tools: ["read"] };
+
+describe("model catalog", () => {
+  const entry = (provider: string) => ({ provider, id: "m", reasoning: false });
+  const publish = (db: FakeSettingsDb, providers: [string, string][]): void => {
+    db.capabilities = {
+      tools: ["read"],
+      extensions: [],
+      instance: "o",
+      models: providers.map(([p]) => entry(p)),
+      model_providers: providers.map(([provider, credential]) => ({ provider, credential })),
+    };
+  };
+  const names = async (base: string, query = "") => {
+    const body = (await json(await call(base, "alice", "GET", `/admin/models${query}`))) as {
+      models: { provider: string }[];
+      providers: { provider: string }[];
+      filtered: boolean;
+      reason?: string;
+      source: string;
+    };
+    return { ...body, models: body.models.map((m) => m.provider) };
+  };
+
+  it("GET /admin/models: none before a publish; admin only; GET only", async () => {
+    const { base } = await start(["alice"]);
+    expect(await json(await call(base, "alice", "GET", "/admin/models"))).toEqual({
+      models: [],
+      providers: [],
+      source: "none",
+      filtered: false,
+      credentials: "unknown",
+      reason: "no orchestrator has published a model catalog yet",
+    });
+    expect((await call(base, "bob", "GET", "/admin/models")).status).toBe(403);
+    expect((await call(base, "alice", "POST", "/admin/models", {})).status).toBe(405);
+  });
+
+  it("returns only configured providers by default, everything with ?all=1", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "configured"],
+      ["anthropic", "missing"],
+      ["mistral", "unknown"],
+    ]);
+    const filtered = await names(base);
+    expect(filtered).toMatchObject({
+      filtered: true,
+      source: "orchestrator",
+      credentials: "configured",
+    });
+    expect(filtered.models).toEqual(["openai"]);
+    expect(filtered.providers.map((p) => p.provider)).toEqual(["openai"]);
+    const full = await names(base, "?all=1");
+    expect(full.filtered).toBe(false);
+    expect(full.models).toEqual(["openai", "anthropic", "mistral"]);
+    expect(full.providers).toHaveLength(3);
+  });
+
+  it("is empty with credentials none-configured when OneCLI was checked and holds none", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "missing"],
+      ["anthropic", "missing"],
+      ["scripted", "configured"],
+    ]);
+    expect(await names(base)).toMatchObject({
+      models: [],
+      providers: [],
+      filtered: true,
+      credentials: "none-configured",
+    });
+  });
+
+  it("is empty with credentials unknown and a reason when OneCLI could not be checked", async () => {
+    const { base, db } = await start();
+    publish(db, [
+      ["openai", "unknown"],
+      ["scripted", "configured"],
+    ]);
+    const body = await names(base);
+    expect(body).toMatchObject({
+      models: [],
+      providers: [],
+      filtered: true,
+      credentials: "unknown",
+    });
+    expect(body.reason).toMatch(/could not be checked/);
+  });
+
+  it("never offers scripted in the default view, only with ?all=1", async () => {
+    const { base, db } = await start(["alice"], {
+      ...seed,
+      defaultModel: "scripted/m",
+      allowlist: ["scripted/m"],
+    });
+    publish(db, [
+      ["openai", "configured"],
+      ["scripted", "configured"],
+    ]);
+    const body = await names(base);
+    expect(body.models).toEqual(["openai"]);
+    expect(body.providers.map((p) => p.provider)).toEqual(["openai"]);
+    expect((await names(base, "?all=1")).models).toEqual(["openai", "scripted"]);
+  });
+
+  it("settings and profile writes check models against the catalog only once one is published", async () => {
+    const { base, db } = await start();
+    const put = (body: unknown) => call(base, "alice", "PUT", "/admin/settings", body);
+    expect((await put({ defaultModel: "openai/gpt-x", allowlist: ["openai/gpt-x"] })).status).toBe(
+      200,
+    );
+    db.capabilities = {
+      tools: ["read"],
+      extensions: [],
+      instance: "o",
+      models: [
+        { provider: "scripted", id: "scripted-1", reasoning: false },
+        { provider: "openai", id: "gpt-y", reasoning: true },
+      ],
+    };
+    const bad = await put({ defaultModel: "openai/gpt-z" });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toMatch(/"openai\/gpt-z"/);
+    expect((await put({ allowlist: ["openai/gpt-x", "openai/gpt-q"] })).status).toBe(400);
+    expect((await put({ defaultModel: "openai/gpt-y", allowlist: ["openai/gpt-y"] })).status).toBe(
+      200,
+    );
+    const profile = (model: string) =>
+      call(base, "alice", "PUT", "/admin/profiles/m", { definition: { defaultModel: model } });
+    expect((await profile("openai/gpt-z")).status).toBe(400);
+    expect((await profile("openai/gpt-y")).status).toBe(201);
+  });
+});

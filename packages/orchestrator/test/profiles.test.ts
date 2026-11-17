@@ -273,6 +273,20 @@ describe("publishAndCheckProfiles", () => {
     );
     expect(unresolved).toEqual(["stale"]);
     expect(db.capabilities).toMatchObject({ tools: ["read", "bash"], instance: "o1" });
+    await publishAndCheckProfiles(
+      db.asPool(),
+      {
+        tools: [],
+        extensions: [],
+        models: [{ provider: "scripted", id: "scripted-1", reasoning: false }],
+        modelProviders: [{ provider: "scripted", credential: "configured" }],
+      },
+      "o1",
+    );
+    expect(db.capabilities).toMatchObject({
+      models: [{ provider: "scripted", id: "scripted-1", reasoning: false }],
+      model_providers: [{ provider: "scripted", credential: "configured" }],
+    });
     const logged = write.mock.calls.map(([line]) => String(line)).join("");
     expect(logged).toContain("profile-unresolved");
     expect(logged).not.toContain("gone");

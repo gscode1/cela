@@ -317,6 +317,7 @@ export async function updateSettings(
   patch: unknown,
   by: string,
   expectedRevision?: number,
+  catalog?: readonly string[],
 ): Promise<StoredSettings | string> {
   return inTransaction(pool, async (client) => {
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [DEFAULT_PROFILE_LOCK]);
@@ -327,6 +328,10 @@ export async function updateSettings(
     const current = rows[0] === undefined ? undefined : fromRow(rows[0]);
     const next = validateSettings(patch, current?.settings);
     if (typeof next === "string") return next;
+    if (catalog !== undefined) {
+      const unknown = unknownModel(next, current?.settings, catalog);
+      if (unknown !== undefined) return unknown;
+    }
     if (typeof patch === "object" && patch !== null && "defaultProfile" in patch) {
       const problem = await defaultProfileProblem(client, next.defaultProfile);
       if (problem !== undefined) return problem;
@@ -362,6 +367,25 @@ export async function updateSettings(
         }
       : fromRow(written[0]);
   });
+}
+
+/**
+ * The message for a 400 when a model this write adds is not in the published catalog (docs/decisions/0025-model-catalog.md),
+ * or undefined. Only what changed is checked: an entry kept from before stays, so an operator can edit another field
+ * while the catalog no longer lists an old model.
+ */
+function unknownModel(
+  next: Settings,
+  current: Settings | undefined,
+  catalog: readonly string[],
+): string | undefined {
+  if (next.defaultModel !== current?.defaultModel && !catalog.includes(next.defaultModel)) {
+    return `defaultModel "${next.defaultModel}" is not in the model catalog`;
+  }
+  const added = next.allowlist.find(
+    (entry) => !catalog.includes(entry) && !(current?.allowlist ?? []).includes(entry),
+  );
+  return added === undefined ? undefined : `allowlist entry "${added}" is not in the model catalog`;
 }
 
 /** Newest first. */

@@ -138,7 +138,15 @@ export class FakeSettingsDb {
   skillVersions: SkillVersionRowF[] = [];
   skillFiles: SkillFileRowF[] = [];
   /** inbox.orchestrator_capabilities (one row) once an orchestrator published. */
-  capabilities: { tools: unknown; extensions: unknown; instance: string } | undefined;
+  capabilities:
+    | {
+        tools: unknown;
+        extensions: unknown;
+        instance: string;
+        models?: unknown;
+        model_providers?: unknown;
+      }
+    | undefined;
   /** inbox.sessions rows by id, as the columns the profile code writes and reads. */
   sessions = new Map<string, Record<string, unknown>>();
   #pending: string[] = [];
@@ -470,11 +478,19 @@ export class FakeSettingsDb {
       return done(this.capabilities === undefined ? [] : [{ ...this.capabilities }]);
     }
     if (text.startsWith("insert into inbox.orchestrator_capabilities")) {
-      const [tools, extensions, instance] = params as [string, string, string];
+      const [tools, extensions, instance, models, providers] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+      ];
       this.capabilities = {
         tools: JSON.parse(tools) as unknown,
         extensions: JSON.parse(extensions) as unknown,
         instance,
+        models: models === null ? null : (JSON.parse(models) as unknown),
+        model_providers: providers === null ? null : (JSON.parse(providers) as unknown),
       };
       return done();
     }

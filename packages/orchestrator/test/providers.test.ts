@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import { PLACEHOLDER_API_KEY } from "../src/onecli.ts";
-import { buildModels } from "../src/providers.ts";
+import {
+  buildModels,
+  hostPatternMatches,
+  modelCatalog,
+  providerCredentials,
+} from "../src/providers.ts";
 
 const base = {
   PI_ORCH_NAMESPACE: "test-ns",
@@ -122,5 +127,71 @@ describe("buildModels", () => {
       { chatgpt_account_id?: string }
     >;
     expect(claims["https://api.openai.com/auth"]?.chatgpt_account_id).toBe("acct-placeholder");
+  });
+});
+
+describe("model catalog", () => {
+  it("lists the scripted models without faux, and every builtin provider with a token", async () => {
+    const plain = modelCatalog(await buildModels(loadConfig(base), readCa));
+    expect(plain.map((m) => `${m.provider}/${m.id}`)).toEqual([
+      "scripted/scripted-1",
+      "scripted/scripted-2",
+    ]);
+    const full = modelCatalog(
+      await buildModels(loadConfig({ ...base, ONECLI_AGENT_TOKEN: TOKEN }), readCa),
+    );
+    expect(full.some((m) => m.provider === "faux")).toBe(false);
+    expect(full.length).toBeGreaterThan(plain.length);
+    expect(full.find((m) => m.provider === "openai")).toMatchObject({
+      reasoning: expect.any(Boolean) as boolean,
+      contextWindow: expect.any(Number) as number,
+    });
+  });
+});
+
+describe("hostPatternMatches", () => {
+  it("matches the same host, or a subdomain for *., case-insensitively, and never a bare *", () => {
+    expect(hostPatternMatches("api.openai.com", "API.openai.com")).toBe(true);
+    expect(hostPatternMatches("*.openai.com", "api.openai.com")).toBe(true);
+    expect(hostPatternMatches("*.openai.com", "openai.com")).toBe(false);
+    expect(hostPatternMatches("api.openai.com", "x.api.openai.com")).toBe(false);
+    expect(hostPatternMatches("*", "api.openai.com")).toBe(false);
+  });
+});
+
+describe("providerCredentials", () => {
+  const config = loadConfig({ ...base, ONECLI_AGENT_TOKEN: TOKEN });
+  const status = async (
+    list: Parameters<typeof providerCredentials>[2],
+    cfg: Parameters<typeof providerCredentials>[1] = config,
+  ): Promise<Record<string, string>> => {
+    const models = await buildModels(config, readCa);
+    return Object.fromEntries(
+      (await providerCredentials(models, cfg, list)).map((p) => [p.provider, p.credential]),
+    );
+  };
+
+  it("marks a provider configured when a secret's host covers its base URL, else missing", async () => {
+    const result = await status(() => Promise.resolve([{ hostPattern: "api.openai.com" }, {}]));
+    expect(result.openai).toBe("configured");
+    expect(result.anthropic).toBe("missing");
+    expect(result.scripted).toBe("configured");
+  });
+
+  it("is unknown without an admin client, and when listing fails, never failing", async () => {
+    expect((await status(undefined)).openai).toBe("unknown");
+    const failed = await status(() => Promise.reject(new Error("down")));
+    expect(failed.openai).toBe("unknown");
+    expect(failed.scripted).toBe("configured");
+  });
+
+  it("counts the Codex provider as configured when the OneCLI account id is set", async () => {
+    const withAccount = loadConfig({
+      ...base,
+      ONECLI_AGENT_TOKEN: TOKEN,
+      PI_CODEX_ACCOUNT_ID: "acct-1",
+    });
+    expect((await status(undefined, withAccount))["openai-codex"]).toBe("configured");
+    expect((await status(undefined))["openai-codex"]).toBe("unknown");
   });
 });

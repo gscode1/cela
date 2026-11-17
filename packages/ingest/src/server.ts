@@ -37,6 +37,7 @@ import {
   verifySkillBundle,
   validateProfileDefinition,
   putProfile,
+  catalogKeys,
   readCapabilities,
   readMcpServers,
   readProfile,
@@ -54,6 +55,8 @@ import {
   UUID,
 } from "@pi-durable-k8s/session-core";
 import type {
+  ModelCatalogEntry,
+  ModelProviderStatus,
   Authenticator,
   ModelChoice,
   ModelPolicy,
@@ -248,6 +251,53 @@ async function installedTools(
     : { tools: capabilities.tools, source: "orchestrator" };
 }
 
+/** The published model catalog's `provider/model` keys, or undefined while none is published (no check then). */
+async function publishedModelKeys(deps: IngestDeps): Promise<string[] | undefined> {
+  const capabilities = await readCapabilities(deps.pool);
+  return capabilities?.models === undefined ? undefined : catalogKeys(capabilities.models);
+}
+
+export type CredentialsView = "configured" | "none-configured" | "unknown";
+
+/**
+ * The catalog as the console should offer it: only providers whose credential is `configured`, never `scripted` (a
+ * test provider for CI, e2e and the quickstart), so the list is never big. `credentials` says why it may be empty:
+ * `none-configured` when OneCLI was checked and holds no model credential, `unknown` (with a `reason`) when it could not
+ * be checked. `all` returns the full catalog. Validation of writes never uses this view
+ * (docs/decisions/0025-model-catalog.md).
+ */
+export function filterModelCatalog(
+  models: readonly ModelCatalogEntry[],
+  providers: readonly ModelProviderStatus[],
+  all: boolean,
+): {
+  models: ModelCatalogEntry[];
+  providers: ModelProviderStatus[];
+  filtered: boolean;
+  credentials?: CredentialsView;
+  reason?: string;
+} {
+  if (all) return { models: [...models], providers: [...providers], filtered: false };
+  const real = providers.filter((p) => p.provider !== "scripted");
+  const kept = real.filter((p) => p.credential === "configured");
+  const names = new Set(kept.map((p) => p.provider));
+  const filtered = {
+    models: models.filter((m) => names.has(m.provider)),
+    providers: kept,
+    filtered: true,
+  };
+  if (kept.length > 0) return { ...filtered, credentials: "configured" };
+  if (real.some((p) => p.credential === "missing")) {
+    return { ...filtered, credentials: "none-configured" };
+  }
+  return {
+    ...filtered,
+    credentials: "unknown",
+    reason:
+      "OneCLI could not be checked (the orchestrator has no OneCLI admin key, or listing the secrets failed)",
+  };
+}
+
 async function handleAdminRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -301,6 +351,31 @@ async function handleAdminRoutes(
       return;
     }
     sendJson(res, 200, await installedTools(deps));
+    return;
+  }
+  if (parts[1] === "models" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const capabilities = await readCapabilities(deps.pool);
+    if (capabilities?.models === undefined) {
+      sendJson(res, 200, {
+        models: [],
+        providers: [],
+        source: "none",
+        filtered: false,
+        credentials: "unknown",
+        reason: "no orchestrator has published a model catalog yet",
+      });
+      return;
+    }
+    const all = ["1", "true"].includes(url.searchParams.get("all") ?? "");
+    const providers = capabilities.modelProviders ?? [];
+    sendJson(res, 200, {
+      ...filterModelCatalog(capabilities.models, providers, all),
+      source: "orchestrator",
+    });
     return;
   }
   if (parts[1] === "mcp-servers") {
@@ -364,6 +439,7 @@ async function handleAdminRoutes(
       taken.rest,
       principal.owner,
       taken.expectedRevision,
+      await publishedModelKeys(deps),
     );
     if (typeof stored === "string") {
       sendJson(res, 400, { error: stored });
@@ -681,6 +757,7 @@ async function handleAdminProfiles(
       return;
     }
     const installed = await installedTools(deps);
+    const models = await publishedModelKeys(deps);
     const catalog = await readMcpServers(deps.pool);
     const result = await putProfile(
       deps.pool,
@@ -695,6 +772,7 @@ async function handleAdminProfiles(
       {
         tools: installed.tools,
         mcpServers: catalog.servers.map((stored) => stored.server.name),
+        ...(models === undefined ? {} : { models }),
       },
     );
     if (!result.ok) {

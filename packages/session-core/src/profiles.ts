@@ -272,8 +272,15 @@ export function profileDefinitionsEqual(a: ProfileDefinition, b: ProfileDefiniti
  */
 export function checkProfileNames(
   definition: ProfileDefinition,
-  known: { tools: readonly string[]; mcpServers: readonly string[] },
+  known: { tools: readonly string[]; mcpServers: readonly string[]; models?: readonly string[] },
 ): string | undefined {
+  if (
+    definition.defaultModel !== undefined &&
+    known.models !== undefined &&
+    !known.models.includes(definition.defaultModel)
+  ) {
+    return `defaultModel "${definition.defaultModel}" is not in the model catalog`;
+  }
   for (const field of ["tools", "modelTools"] as const) {
     const unknown = definition[field]?.find((name) => !known.tools.includes(name));
     if (unknown !== undefined) {
@@ -446,7 +453,7 @@ export async function putProfile(
   name: string,
   input: PutProfileInput,
   by: string,
-  known: { tools: readonly string[]; mcpServers: readonly string[] },
+  known: { tools: readonly string[]; mcpServers: readonly string[]; models?: readonly string[] },
 ): Promise<PutProfileResult> {
   const nameError = profileNameError(name);
   if (nameError !== undefined) return { ok: false, message: nameError };
@@ -570,6 +577,33 @@ export interface Capabilities {
   tools: string[];
   /** Names of the installed extensions (without the per-server `mcp-*` ones). */
   extensions: string[];
+  /** The model catalog (docs/decisions/0025-model-catalog.md); absent from an orchestrator that does not publish it. */
+  models?: ModelCatalogEntry[];
+  /** Per provider of the catalog, whether OneCLI holds a credential for it (a hint, ADR 0025). */
+  modelProviders?: ModelProviderStatus[];
+}
+
+export type CredentialState = "configured" | "missing" | "unknown";
+
+export interface ModelProviderStatus {
+  provider: string;
+  credential: CredentialState;
+}
+
+/** One model pi-ai knows, as published for the admin console and the settings checks. Not a statement about credentials. */
+export interface ModelCatalogEntry {
+  provider: string;
+  id: string;
+  name?: string;
+  /** True if the model supports thinking levels. */
+  reasoning: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+/** `provider/model` keys of a catalog. */
+export function catalogKeys(models: readonly ModelCatalogEntry[]): string[] {
+  return models.map((entry) => modelKey({ provider: entry.provider, model: entry.id }));
 }
 
 /** The orchestrator's start: what it has installed, for ingest to validate profile writes against. */
@@ -579,22 +613,59 @@ export async function publishCapabilities(
   instance: string,
 ): Promise<void> {
   await pool.query(
-    `insert into inbox.orchestrator_capabilities (tools, extensions, instance)
-     values ($1, $2, $3)
+    `insert into inbox.orchestrator_capabilities (tools, extensions, instance, models, model_providers)
+     values ($1, $2, $3, $4, $5)
      on conflict (id) do update set tools = excluded.tools, extensions = excluded.extensions,
-       instance = excluded.instance, updated_at = clock_timestamp()`,
-    [JSON.stringify(capabilities.tools), JSON.stringify(capabilities.extensions), instance],
+       instance = excluded.instance, models = excluded.models,
+       model_providers = excluded.model_providers, updated_at = clock_timestamp()`,
+    [
+      JSON.stringify(capabilities.tools),
+      JSON.stringify(capabilities.extensions),
+      instance,
+      capabilities.models === undefined ? null : JSON.stringify(capabilities.models),
+      capabilities.modelProviders === undefined
+        ? null
+        : JSON.stringify(capabilities.modelProviders),
+    ],
   );
 }
 
 /** What the orchestrator published; undefined if it never started against this database. */
 export async function readCapabilities(db: Db): Promise<Capabilities | undefined> {
-  const { rows } = await db.query<{ tools: unknown; extensions: unknown }>(
-    "select tools, extensions from inbox.orchestrator_capabilities",
-  );
+  const { rows } = await db.query<{
+    tools: unknown;
+    extensions: unknown;
+    models: unknown;
+    model_providers: unknown;
+  }>("select tools, extensions, models, model_providers from inbox.orchestrator_capabilities");
   const row = rows[0];
   if (row === undefined) return undefined;
   const strings = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-  return { tools: strings(row.tools), extensions: strings(row.extensions) };
+  const models = Array.isArray(row.models)
+    ? row.models.filter(
+        (entry): entry is ModelCatalogEntry =>
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof (entry as ModelCatalogEntry).provider === "string" &&
+          typeof (entry as ModelCatalogEntry).id === "string",
+      )
+    : undefined;
+  const modelProviders = Array.isArray(row.model_providers)
+    ? row.model_providers.flatMap((entry: unknown): ModelProviderStatus[] => {
+        const item = entry as Partial<ModelProviderStatus> | null;
+        if (typeof item?.provider !== "string") return [];
+        const credential =
+          item.credential === "configured" || item.credential === "missing"
+            ? item.credential
+            : "unknown";
+        return [{ provider: item.provider, credential }];
+      })
+    : undefined;
+  return {
+    tools: strings(row.tools),
+    extensions: strings(row.extensions),
+    ...(models === undefined ? {} : { models }),
+    ...(modelProviders === undefined ? {} : { modelProviders }),
+  };
 }
