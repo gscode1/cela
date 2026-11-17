@@ -1,0 +1,24 @@
+{{- if .Values.networkPolicy.enabled }}
+# Ingress to 5432 only from the listed client Pods of this namespace. Postgres needs no egress (no replication, no
+# backup), so none is opened here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pi-postgres.fullname" . }}
+  labels:
+    {{- include "pi-postgres.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pi-postgres.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    {{- range .Values.networkPolicy.clientSelectors }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+    {{- end }}
+{{- end }}

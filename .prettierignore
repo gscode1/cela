@@ -19,3 +19,4 @@ examples/*/briefs/
 examples/*/briefs.json
 examples/*/create-all.mjs
 examples/*/batches.txt
+charts/*/templates
