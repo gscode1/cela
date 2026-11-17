@@ -67,6 +67,12 @@ test.describe("skills", () => {
     const file = stored.files.find((f) => f.path === "scripts/run.sh");
     expect(file?.executable).toBe(true);
     expect(Buffer.from(file?.contentBase64 ?? "", "base64").toString()).toBe(SCRIPT);
+    await page
+      .getByRole("navigation", { name: "Console" })
+      .getByRole("link", { name: "Skills" })
+      .click();
+    await expect(page.getByRole("link", { name }).first()).toBeVisible();
+    await shot(page, "skills-list.png");
     expect(info.errors).toEqual([]);
   });
 

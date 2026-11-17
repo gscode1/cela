@@ -34,8 +34,8 @@ its own console and admin list, and scope C becomes a tenant-admin scope within 
 
 Links between screens (a contract with the profile editor; the editor reads the query string and preselects, it never writes
 from a link alone):
-- `/console/profiles?pinSkill=<name>@<version>` after a skill publish: add that exact version to a profile's skill pins.
-- `/console/profiles?addMcp=<name>` after an MCP save: add that server to a profile's `mcpServers`.
+- `/console/profiles?pinSkill=<name>@<version>` after a skill publish: add that exact version to a profile's skill pins. The profile list asks which profile; the chosen profile opens with the pin in its unsaved draft (a pin of the same skill is replaced) and nothing is written until the operator publishes.
+- `/console/profiles?addMcp=<name>` after an MCP save: add that server to a profile's `mcpServers`, the same way.
 - `/console/profiles/<name>` from the "pinned by" and "profiles" lists of the skill and MCP screens.
 
 `console.catalogs` (`manage` or `readOnly`, default `manage`) sets whether the skills and MCP screens offer writes. Ingest
