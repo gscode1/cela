@@ -34,7 +34,7 @@ test.describe("console enabled", () => {
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();
-    await expect(page.getByText("Default model")).toBeVisible();
+    await expect(page.getByLabel("Default model")).toBeVisible();
 
     expect(assets.length).toBeGreaterThanOrEqual(2);
     expect(assets.filter((asset) => asset.status !== 200)).toEqual([]);
@@ -97,7 +97,7 @@ test.describe("console enabled", () => {
     page.on("dialog", (dialog) => {
       throw new Error(`unexpected dialog: ${dialog.message()}`);
     });
-    // Only the settings answer is replaced, so the test needs no hostile data in the deployment.
+    // Only the answers are replaced, so the test needs no hostile data in the deployment.
     await page.route("**/admin/settings", (route) =>
       route.fulfill({
         json: {
@@ -107,14 +107,37 @@ test.describe("console enabled", () => {
           maxReasoning: null,
           defaultProfile: "<script>window.__xss=2</script>",
           turnBudget: 1,
+          revision: 1,
           updatedAt: "2026-01-01T00:00:00.000Z",
           updatedBy: hostile,
         },
       }),
     );
+    await page.route("**/admin/settings/history*", (route) =>
+      route.fulfill({
+        json: {
+          history: [
+            {
+              id: "1",
+              changedAt: "2026-01-01T00:00:00.000Z",
+              changedBy: hostile,
+              old: null,
+              new: {
+                defaultModel: hostile,
+                allowlist: [hostile],
+                reasoning: null,
+                maxReasoning: null,
+                defaultProfile: "<script>window.__xss=2</script>",
+                turnBudget: 1,
+              },
+            },
+          ],
+        },
+      }),
+    );
     await page.goto("/console/");
     await signIn(page, admin);
-    await expect(page.getByText("<script>window.__xss=2</script>")).toBeVisible();
+    await expect(page.getByText("<script>window.__xss=2</script>").first()).toBeVisible();
     await expect(page.getByText(hostile).first()).toBeVisible();
     await expect(page.locator("main img, main b, main script")).toHaveCount(0);
     expect(await page.evaluate(() => (window as { __xss?: number }).__xss)).toBeUndefined();

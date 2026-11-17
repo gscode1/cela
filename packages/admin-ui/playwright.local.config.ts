@@ -15,17 +15,19 @@ export default defineConfig({
   testDir: "e2e",
   timeout: 30_000,
   fullyParallel: true,
+  // The specs share one fake database and some of them change global settings.
+  workers: 1,
   retries: 0,
   reporter: [["list"]],
   webServer: [
     {
-      command: "node e2e/local-server.mjs",
+      command: "node --disable-warning=ExperimentalWarning e2e/local-server.mjs",
       env: { PORT: String(on), WITH_CONSOLE: "1" },
       url: `http://127.0.0.1:${String(on)}/healthz`,
       reuseExistingServer: false,
     },
     {
-      command: "node e2e/local-server.mjs",
+      command: "node --disable-warning=ExperimentalWarning e2e/local-server.mjs",
       env: { PORT: String(off), WITH_CONSOLE: "0" },
       url: `http://127.0.0.1:${String(off)}/healthz`,
       reuseExistingServer: false,
@@ -34,7 +36,7 @@ export default defineConfig({
   projects: [
     {
       name: "enabled",
-      testMatch: "console.spec.ts",
+      testMatch: ["console.spec.ts", "settings.spec.ts", "profiles.spec.ts"],
       use: { baseURL: `http://127.0.0.1:${String(on)}`, trace: "retain-on-failure" },
     },
     {

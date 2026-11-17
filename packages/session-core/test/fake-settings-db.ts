@@ -614,32 +614,34 @@ export class FakeListener extends EventEmitter {
   released = false;
   /** Channels this client LISTENs on. */
   readonly channels = new Set<string>();
-  /** Every client handed out, so a test can check each was released once. */
-  constructor(private readonly db: FakeSettingsDb) {
+  readonly #db: FakeSettingsDb;
+  // No parameter property: the console's browser suite runs this file under Node's type stripping.
+  constructor(db: FakeSettingsDb) {
     super();
+    this.#db = db;
   }
 
   async query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number }> {
     if (sql.startsWith("select pg_advisory_xact_lock")) {
       // Held until this client commits or rolls back; a second client asking for the same key waits.
       const key = String(params?.[0]);
-      while (this.db.locks.has(key) && this.db.locks.get(key) !== this) {
+      while (this.#db.locks.has(key) && this.#db.locks.get(key) !== this) {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      this.db.locks.set(key, this);
+      this.#db.locks.set(key, this);
       return { rows: [], rowCount: 0 };
     }
     if (sql === "commit" || sql === "rollback") {
-      const result = await this.db.query(sql, params);
-      for (const [key, holder] of this.db.locks) if (holder === this) this.db.locks.delete(key);
+      const result = await this.#db.query(sql, params);
+      for (const [key, holder] of this.#db.locks) if (holder === this) this.#db.locks.delete(key);
       return result;
     }
     if (sql.startsWith("listen ")) {
       this.channels.add(sql.slice("listen ".length).trim());
-      this.db.listeners.add(this);
+      this.#db.listeners.add(this);
       return { rows: [], rowCount: 0 };
     }
-    return this.db.query(sql, params);
+    return this.#db.query(sql, params);
   }
 
   release(): void {
@@ -647,12 +649,12 @@ export class FakeListener extends EventEmitter {
     if (this.released)
       throw new Error("Release called on client which has already been released to the pool.");
     this.released = true;
-    this.db.listeners.delete(this);
+    this.#db.listeners.delete(this);
   }
 
   /** The server dropped the connection. */
   drop(): void {
-    this.db.listeners.delete(this);
+    this.#db.listeners.delete(this);
     this.emit("error", new Error("terminating connection"));
   }
 }

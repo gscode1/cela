@@ -318,7 +318,7 @@ export function GlobalSettings() {
       )}
 
       {dirty && (
-        <Card>
+        <Card role="region" aria-label="Review before saving">
           <CardHeader>
             <CardTitle>Review before saving</CardTitle>
             <CardDescription>Previous values are revision {current.baseRevision}.</CardDescription>
