@@ -48,8 +48,22 @@ The bootstrap leaves three things in the namespace; no script prints a value:
 It also writes the host allowlist ([OneCLI host rules](onecli-host-rules.md)): an allow rule per host, then `block *`.
 The orchestrator gets only the `api-key` and `agent-token` keys and the CA, never the password.
 
-**Sign in to the dashboard.** The API and dashboard have no Ingress. Forward both ports (the dashboard calls the API at
-`localhost:10256`, so one forward is not enough) and read the login from the Secret:
+**Sign in to the dashboard on kind.** `hack/kind-up.sh` publishes the dashboard and the API on the host's loopback
+(`http://localhost:10254` and `:10256`, [ADR 0022 addendum](decisions/0022-bundled-onecli.md#addendum-kind-publishes-the-dashboard-and-api-on-localhost-issue-138)),
+so there is nothing to forward. Open `http://localhost:10254/auth/login` and use the login from the Secret:
+
+```sh
+NS=pi-durable; CTX=kind-pi-durable
+open http://localhost:10254/auth/login        # sign in, paste the password; the agent pi-orchestrator is listed
+kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
+kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # macOS; xclip -selection clipboard on Linux
+```
+
+A cluster made with `--no-expose`, or any other cluster, has no such ports.
+
+**Sign in to the dashboard with a port-forward** (any cluster, and kind with `--no-expose`). The API and dashboard have no
+Ingress. Forward both ports (the dashboard calls the API at `localhost:10256`, so one forward is not enough) and read the
+login from the Secret:
 
 ```sh
 NS=pi-durable; CTX=kind-pi-durable            # your namespace and kubectl context
@@ -64,7 +78,7 @@ open http://localhost:10254/auth/login        # sign in, paste the password; the
 The ports must be 10254 and 10256: OneCLI's `externalUrl` is fixed at install time to `http://localhost:10254`. Closing
 sign-up does not exist in OneCLI (nothing to block), so this sign-in is always possible and always works.
 
-**What works over a port-forward.** Read from OneCLI 2.20.0's source (the API image), not tested against a live provider:
+**What works over localhost (a port-forward or the kind ports).** Read from OneCLI 2.20.0's source (the API image), not tested against a live provider:
 
 - Sign-in, agents, secrets, host rules, the Codex login (a browser flow in the dashboard) and API-key secrets work: they
   need only the browser to reach `localhost:10254` and `localhost:10256`.
