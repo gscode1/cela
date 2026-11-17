@@ -229,9 +229,12 @@ Reach the session API on localhost:8080:
 Smoke test:   hack/kind-smoke.sh --name $name --namespace $namespace
 Remove it:    hack/kind-down.sh --name $name
 
-This is a trial: sandboxes run under runc, not gVisor, and only the scripted model is available (the message text is the
-script, see docs/session-api.md). A real model needs OneCLI: rerun with --onecli (docs/model-credentials.md).
+This is a trial: sandboxes run under runc, not gVisor. The scripted model is the default (the message text is the
+script, see docs/session-api.md).
 TXT
+if [[ $onecli -eq 0 ]]; then
+  echo "A real model needs OneCLI: rerun with --onecli (docs/model-credentials.md)."
+fi
 if [[ $onecli -eq 1 ]]; then
   cat <<TXT
 
