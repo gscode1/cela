@@ -5,6 +5,9 @@ The run's own charts/pi-postgres release is the external database (secret `pi-db
 the shared OneCLI is external, and the test switches of the orchestrator are extra environment. Everything that varies
 per run comes from the environment (the image and storage-class variables of docs/e2e.md) or the two arguments.
 
+DB_TLS=1 makes the orchestrator and ingest verify the database server (database.tls verify-full against the CA in
+the Secret `pi-db-tls-ca`, which run.sh makes); the URI's host is a name in the server certificate.
+
 usage: chart-values.py <onecli name prefix> <shards>
 """
 import json
@@ -98,6 +101,8 @@ def main() -> None:
         },
         "ingest": {"replicas": 2},
     }
+    if os.environ.get("DB_TLS") == "1":
+        values["database"]["tls"] = {"mode": "verify-full", "existingSecret": "pi-db-tls-ca", "caKey": "ca.crt"}
     json.dump(values, sys.stdout, indent=2)
     print()
 
