@@ -1,5 +1,5 @@
 # Template for the driver Job; tests/e2e/run.sh fills __JOB__, __PHASE__, __IMAGE__, __ONLY__, __E2E_PARALLEL__ (tests run at once within a suite) and __REAL_MODEL__ (1 = also the real-model test of phase4b, which spends model turns) (the tests to run; empty = all of the phase).
-# The image is public and pinned by digest (multi-arch index, includes linux/arm64): bash, curl, jq, openssl, kubectl.
+# The driver image includes scripts, clients, the Phase 1 runner bundle and CLI tools.
 # The Job talks to the API server with its ServiceAccount (in-cluster config); no kubeconfig, no context.
 apiVersion: batch/v1
 kind: Job
@@ -31,6 +31,7 @@ spec:
           command: [bash, /driver/tests/e2e/run-__PHASE__.sh]
           env:
             - { name: HOME, value: /tmp }
+            - { name: DRIVER_IMAGE, value: "__IMAGE__" }
             - { name: KUBE_CONTEXT, value: "" }
             - { name: NO_COLOR, value: "1" }
             - { name: ONLY, value: "__ONLY__" }
@@ -50,12 +51,7 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - { name: driver, mountPath: /driver, readOnly: true }
             - { name: tmp, mountPath: /tmp }
       volumes:
-        - name: driver
-          persistentVolumeClaim:
-            claimName: e2e-driver
-            readOnly: true
         - name: tmp
           emptyDir: {}

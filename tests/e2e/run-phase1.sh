@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Phase 1 end-to-end flow on a real cluster. Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh
-# (ServiceAccount kubeconfig, no context). The tests themselves run in a pod (`e2e-runner`, public node image) that
-# gets the code streamed in from the driver volume, so no image is pushed. The sandbox-env bundle (pnpm build) is made
-# on the Mac by run.sh and sits at /driver/bundle.tgz.
+# (ServiceAccount kubeconfig, no context). The runner uses the same prebuilt driver image,
+# including sandbox-env and its test dependencies at /opt/phase1.
 #
 #   1. start a fresh runner pod with the bundle
 #   2. stdio smoke: 64 MiB through commands.start("cat"), SHA-256 round trip
@@ -21,7 +20,6 @@ ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster Servi
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 claim=${CLAIM:-e2e-phase1}
 here=$(cd "$(dirname "$0")" && pwd)
-bundle=${BUNDLE:-/driver/bundle.tgz}
 run_id=$(date +%s)-$$
 work=$(mktemp -d)
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
@@ -38,15 +36,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ -s $bundle ]] || fail "no bundle at $bundle: run tests/e2e/run.sh phase1"
 
 # Fresh runner pod with the code unpacked at /work/app. Called again to model an orchestrator restart.
 start_runner() {
   k delete pod e2e-runner --ignore-not-found --wait=true >/dev/null
   # The manifest hard-codes the default namespace; follow NAMESPACE so `kubectl create` does not reject it.
-  k create -f "$here/runner-pod.yaml" >/dev/null
+  sed "s|__DRIVER_IMAGE__|${DRIVER_IMAGE:?DRIVER_IMAGE is set by run.sh}|" "$here/runner-pod.yaml" | k create -f - >/dev/null
   k wait --for=condition=Ready pod/e2e-runner --timeout=240s >/dev/null
-  k exec -i e2e-runner -- sh -c 'mkdir -p /work/app && tar xzf - -C /work/app' <"$bundle"
 }
 
 # The claim's token, derived inside the runner by the bundle's own deriveSandboxToken from the master in its env.

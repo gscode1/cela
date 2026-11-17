@@ -46,20 +46,20 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 
 ## Repository layout
 
-| Path                                    | What                                                                                                                       |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `packages/ingest`                       | Session API: auth, owner checks, inbox writes, SSE proxy                                                                   |
-| `packages/orchestrator`                 | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                             |
-| `packages/sandbox-env`                  | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                          |
-| `packages/session-core`                 | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                        |
-| `packages/egress-proxy`                 | Go module: Smokescreen chained to OneCLI, a spike not yet deployed ([ADR 0012](docs/decisions/0012-egress-proxy-spike.md)) |
-| `packages/vendor/agent-sandbox-client`  | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                 |
-| `vendor/`                               | Packed `@netzlabor/pi-durable-postgres` adapter, ported to Pi Durable 1.5.2                                                |
-| `images/sandbox`, `images/egress-proxy` | Sandbox image (sandboxd + `pi-env` + git); egress proxy image (not built yet)                                              |
-| `deploy/`                               | Kubernetes manifests (namespace, Postgres, orchestrator, ingest, sandbox template, network policies)                       |
-| `tests/e2e`                             | End-to-end suites that run as in-cluster Jobs                                                                              |
-| `examples/`                             | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
-| `docs/`                                 | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |
+| Path                                   | What                                                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                   |
+| `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                             |
+| `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                          |
+| `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                        |
+| `packages/egress-proxy`                | Go module: Smokescreen chained to OneCLI, a spike not yet deployed ([ADR 0012](docs/decisions/0012-egress-proxy-spike.md)) |
+| `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                 |
+| `vendor/`                              | Packed `@netzlabor/pi-durable-postgres` adapter, ported to Pi Durable 1.5.2                                                |
+| `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                          |
+| `deploy/`                              | Kubernetes manifests (namespace, Postgres, orchestrator, ingest, sandbox template, network policies)                       |
+| `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                              |
+| `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
+| `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |
 
 ## Docs
 
@@ -81,16 +81,16 @@ Prerequisites: the **agent-sandbox controller with extensions** (tested with v1.
 `gvisor`, CloudNativePG, OneCLI (tested with v2.20.0), a NetworkPolicy-enforcing CNI such as Cilium, a dynamically
 provisioned StorageClass, and External Secrets or an equivalent way to provision the target Secrets. The supplied
 API/FQDN policies require Cilium CRDs; another CNI needs equivalent policies. Do not use real credentials until the
-isolation suite passes. The published sandbox image is arm64; build a matching image for other architectures.
+isolation suite passes. Build the application and sandbox images for your nodes (amd64 and arm64 are supported).
 
-1. Review [deploy settings](deploy/README.md). Choose storage (cluster default unless patched), sandbox image/registry,
+1. Review [deploy settings](deploy/README.md). Choose storage (cluster default unless patched), image registry/digests,
    OneCLI endpoints, secret store/remote keys, and model settings. Match DNS, CNPG, OneCLI and optional ingress-controller
    policy selectors to your cluster. No public hostname, Envoy installation or ArgoCD repository is required.
-2. Apply the adapted policies and stack, provision Secrets and the OneCLI CA, then upload code with the deploy scripts
+2. Apply the adapted policies and stack, provision Secrets and the OneCLI CA, then deploy your built images
    ([setup](deploy/README.md), [credentials](docs/model-credentials.md)). Use `KUBE_CONTEXT` to select your context;
    unset means the current context. Deploy scripts default to namespace `pi-durable-poc`.
 3. Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`.
-   Omit `STORAGE_CLASS` for the cluster default; set `SANDBOX_IMAGE` for your own image. See [e2e](docs/e2e.md) for
+   Omit `STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed image digests. See [e2e](docs/e2e.md) for
    OneCLI ingress rules, secret-store access, prerequisites and the isolation suite (`phase3`). Never test against production.
 
 ## Development

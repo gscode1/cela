@@ -11,3 +11,6 @@ dist/
 # Local deployment overlays and experiment output
 /local/
 examples/*/raw/
+
+# Local multi-platform image exports
+*.oci.tar

@@ -36,8 +36,7 @@ and hand out another session's repository credentials.
   k > 0: schema `<schema>_s<k>` (created at start with `create schema if not exists`; `deploy/postgres.yaml` runs only at
   initdb), claims `pi-s<k>-conv-<n>`, Deployment and Service `pi-orchestrator-<k>`. `deploy/add-shard.sh k` clones the
   live Deployment (as the phase 3 double-owner test does), adds the Services `pi-orchestrator-0` and `pi-orchestrator-<k>`
-  and sets ingest's `PI_ORCH_SHARDS` and URL together. Code stays on the one ReadWriteOnce code volume, so shards are
-  scheduled onto the node that holds it (podAffinity on the `name` label).
+  and sets ingest's `PI_ORCH_SHARDS` and URL together. As of installation slice 2, it inherits the same image digest; shards no longer require a shared code volume or node affinity.
 - **Routing.** `PI_ORCH_URL` may contain `{shard}` (`http://pi-orchestrator-{shard}:8081`); ingest substitutes the
   session's shard and forwards the upstream `Retry-After`. A shard that receives a stream for another shard's session
   answers 421 before `ensureConversation`, so a misrouted stream never creates a conversation in the wrong schema.
@@ -57,17 +56,16 @@ and hand out another session's repository credentials.
   availability than "no takeover until the old owner is dead".
 - Active/standby: no capacity.
 - Seeding `next_id` ranges per shard: writes adapter-private state and does not fix the existing `pi-conv-<n>` names.
-- A StatefulSet now: would rewrite every suite and `deploy/push-code.sh`. Code keys only on the integer `PI_ORCH_SHARD`,
+- A StatefulSet now: would rewrite every suite and the former code delivery tooling. Code keys only on the integer `PI_ORCH_SHARD`,
   so it can come later.
 - Rebalancing, HPA, per-shard OneCLI prefixes and a `shard` abstraction layer.
 
 ## Limits
 
-- Shards share one node (the code volume is ReadWriteOnce): capacity grows only until that node is full, and a node loss
-  takes every shard.
+- Shards may run on different nodes (installation slice 2 removed the shared code volume). A node loss affects only the shards scheduled there.
 - `PI_ORCH_SHARDS` never decreases: a session stays on its shard. Raising it without the Deployment strands new
   sessions as `pending`; `add-shard.sh` sets both.
 - No rebalancing: placement balances new sessions only.
-- A code push restarts all shards (`push-code.sh` scales every orchestrator Deployment to 0 and back, to at least 1), and
+- Image rollouts must update all shards to the same digest (new shards inherit shard 0's image), and
   mixed versions across shards are not supported.
 - One session's cost is still bounded by its shard's bridge cap and memory.

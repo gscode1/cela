@@ -1,0 +1,19 @@
+# Only image inputs enter the context; local credentials and generated output never do.
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!vendor/
+!vendor/**
+!packages/
+!packages/**
+!tests/
+!tests/e2e/
+!tests/e2e/**
+!deploy/
+!deploy/gen-api-secret.sh
+!images/
+!images/**
+**/node_modules
+**/dist
+**/.env*

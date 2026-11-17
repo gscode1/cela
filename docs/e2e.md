@@ -6,7 +6,7 @@ namespace `pi-durable-poc` is never touched: the script refuses any namespace th
 `run-*.sh` scripts have no default namespace. Two runs, for example from two branches, can run at the same time.
 
 ```sh
-tests/e2e/run.sh smoke                    # ~5 minutes of tests plus ~3 minutes to build, deploy and tear down
+tests/e2e/run.sh smoke                    # ~5 minutes of tests plus deployment and teardown time
 KEEP_NS=1 tests/e2e/run.sh phase4         # keep the namespace for debugging
 KEEP_NS_ON_FAIL=1 tests/e2e/run.sh all    # keep it only when something failed
 RUN_ID=ab12cd tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept namespace pi-e2e-ab12cd
@@ -19,9 +19,12 @@ for `mcp.deepwiki.com`.
 
 | Variable            | Meaning                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `STORAGE_CLASS` | storage class for database, code, driver and workspace PVCs (unset: cluster default) |
+| `STORAGE_CLASS` | storage class for database and workspace PVCs (unset: cluster default) |
 | `SANDBOX_STORAGE_CLASS` | storage class for the sandbox workspace PVCs only; wins over `STORAGE_CLASS` for them |
-| `SANDBOX_IMAGE` | sandbox image override (unset: the digest-pinned arm64 example in `deploy/sandbox-template.yaml`) |
+| `ORCH_IMAGE` | orchestrator image (default `pi-orchestrator:<version>-<sha>`) |
+| `INGEST_IMAGE` | ingest image (default `pi-ingest:<version>-<sha>`) |
+| `DRIVER_IMAGE` | e2e driver and Phase 1 runner image (default `pi-e2e-driver:<version>-<sha>`) |
+| `SANDBOX_IMAGE` | sandbox image (default `pi-sandbox:<version>-<sha>`) |
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
 | `KEEP_NS=1`         | never delete the namespace at the end                                                                     |
 | `KEEP_NS_ON_FAIL=1` | keep it if the exit code is not 0. Exit code 2 (the operator machine lost the Job) always keeps it, the Job is still in it |
@@ -34,10 +37,23 @@ for `mcp.deepwiki.com`.
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
 | `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
 
-Requires the [cluster prerequisites and settings](../README.md#deploy-on-your-cluster), Node/pnpm,
-`kubectl`, Python 3, curl, jq, OpenSSL and tar on the operator machine. The supplied policies require Cilium CRDs;
+Requires the [cluster prerequisites and settings](../README.md#deploy-on-your-cluster), Node 22.19+, Git,
+`kubectl`, Python 3, curl, jq and OpenSSL on the operator machine. The supplied policies require Cilium CRDs;
 with another enforcing CNI, supply equivalent API and DNS/FQDN policies. Local `local/` overlays are not used
 by the runner: adapt `deploy/` or `tests/e2e/deploy/` for network identities, secret stores and OneCLI endpoints.
+
+Build and push all four images before running the suites ([build instructions](../deploy/README.md#build-images)).
+The defaults match `images/build.sh` at the current root package version and git short SHA; they are local names,
+not published images. On a remote cluster set all four variables to reachable registry references, preferably digests:
+
+```sh
+ORCH_IMAGE=registry.example.com/team/pi-orchestrator@sha256:… \
+INGEST_IMAGE=registry.example.com/team/pi-ingest@sha256:… \
+DRIVER_IMAGE=registry.example.com/team/pi-e2e-driver@sha256:… \
+SANDBOX_IMAGE=registry.example.com/team/pi-sandbox@sha256:… tests/e2e/run.sh smoke
+```
+
+The operator machine does not build or ship code during a run. Node is used only to compute default image tags.
 
 ## What a run does
 
@@ -48,22 +64,21 @@ by the runner: adapt `deploy/` or `tests/e2e/deploy/` for network identities, se
    because Cilium takes a Pod's identity from its namespace labels when the Pod starts. The same `apply` (also on a reused
    namespace) sets the Pod Security labels: `enforce`, `warn` and `audit` = `restricted`, version `v1.36`, as in
    `deploy/namespace.yaml` ([decision 0019](decisions/0019-restricted-pod-security.md)). Every Pod the run creates,
-   including the loader pods and the driver Job, must meet that profile.
+   including the Phase 1 runner and the driver Job, must meet that profile.
 3. **Stack.** A generated overlay (`kustomization.yaml` in a temp dir with `namespace: pi-e2e-<id>`) over
    `tests/e2e/deploy`, which is `deploy/` (without its `Namespace` object) plus `tests/e2e/driver` (driver
-   ServiceAccount, Roles, code volume), the test switches of the orchestrator and lower resource requests. That gives:
+   ServiceAccount and Roles), the test switches of the orchestrator and lower resource requests. That gives:
    the CNPG cluster `pi-pg` (own database, same mechanism and manifest as production), orchestrator (starts at 0
    replicas), ingest, the SandboxTemplate and warm pool, RBAC, every NetworkPolicy and, from `deploy/cilium`, every
    CiliumNetworkPolicy. Cilium policies are applied first (`docs/network-policy.md`).
 4. **Secrets** (next section), then the **OneCLI CA** (`deploy/fetch-onecli-ca.sh`, public data fetched from OneCLI).
-5. **Code.** `deploy/push-code.sh` and `deploy/push-ingest.sh` with `NAMESPACE=pi-e2e-<id>` (build on the operator machine, copy to the
-   code volume and ConfigMap of this namespace). `push-code.sh` scales every orchestrator Deployment (the ones labelled
-   `app.kubernetes.io/name=pi-orchestrator`) from 0 to 1, after the secrets exist; both push scripts hold a ConfigMap lock (`deploy/push-lock.sh`) so two pushes into one namespace cannot interleave. The `shards` suite first runs
-   `deploy/add-shard.sh 1`, which adds the second shard (`pi-orchestrator-1`, schema `durable_s1`) and points ingest at both
-   ([decision 0017](decisions/0017-schema-sharding.md), [scaling](scaling.md)); `run-shards.sh` is not part of `all`.
-6. **Driver.** Stages the driver scripts and loads them onto the namespace's `e2e-driver` volume, then creates one
-   Job per suite phase in the namespace. The Job gets `NAMESPACE` from its own metadata, so every `run-*.sh` works in
-   the run namespace.
+5. **Start images.** Scale every orchestrator shard from 0 to 1 after credentials exist, then wait for orchestrator
+   and ingest rollouts. The `shards` suite first runs `deploy/add-shard.sh 1`, which clones shard 0's image and adds
+   routing for shard 1 without shared-volume node affinity ([scaling](scaling.md)).
+6. **Driver.** Create one Job per suite phase using `DRIVER_IMAGE`. Scripts, clients and Phase 1 dependencies are
+   baked in: there is no local build, code upload, loader Pod or driver PVC. Phase 1 starts a runner using the same
+   image, copying its packaged test bundle into a writable emptyDir so tests can model process restarts.
+   The Job gets `NAMESPACE` from its own metadata.
 7. **Verdict** from the Job status, unchanged from before (live log stream for watching only).
 8. **Delete.** `kubectl delete namespace`, then wait until it is gone. That removes the Job, the stack, the CNPG cluster,
    the PVCs, sandboxes and secrets with it. Use a StorageClass with reclaim policy `Delete` for disposable tests;
@@ -173,12 +188,12 @@ Creating namespaces is a cluster-admin action, the same trust as creating `pi-du
 
 Requests (what the scheduler reserves), per run: Postgres 50m / 192Mi, orchestrator 50m / 192Mi, two ingest pods 50m / 128Mi each, the
 driver Job 50m / 64Mi and one 100m / 128Mi sandbox per claim, so about 0.3 CPU and 0.7 Gi plus the sandboxes. Limits are
-the production ones. Storage: three 1 Gi persistent volumes (database, orchestrator code, driver) plus one per sandbox.
+the production ones. Storage: one 1 Gi database persistent volume plus one per sandbox.
 
 ## Scripts that take the namespace
 
 Every deploy script reads `NAMESPACE` (default `pi-durable-poc`, the long-lived deployment) and `KUBE_CONTEXT`:
-`push-code.sh`, `push-ingest.sh`, `add-shard.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The manifests carry no namespace
+`add-shard.sh`, `gen-secret.sh`, `gen-api-secret.sh`, `fetch-onecli-ca.sh`. The manifests carry no namespace
 except `deploy/kustomization.yaml` and `deploy/cilium/kustomization.yaml`, which set the long-lived one and are overridden by
 the run's overlay; the orchestrator gets `PI_ORCH_NAMESPACE` from the downward API and `PI_ONECLI_NAME_PREFIX` (`pi-e2e-<run id>-`) from the overlay. The `run-*.sh` suites require
 `NAMESPACE` (the Job sets it). `packages/orchestrator/test/e2e-namespace.test.ts` fails if a new hard-coded `pi-durable-poc`

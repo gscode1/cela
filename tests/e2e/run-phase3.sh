@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh (ServiceAccount kubeconfig, no context).
-# The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and the code pushes are done by
+# The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and image deployment are done by
 # run.sh on the Mac before the Job starts; this script only waits for them and runs the tests.
 # Phase 3 failure tests on the real cluster: orchestrator + CNPG + sandboxes, scripted model, no LLM.
 #
@@ -25,7 +25,7 @@ set -euo pipefail
 ctx=${KUBE_CONTEXT:-} # empty in the Job: kubectl then uses the in-cluster ServiceAccount config
 ns=${NAMESPACE:?NAMESPACE is the e2e run namespace; tests/e2e/run.sh sets it in the Job}
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd) # the driver volume mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
+root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: tests/e2e and deploy/gen-api-secret.sh
 work=$(mktemp -d)
 claims_file=$work/claims
 : >"$claims_file"
@@ -164,8 +164,7 @@ exited_with_1() { k get pod "$1" -o json | jq -e '.status.containerStatuses[0].l
 sandbox_file_exists() { k exec "$1" -c sandboxd -- test -e "$2"; }
 # The second orchestrator for the double-owner test is the LIVE pi-orchestrator Deployment (base deploy/ plus the
 # e2e overlay) under another name, so its env, image, volumes and test switches cannot drift from the first. Only
-# the identity changes: name, instance label and selector. It is scheduled next to the first (the code volume is
-# ReadWriteOnce, so only one node can mount it) and asks for less, since it mostly waits on the lock.
+# the identity changes: name, instance label and selector. It asks for less, since it mostly waits on the lock.
 render_orchestrator_b() {
   k get deployment pi-orchestrator -o json | jq '
     del(.status, .metadata.uid, .metadata.resourceVersion, .metadata.generation, .metadata.creationTimestamp,
@@ -174,9 +173,6 @@ render_orchestrator_b() {
     | .spec.replicas = 1
     | .spec.selector.matchLabels["app.kubernetes.io/instance"] = "pi-orchestrator-b"
     | .spec.template.metadata.labels["app.kubernetes.io/instance"] = "pi-orchestrator-b"
-    | .spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution =
-        [{topologyKey: "kubernetes.io/hostname",
-          labelSelector: {matchLabels: {"app.kubernetes.io/instance": "pi-orchestrator"}}}]
     | .spec.template.spec.containers[0].resources.requests = {cpu: "50m", memory: "128Mi"}'
 }
 has_pod_for() { [[ -n $(k get pods -l "app.kubernetes.io/instance=$1" -o name) ]]; }

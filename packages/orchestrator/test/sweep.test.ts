@@ -116,7 +116,7 @@ describe("planSweep: PVCs", () => {
     const actions = plan({
       pvcs: [
         { name: "pi-pg-1", createdAt: ago(600) },
-        { name: "orchestrator-code", createdAt: ago(600) },
+        { name: "retired-code-volume", createdAt: ago(600) },
         { name: "e2e-driver", createdAt: ago(600) },
         { name: "workspace-e2e-phase1", createdAt: ago(600) },
         { name: "workspace-pi-conv-99", createdAt: ago(1) },

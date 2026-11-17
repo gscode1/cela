@@ -28,8 +28,7 @@
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, in the run namespace), so a
 # result never depends on the laptop's network. The operator machine does only this:
-#   1. create the namespace and the stack, the secrets, build and push code (pnpm builds, deploy/push-code.sh and
-#      push-ingest.sh), the Phase 1 bundle, the driver scripts
+#   1. create the namespace, stack and secrets using prebuilt images
 #   2. create the Job
 #   3. wait for it with `kubectl wait` and read the result from the Job status plus the final logs
 # The live log stream is for watching only. If it drops, nothing changes: the verdict comes from the Job status and
@@ -40,8 +39,13 @@
 # The namespace, with the Job and its pods, is deleted at the end; if this script is killed, `tests/e2e/sweep.sh` removes it.
 set -euo pipefail
 
-# Public driver image, pinned by digest (multi-arch index with linux/arm64): bash, curl, jq, openssl, kubectl 1.36.
-IMAGE=docker.io/alpine/k8s:1.36.2@sha256:44ef4942e171939b9c665a4a84beb80e2dcdb9a24330d4651cfdfd2e9deecc47
+# Match images/build.sh's local names; cluster runs should supply pushed digest references.
+root=$(cd "$(dirname "$0")/../.." && pwd)
+tag=$(node -p "JSON.parse(require('node:fs').readFileSync('$root/package.json', 'utf8')).version")-$(git -C "$root" rev-parse --short HEAD)
+export ORCH_IMAGE=${ORCH_IMAGE:-pi-orchestrator:$tag}
+export INGEST_IMAGE=${INGEST_IMAGE:-pi-ingest:$tag}
+export SANDBOX_IMAGE=${SANDBOX_IMAGE:-pi-sandbox:$tag}
+IMAGE=${DRIVER_IMAGE:-pi-e2e-driver:$tag}
 
 ctx=${KUBE_CONTEXT:-}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -94,10 +98,8 @@ cleanup() {
   pkill -f -- "-n $ns logs -f job/e2e-driver" 2>/dev/null || true
   rm -rf "$work"
   [[ $ns_touched -eq 1 ]] || return "$rc"
-  # What a kept namespace must not hold on to: the loader pod and a finished Job mount the ReadWriteOnce driver volume.
   # An unfinished Job (keep_job=1) stays for the reader.
   if [[ $keep_job -eq 0 ]]; then k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --wait=false >/dev/null 2>&1 || true; fi
-  k delete pod e2e-driver-loader --ignore-not-found --wait=false >/dev/null 2>&1 || true
   if [[ ${KEEP_NS:-0} == 1 || ( $rc -ne 0 && ${KEEP_NS_ON_FAIL:-0} == 1 ) || $rc -eq 2 ]]; then
     printf '\nnamespace %s kept. Delete it with: kubectl %s delete namespace %s (tests/e2e/sweep.sh removes it after %s h)\n' \
       "$ns" "${ctx:+--context=$ctx}" "$ns" "${SWEEP_MAX_AGE_HOURS:-6}" >&2
@@ -180,14 +182,14 @@ sc = os.environ.get("STORAGE_CLASS")
 if sc:
     for kind, name, path in [
         ("Cluster", "pi-pg", "/spec/storage/storageClass"),
-        ("PersistentVolumeClaim", "orchestrator-code", "/spec/storageClassName"),
-        ("PersistentVolumeClaim", "e2e-driver", "/spec/storageClassName"),
     ]:
         patches.append((kind, name, path, sc))
 # Workspaces are per-session scratch, so they may use their own (e.g. single-replica) class.
 workspace_sc = os.environ.get("SANDBOX_STORAGE_CLASS") or sc
 if workspace_sc:
     patches.append(("SandboxTemplate", "pi-env-template", "/spec/volumeClaimTemplates/0/spec/storageClassName", workspace_sc))
+for name, variable in [("pi-orchestrator", "ORCH_IMAGE"), ("pi-ingest", "INGEST_IMAGE")]:
+    patches.append(("Deployment", name, "/spec/template/spec/containers/0/image", os.environ[variable]))
 image = os.environ.get("SANDBOX_IMAGE")
 if image:
     patches.append(("SandboxTemplate", "pi-env-template", "/spec/podTemplate/spec/containers/0/image", image))
@@ -204,7 +206,7 @@ log "stack: CiliumNetworkPolicies, network policies, RBAC, Postgres, template, i
 # CiliumNetworkPolicies first (docs/network-policy.md apply order); they need the Cilium CRDs, so they are not in the base.
 kc apply -k "$work/cilium" >/dev/null
 kc apply -k "$work/stack" >/dev/null
-# A Job left by an earlier killed run would hold the code volume (ReadWriteOnce).
+# Remove a Job left by an earlier killed run before redeploying.
 k delete job -l app.kubernetes.io/name=e2e-driver --ignore-not-found --cascade=foreground --wait=true >/dev/null
 
 log "secrets"
@@ -212,7 +214,7 @@ log "secrets"
 NAMESPACE=$ns "$root/deploy/gen-secret.sh" >/dev/null
 NAMESPACE=$ns "$root/deploy/gen-api-secret.sh" >/dev/null
 # pi-onecli, pi-onecli-admin and pi-github-app are ExternalSecrets on the ClusterSecretStore: ESO copies them in. The
-# orchestrator reads them optionally and only once at start, so they must be Ready before it starts (push-code.sh below).
+# orchestrator reads them optionally and only once at start, so they must be Ready before it starts (scaled below).
 if ! k wait --for=condition=Ready externalsecret --all --timeout=120s >/dev/null 2>&1; then
   echo "WARNING: some ExternalSecrets are not Ready (kubectl -n $ns get externalsecret); suites that need OneCLI or GitHub will SKIP or fail" >&2
 fi
@@ -237,65 +239,14 @@ fi
   exit 1
 }
 
-# The second shard exists before the code push, which then starts every shard on the same code (it also sets ingest's
-# PI_ORCH_SHARDS and PI_ORCH_URL template, so a shard count and its Deployments never disagree).
+# Start only after optional credentials exist; every shard uses the same baked image.
 if has_phase shards; then
   log "orchestrator shard 1 and ingest routing (deploy/add-shard.sh 1)"
   NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/add-shard.sh" 1
 fi
-if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp || has_phase shards; then
-  log "orchestrator and ingest code (build + push on the operator machine)"
-  NAMESPACE=$ns "$root/deploy/push-code.sh" >/dev/null
-  NAMESPACE=$ns "$root/deploy/push-ingest.sh" >/dev/null
-fi
-
-log "stage the driver scripts (and the Phase 1 bundle for phase1)"
-stage=$work/stage
-mkdir -p "$stage/tests/e2e" "$stage/deploy"
-cp "$here"/run-phase*.sh "$here"/run-mcp.sh "$here"/run-shards.sh "$here/fns.sh" "$here/client.mjs" "$here/client-4b.mjs" "$here/runner-pod.yaml" "$stage/tests/e2e/"
-cp "$root/deploy/gen-api-secret.sh" "$stage/deploy/"
-if has_phase phase1; then
-  (cd "$root" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter "@pi-durable-k8s/sandbox-env..." build >/dev/null)
-  (cd "$root" && pnpm --filter @pi-durable-k8s/sandbox-env deploy --prod=false "$work/bundle" >/dev/null)
-  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$stage/bundle.tgz" -C "$work/bundle" .
-  rm -rf "$work/bundle"
-fi
-
-log "load the driver volume e2e-driver"
-k apply -f - >/dev/null <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: e2e-driver-loader
-  labels: { app.kubernetes.io/name: e2e-driver-loader }
-spec:
-  restartPolicy: Never
-  securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
-  containers:
-    - name: loader
-      image: $IMAGE
-      command: [sleep, "900"]
-      securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
-      resources:
-        requests: { cpu: 10m, memory: 32Mi }
-        limits: { cpu: 200m, memory: 128Mi }
-      volumeMounts: [{ name: driver, mountPath: /driver }]
-  volumes:
-    - name: driver
-      persistentVolumeClaim: { claimName: e2e-driver }
-EOF
-k wait --for=condition=Ready pod/e2e-driver-loader --timeout=300s >/dev/null
-tar -cf - -C "$stage" . | k exec -i e2e-driver-loader -- sh -c 'rm -rf /driver/* && tar xf - -C /driver'
-if [[ -f $stage/bundle.tgz ]]; then
-  want=$(shasum -a 256 "$stage/bundle.tgz" | awk '{print $1}')
-  got=$(k exec e2e-driver-loader -- sha256sum /driver/bundle.tgz | awk '{print $1}')
-  [[ $want == "$got" ]] || { echo "bundle upload is corrupt (sha256 differs)" >&2; exit 1; }
-fi
-# Every selected suite's script must be on the volume before a Job is created for it.
-for p in "${phases[@]}"; do
-  k exec e2e-driver-loader -- test -f "/driver/tests/e2e/run-$p.sh" || { echo "run-$p.sh is not on the driver volume (is it staged above?)" >&2; exit 1; }
-done
-k delete pod e2e-driver-loader --wait=true >/dev/null
+k scale deployment -l app.kubernetes.io/name=pi-orchestrator --replicas=1 >/dev/null
+k rollout status deployment/pi-orchestrator --timeout=300s >/dev/null
+k rollout status deployment/pi-ingest --timeout=300s >/dev/null
 
 # ------------------------------------------------------------------ 2+3. create the Job, wait, read the verdict
 overall=0
@@ -371,7 +322,7 @@ run_phase() { # phase1|phase3|phase4
 
 for phase in "${phases[@]}"; do
   run_phase "$phase"
-  # An unfinished Job may still use the driver volume and cluster resources; do not start the next phase on top.
+  # An unfinished Job may still use cluster resources; do not start the next phase on top.
   if [[ $keep_job -eq 1 ]]; then
     echo "stopping: the previous Job is unfinished, so the remaining phases were not run" >&2
     verdicts+=("remaining phases: NOT RUN")
