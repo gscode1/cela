@@ -5,8 +5,8 @@ Status: accepted, 2026-11-17 (issue #158). Not implemented yet; this records the
 ## Context
 
 Coding agents (Claude Code, Codex, OpenCode, Cursor, Goose, ...) all speak MCP. If pi-durable has an MCP server, one of them
-can hand a task to a durable session with a sandbox and a repository workspace (`docs/repo-workspace.md`: the agent pushes
-`agent/**` branches and can open a PR) and collect the result, with no HTTP glue of its own.
+can hand a task to a durable session with a sandbox and a repository workspace (`docs/repo-workspace.md`: the agent pushes a
+branch and can open a PR) and collect the result, with no HTTP glue of its own.
 
 The difficulty is time. One agent turn takes minutes, sometimes longer, and MCP clients time out a `tools/call` far sooner. A
 tool that blocks until the turn ends loses its result on that timeout.
