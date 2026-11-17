@@ -7,6 +7,11 @@ with `WaitForFirstConsumer` fits, at the cost of losing the workspace (not the c
 Its PVC is kept across idle suspend and deleted with the session, so the class must reclaim with `Delete`; with `Retain`
 every deleted session leaves a volume behind. Postgres and the orchestrator code volume need a replicated, durable class.
 
+**Upgrading a stack deployed before the storage class was removed from the base** (it named one explicitly): set the
+same classes in your overlay before you apply, or `kubectl apply` tries to drop `storageClassName` from the existing
+`orchestrator-code` PVC, which Kubernetes rejects as immutable, and changes the class of the existing Postgres cluster.
+Read the current ones with `kubectl get pvc -o custom-columns=NAME:.metadata.name,CLASS:.spec.storageClassName`.
+
 Adapt the base or use a local Kustomize overlay before applying:
 
 | Setting | Where / default |
