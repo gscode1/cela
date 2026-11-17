@@ -45,12 +45,12 @@ push_lock_acquire() {
   read -r rv expires holder <<<"$cur"
   if [[ ! $expires =~ ^[0-9]+$ ]]; then
     # A lock without an expiry (made by an older push-code.sh) cannot be judged, so it is never taken over.
-    echo "another push-code run holds the lock ($lock, holder ${holder:-unknown}, no expiry)." >&2
+    echo "another push holds the lock ($lock, holder ${holder:-unknown}, no expiry)." >&2
     echo "If no push is running, remove it with: kubectl -n $ns delete configmap $lock" >&2
     return 1
   fi
   if ((expires > now)); then
-    echo "another push-code run holds the lock ($lock, holder ${holder:-unknown}, expires in $((expires - now))s)." >&2
+    echo "another push holds the lock ($lock, holder ${holder:-unknown}, expires in $((expires - now))s)." >&2
     echo "If no push is running, wait for it to expire or remove it with: kubectl -n $ns delete configmap $lock" >&2
     return 1
   fi
