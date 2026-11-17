@@ -23,6 +23,29 @@ spec:
         - { protocol: TCP, port: 8080 }
 ---
 {{- end }}
+{{- if .Values.ingest.expose.enabled }}
+# kind only (ingest.expose): the one extra source, the Docker gateway of the kind network, where connections made on the
+# host's localhost arrive from. It is a /32 (the schema insists): the node and the Pod network are not admitted, so a
+# sandbox still cannot reach ingest.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-allow-expose-ingress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.ingest.expose.sourceCidr }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

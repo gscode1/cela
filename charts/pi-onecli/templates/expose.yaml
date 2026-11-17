@@ -1,0 +1,49 @@
+{{- /*
+kind only (expose.enabled, set by hack/kind-up.sh): NodePort Services for the dashboard and the management API, and the one
+extra ingress source that reaches them. Off by default: nothing is rendered.
+The host's localhost connections arrive from the IPv4 gateway of the kind Docker network (`expose.sourceCidr`, a /32 by
+schema). `externalTrafficPolicy: Local` keeps that address. The node and the Pod network are not admitted, so a sandbox
+still cannot reach the management API this way. Pods of the same node can still reach the node's own ports; that is a
+limit of kindnet, not of these policies (docs/network-policy.md).
+*/ -}}
+{{- if .Values.expose.enabled }}
+{{- $r := .Values.release }}
+{{- range $component, $port := dict "web" 10254 "api" 10256 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $r }}-{{ $component }}-nodeport
+  labels:
+    {{- include "pi-onecli.labels" $ | nindent 4 }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: onecli
+    app.kubernetes.io/instance: {{ $r }}
+    app.kubernetes.io/component: {{ $component }}
+  ports:
+    - { name: http, port: {{ $port }}, targetPort: http, nodePort: {{ index $.Values.expose.nodePorts $component }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-{{ $component }}-allow-expose-ingress
+  labels:
+    {{- include "pi-onecli.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: onecli
+      app.kubernetes.io/instance: {{ $r }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: {{ $.Values.expose.sourceCidr }}
+      ports:
+        - { protocol: TCP, port: {{ $port }} }
+{{- end }}
+{{- end }}

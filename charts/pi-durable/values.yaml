@@ -138,6 +138,15 @@ ingest:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 250m, memory: 256Mi }
+  # kind only (hack/kind-up.sh sets it): an extra NodePort Service, so the session API is on the host's localhost:8080
+  # without `kubectl port-forward` (kind publishes the NodePort, hack/kind-config.yaml). `externalTrafficPolicy: Local`
+  # keeps the client's source address, and one policy admits exactly one source: `sourceCidr`, a /32 (the IPv4 gateway
+  # of the kind Docker network, where the host's connections come from). Never turn this on in a real cluster. Off:
+  # nothing is rendered.
+  expose:
+    enabled: false
+    nodePort: 30080
+    sourceCidr: ""
 
 api:
   # Owners who may call /admin/*. Each needs a token in the Secret.

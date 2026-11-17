@@ -9,3 +9,21 @@ spec:
     app.kubernetes.io/name: pi-ingest
   ports:
     - { name: http, port: 8080, targetPort: http }
+{{- if .Values.ingest.expose.enabled }}
+---
+# kind only (ingest.expose): reachable from the host's localhost:8080 through the port mapping of hack/kind-config.yaml.
+# Local keeps the client's source address, which ingest-allow-expose-ingress matches.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-ingest-nodeport
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: pi-ingest
+  ports:
+    - { name: http, port: 8080, targetPort: http, nodePort: {{ .Values.ingest.expose.nodePort }} }
+{{- end }}

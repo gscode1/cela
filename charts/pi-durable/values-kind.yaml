@@ -30,3 +30,6 @@ orchestrator:
 
 ingest:
   replicas: 1
+
+# The NodePort for the session API (ingest.expose) is turned on by hack/kind-up.sh, with the source address it reads from
+# Docker (unless --no-expose); the port matches hack/kind-config.yaml.

@@ -32,3 +32,13 @@ web:
 # blocked, as for sandboxes, so a rebinding host name cannot reach the cluster.
 gateway:
   egressInternet: true
+
+# kind only (hack/kind-up.sh sets it): NodePort Services for the dashboard and the management API, so a browser on the
+# machine that runs kind reaches them on localhost without `kubectl port-forward`. kind publishes the NodePorts on
+# 127.0.0.1 of the host (hack/kind-config.yaml); `externalTrafficPolicy: Local` keeps the client's source address, and the
+# policy admits exactly one source: `sourceCidr`, a /32 (the IPv4 gateway of the kind Docker network, where the host's
+# connections come from). Never turn this on in a real cluster. Off: nothing is rendered.
+expose:
+  enabled: false
+  sourceCidr: ""
+  nodePorts: { web: 30254, api: 30256 }
