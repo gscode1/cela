@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all>
-#   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call)
+#   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call), Postgres pod restart keeps data
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
 #   phase4c optional repo workspace through OneCLI + a repo-scoped GitHub App token; needs REPO_A and REPO_B
@@ -71,7 +71,7 @@ started=$(date +%s)
 case ${1:-} in
 smoke)
   phases=(phase4)
-  only="create-send-stream,dedup,auth,delete"
+  only="create-send-stream,dedup,auth,delete,postgres-restart"
   label=smoke
   ;;
 phase1) phases=(phase1) ;;
