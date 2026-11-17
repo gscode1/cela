@@ -23,7 +23,7 @@ const walk = (dir: string): string[] =>
   });
 
 describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
-  // The scripts that moved out of deploy/ (hack/) and the e2e files. The examples of policies applied separately in
+  // The scripts in hack/ (some moved there from the old deploy/) and the e2e files. The examples of policies applied separately in
   // the OneCLI namespace (hack/onecli-policies) name it on purpose. Markdown documents these defaults; it is not applied.
   const files = [...walk(join(root, "hack")), ...walk(join(root, "tests/e2e"))]
     .map((p) => relative(root, p))

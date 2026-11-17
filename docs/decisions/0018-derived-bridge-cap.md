@@ -3,6 +3,8 @@
 Status: accepted, 2026-11-17 (issue #91). Builds on [0004](0004-idle-suspend.md) (the cap), [0016](0016-in-process-broker.md)
 (what an open env costs) and [0017](0017-schema-sharding.md) (one cap per shard).
 
+Note (install slice 11b, issue #141): `deploy/orchestrator.yaml` is now the chart's `templates/orchestrator/deployment.yaml`.
+
 ## Context
 
 `PI_MAX_OPEN_BRIDGES` defaulted to 12, set when a bridge was a 100 MiB Node process. Since ADR 0016 an open env is a small

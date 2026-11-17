@@ -22,13 +22,13 @@ orchestrator (pi-ai, apiKey = placeholder)
   `onecli-managed-placeholder` and ignores the real environment. The gateway replaces the SDK's key (spike Q7), so a
   model call works with no provider key in the orchestrator's environment.
 - **The token.** `ONECLI_AGENT_TOKEN` comes from Secret `pi-onecli` (key `agent-token`), delivered by the
-  ExternalSecret `deploy/onecli-externalsecret.yaml` from `secret-store` (remote key `pi-onecli`, property
+  ExternalSecret (example: `charts/pi-durable/examples/external-secrets.yaml`) from `secret-store` (remote key `pi-onecli`, property
   `agent-token`). It is wrapped in `Redacted`, which prints as `[redacted]` in JSON, string conversion and
   `console.log`. The bridge launcher allows only a short list of variables, so the token, `NO_PROXY` and any proxy
   setting never reach a bridge (tested). The orchestrator refuses to start with a real provider in the allowlist and no
   token.
 - **The CA.** OneCLI v2 serves its CA, unauthenticated, at `GET http://onecli.onecli:10256/v1/gateway/ca` (v1.45:
-  `:10254`). `deploy/fetch-onecli-ca.sh` copies it into ConfigMap `onecli-ca`, mounted at `/etc/onecli/ca.pem`
+  `:10254`). `hack/fetch-onecli-ca.sh` copies it into ConfigMap `onecli-ca`, mounted at `/etc/onecli/ca.pem`
   (`PI_ONECLI_CA_FILE`). The CA lives in OneCLI's data volume, so run the script once, and again only if that volume
   is recreated. With the bundled OneCLI (next section) the bootstrap writes the public part into ConfigMap
   `pi-onecli-ca` (key `ca.pem`) and the chart mounts it; the script is for an external OneCLI.
@@ -138,11 +138,11 @@ sandbox tool call, through the gateway, with no provider credential in the orche
    another and is not needed. The token is built in memory; it is not in the environment or the logs.
 3. **Transport `sse`.** The provider defaults to a WebSocket. `withFetch` sets `transport: "sse"` on every stream call so
    the request is plain HTTPS through the gateway's `fetch` (WebSocket through the gateway is not tested).
-4. **Model config** (`deploy/model-config.yaml`): default `openai-codex/gpt-6.1-terra`, `PI_MODEL_REASONING=medium`,
+4. **Model config** (the chart's `models` values, ConfigMap `pi-model-config`): default `openai-codex/gpt-6.1-terra`, `PI_MODEL_REASONING=medium`,
    allowlist `openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol,scripted/scripted-1,scripted/scripted-2`. Pick a
    model per session with `POST /sessions {provider, model}`. In pi-ai's list `gpt-6-luna` is the cheapest
    ($0.10/$0.50 per million tokens), then `gpt-6.1-terra` ($1/$5), then `gpt-6.1-sol` and `gpt-6-sol` ($2/$10).
-5. **Deploy:** `deploy/fetch-onecli-ca.sh`, configure your built image digests ([deploy settings](../deploy/README.md)), `kubectl apply -k deploy`, then
+5. **Deploy:** `hack/fetch-onecli-ca.sh`, configure your built image digests in your values file ([chart README](../charts/pi-durable/README.md)), `hack/install.sh`, then
    restart orchestrator and ingest. Gateway line for a model call (redacted): `INFO session{peer=<pod ip> host=chatgpt.com:443
    lane=Mitm workspace_id=.. org_id=.. agent="pi-orchestrator" ..}: server: CONNECT`. A `WARN ... error=serving MITM
    connection` after a stream ends is normal here.
@@ -165,11 +165,11 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 1. **OneCLI agent for the orchestrator** (your dashboard, or the API with an `oc_` key): create
    an agent, for example identifier `pi-orchestrator`, and grant it **only** the model-provider secrets (`Codex subscription`). Never grant a GitHub connection to it. Copy its access token (`aoc_...`).
 2. **Secret in your store:** securely supply the token under the remote key/property referenced by
-   `deploy/onecli-externalsecret.yaml` (example: `pi-onecli` / `agent-token`). Adapt `secretStoreRef` and `remoteRef`
+   `charts/pi-durable/examples/external-secrets.yaml` (example: `pi-onecli` / `agent-token`). Adapt `secretStoreRef` and `remoteRef`
    to your backend. Alternatively omit the ExternalSecret and provision target Secret `pi-onecli`, key `agent-token`,
    with your secret-management tool. Do not put tokens in shell history or manifests.
-3. `kubectl apply -k deploy` (adds `pi-model-config` and the ExternalSecret), then
-   `deploy/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
+3. Apply the ExternalSecret and run `hack/install.sh` (it installs `pi-model-config` with the chart), then
+   `hack/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
 4. **Gateway egress.** OneCLI v2 still relays any public host by default. Add org rules that allow the model hosts and
    block the rest (`docs/research/onecli-v2-recheck.md`, section 2).
 5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).

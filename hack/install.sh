@@ -114,7 +114,7 @@ log "namespace $namespace"
 # Assigned on its own line so an unreachable cluster aborts instead of reading as "absent".
 found=$(kc get namespace "$namespace" --ignore-not-found -o name)
 if [[ -z $found ]]; then
-  # The Pod Security version is pinned, like deploy/namespace.yaml and tests/e2e/run.sh (a unit test checks all three): a
+  # The Pod Security version is pinned, like tests/e2e/run.sh (a unit test checks both): a
   # cluster upgrade must not change the rules under us (docs/decisions/0019-restricted-pod-security.md).
   kc apply -f - >/dev/null <<YAML
 apiVersion: v1

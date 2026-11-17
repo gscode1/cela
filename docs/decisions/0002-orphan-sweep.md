@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-16 (issue #9). Implements the "periodic sweep" of the plan's Lifecycle baseline.
 
+Note (install slice 11b, issue #141): `deploy/orchestrator-rbac.yaml` is now `charts/pi-durable/templates/rbac.yaml`.
+
 ## Context
 
 Session deletion removes the claim, the PVC and the OneCLI objects, but a crash, a test that dropped its rows before

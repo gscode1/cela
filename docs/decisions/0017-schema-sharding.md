@@ -5,6 +5,8 @@ Status: accepted, 2026-11-17 (issue #84). Builds on [0001](0001-per-sandbox-sand
 [0005](0005-migrations-without-ddl-locks.md), [0013](0013-e2e-namespace-per-run.md) and
 [0016](0016-in-process-broker.md).
 
+Note (install slice 11b, issue #141): `deploy/add-shard.sh` and `deploy/postgres.yaml` are gone; shards are the chart value `orchestrator.shards`.
+
 ## Context
 
 One orchestrator owns one Postgres schema (the adapter's advisory lock allows a single owner), so one process serves

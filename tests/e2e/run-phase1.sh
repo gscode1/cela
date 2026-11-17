@@ -9,7 +9,7 @@
 #   4. reattach (a): write via the env, DELETE the runner pod, start a fresh one, read the file back
 #   5. reattach (b): delete the sandbox Pod, wait for recreation, next env call works, file still there
 #
-# Needs: the run namespace $NAMESPACE with deploy/ applied (template, warm pool) and the sandboxd-auth secret. Touches only
+# Needs: the run namespace $NAMESPACE with the chart installed (template, warm pool) and the sandboxd-auth secret. Touches only
 # that namespace. The claim gets the sha256 of its own token (HMAC of the master); the runner pod reads the master from
 # the secret and derives both with sandbox-env's own functions (the driver image has no openssl, and one
 # implementation is enough). Nothing secret is printed. Exits non-zero on any failure. Set KEEP_RUNNER=1 to

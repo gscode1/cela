@@ -79,7 +79,7 @@ checkout root) into the instructions, before the skills catalog.
 ## Branch ruleset: agents may only touch `agent/**`
 
 A session token has `contents: write` on its repository, and GitHub cannot scope a token by ref. Without a guard the agent can
-push, force-push or delete `main`. `deploy/agent-ruleset.json` is a repository ruleset that closes this:
+push, force-push or delete `main`. `hack/agent-ruleset.json` is a repository ruleset that closes this:
 
 - Target: branches, `include: ["~ALL"]`, `exclude: ["refs/heads/agent/**"]`. Every branch except `agent/**` is covered.
 - Rules `creation`, `update`, `deletion`, `non_fast_forward`: nobody without bypass can create, push to (including merging a PR
@@ -96,8 +96,8 @@ push, force-push or delete `main`. `deploy/agent-ruleset.json` is a repository r
 Apply to every repository the GitHub App is installed on (needs `gh` logged in as a repo admin, and `jq`):
 
 ```
-deploy/agent-ruleset.sh owner/repo           # create, or update the ruleset named pi-agent-branches (idempotent)
-deploy/agent-ruleset.sh --check owner/repo   # read-only; exit 0 when present and matching, 1 when missing or different
+hack/agent-ruleset.sh owner/repo           # create, or update the ruleset named pi-agent-branches (idempotent)
+hack/agent-ruleset.sh --check owner/repo   # read-only; exit 0 when present and matching, 1 when missing or different
 ```
 
 Rulesets need a public repo, or a private one on a paid plan (GitHub Pro/Team/Enterprise). Run `--check` after every new installation.

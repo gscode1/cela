@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-16 (issue #69).
 
+Note (install slice 11b, issue #141): `deploy/` is gone. A run installs `charts/pi-postgres` and `charts/pi-durable` and applies only `tests/e2e/deploy` around them; the scripts it calls are in `hack/`. The text below describes the first design.
+
 ## Context
 
 The suites ran in the long-lived `pi-durable-poc`. Each run pushed code, restarted the shared orchestrator and ingest, changed

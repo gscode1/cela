@@ -3,6 +3,8 @@
 Status: accepted, 2026-11-17 (issue #136, install slice 10). Builds on [0020](0020-helm-install.md) (D4), the spike
 [research/onecli-bundled-spike.md](../research/onecli-bundled-spike.md) (#120) and [0019](0019-restricted-pod-security.md).
 
+Note (install slice 11b, issue #141): `fetch-onecli-ca.sh` is now `hack/fetch-onecli-ca.sh`; the `deploy/` stack no longer exists.
+
 ## Context
 
 `onecli.mode: bundled` was planned in ADR 0020: the upstream OneCLI chart as its own release, with a bootstrap that
@@ -57,7 +59,7 @@ So "the first account owns the install" (the plan's earlier sentence) is false, 
   `pi-onecli` (`agent-token`) is the orchestrator's token. The chart gives the orchestrator single keys by `secretKeyRef`,
   so the login password never reaches a pod. Nothing prints a value. The CA ConfigMap `pi-onecli-ca` (key `ca.pem`) holds
   only the public certificate; the script refuses a PEM with a private key.
-- **`deploy/fetch-onecli-ca.sh` stays** for an external OneCLI and for the `deploy/` stack and e2e, which do not run the
+- **`hack/fetch-onecli-ca.sh` stays** for an external OneCLI and for e2e, which do not run the
   bootstrap. Chart installs with a bundled OneCLI do not use it.
 
 ## Consequences

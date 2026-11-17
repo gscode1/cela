@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh (ServiceAccount kubeconfig, no context).
-# The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and image deployment are done by
+# The overlay tests/e2e/deploy (the chart plus test-only orchestrator switches) and image deployment are done by
 # run.sh on the Mac before the Job starts; this script only waits for them and runs the tests.
 # Phase 4 acceptance tests of the session API on the real cluster: ingest + orchestrator + Postgres + sandboxes,
 # scripted fake model, no LLM. All API calls run inside an ingest pod (tests/e2e/client.mjs), so API tokens never

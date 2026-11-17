@@ -1,6 +1,6 @@
 # 0020: Install with Helm releases behind one command
 
-Status: accepted as the direction, 2026-11-17 (issue #104). Built slice by slice: the app chart and `hack/install.sh` exist (slice 4, `charts/pi-durable`); the rest is planned. The plan, slices and acceptance checks are in
+Status: accepted as the direction, 2026-11-17 (issue #104). Built slice by slice: the app chart and `hack/install.sh` exist (slice 4, `charts/pi-durable`), and `deploy/` was removed in slice 11b (issue #141), so this is the only supported install path; the rest is planned. The plan, slices and acceptance checks are in
 [install-plan.md](../install-plan.md). Builds on [0019](0019-restricted-pod-security.md) (restricted Pod Security) and
 [0013](0013-e2e-namespace-per-run.md) (a namespace per e2e run).
 
@@ -59,7 +59,7 @@ ConfigMap. Nobody can try the project on a fresh cluster or on kind without read
 
 ## Consequences
 
-- `deploy/` and its scripts are removed once the chart covers them (last slice).
+- `deploy/` and its scripts are removed (done in slice 11b, issue #141); the scripts still in use are in `hack/`.
 - The lab cluster's stack is deleted and recreated; client tokens change.
 - Warn-only means a cluster without enforcement runs agent code with no network isolation. This is accepted for the
   PoC, because the state is measured and shown everywhere, not assumed.

@@ -131,7 +131,7 @@ One middleware, `Authenticator` in `session-core`: it maps request headers to a 
 processes use it, so replacing the static tokens by an OIDC verifier is a change in that one function.
 
 - Tokens come from the Kubernetes Secret `api-auth`, key `tokens`, as `owner:token` lines (create it with
-  `deploy/gen-api-secret.sh`; it never prints the tokens). Tokens are compared in constant time. A token must be at least 16 characters with no whitespace (it could not be sent in a bearer header); a bad entry stops the process at start with an error that does not print the token.
+  `hack/gen-api-secret.sh`; it never prints the tokens). Tokens are compared in constant time. A token must be at least 16 characters with no whitespace (it could not be sent in a bearer header); a bad entry stops the process at start with an error that does not print the token.
 - The owner is stored on the session at creation and checked on every call (ingest) and again on the stream
   (orchestrator). A token of another owner gets `404`.
 - Test setup creates two owners, `alice` and `bob`.
@@ -260,11 +260,11 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
 
 ## Deployment
 
-- `deploy/gen-api-secret.sh` creates `api-auth`. `deploy/ingest.yaml` is the 2-replica Deployment
-  (250m / 256Mi limits each) and Service `pi-ingest`.
+- `hack/install.sh` creates `api-auth` (`hack/gen-api-secret.sh` does the same on its own). The chart's `templates/ingest/` is the
+  2-replica Deployment (250m / 256Mi limits each) and Service `pi-ingest`.
 - **Image delivery:** ingest and orchestrator run multi-arch application images built by `images/build.sh`.
   Dependencies and session-core migrations are packaged at build time; no runtime code volumes or unpack containers.
-  See [deploy settings](../deploy/README.md) for digest overrides.
+  See [image builds](../images/README.md) and the chart's image values for digest overrides.
 - The inbox schema is `packages/session-core/migrations/*.sql` (`001_inbox.sql` to `014_shard.sql`, which adds `inbox.sessions.shard`; `008_profiles.sql` adds the profile tables, `010_skills.sql` the skill tables), applied
   in order by both processes at start. Each applied file is recorded in `inbox.schema_migrations`; when all are
   recorded the start issues one SELECT, no lock and no DDL. Missing files run idempotently under an advisory lock
@@ -275,14 +275,14 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
 - Probes: ingest serves `/healthz` as soon as the process is up and `503`s `/readyz` and the API until migrations
   succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
   owner-only.
-- `deploy/model-config.yaml` (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
+- The chart's `models` values (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
   list and fallback; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 
 ## Known limits
 
 - One orchestrator replica per shard: the Pi Durable storage allows one owner per schema. Capacity grows by adding shards
-  (`deploy/add-shard.sh`, `PI_ORCH_SHARDS` at ingest; a session never moves), see ADR 0017 and `docs/scaling.md`.
+  (`orchestrator.shards` in the chart, which sets `PI_ORCH_SHARDS` at ingest; a session never moves), see ADR 0017 and `docs/scaling.md`.
 - Conversation state of deleted sessions stays until the maintenance job.
 - A crash between creating a Pi conversation and storing its id in `inbox.sessions` leaves one empty, unreferenced
   conversation.

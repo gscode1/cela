@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { renderDocs } from "./support/helm.js";
+import { type Obj, renderDocs } from "./support/helm.js";
 
 const root = resolve(import.meta.dirname, "../../..");
 let dir: string;
@@ -122,12 +122,18 @@ describe("image delivery replaces mutable code uploads", () => {
     const deployments = renderDocs("pi-durable", ["--set", "orchestrator.shards=3"]).filter(
       (d) => d.kind === "Deployment",
     );
-    expect(deployments.map((d) => d.metadata.name)).toEqual(
-      expect.arrayContaining(["pi-orchestrator", "pi-orchestrator-1", "pi-orchestrator-2", "pi-ingest"]),
+    const nameOf = (d: Obj): string => String((d.metadata as Obj).name);
+    expect(deployments.map(nameOf)).toEqual(
+      expect.arrayContaining([
+        "pi-orchestrator",
+        "pi-orchestrator-1",
+        "pi-orchestrator-2",
+        "pi-ingest",
+      ]),
     );
     for (const d of deployments) {
       const manifest = JSON.stringify(d);
-      expect(manifest, d.metadata.name).not.toMatch(
+      expect(manifest, nameOf(d)).not.toMatch(
         /initContainers|"mountPath":"\/code"|claimName|"podAffinity"/,
       );
     }

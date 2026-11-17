@@ -2,7 +2,7 @@
 # (tests/e2e/runner-pod.yaml, which carries the orchestrator label and therefore uses the orchestrator policies).
 #
 # The suites do everything through the Kubernetes API (`kubectl exec` into ingest and the orchestrator, get, wait,
-# delete, scale), so the driver needs the API (deploy/cilium/kube-apiserver.yaml) and DNS (allow-dns-egress), and nothing
+# delete, scale), so the driver needs the API (tests/e2e/deploy/cilium/kube-apiserver.yaml) and DNS (allow-dns-egress), and nothing
 # else. The orchestrator and ingest ports below are for direct calls a suite may make; remove them if unused.
 # The driver accepts no ingress.
 apiVersion: networking.k8s.io/v1

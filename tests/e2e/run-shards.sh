@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh shards (ServiceAccount kubeconfig, no context).
 # run.sh has already built the stack with TWO orchestrator shards on the Mac side: the base Deployment pi-orchestrator
-# (shard 0, schema durable) and pi-orchestrator-1 (shard 1, schema durable_s1) from deploy/add-shard.sh, ingest with
+# (shard 0, schema durable) and pi-orchestrator-1 (shard 1, schema durable_s1) from the chart (orchestrator.shards=2), ingest with
 # PI_ORCH_SHARDS=2 and PI_ORCH_URL=http://pi-orchestrator-{shard}:8081, and the images deployed. This script only waits for
 # them and runs the tests (docs/decisions/0017-schema-sharding.md). Scripted fake model, no LLM.
 #

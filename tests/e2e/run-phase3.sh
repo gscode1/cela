@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs IN the cluster, as the e2e-driver Job started by tests/e2e/run.sh (ServiceAccount kubeconfig, no context).
-# The overlay tests/e2e/deploy (base deploy/ plus test-only orchestrator switches) and image deployment are done by
+# The overlay tests/e2e/deploy (the chart plus test-only orchestrator switches) and image deployment are done by
 # run.sh on the Mac before the Job starts; this script only waits for them and runs the tests.
 # Phase 3 failure tests on the real cluster: orchestrator + CNPG + sandboxes, scripted model, no LLM.
 #
@@ -11,7 +11,7 @@
 #   concurrency    two sessions at once, separate sandboxes and PVCs, no cross-access
 #   isolation      a sandbox cannot reach the orchestrator, Postgres, another sandbox, the Kubernetes API, the OneCLI
 #                  API or ingest, and can reach public internet and the OneCLI gateway (controls). It must PASS once the CNI
-#                  enforces NetworkPolicy (Cilium, deploy/networkpolicy*.yaml + deploy/cilium/). It is KNOWN-FAIL
+#                  enforces NetworkPolicy (Cilium, the chart's networkpolicy templates). It is KNOWN-FAIL
 #                  (printed, not a failure of the run) only while enforcement is absent: every denied target is
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
 #                  KNOWN-FAIL into FAIL (use it after the migration); NETPOL_ENFORCED=0 forces KNOWN-FAIL.
@@ -164,7 +164,7 @@ dump_orchestrator_logs() { # on a failed takeover: both orchestrators' logs, cur
 not() { ! "$@"; }
 exited_with_1() { k get pod "$1" -o json | jq -e '.status.containerStatuses[0].lastState.terminated.exitCode==1'; }
 sandbox_file_exists() { k exec "$1" -c sandboxd -- test -e "$2"; }
-# The second orchestrator for the double-owner test is the LIVE pi-orchestrator Deployment (base deploy/ plus the
+# The second orchestrator for the double-owner test is the LIVE pi-orchestrator Deployment (the chart's Deployment plus the
 # e2e overlay) under another name, so its env, image, volumes and test switches cannot drift from the first. Only
 # the identity changes: name, instance label and selector. It asks for less, since it mostly waits on the lock.
 render_orchestrator_b() {
@@ -516,7 +516,7 @@ netpol_probe_check || exit 1
 isolation_status=""
 record() { # name rc: like the shared one, plus isolation's KNOWN-FAIL (exit 3)
   if [[ $1 == isolation && $2 -eq 3 ]]; then
-    summary+=("KNOWN-FAIL  $1 (NetworkPolicy is not enforced by the CNI yet; passes once Cilium enforces deploy/networkpolicy*.yaml)")
+    summary+=("KNOWN-FAIL  $1 (NetworkPolicy is not enforced by the CNI yet; passes once Cilium enforces the chart policies)")
     isolation_status=known-fail
   elif [[ $2 -eq 0 ]]; then
     summary+=("PASS  $1")
