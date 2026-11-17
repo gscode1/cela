@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126) and slice 10 (bundled OneCLI; issue #136, [ADR 0021](decisions/0021-bundled-onecli.md); the real-model check is still open). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -107,20 +107,25 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
 - **Shards.** Shard count can only grow: sessions stay on their shard (ADR 0017). `deploy/add-shard.sh` becomes the
   `orchestrator.shards` value, and ingest refuses to start when it sees sessions on a shard it has no route for.
 - **OneCLI bootstrap.** Installing OneCLI does not create a user, an org, an `oc_` admin key, the orchestrator agent,
-  grants or host rules. A bootstrap step (Job or `install.sh` step) must do this through OneCLI's API only, and must
-  be idempotent. OneCLI has no switch to turn off sign-up, the first account owns the install, and admin keys are per
-  user (`docs/research/onecli-v2-recheck.md`). So the bootstrap must script the email sign-up (not tested yet) and run
-  right after the OneCLI rollout: until then anyone who can reach its API can claim the install. Today the orchestrator holds an **account-level** admin key
-  (`deploy/repo-externalsecrets.yaml`). That breaks the plan's least-privilege goal; the packaging should not hide this.
-  Model credentials (Codex OAuth) remain an interactive dashboard step. An API-key path can read an `existingSecret`.
+  grants or host rules. `hack/onecli-bootstrap.sh` does this through OneCLI's API only, idempotently, right after the
+  rollout (slice 10). **Sign-up cannot be closed**: OneCLI 2.20.0 has no switch, the first account does not own the
+  install, and a second account gets an organization of its own whose agents are not bound by our host rules and use
+  the gateway as an open proxy ([spike](research/onecli-bundled-spike.md), [ADR 0021](decisions/0021-bundled-onecli.md)).
+  So the API and the dashboard are ClusterIP only with no Ingress, and `charts/pi-onecli` (installed before OneCLI) lets
+  only the orchestrator and a bootstrap Pod reach the API. The orchestrator holds an **account-level** admin key
+  (OneCLI has no scoped key type); only that key of `pi-onecli-admin` reaches the pod, not the login password. Model
+  credentials (Codex OAuth) remain an interactive dashboard step (port-forward, `docs/model-credentials.md`); an
+  API-key path can read `ONECLI_SECRET_*`.
 - **OneCLI CA.** OneCLI's chart creates its gateway CA in Secret `<release>-gateway-ca`, with key and certificate
-  together. The bootstrap (which can read that Secret) copies only the public certificate to a ConfigMap for us (replaces `fetch-onecli-ca.sh`). The orchestrator reads the CA once at start, so a rotation needs a
-  restart.
+  together. The bootstrap (which can read that Secret) copies only the public certificate to ConfigMap `pi-onecli-ca`,
+  key `ca.pem`, which `charts/pi-durable` mounts (bundled mode). `deploy/fetch-onecli-ca.sh` stays for an external
+  OneCLI. The orchestrator reads the CA once at start, so a rotation needs a restart.
 - **Multi-arch sandbox.** Implemented in slice 2: select the pi-env binary by `TARGETARCH`, with a verified checksum per architecture (see deploy/README.md).
 - **Policies rewritten, not just templated.** Replace the CNPG selectors and the CNPG operator rules
   (`networkpolicy-{ingest,orchestrator,postgres}.yaml`, `cilium/kube-apiserver.yaml`). Match the OneCLI chart's labels
   (it has separate web/api/gateway Deployments). Add OneCLI-to-database egress. Sandboxes may reach gateway :10255
-  only. `deploy/onecli-policies/*` move into the chart for bundled OneCLI. External mode needs the OneCLI namespace
+  only. For bundled OneCLI the policies are `charts/pi-onecli` (slice 10), a separate release installed first, because
+  they must hold before OneCLI starts; `deploy/onecli-policies/*` stay the examples for an external OneCLI. External mode needs the OneCLI namespace
   and pod selector as values (today `onecli` and `app: onecli`), and `database.external` needs a pod selector or CIDR
   for the orchestrator and ingest egress rule, or `default-deny-all` makes the database unreachable.
 - **Template changes do not reach existing Sandboxes** (ADR 0019). Changing runtime or security settings on an
@@ -165,8 +170,9 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
    policy set).
 3. Build native-arch images and `kind load` them; the release path pulls digests instead.
 4. `hack/install.sh --values values-kind.yaml`: runc with `allowInsecureRuntime`, kind's `standard` StorageClass,
-   bundled Postgres and agent-sandbox, `onecli.mode: disabled` and the scripted model by default. `--onecli` adds
-   bundled OneCLI with `allowInsecureExternalUrl` for a port-forward trial. No ESO and no credentials are needed.
+   bundled Postgres and agent-sandbox, `onecli.mode: disabled` and the scripted model by default. `hack/kind-up.sh
+   --onecli` adds bundled OneCLI (`onecli.mode=bundled`; `externalUrl` `http://localhost:10254` with
+   `allowInsecureExternalUrl` for a port-forward trial). No ESO and no credentials are needed.
 5. Verify: read `/admin/status` and print the runtime and network-policy warnings; then smoke (create a session, run
    one tool call that writes a workspace marker, stream the result, replace the Pod, check the marker, delete the
    session, check claim and PVC cleanup). It fails on `not-enforced` only with `NETPOL_ENFORCED=1`, which CI sets.
@@ -261,10 +267,20 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
     - Spike first: dashboard sign-in over port-forward with an http `externalUrl`; scripted email sign-up and admin key;
       Prisma migrations on a shared Postgres 17 without superuser; OneCLI Jobs under `restricted`.
       Done in [research/onecli-bundled-spike.md](research/onecli-bundled-spike.md) (#120), with a prototype `hack/onecli-bootstrap.sh`.
-    - Upstream chart as its own release (runner off, one replica, no Redis, `onecli` database); bootstrap step right
-      after rollout (account, admin key, orchestrator agent and token Secret, host rules); public CA to a ConfigMap.
+    - Status: implemented (issue #136, [ADR 0021](decisions/0021-bundled-onecli.md)). `hack/onecli.sh` creates
+      `onecli-database` and `onecli-secrets` once, installs `charts/pi-onecli` (network policies) first, then the upstream
+      chart (pinned by version and digest; runner off, one replica, no Redis, the `onecli` database), then runs the
+      bootstrap (`hack/onecli-bootstrap.sh`: account, admin key, orchestrator agent and token Secret, host rules, public
+      CA ConfigMap; a second run prints `changed=0`). `hack/install.sh` calls it for `onecli.mode=bundled`;
+      `hack/kind-up.sh --onecli` is that on kind; `hack/kind-smoke.sh --onecli` proves the orchestrator's CONNECT through
+      the gateway (407 without the token, a TLS handshake that verifies against the CA ConfigMap, the gateway's own 403
+      for a host that is not allowed) and that the API is closed to ingest and sandboxes. Sign-up cannot be closed (ADR
+      0021): the network is the control.
+    - Still open: the real-model test with protected credentials, run by someone with a Codex login or an API key
+      (steps in [model credentials](model-credentials.md#bundled-onecli-sign-in-and-credentials)); the bootstrap as a Job.
     - Done when: kind with `--onecli` runs a session through the gateway (scripted model plus one real-model test with
-      protected credentials), and a second bootstrap run changes nothing.
+      protected credentials), and a second bootstrap run changes nothing. The first part is covered without a model
+      call; the real-model part is open.
 11. **DB TLS and cleanup.**
     - TLS with verification for both `pg` pools; `database.tls` values. Remove the `deploy/` scripts and manifests that
       the chart replaced; update README, `deploy/README.md`, `docs/e2e.md`, `docs/model-credentials.md` and plan.md.

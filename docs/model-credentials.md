@@ -30,7 +30,76 @@ orchestrator (pi-ai, apiKey = placeholder)
 - **The CA.** OneCLI v2 serves its CA, unauthenticated, at `GET http://onecli.onecli:10256/v1/gateway/ca` (v1.45:
   `:10254`). `deploy/fetch-onecli-ca.sh` copies it into ConfigMap `onecli-ca`, mounted at `/etc/onecli/ca.pem`
   (`PI_ONECLI_CA_FILE`). The CA lives in OneCLI's data volume, so run the script once, and again only if that volume
-  is recreated.
+  is recreated. With the bundled OneCLI (next section) the bootstrap writes the public part into ConfigMap
+  `pi-onecli-ca` (key `ca.pem`) and the chart mounts it; the script is for an external OneCLI.
+
+## Bundled OneCLI: sign-in and credentials
+
+`hack/kind-up.sh --onecli` (or `onecli.mode=bundled` with `hack/install.sh`) installs the upstream OneCLI chart as release
+`onecli` next to the app ([ADR 0021](decisions/0021-bundled-onecli.md), [network policy](network-policy.md#bundled-onecli)).
+The bootstrap leaves three things in the namespace; no script prints a value:
+
+| Object | Holds |
+| --- | --- |
+| Secret `pi-onecli-admin` | `email`, `password` (the dashboard login) and `api-key` (the account-level `oc_` admin key) |
+| Secret `pi-onecli` | `agent-token` (`aoc_`, the orchestrator's agent `pi-orchestrator`) |
+| ConfigMap `pi-onecli-ca` | `ca.pem`, the public gateway CA |
+
+It also writes the host allowlist ([OneCLI host rules](onecli-host-rules.md)): an allow rule per host, then `block *`.
+The orchestrator gets only the `api-key` and `agent-token` keys and the CA, never the password.
+
+**Sign in to the dashboard.** The API and dashboard have no Ingress. Forward both ports (the dashboard calls the API at
+`localhost:10256`, so one forward is not enough) and read the login from the Secret:
+
+```sh
+NS=pi-durable; CTX=kind-pi-durable            # your namespace and kubectl context
+kubectl --context $CTX -n $NS port-forward svc/onecli-web 10254:10254 &
+kubectl --context $CTX -n $NS port-forward svc/onecli-api 10256:10256 &
+kubectl --context $CTX -n $NS port-forward svc/onecli-gateway 10255:10255 &   # only for the dashboard's proxy and CA hints
+kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
+kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # macOS; xclip -selection clipboard on Linux
+open http://localhost:10254/auth/login        # sign in, paste the password; the agent pi-orchestrator is listed
+```
+
+The ports must be 10254 and 10256: OneCLI's `externalUrl` is fixed at install time to `http://localhost:10254`. Closing
+sign-up does not exist in OneCLI (nothing to block), so this sign-in is always possible and always works.
+
+**What works over a port-forward.** Read from OneCLI 2.20.0's source (the API image), not tested against a live provider:
+
+- Sign-in, agents, secrets, host rules, the Codex login (a browser flow in the dashboard) and API-key secrets work: they
+  need only the browser to reach `localhost:10254` and `localhost:10256`.
+- OAuth connections to apps (GitHub, Atlassian, ...) build their redirect URI from the API's own address
+  (`http://localhost:10256/v1/...` over a port-forward), and the redirect goes through your browser. It works if the
+  provider accepts an `http://localhost` redirect URI, and it does for GitHub OAuth Apps and Google; Atlassian and others
+  need the URI registered exactly. The forward must be up during the flow.
+- Anything the provider calls **from the internet** does not work: GitHub App and Slack webhooks and event
+  subscriptions (OneCLI offers them only when `externalUrl` is https; with http it falls back to Slack socket mode), and
+  OAuth providers that refuse `http` redirect URIs. Those need a reachable https URL (next paragraph).
+
+**Expose the dashboard deliberately.** The charts render no Ingress or HTTPRoute for OneCLI, on purpose. If you need
+webhooks or shared access, run your own route to the `onecli-web` and `onecli-api` Services, install OneCLI with
+`hack/onecli.sh --external-url https://onecli.example.com` (the origin of that route), and admit your ingress
+controller in `charts/pi-onecli` (`web.allowFrom`, and for the API a route you trust). **OneCLI sign-up is open and cannot be
+closed**, and an account created there gets an organization of its own whose agents bypass our host rules. So the route
+must block it: return 403 for `/auth/signup` and `/auth/sign-up*` (the dashboard page and the API calls
+`POST /auth/sign-up/email`), and put your own authentication in front of everything else. Then check from outside the
+cluster that `POST /auth/sign-up/email` answers 403, and that the management API (`/v1/*`, `/auth/*` on `:10256`) is not
+published at all unless you also protect it. The bootstrap needs neither: it uses a port-forward.
+
+**The real-model check (not done by the installer).** The scripted model needs nothing; a real one needs a credential in
+OneCLI. Either sign in as above and connect the Codex login (secret type `openai`, host `chatgpt.com`, `oauth`) and grant it
+to `pi-orchestrator`, or give the bootstrap an API key from the environment (it creates one generic secret and the grant,
+and never prints the value):
+
+```sh
+ONECLI_SECRET_NAME=openai ONECLI_SECRET_HOST=api.openai.com ONECLI_SECRET_VALUE=<key> \
+  KUBE_CONTEXT=$CTX hack/onecli-bootstrap.sh -n $NS
+```
+
+Then set `models.default` and `models.allowlist` (for example `openai-codex/gpt-6.1-terra`) in your values, `helm upgrade`, and
+run one session. `GATEWAY_CHECK_HOST=api.openai.com` with `hack/kind-gateway-check.mjs` (see `hack/kind-smoke.sh --onecli`)
+sends a request through the gateway to that host; the answer shows whether the credential was injected (OpenAI answers
+401 without one).
 
 ## OpenAI Codex (ChatGPT subscription): the working setup
 

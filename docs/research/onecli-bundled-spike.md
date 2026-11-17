@@ -1,6 +1,6 @@
 # Bundled OneCLI on kind: spike for install slice 10 (2026-11-17)
 
-Spike for issue #120, before slice 10 of [install-plan.md](../install-plan.md) (D4, "OneCLI bootstrap", "OneCLI CA"). Follow-up to [onecli-v2-recheck.md](onecli-v2-recheck.md). Everything ran on a throwaway kind cluster that was deleted afterwards. All secret values were generated at run time and are not recorded here. Dummy values only, no real model credential.
+Spike for issue #120 (its prototype became `hack/onecli-bootstrap.sh` and slice 10 shipped in #136: [ADR 0021](../decisions/0021-bundled-onecli.md)), before slice 10 of [install-plan.md](../install-plan.md) (D4, "OneCLI bootstrap", "OneCLI CA"). Follow-up to [onecli-v2-recheck.md](onecli-v2-recheck.md). Everything ran on a throwaway kind cluster that was deleted afterwards. All secret values were generated at run time and are not recorded here. Dummy values only, no real model credential.
 
 ## Versions
 
