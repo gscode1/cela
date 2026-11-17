@@ -157,15 +157,15 @@ replace `PI_API_ADMINS`.
 
 - **Scope.** B, with skill upload and MCP management in the console (owner's choice, 2026-11-17).
 - **Access.** Start with named tokens on a private route, or require SSO for a shared rollout.
-- **Catalog repository.** Whether an install can take its skills and MCP servers from a Git repository (below).
+- **Catalog repository.** Decided 2026-11-17: console management now, a catalog repository later (below).
 
-## Option: a catalog repository
+## Later: a catalog repository
 
 An install could name a Git repository as the source of its skills and MCP servers:
 
 ```text
 skills/<name>/SKILL.md, scripts, binaries
-mcp-servers.yaml        # name, url, readOnly, timeoutMs, maxOutputBytes, enabled
+mcp-servers.yaml        # every field: name, url, transport, readOnly, timeoutMs, maxOutputBytes, onecliSecret, enabled
 ```
 
 Git gives versioning, review by pull request, history, and rollback for free. The database still keeps the published
@@ -188,5 +188,29 @@ With a catalog repository, the console shows skills and MCP servers read-only wi
 in profiles. One writer per catalog avoids the console and the repository overwriting each other. This is separate
 from repo skills ([ADR 0014](decisions/0014-repo-skills.md)), which come from the session's own repository.
 
-Recommendation: ship console management first. Add the catalog repository later as a per-install switch, starting
-with CI sync, which needs no change to ingest.
+**Decision:** console management ships first. The catalog repository comes later as a per-install switch, starting
+with CI sync, which needs no GitHub access in ingest. Publishing and unchanged MCP writes are already idempotent, so a
+sync is a thin client of the admin API.
+
+**Commitments now**, so the repository stays cheap to add:
+1. The console writes skills and MCP servers only through the public admin API.
+2. Each skill version can be downloaded as a zip that keeps the executable bit.
+3. The skill and MCP screens have a read-only mode from the start.
+4. Skill versions and MCP servers reserve an optional `source` (repository and commit), kept out of the digest.
+5. Retiring a skill is defined before the repository lands: versions cannot be deleted and skills have no disable flag
+   today, so a skill removed from the repository would stay published and pinnable.
+6. A publish never moves profile pins. Pinning in the console stays the gate for what sessions get.
+7. A sync sends complete MCP bodies, because `PUT` lays the body over the stored row.
+
+**Risks to design for then:**
+- Merge rights on the catalog repository equal deploying code into sandboxes.
+- The GitHub App mints `contents: write` tokens for session repositories. A catalog repository needs a separate
+  read-only token and must never be usable as a session repository.
+- An MCP server missing from the YAML is disabled, not deleted: deletion breaks profile edits and live sessions. This
+  needs a full-set reconcile that per-name `PUT` does not give.
+- A sync is a series of calls without one transaction. It must be re-runnable and report the last fully applied
+  commit.
+- Line-ending conversion or a lost executable bit in the checkout creates spurious versions. A revert creates a new
+  version with an old digest, because the no-op check compares with the current version only.
+- One writer per install is enforced by ingest (a "managed by" setting), not only by the console.
+- A webhook needs inbound access to the stack; CI push or polling does not.
