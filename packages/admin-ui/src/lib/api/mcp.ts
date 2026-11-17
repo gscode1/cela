@@ -1,4 +1,5 @@
 import { adminJson } from "@/lib/api/raw";
+import { fieldLabel } from "@/lib/field-labels";
 
 export interface CatalogSource {
   repository: string;
@@ -103,15 +104,73 @@ export function urlProblem(text: string): string | undefined {
   return undefined;
 }
 
-/** What the form may be saved with, or the first problem; mirrors the validator's ranges. */
-export function numberProblem(
-  label: string,
-  text: string,
-  range: { min: number; max: number },
-): string | undefined {
-  if (!/^\d+$/.test(text.trim())) return `${label} must be a whole number`;
-  const value = Number(text);
-  if (value < range.min || value > range.max)
-    return `${label} must be from ${String(range.min)} to ${String(range.max)}`;
+export interface ScaledRange {
+  /** Name shown in the message, such as "Timeout". */
+  label: string;
+  /** What the operator types: seconds or KB. */
+  unit: string;
+  /** Stored units per typed unit: 1000 ms per second, 1024 bytes per KB. */
+  scale: number;
+  min: number;
+  max: number;
+}
+
+export const TIMEOUT_FIELD: ScaledRange = {
+  label: "Timeout",
+  unit: "seconds",
+  scale: 1000,
+  min: MCP_LIMITS.timeoutMs.min,
+  max: MCP_LIMITS.timeoutMs.max,
+};
+export const OUTPUT_FIELD: ScaledRange = {
+  label: "Max output",
+  unit: "KB",
+  scale: 1024,
+  min: MCP_LIMITS.maxOutputBytes.min,
+  max: MCP_LIMITS.maxOutputBytes.max,
+};
+
+/** What the operator types for a stored value: `60000` ms is `60`, `1500` ms is `1.5`. */
+export const toTyped = (stored: number, scale: number): string => String(stored / scale);
+
+/** The stored value (ms or bytes) for typed text, or `undefined` when it is not a plain positive number. */
+export function fromTyped(text: string, scale: number): number | undefined {
+  if (!/^\d+(\.\d+)?$/.test(text.trim())) return undefined;
+  return Math.round(Number(text) * scale);
+}
+
+/** The first problem with a typed value, or `undefined`; mirrors the validator's ranges. */
+export function scaledProblem(field: ScaledRange, text: string): string | undefined {
+  const stored = fromTyped(text, field.scale);
+  const range = `from ${String(field.min / field.scale)} to ${String(field.max / field.scale)} ${field.unit}`;
+  if (stored === undefined) return `${field.label} must be a number ${range}`;
+  if (stored < field.min || stored > field.max) return `${field.label} must be ${range}`;
   return undefined;
+}
+
+/** The host of a URL for a table cell; the whole text when it is not a URL. */
+export function hostOf(text: string): string {
+  try {
+    return new URL(text).host;
+  } catch {
+    return text;
+  }
+}
+
+/** "90 s", "1.5 s". */
+export const secondsText = (ms: number): string => `${String(ms / 1000)} s`;
+/** "48 KB". */
+export const kbText = (bytes: number): string => `${String(bytes / 1024)} KB`;
+
+/** Settings that differ from the defaults: the only ones a table row mentions. */
+export function nonDefaultLimits(server: Pick<McpServer, "timeoutMs" | "maxOutputBytes">): {
+  label: string;
+  value: string;
+}[] {
+  const out: { label: string; value: string }[] = [];
+  if (server.timeoutMs !== MCP_LIMITS.timeoutMs.default)
+    out.push({ label: fieldLabel("timeoutMs"), value: secondsText(server.timeoutMs) });
+  if (server.maxOutputBytes !== MCP_LIMITS.maxOutputBytes.default)
+    out.push({ label: fieldLabel("maxOutputBytes"), value: kbText(server.maxOutputBytes) });
+  return out;
 }

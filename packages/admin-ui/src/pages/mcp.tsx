@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "@/auth";
 import { ReadOnlyNote } from "@/components/read-only-note";
@@ -8,9 +7,19 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, Td, Th } from "@/components/ui/table";
+import { Time } from "@/components/time";
 import { ApiError } from "@/lib/api";
-import { deleteMcpServer, listMcpServers, mcpHistory, putMcpServer } from "@/lib/api/mcp";
-import type { McpFields, McpHistoryEntry, McpServer } from "@/lib/api/mcp";
+import {
+  deleteMcpServer,
+  hostOf,
+  listMcpServers,
+  mcpHistory,
+  nonDefaultLimits,
+  putMcpServer,
+} from "@/lib/api/mcp";
+import type { McpServer } from "@/lib/api/mcp";
+import { describeMcpChange } from "@/lib/mcp-history";
 import { listProfileRefs, profilesWithMcp } from "@/lib/api/profile-refs";
 import type { ProfileRef } from "@/lib/api/profile-refs";
 import { useCatalogMode } from "@/lib/use-catalog-mode";
@@ -39,26 +48,6 @@ type Pending =
   | { kind: "delete"; server: McpServer }
   | { kind: "enable"; server: McpServer }
   | { kind: "create" };
-
-function describeChange(entry: McpHistoryEntry): string {
-  if (entry.action === "create") return "created";
-  if (entry.action === "delete") return "deleted";
-  const before = entry.old;
-  const after = entry.new;
-  if (before === null || after === null) return "updated";
-  const fields: (keyof McpFields)[] = [
-    "url",
-    "enabled",
-    "readOnly",
-    "timeoutMs",
-    "maxOutputBytes",
-    "onecliSecret",
-  ];
-  const parts = fields
-    .filter((field) => before[field] !== after[field])
-    .map((field) => `${field}: ${String(before[field])} -> ${String(after[field])}`);
-  return parts.length === 0 ? "updated (no field changed)" : parts.join("; ");
-}
 
 function DeletePanel({
   server,
@@ -93,40 +82,33 @@ function DeletePanel({
     <Card aria-label={`Delete ${server.name}`}>
       <CardHeader>
         <CardTitle>Delete {server.name}?</CardTitle>
-        <CardDescription>
-          Deleting removes the row for real; the history keeps the old value. Disabling keeps the
-          server in the catalog.
-        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {profilesError !== undefined && (
           <Alert variant="destructive">
-            Could not load the profiles that may reference it: {profilesError}
+            Could not load the profiles that may use it: {profilesError}
           </Alert>
         )}
         {profiles === undefined && profilesError === undefined && (
-          <p className="text-sm">Loading profile references...</p>
+          <p className="text-sm">Loading...</p>
         )}
         {referencing.length > 0 && (
           <Alert variant="destructive">
-            Still referenced by <ProfileLinks profiles={referencing} />. A profile that names a
-            deleted server cannot be changed until the reference is removed, and its tools stop
-            working for existing sessions. Disable the server instead unless you mean to remove it.
+            Still used by <ProfileLinks profiles={referencing} />. Those profiles cannot be changed
+            until they drop it, and their sessions lose its tools. Disable it instead unless you
+            mean to remove it.
           </Alert>
-        )}
-        {profiles !== undefined && referencing.length === 0 && (
-          <p className="text-sm">No profile references this server.</p>
         )}
         {remove.isError && (
           <Alert variant="destructive">
-            {remove.error.message}
-            {conflict &&
-              " The server changed since this page loaded; close this and reload the list."}
+            {conflict
+              ? "The server changed since this page loaded; close this and reload the list."
+              : remove.error.message}
           </Alert>
         )}
         {disable.isError && <Alert variant="destructive">{disable.error.message}</Alert>}
         <div className="flex flex-wrap gap-2">
-          {server.enabled && (
+          {server.enabled && referencing.length > 0 && (
             <Button size="sm" onClick={() => disable.mutate()} disabled={disable.isPending}>
               Disable instead
             </Button>
@@ -148,7 +130,7 @@ function DeletePanel({
   );
 }
 
-/** Enabling a server that is not declared read-only asks for the declaration again. */
+/** Enabling a server that is not declared read-only asks for the answer again. */
 function EnablePanel({ server, onClose }: { server: McpServer; onClose: () => void }) {
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -170,12 +152,9 @@ function EnablePanel({ server, onClose }: { server: McpServer; onClose: () => vo
     <Card aria-label={`Enable ${server.name}`}>
       <CardHeader>
         <CardTitle>Enable {server.name}</CardTitle>
-        <CardDescription>
-          It is not declared read-only. Confirm what it is before sessions can call it.
-        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <ReadOnlyChoice value={declared} onChange={setDeclared} prompt="Read-only declaration" />
+        <ReadOnlyChoice value={declared} onChange={setDeclared} />
         {enable.isError && <Alert variant="destructive">{enable.error.message}</Alert>}
         <div className="flex gap-2">
           <Button
@@ -194,7 +173,9 @@ function EnablePanel({ server, onClose }: { server: McpServer; onClose: () => vo
   );
 }
 
-function ServerCard({
+const COLUMNS = 7;
+
+function ServerRow({
   server,
   profiles,
   manage,
@@ -207,101 +188,167 @@ function ServerCard({
 }) {
   const { token } = useAuth();
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   const toggle = useMutation({
     mutationFn: (enabled: boolean) =>
       putMcpServer(token ?? "", server.name, { enabled }, server.revision),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["mcp"] }),
   });
   const referencing = profiles === undefined ? undefined : profilesWithMcp(profiles, server.name);
-  const rows: [string, ReactNode][] = [
-    ["URL", <span className="break-all">{server.url}</span>],
-    ["Transport", "streamable-http"],
-    ["timeoutMs", String(server.timeoutMs)],
-    ["maxOutputBytes", String(server.maxOutputBytes)],
-    ["onecliSecret", `${server.onecliSecret ?? "none"} (read-only until #42)`],
-    ["Reachability", `${server.reachability} (the API does not probe the network)`],
-    ["Revision", String(server.revision)],
-    ["Updated", `${server.updatedAt} by ${server.updatedBy}`],
-    ...(server.source === null
-      ? []
-      : ([["Source", `${server.source.repository} @ ${server.source.commit}`]] as [
-          string,
-          string,
-        ][])),
-    [
-      "Profiles",
-      referencing === undefined ? (
-        "loading"
-      ) : referencing.length === 0 ? (
-        "none"
-      ) : (
-        <ProfileLinks profiles={referencing} />
-      ),
-    ],
-  ];
+  const limits = nonDefaultLimits(server);
+  const hasDetails = limits.length > 0 || server.source !== null;
   return (
-    <Card data-testid={`mcp-${server.name}`}>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>{server.name}</CardTitle>
+    <Fragment>
+      <tr data-testid={`mcp-${server.name}`}>
+        <Td className="font-medium break-all">{server.name}</Td>
+        <Td>
           <Badge variant={server.enabled ? "secondary" : "warning"}>
             {server.enabled ? "enabled" : "disabled"}
           </Badge>
-          <Badge variant="outline">readOnly: {String(server.readOnly)}</Badge>
-        </div>
-        {!server.enabled && (
-          <CardDescription>
-            Disabled: the server stays in the catalog and its tools are unavailable to sessions.
-          </CardDescription>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
-          {rows.map(([label, value]) => (
-            <div key={label} className="contents">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="min-w-0">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        {toggle.isError && <Alert variant="destructive">{toggle.error.message}</Alert>}
-        {manage && (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => onAction({ kind: "edit", server })}>
-              Edit
-            </Button>
-            {server.enabled ? (
+        </Td>
+        <Td className="break-all">
+          <span title={server.url}>{hostOf(server.url)}</span>
+        </Td>
+        <Td>
+          {server.readOnly ? (
+            <span className="text-muted-foreground">Read-only</span>
+          ) : (
+            <Badge variant="warning">Can change state</Badge>
+          )}
+        </Td>
+        <Td>
+          {referencing === undefined ? (
+            ""
+          ) : referencing.length === 0 ? (
+            <span className="text-muted-foreground">{"\u2014"}</span>
+          ) : (
+            <ProfileLinks profiles={referencing} />
+          )}
+        </Td>
+        <Td>
+          <Time value={server.updatedAt} />
+          <span className="text-muted-foreground"> by {server.updatedBy}</span>
+        </Td>
+        <Td>
+          <span className="flex flex-wrap gap-1">
+            {hasDetails && (
               <Button
                 size="sm"
-                variant="outline"
-                onClick={() => toggle.mutate(false)}
-                disabled={toggle.isPending}
+                variant="ghost"
+                aria-expanded={open}
+                onClick={() => setOpen((shown) => !shown)}
               >
-                Disable
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={toggle.isPending}
-                onClick={() =>
-                  server.readOnly ? toggle.mutate(true) : onAction({ kind: "enable", server })
-                }
-              >
-                Enable
+                Details
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onAction({ kind: "delete", server })}
-            >
-              Delete
+            {manage && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onAction({ kind: "edit", server })}
+                >
+                  Edit
+                </Button>
+                {server.enabled ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => toggle.mutate(false)}
+                    disabled={toggle.isPending}
+                  >
+                    Disable
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={toggle.isPending}
+                    onClick={() =>
+                      server.readOnly ? toggle.mutate(true) : onAction({ kind: "enable", server })
+                    }
+                  >
+                    Enable
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onAction({ kind: "delete", server })}
+                >
+                  Delete
+                </Button>
+              </>
+            )}
+          </span>
+        </Td>
+      </tr>
+      {(open || toggle.isError) && (
+        <tr>
+          <Td colSpan={COLUMNS} className="bg-muted/40">
+            {open && (
+              <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
+                {limits.map(({ label, value }) => (
+                  <Fragment key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd>{value}</dd>
+                  </Fragment>
+                ))}
+                {server.source !== null && (
+                  <>
+                    <dt className="text-muted-foreground">Source</dt>
+                    <dd className="break-all">
+                      {server.source.repository} @ {server.source.commit}
+                    </dd>
+                  </>
+                )}
+              </dl>
+            )}
+            {toggle.isError && <Alert variant="destructive">{toggle.error.message}</Alert>}
+          </Td>
+        </tr>
+      )}
+    </Fragment>
+  );
+}
+
+const HISTORY_SHOWN = 5;
+
+function RecentChanges() {
+  const { token } = useAuth();
+  const [all, setAll] = useState(false);
+  const history = useQuery({
+    queryKey: ["mcp-history"],
+    queryFn: ({ signal }) => mcpHistory(token ?? "", signal),
+  });
+  const entries = history.data ?? [];
+  return (
+    <details className="rounded-lg border bg-card px-6 py-4">
+      <summary className="cursor-pointer font-semibold">Recent changes</summary>
+      <div className="mt-3 flex flex-col gap-2">
+        {history.isError && <Alert variant="destructive">{history.error.message}</Alert>}
+        {history.isSuccess && entries.length === 0 && (
+          <p className="text-sm text-muted-foreground">No changes yet.</p>
+        )}
+        <ul className="flex flex-col gap-1 text-sm">
+          {(all ? entries : entries.slice(0, HISTORY_SHOWN)).map((entry) => (
+            <li key={entry.id} className="break-words">
+              <strong>{entry.name}</strong> {describeMcpChange(entry)}{" "}
+              <span className="text-muted-foreground">
+                <Time value={entry.changedAt} /> by {entry.changedBy}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {!all && entries.length > HISTORY_SHOWN && (
+          <div>
+            <Button size="sm" variant="ghost" onClick={() => setAll(true)}>
+              Show more
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </details>
   );
 }
 
@@ -313,32 +360,29 @@ export function McpServersPage() {
     queryKey: ["mcp"],
     queryFn: ({ signal }) => listMcpServers(token ?? "", signal),
   });
-  const history = useQuery({
-    queryKey: ["mcp-history"],
-    queryFn: ({ signal }) => mcpHistory(token ?? "", signal),
-  });
   const profiles = useQuery({
     queryKey: ["profile-refs"],
     queryFn: ({ signal }) => listProfileRefs(token ?? "", signal),
   });
+  const queryClient = useQueryClient();
   const manage = mode === "manage";
   const close = (): void => {
     setPending(undefined);
     void servers.refetch();
-    void history.refetch();
+    void queryClient.invalidateQueries({ queryKey: ["mcp-history"] });
     void profiles.refetch();
   };
+  const usedBy = (server: McpServer | undefined): boolean =>
+    server !== undefined &&
+    profiles.data !== undefined &&
+    profilesWithMcp(profiles.data, server.name).length > 0;
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <CardTitle>MCP servers</CardTitle>
-          <CardDescription>
-            Remote servers sessions can call (Streamable HTTP over https). Reachability is always
-            unknown: the API does not probe the network, and a host without an OneCLI rule fails
-            only when the orchestrator connects.
-          </CardDescription>
+          <CardDescription>Remote tool servers that sessions can call.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {modeError !== undefined && <Alert variant="destructive">{modeError}</Alert>}
@@ -351,20 +395,61 @@ export function McpServersPage() {
             </div>
           )}
           {servers.isError && <Alert variant="destructive">{servers.error.message}</Alert>}
-          {servers.isSuccess && servers.data.servers.length === 0 && (
-            <p className="text-sm">No MCP servers registered.</p>
-          )}
+          {servers.isSuccess &&
+            servers.data.servers.length === 0 &&
+            servers.data.invalid.length === 0 && <p className="text-sm">No MCP servers yet.</p>}
           {profiles.isError && (
             <Alert variant="destructive">
-              Could not load profile references: {profiles.error.message}
+              Could not load which profiles use them: {profiles.error.message}
             </Alert>
+          )}
+          {servers.data?.invalid.map((row) => (
+            <Alert key={row.name} variant="destructive">
+              <strong>{row.name}</strong>: this server&apos;s stored settings are invalid; edit it
+              to fix them. {row.message}
+            </Alert>
+          ))}
+          {servers.isSuccess && servers.data.servers.length > 0 && (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Name</Th>
+                  <Th>Status</Th>
+                  <Th>URL</Th>
+                  <Th>Access</Th>
+                  <Th>Used by</Th>
+                  <Th>Updated</Th>
+                  <Th>
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {servers.data.servers.map((server) => (
+                  <ServerRow
+                    key={server.name}
+                    server={server}
+                    profiles={profiles.data}
+                    manage={manage}
+                    onAction={setPending}
+                  />
+                ))}
+              </tbody>
+            </Table>
           )}
         </CardContent>
       </Card>
 
-      {pending?.kind === "create" && <McpForm server={undefined} onClose={close} />}
+      {pending?.kind === "create" && (
+        <McpForm server={undefined} usedByProfiles={false} onClose={close} />
+      )}
       {pending?.kind === "edit" && (
-        <McpForm key={pending.server.name} server={pending.server} onClose={close} />
+        <McpForm
+          key={pending.server.name}
+          server={pending.server}
+          usedByProfiles={usedBy(pending.server)}
+          onClose={close}
+        />
       )}
       {pending?.kind === "delete" && (
         <DeletePanel
@@ -376,42 +461,7 @@ export function McpServersPage() {
       )}
       {pending?.kind === "enable" && <EnablePanel server={pending.server} onClose={close} />}
 
-      {servers.data?.invalid.map((row) => (
-        <Alert key={row.name} variant="destructive">
-          Invalid stored row <strong>{row.name}</strong>: {row.message}. The orchestrator skips it.
-        </Alert>
-      ))}
-      {servers.data?.servers.map((server) => (
-        <ServerCard
-          key={server.name}
-          server={server}
-          profiles={profiles.data}
-          manage={manage}
-          onAction={setPending}
-        />
-      ))}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent changes</CardTitle>
-          <CardDescription>The newest 20 entries of the MCP history.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {history.isError && <Alert variant="destructive">{history.error.message}</Alert>}
-          {history.isSuccess && history.data.length === 0 && (
-            <p className="text-sm">No changes recorded.</p>
-          )}
-          <ul className="flex flex-col gap-1 text-sm">
-            {history.data?.map((entry) => (
-              <li key={entry.id} className="break-words">
-                <span className="text-muted-foreground">{entry.changedAt}</span>{" "}
-                <strong>{entry.name}</strong> {describeChange(entry)}{" "}
-                <span className="text-muted-foreground">by {entry.changedBy}</span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
+      <RecentChanges />
     </div>
   );
 }

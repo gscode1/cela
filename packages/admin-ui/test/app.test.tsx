@@ -54,7 +54,7 @@ describe("sign-in", () => {
       "Session profiles",
       "MCP servers",
       "Skills",
-      "Shard status",
+      "Isolation",
     ])
       expect(nav).toHaveTextContent(title);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/admin/settings");

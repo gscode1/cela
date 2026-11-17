@@ -30,7 +30,7 @@ test.describe("console enabled", () => {
       "Session profiles",
       "MCP servers",
       "Skills",
-      "Shard status",
+      "Isolation",
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();

@@ -8,35 +8,41 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
+import { Time } from "@/components/time";
 import {
+  fromTyped,
+  kbText,
   listMcpServers,
   MCP_LIMITS,
   MCP_NAME,
-  numberProblem,
+  OUTPUT_FIELD,
   putMcpServer,
+  scaledProblem,
+  secondsText,
+  TIMEOUT_FIELD,
+  toTyped,
   urlProblem,
 } from "@/lib/api/mcp";
 import type { McpFields, McpServer } from "@/lib/api/mcp";
 
 export type Declared = "yes" | "no" | "";
 
-/** The declaration the operator makes: one client serves every session, so the server must be stateless. */
+/**
+ * The declaration the operator makes. One MCP client serves every session, so a server that changes state is a
+ * different thing to enable than one that only reads.
+ */
 export function ReadOnlyChoice({
   value,
   onChange,
-  prompt,
+  prompt = "Does this server change anything?",
 }: {
   value: Declared;
   onChange: (value: Declared) => void;
-  prompt: string;
+  prompt?: string;
 }) {
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="text-sm font-medium">{prompt}</legend>
-      <p className="text-xs text-muted-foreground">
-        One MCP client serves every session, so declare whether the server is stateless and changes
-        nothing.
-      </p>
       <label className="flex items-center gap-2 text-sm">
         <input
           type="radio"
@@ -44,7 +50,7 @@ export function ReadOnlyChoice({
           checked={value === "yes"}
           onChange={() => onChange("yes")}
         />
-        Read-only: stateless, it changes nothing
+        No, it only reads
       </label>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -53,7 +59,7 @@ export function ReadOnlyChoice({
           checked={value === "no"}
           onChange={() => onChange("no")}
         />
-        Not read-only: it can change state
+        Yes, it can change state
       </label>
     </fieldset>
   );
@@ -70,12 +76,15 @@ const sameUrl = (a: string, b: string): boolean => {
 /**
  * Register a server (`server` undefined) or edit one. The draft lives in this component, so a `409` leaves it as it is;
  * "Reload" fetches the stored server, shows it next to the draft and uses its revision for the next save.
+ * `usedByProfiles`: whether a profile names this server, which decides if the saved message mentions sessions.
  */
 export function McpForm({
   server,
+  usedByProfiles,
   onClose,
 }: {
   server: McpServer | undefined;
+  usedByProfiles: boolean;
   onClose: () => void;
 }) {
   const { token } = useAuth();
@@ -84,10 +93,10 @@ export function McpForm({
   const [name, setName] = useState(server?.name ?? "");
   const [url, setUrl] = useState(server?.url ?? "https://");
   const [timeout, setTimeoutText] = useState(
-    String(server?.timeoutMs ?? MCP_LIMITS.timeoutMs.default),
+    toTyped(server?.timeoutMs ?? MCP_LIMITS.timeoutMs.default, TIMEOUT_FIELD.scale),
   );
   const [maxOutput, setMaxOutput] = useState(
-    String(server?.maxOutputBytes ?? MCP_LIMITS.maxOutputBytes.default),
+    toTyped(server?.maxOutputBytes ?? MCP_LIMITS.maxOutputBytes.default, OUTPUT_FIELD.scale),
   );
   const [enabled, setEnabled] = useState(server?.enabled ?? true);
   // On create nothing is preselected: `readOnly` must be a deliberate answer.
@@ -111,19 +120,21 @@ export function McpForm({
     );
   const urlIssue = urlProblem(url);
   if (urlIssue !== undefined) problems.push(urlIssue);
-  const timeoutIssue = numberProblem("timeoutMs", timeout, MCP_LIMITS.timeoutMs);
+  const timeoutIssue = scaledProblem(TIMEOUT_FIELD, timeout);
   if (timeoutIssue !== undefined) problems.push(timeoutIssue);
-  const outputIssue = numberProblem("maxOutputBytes", maxOutput, MCP_LIMITS.maxOutputBytes);
+  const outputIssue = scaledProblem(OUTPUT_FIELD, maxOutput);
   if (outputIssue !== undefined) problems.push(outputIssue);
-  if (!readOnlyAnswered) problems.push("declare whether the server is read-only");
+  if (!readOnlyAnswered) problems.push("answer whether the server changes anything");
 
+  const timeoutMs = fromTyped(timeout, TIMEOUT_FIELD.scale) ?? MCP_LIMITS.timeoutMs.default;
+  const maxOutputBytes =
+    fromTyped(maxOutput, OUTPUT_FIELD.scale) ?? MCP_LIMITS.maxOutputBytes.default;
   const changes: Partial<McpFields> = {};
   if (editing) {
     if (urlChanged) changes.url = url;
-    if (Number(timeout) !== server.timeoutMs && timeoutIssue === undefined)
-      changes.timeoutMs = Number(timeout);
-    if (Number(maxOutput) !== server.maxOutputBytes && outputIssue === undefined)
-      changes.maxOutputBytes = Number(maxOutput);
+    if (timeoutMs !== server.timeoutMs && timeoutIssue === undefined) changes.timeoutMs = timeoutMs;
+    if (maxOutputBytes !== server.maxOutputBytes && outputIssue === undefined)
+      changes.maxOutputBytes = maxOutputBytes;
     if (mustReask || (readOnly === "yes") !== server.readOnly)
       changes.readOnly = readOnly === "yes";
   }
@@ -140,8 +151,8 @@ export function McpForm({
               url,
               readOnly: readOnly === "yes",
               enabled,
-              timeoutMs: Number(timeout),
-              maxOutputBytes: Number(maxOutput),
+              timeoutMs,
+              maxOutputBytes,
             },
         editing ? baseRevision : undefined,
       ),
@@ -168,10 +179,10 @@ export function McpForm({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Saved {saved.name}</CardTitle>
-          <CardDescription>
-            Revision {saved.revision}. Existing sessions whose snapshots reference it are affected.
-          </CardDescription>
+          <CardTitle>Saved.</CardTitle>
+          {editing && usedByProfiles && (
+            <CardDescription>Sessions using it pick up the change.</CardDescription>
+          )}
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Link
@@ -193,10 +204,7 @@ export function McpForm({
     <Card>
       <CardHeader>
         <CardTitle>{editing ? `Edit ${server.name}` : "Register an MCP server"}</CardTitle>
-        <CardDescription>
-          Transport is fixed to Streamable HTTP and the URL must be https. Hosts also need an OneCLI
-          host rule; the console does not probe the network, so reachability stays unknown.
-        </CardDescription>
+        <CardDescription>The host must be allowed in OneCLI&apos;s egress rules.</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -222,33 +230,23 @@ export function McpForm({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="mcp-timeout">timeoutMs</Label>
+              <Label htmlFor="mcp-timeout">Timeout (seconds)</Label>
               <Input
                 id="mcp-timeout"
                 value={timeout}
                 onChange={(event) => setTimeoutText(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">1000 to 300000</p>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="mcp-output">maxOutputBytes</Label>
+              <Label htmlFor="mcp-output">Max output (KB)</Label>
               <Input
                 id="mcp-output"
                 value={maxOutput}
                 onChange={(event) => setMaxOutput(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                1024 to 24576; it can only tighten the cut
-              </p>
+              <p className="text-xs text-muted-foreground">Cuts longer tool output.</p>
             </div>
           </div>
-          {editing && (
-            <p className="text-sm">
-              <span className="text-muted-foreground">onecliSecret</span>{" "}
-              {server.onecliSecret ?? "none"}{" "}
-              <span className="text-xs text-muted-foreground">(read-only until #42)</span>
-            </p>
-          )}
           {!editing && (
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -260,9 +258,7 @@ export function McpForm({
             </label>
           )}
           {mustReask && (
-            <Alert>
-              The URL changed. Declare read-only again for the new address before saving.
-            </Alert>
+            <Alert>The URL changed. Answer again for the new address before saving.</Alert>
           )}
           <ReadOnlyChoice
             value={mustReask && !reasked ? "" : readOnly}
@@ -270,7 +266,6 @@ export function McpForm({
               setReadOnly(value);
               setReasked(true);
             }}
-            prompt={editing ? "Read-only declaration" : "Is this server read-only?"}
           />
           {problems.length > 0 && (
             <ul className="list-disc pl-5 text-xs text-muted-foreground">
@@ -281,10 +276,12 @@ export function McpForm({
           )}
           {save.isError && (
             <Alert variant="destructive">
-              {save.error.message}
+              {conflict
+                ? "Someone else changed or removed this server since you opened it."
+                : save.error.message}
               {conflict && (
                 <span className="mt-2 flex flex-col gap-2">
-                  <span>Someone else changed or removed this server. Your draft is kept.</span>
+                  <span>Your draft is kept.</span>
                   <Button
                     type="button"
                     size="sm"
@@ -300,9 +297,10 @@ export function McpForm({
           )}
           {stored !== undefined && (
             <Alert>
-              Stored now (revision {stored.revision}, by {stored.updatedBy}):{" "}
-              <code>{stored.url}</code>, timeoutMs {stored.timeoutMs}, maxOutputBytes{" "}
-              {stored.maxOutputBytes}, readOnly {String(stored.readOnly)},{" "}
+              Changed by {stored.updatedBy} <Time value={stored.updatedAt} /> since you opened it.
+              Stored now: <code>{stored.url}</code>, timeout {secondsText(stored.timeoutMs)}, max
+              output {kbText(stored.maxOutputBytes)},{" "}
+              {stored.readOnly ? "read-only" : "can change state"},{" "}
               {stored.enabled ? "enabled" : "disabled"}. Saving again replaces these with your
               draft.
             </Alert>

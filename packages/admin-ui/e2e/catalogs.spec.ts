@@ -291,103 +291,152 @@ test.describe("MCP servers", () => {
     await page.getByLabel("URL").fill(url);
   }
 
-  test("registers a server: https only, readOnly declared on purpose, then offers a profile link", async ({
+  test("registers a server: https only, the declaration made on purpose, then offers a profile link", async ({
     page,
   }) => {
     const name = unique("reg");
     await signInAndGo(page, "/console/mcp-servers");
     await register(page, name, "http://plain.example.com/mcp");
+    await expect(
+      page.getByText("The host must be allowed in OneCLI's egress rules."),
+    ).toBeVisible();
     const submit = page.getByRole("button", { name: "Register", exact: true });
     await expect(page.getByText("the URL must be https", { exact: true })).toBeVisible();
     await expect(submit).toBeDisabled();
     await page.getByLabel("URL").fill("https://mcp.example.com/mcp");
-    // Nothing is preselected: the declaration has to be made.
-    await expect(page.getByText("declare whether the server is read-only")).toBeVisible();
-    await expect(page.getByRole("radio", { name: /^Read-only/ })).not.toBeChecked();
-    await expect(page.getByRole("radio", { name: /^Not read-only/ })).not.toBeChecked();
+    // Nothing is preselected: the answer has to be given.
+    await expect(page.getByText("Does this server change anything?")).toBeVisible();
+    await expect(page.getByRole("radio", { name: /^No, it only reads/ })).not.toBeChecked();
+    await expect(page.getByRole("radio", { name: /^Yes, it can change state/ })).not.toBeChecked();
     await expect(submit).toBeDisabled();
-    await page.getByRole("radio", { name: /^Read-only/ }).check();
+    await page.getByRole("radio", { name: /^No, it only reads/ }).check();
     await submit.click();
 
-    await expect(page.getByRole("heading", { name: `Saved ${name}` })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
+    // A new server is used by nobody: no sentence about sessions.
+    await expect(page.getByText("Sessions using it pick up the change.")).toHaveCount(0);
     await expect(page.getByRole("link", { name: `Add ${name} to a profile` })).toHaveAttribute(
       "href",
       `/console/profiles?addMcp=${name}`,
     );
     await page.getByRole("button", { name: "Done" }).click();
-    const card = page.getByTestId(`mcp-${name}`);
-    await expect(card).toContainText("https://mcp.example.com/mcp");
-    await expect(card).toContainText("unknown");
-    await expect(card).toContainText("none (read-only until #42)");
-    await expect(card).toContainText("readOnly: true");
-    await expect(page.getByText(new RegExp(`${name} created by alice`))).toBeVisible();
+    const row = page.getByTestId(`mcp-${name}`);
+    await expect(row).toContainText("mcp.example.com");
+    await expect(row.getByText("mcp.example.com")).toHaveAttribute(
+      "title",
+      "https://mcp.example.com/mcp",
+    );
+    await expect(row).toContainText("Read-only");
+    await expect(row).toContainText("enabled");
+    // Defaults and no source: nothing to expand, and none of the removed fields anywhere.
+    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    for (const gone of ["Transport", "Reachability", "onecliSecret", "#42", "Revision"])
+      await expect(page.getByText(gone)).toHaveCount(0);
+    await page.getByText("Recent changes").click();
+    await expect(page.getByText(new RegExp(`${name} created`))).toBeVisible();
     await shot(page, "mcp-list.png");
   });
 
-  test("an edit that changes the URL asks for the readOnly declaration again", async ({
+  test("shows timeout and max output only when they differ, inside Details", async ({
+    page,
+    request,
+  }) => {
+    const name = unique("limits");
+    await putMcp(request, name, {
+      url: "https://limits.example.com/mcp",
+      readOnly: false,
+      timeoutMs: 90_000,
+      maxOutputBytes: 12 * 1024,
+    });
+    await signInAndGo(page, "/console/mcp-servers");
+    const row = page.getByTestId(`mcp-${name}`);
+    await expect(row).toContainText("Can change state");
+    await expect(row).not.toContainText("90 s");
+    await row.getByRole("button", { name: "Details" }).click();
+    const details = page.getByRole("row").filter({ hasText: "Timeout" });
+    await expect(details).toContainText("90 s");
+    await expect(details).toContainText("12 KB");
+    await shot(page, "mcp-details.png");
+    await row.getByRole("button", { name: "Details" }).click();
+    await expect(page.getByRole("definition")).toHaveCount(0);
+  });
+
+  test("an edit that changes the URL asks the declaration again, in seconds and KB", async ({
     page,
     request,
   }) => {
     const name = unique("edit");
     await putMcp(request, name, { url: "https://one.example.com/mcp", readOnly: true });
+    await request.put(`/__fake/profiles/${unique("user")}`, {
+      data: { definition: { mcpServers: [name] } },
+    });
     await signInAndGo(page, "/console/mcp-servers");
-    const card = page.getByTestId(`mcp-${name}`);
-    await card.getByRole("button", { name: "Edit" }).click();
+    const row = page.getByTestId(`mcp-${name}`);
+    await row.getByRole("button", { name: "Edit" }).click();
     const save = page.getByRole("button", { name: "Save changes" });
     await expect(save).toBeDisabled();
+    await expect(page.getByLabel("Timeout (seconds)")).toHaveValue("60");
+    await expect(page.getByLabel("Max output (KB)")).toHaveValue("24");
 
-    await page.getByLabel("timeoutMs").fill("90000");
+    await page.getByLabel("Timeout (seconds)").fill("90");
     await expect(save).toBeEnabled();
     await page.getByLabel("URL").fill("https://two.example.com/mcp");
-    await expect(page.getByText("The URL changed. Declare read-only again")).toBeVisible();
+    await expect(page.getByText("The URL changed. Answer again")).toBeVisible();
     await expect(save).toBeDisabled();
-    await page.getByRole("radio", { name: /^Read-only/ }).check();
+    await page.getByRole("radio", { name: /^No, it only reads/ }).check();
     await expect(save).toBeEnabled();
     await save.click();
-    await expect(page.getByRole("heading", { name: `Saved ${name}` })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
+    // Used by a profile: the edit reaches its sessions.
+    await expect(page.getByText("Sessions using it pick up the change.")).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
-    await expect(card).toContainText("https://two.example.com/mcp");
-    await expect(card).toContainText("90000");
-    await expect(card).toContainText(/Revision\s*2/);
+    await expect(row).toContainText("two.example.com");
+    await row.getByRole("button", { name: "Details" }).click();
+    await expect(page.getByRole("definition").filter({ hasText: "90 s" })).toBeVisible();
+    expect(await storedMcp(request, name)).toMatchObject({ timeoutMs: 90_000 });
+    await page.getByText("Recent changes").click();
     await expect(
-      page.getByText(/url: https:\/\/one\.example\.com\/mcp -> https:\/\/two\.example\.com\/mcp/),
+      page.getByText(/URL: https:\/\/one\.example\.com\/mcp \u2192 https:\/\/two/),
     ).toBeVisible();
+    await expect(page.getByText(/Timeout: 60 s \u2192 90 s/)).toBeVisible();
 
     // The API's own range check is mirrored before the request is made.
-    await card.getByRole("button", { name: "Edit" }).click();
-    await page.getByLabel("maxOutputBytes").fill("99999");
-    await expect(page.getByText("maxOutputBytes must be from 1024 to 24576")).toBeVisible();
+    await row.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Max output (KB)").fill("99");
+    await expect(page.getByText("Max output must be from 1 to 24 KB")).toBeVisible();
     await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
-  test("a stale edit keeps the draft, shows the conflict and saves after a reload", async ({
+  test("a stale edit keeps the draft, says who changed it and saves after a reload", async ({
     page,
     request,
   }) => {
     const name = unique("race");
     await putMcp(request, name, { url: "https://race.example.com/mcp", readOnly: true });
     await signInAndGo(page, "/console/mcp-servers");
-    const card = page.getByTestId(`mcp-${name}`);
-    await card.getByRole("button", { name: "Edit" }).click();
-    await page.getByLabel("timeoutMs").fill("45000");
+    const row = page.getByTestId(`mcp-${name}`);
+    await row.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Timeout (seconds)").fill("45");
 
     // Someone else changes the server meanwhile.
     await putMcp(request, name, { maxOutputBytes: 2048, expectedRevision: 1 });
     await page.getByRole("button", { name: "Save changes" }).click();
-    const alert = page.getByRole("alert").filter({ hasText: "revision 2, not the expected 1" });
+    const alert = page.getByRole("alert").filter({ hasText: "Someone else changed" });
     await expect(alert).toBeVisible();
-    await expect(page.getByLabel("timeoutMs")).toHaveValue("45000");
+    await expect(alert).not.toContainText("revision");
+    await expect(page.getByLabel("Timeout (seconds)")).toHaveValue("45");
 
     await alert.getByRole("button", { name: "Reload the stored server" }).click();
-    await expect(page.getByText(/Stored now \(revision 2, by alice\)/)).toBeVisible();
-    await expect(page.getByLabel("timeoutMs")).toHaveValue("45000");
+    await expect(page.getByText(/Changed by alice .* since you opened it/)).toBeVisible();
+    await expect(page.getByText(/revision/i)).toHaveCount(0);
+    await expect(page.getByLabel("Timeout (seconds)")).toHaveValue("45");
     await page.getByRole("button", { name: "Save changes" }).click();
-    await expect(page.getByRole("heading", { name: `Saved ${name}` })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
     const stored = await storedMcp(request, name);
     expect(stored).toMatchObject({ revision: 3, timeoutMs: 45000, maxOutputBytes: 2048 });
   });
 
-  test("disables and enables; a server not declared read-only asks again before it is enabled", async ({
+  test("disables and enables; a server that changes state asks again before it is enabled", async ({
     page,
     request,
   }) => {
@@ -401,24 +450,26 @@ test.describe("MCP servers", () => {
     });
     await signInAndGo(page, "/console/mcp-servers");
 
-    const roCard = page.getByTestId(`mcp-${ro}`);
-    await roCard.getByRole("button", { name: "Disable" }).click();
-    await expect(roCard.getByText("disabled", { exact: true })).toBeVisible();
-    await expect(roCard).toContainText("its tools are unavailable to sessions");
-    await roCard.getByRole("button", { name: "Enable" }).click();
-    await expect(roCard.getByText("enabled", { exact: true })).toBeVisible();
+    const roRow = page.getByTestId(`mcp-${ro}`);
+    await roRow.getByRole("button", { name: "Disable" }).click();
+    await expect(roRow.getByText("disabled", { exact: true })).toBeVisible();
+    // The badge says it all: no paragraph about disabled servers.
+    await expect(page.getByText("its tools are unavailable")).toHaveCount(0);
+    await roRow.getByRole("button", { name: "Enable" }).click();
+    await expect(roRow.getByText("enabled", { exact: true })).toBeVisible();
 
-    const rwCard = page.getByTestId(`mcp-${rw}`);
-    await expect(rwCard.getByText("disabled", { exact: true })).toBeVisible();
-    await rwCard.getByRole("button", { name: "Enable" }).click();
+    const rwRow = page.getByTestId(`mcp-${rw}`);
+    await expect(rwRow.getByText("disabled", { exact: true })).toBeVisible();
+    await rwRow.getByRole("button", { name: "Enable" }).click();
     const panel = page.getByLabel(`Enable ${rw}`);
+    await expect(panel.getByText("Does this server change anything?")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Enable" })).toBeDisabled();
-    await panel.getByRole("radio", { name: /^Not read-only/ }).check();
+    await panel.getByRole("radio", { name: /^Yes, it can change state/ }).check();
     await panel.getByRole("button", { name: "Enable" }).click();
-    await expect(rwCard.getByText("enabled", { exact: true })).toBeVisible();
+    await expect(rwRow.getByText("enabled", { exact: true })).toBeVisible();
   });
 
-  test("delete names the referencing profiles, suggests disabling, and removes the server on confirm", async ({
+  test("delete names the profiles that use the server and suggests disabling; unused ones get no such alert", async ({
     page,
     request,
   }) => {
@@ -429,28 +480,49 @@ test.describe("MCP servers", () => {
       data: { definition: { mcpServers: [name] } },
     });
     await signInAndGo(page, "/console/mcp-servers");
-    const card = page.getByTestId(`mcp-${name}`);
-    await expect(card.getByRole("link", { name: profile })).toBeVisible();
-    await card.getByRole("button", { name: "Delete" }).click();
+    const row = page.getByTestId(`mcp-${name}`);
+    await expect(row.getByRole("link", { name: profile })).toBeVisible();
+    await row.getByRole("button", { name: "Delete" }).click();
     const panel = page.getByLabel(`Delete ${name}`);
-    await expect(panel).toContainText(`Still referenced by ${profile}`);
-    await expect(panel).toContainText("Disable the server instead");
+    await expect(panel).toContainText(`Still used by ${profile}`);
+    await expect(panel).toContainText("Disable it instead");
+    await expect(panel).not.toContainText("removes the row");
     await shot(page, "mcp-delete-confirmation.png");
 
     await panel.getByRole("button", { name: "Disable instead" }).click();
     await expect(panel).toHaveCount(0);
-    await expect(card.getByText("disabled", { exact: true })).toBeVisible();
+    await expect(row.getByText("disabled", { exact: true })).toBeVisible();
 
-    await card.getByRole("button", { name: "Delete" }).click();
-    await page
-      .getByLabel(`Delete ${name}`)
-      .getByRole("button", { name: `Delete ${name}` })
-      .click();
-    await expect(card).toHaveCount(0);
-    await expect(page.getByText(new RegExp(`${name} deleted by alice`))).toBeVisible();
+    // Free the server: no profile names it any more, so the panel has no alert and no positive-only line.
+    await request.put(`/__fake/profiles/${profile}`, { data: { definition: {} } });
+    await signInAndGo(page, "/console/mcp-servers");
+    await row.getByRole("button", { name: "Delete" }).click();
+    const free = page.getByLabel(`Delete ${name}`);
+    await expect(free.getByRole("button", { name: `Delete ${name}` })).toBeEnabled();
+    await expect(free).not.toContainText("Still used by");
+    await expect(free).not.toContainText("No profile");
+    await free.getByRole("button", { name: `Delete ${name}` }).click();
+    await expect(row).toHaveCount(0);
     expect((await request.get(`/admin/mcp-servers/${name}`, { headers: bearer })).status()).toBe(
       404,
     );
+  });
+
+  test("recent changes are collapsed, show five lines and then more on request", async ({
+    page,
+    request,
+  }) => {
+    const name = unique("hist");
+    await putMcp(request, name, { url: "https://hist.example.com/mcp", readOnly: true });
+    for (let i = 1; i <= 7; i++) await putMcp(request, name, { timeoutMs: 1000 * (i + 1) });
+    await signInAndGo(page, "/console/mcp-servers");
+    const section = page.locator("details", { hasText: "Recent changes" });
+    await expect(section).not.toHaveAttribute("open", "");
+    await section.getByText("Recent changes").click();
+    await expect(section.getByRole("listitem")).toHaveCount(5);
+    await expect(section).not.toContainText("The newest 20");
+    await section.getByRole("button", { name: "Show more" }).click();
+    expect(await section.getByRole("listitem").count()).toBeGreaterThan(5);
   });
 });
 
