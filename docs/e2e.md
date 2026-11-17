@@ -20,6 +20,7 @@ for `mcp.deepwiki.com`.
 | Variable            | Meaning                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------- |
 | `STORAGE_CLASS` | storage class for database, code, driver and workspace PVCs (unset: cluster default) |
+| `SANDBOX_STORAGE_CLASS` | storage class for the sandbox workspace PVCs only; wins over `STORAGE_CLASS` for them |
 | `SANDBOX_IMAGE` | sandbox image override (unset: the digest-pinned arm64 example in `deploy/sandbox-template.yaml`) |
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
 | `KEEP_NS=1`         | never delete the namespace at the end                                                                     |

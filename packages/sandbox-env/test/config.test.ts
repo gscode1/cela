@@ -23,10 +23,13 @@ describe("parseBridgeArgs", () => {
   });
 
   it("lets flags override the environment", () => {
-    const config = parseBridgeArgs(["--claim", "other", "--connectivity", "port-forward", ...serve], {
-      PI_SANDBOX_CLAIM: "c1",
-      PI_SANDBOX_NAMESPACE: "ns",
-    });
+    const config = parseBridgeArgs(
+      ["--claim", "other", "--connectivity", "port-forward", ...serve],
+      {
+        PI_SANDBOX_CLAIM: "c1",
+        PI_SANDBOX_NAMESPACE: "ns",
+      },
+    );
     expect(config.target).toEqual({
       claimName: "other",
       namespace: "ns",

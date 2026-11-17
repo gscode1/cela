@@ -182,9 +182,12 @@ if sc:
         ("Cluster", "pi-pg", "/spec/storage/storageClass"),
         ("PersistentVolumeClaim", "orchestrator-code", "/spec/storageClassName"),
         ("PersistentVolumeClaim", "e2e-driver", "/spec/storageClassName"),
-        ("SandboxTemplate", "pi-env-template", "/spec/volumeClaimTemplates/0/spec/storageClassName"),
     ]:
         patches.append((kind, name, path, sc))
+# Workspaces are per-session scratch, so they may use their own (e.g. single-replica) class.
+workspace_sc = os.environ.get("SANDBOX_STORAGE_CLASS") or sc
+if workspace_sc:
+    patches.append(("SandboxTemplate", "pi-env-template", "/spec/volumeClaimTemplates/0/spec/storageClassName", workspace_sc))
 image = os.environ.get("SANDBOX_IMAGE")
 if image:
     patches.append(("SandboxTemplate", "pi-env-template", "/spec/podTemplate/spec/containers/0/image", image))

@@ -2,6 +2,11 @@
 
 The base uses namespace `pi-durable-poc`, the current kubectl context, and the cluster's default StorageClass (storage class fields are omitted, not set to `""`). Use a dedicated test cluster, not production. PVCs need dynamic provisioning and ReadWriteOnce support; choose a `Delete` reclaim policy for disposable e2e volumes. Retained volumes need manual cleanup.
 
+Workspaces and data need different classes. A sandbox workspace is per-session scratch: a fast single-replica class
+with `WaitForFirstConsumer` fits, at the cost of losing the workspace (not the conversation) if its node's disk is lost.
+Its PVC is kept across idle suspend and deleted with the session, so the class must reclaim with `Delete`; with `Retain`
+every deleted session leaves a volume behind. Postgres and the orchestrator code volume need a replicated, durable class.
+
 Adapt the base or use a local Kustomize overlay before applying:
 
 | Setting | Where / default |
@@ -46,4 +51,4 @@ Build with `IMAGE_REPO=registry.example.com/team/pi-sandbox images/sandbox/build
 
 Apply the adapted Cilium policies first, then the stack. Generate `sandboxd-auth` and `api-auth` with `gen-secret.sh` and `gen-api-secret.sh`; provision the OneCLI Secrets and fetch its CA with `fetch-onecli-ca.sh` (`ONECLI_NAMESPACE=onecli`, `ONECLI_SERVICE=onecli`, `ONECLI_API_PORT=10256` by default). Run `push-code.sh` and `push-ingest.sh` to build and upload code. These scripts use `NAMESPACE` (default `pi-durable-poc`) and `KUBE_CONTEXT` (unset = current context); they require Node/pnpm locally. See [model credentials](../docs/model-credentials.md) and [network policy](../docs/network-policy.md) for setup and verification.
 
-E2e uses the same base, not `deploy/local`. `STORAGE_CLASS` overrides all four storage resources (including its driver PVC); `SANDBOX_IMAGE` overrides its sandbox image. Other base customizations must be made in `deploy/` or `tests/e2e/deploy/` before running. See [e2e](../docs/e2e.md).
+E2e uses the same base, not `deploy/local`. `STORAGE_CLASS` overrides all four storage resources (including its driver PVC) and `SANDBOX_STORAGE_CLASS` the workspace class alone; `SANDBOX_IMAGE` overrides its sandbox image. Other base customizations must be made in `deploy/` or `tests/e2e/deploy/` before running. See [e2e](../docs/e2e.md).
