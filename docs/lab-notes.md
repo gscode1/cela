@@ -333,3 +333,38 @@ REPO=owner/repo NAMESPACE=pi-durable-poc examples/load-50-2026-11-16/run-load.sh
 | [reports/](../examples/load-50-2026-11-16/reports/)                                                       | Each agent's final report, verbatim                                                           |
 | [verified/](../examples/load-50-2026-11-16/verified/)                                                     | The verifier's verdict per finding                                                            |
 | `run-load.sh`, `create-all.mjs`, `multi-stream.mjs`                        | The runner                                                                                    |
+
+## reinstall-2026-11-17
+
+### The lab stack reinstalled from the charts (install slice 5, issue #124)
+
+The namespace `pi-durable-poc` of the example cluster (context `admin@c2`, Cilium, gVisor, Longhorn) was deleted and
+recreated from `charts/pi-durable` and `charts/pi-postgres` by `hack/install.sh`, following
+[install plan](install-plan.md) section 9a. The agent-sandbox controller, OneCLI and the CloudNativePG operator stayed as
+they were: the operator Deployment (`postgres-system`) and its 11 CRDs had the same generation and image before and
+after (checked), and no step touched them.
+
+- **Before.** Kustomize stack, one `pi-pg` CNPG cluster (1 Gi, `longhorn-static`), 9 sessions, ingest 2 replicas,
+  `PI_API_ADMINS=alice` (tokens for `alice` and `bob`), models `openai-codex/gpt-6.1-terra` (default) and `gpt-6.1-sol`
+  plus both scripted models, turn budget 100. The sandbox template had been raised by hand to 500m/1Gi requests,
+  2 CPU/4Gi limits and a 10 Gi workspace on `longhorn-single` (runtime class `gvisor`); the chart's defaults are smaller, so
+  the values file carries these numbers.
+- **Backed up.** Data-only `pg_dump --column-inserts` of nine `inbox` tables: `settings` 1 row, `settings_history` 11,
+  `profiles` 4 (`coding`, `research`, `implementer`, `e2e-smoke-profile`), `profile_versions` 7, `skills` 1,
+  `skill_versions` 1, `skill_version_files` 2, `mcp_servers` 0, `mcp_servers_history` 5 (the catalog is read from the history).
+  127 lines, kept outside the repository.
+- **Delete.** The namespace was gone in about 30 s (Sandbox finalizers completed). Both storage classes reclaim with
+  `Delete`, so no Released PV was left.
+- **Install.** `pi-postgres` release (`longhorn-static`, 10 Gi) with random secrets created beforehand; URI Secret
+  `pi-database`; the three ExternalSecrets from `deploy/` (all `SecretSynced` in seconds); the `onecli-ca` ConfigMap from
+  `deploy/fetch-onecli-ca.sh` (the chart does not create it); then `hack/install.sh` with the lab values: external OneCLI
+  (`onecli.onecli:10256` and `:10255`, prefix `pi-session-`), `networkPolicy.provider: cilium`,
+  `sandbox.storageClass: longhorn-single`, `api.admins: [alice]`. `bob` has no token on the new `api-auth` (the chart creates
+  tokens for the admins only).
+- **Restore.** The new install had seeded a `coding` profile and a settings row, so the nine tables were truncated in one
+  transaction and the dump loaded (restored values win); the history sequences continued. Orchestrator and ingest were
+  restarted. `GET /admin/settings` and `/admin/profiles` returned the old values; `implementer` has `turnBudget` 1000.
+- **Verified.** `GET /admin/status`: `configuredRuntime=gvisor`, `observedRuntime=gvisor` (it reads `null` until the first
+  sandbox exists), `networkPolicy=unknown`. A real session (profile `implementer`, `openai-codex/gpt-6.1-sol`, reasoning
+  `low`, no repo) answered "ok" through OneCLI, and a second message ran a bash tool in a gVisor sandbox. `run.sh smoke` and
+  `phase4b` passed.

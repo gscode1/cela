@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 7 (`hack/agent-sandbox.sh`) and slice 9 (isolation probe; issue #126). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -218,7 +218,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
      object is a CRD, a CNPG resource or outside the release namespace.
    - `run.sh` installs the chart (it still creates its own CNPG `Cluster` as the external DB until slice 6).
    - Done when: `helm lint`, the render tests and `run.sh all` pass on the chart.
-5. **Reinstall the existing lab stack** from the chart (section 9a).
+5. **Reinstall the existing lab stack** from the chart (section 9a; done 2026-11-17, with `charts/pi-postgres` as its database).
    - Done when: the lab stack runs from the chart, `run.sh smoke` and `phase4b` pass, and the CNPG operator is unchanged.
 6. **`charts/pi-postgres`.**
    - StatefulSet, Service, Secret references, init of the `pi` and `onecli` databases and roles (idempotent, also on an
