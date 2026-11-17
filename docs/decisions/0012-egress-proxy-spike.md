@@ -73,7 +73,7 @@ Smokescreen's `BuildProxy` gives the CONNECT handling, ACL hook, resolve-classif
   closes the client side. The CONNECT handshake with the upstream has a deadline (`EGRESS_UPSTREAM_HANDSHAKE_TIMEOUT`,
   default 10 s) that is cleared once the response header has been read, so a silent upstream cannot hold a tunnel. Each
   tracked connection's timer is installed before it is published, and a connection that is already closed is never
-  registered, so expiry and close cannot race or leak. A maximum age (`EGRESS_MAX_TUNNEL_AGE`, default 1 h) closes each tunnel with a timer. An admin
+  registered, so expiry and close cannot race or leak. `CloseSession` also marks the session revoked, so a dial whose ACL decision predates the close and calls `Track` afterwards is closed at once; the next ACL allow for that session clears the mark. A maximum age (`EGRESS_MAX_TUNNEL_AGE`, default 1 h) closes each tunnel with a timer. An admin
   endpoint `POST /admin/sessions/{session}/close-tunnels` (bearer token `EGRESS_ADMIN_TOKEN`, separate listener, default
   `127.0.0.1:3129`) calls it. Slice 7 calls the function from the revocation path.
 

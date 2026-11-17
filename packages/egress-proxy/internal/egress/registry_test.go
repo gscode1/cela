@@ -67,3 +67,32 @@ func TestRegistryTimerFiresDuringTrack(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// A dial whose ACL decision predates CloseSession registers afterwards; the
+// connection must be closed at once, until the session is granted again.
+func TestRegistryTrackAfterCloseSessionIsClosed(t *testing.T) {
+	r := NewRegistry(time.Hour)
+	r.CloseSession("s")
+	a, b := net.Pipe()
+	defer b.Close()
+	tc := r.Track("s", a)
+	if !tc.(*trackedConn).closed.Load() {
+		t.Fatal("connection tracked after revocation is still open")
+	}
+	if n := r.Open("s"); n != 0 {
+		t.Fatalf("open = %d, want 0", n)
+	}
+	// Other sessions are unaffected.
+	c, d := net.Pipe()
+	defer d.Close()
+	if r.Track("other", c).(*trackedConn).closed.Load() {
+		t.Fatal("other session was revoked")
+	}
+
+	r.Grant("s")
+	e, f := net.Pipe()
+	defer f.Close()
+	if r.Track("s", e).(*trackedConn).closed.Load() {
+		t.Fatal("connection closed after the session was granted again")
+	}
+}

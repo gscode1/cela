@@ -268,6 +268,7 @@ func (d *decider) Decide(a acl.DecideArgs) (acl.Decision, error) {
 			return deny("session has no upstream binding")
 		}
 	}
+	d.p.Registry.Grant(a.Service)
 	return acl.Decision{Result: acl.Allow, Reason: "allowed, route " + string(route)}, nil
 }
 
