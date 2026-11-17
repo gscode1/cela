@@ -97,8 +97,8 @@ ONECLI_SECRET_NAME=openai ONECLI_SECRET_HOST=api.openai.com ONECLI_SECRET_VALUE=
 ```
 
 Then set `models.default` and `models.allowlist` (for example `openai-codex/gpt-6.1-terra`) in your values, `helm upgrade`, and
-run one session. `GATEWAY_CHECK_HOST=api.openai.com` with `hack/kind-gateway-check.mjs` (see `hack/kind-smoke.sh --onecli`)
-sends a request through the gateway to that host; the answer shows whether the credential was injected (OpenAI answers
+run one session. `GATEWAY_CHECK_HOST=api.openai.com hack/kind-smoke.sh --onecli` (inside the orchestrator pod, with its token and CA)
+sends one request through the gateway to that host instead of the blocked `example.com`; the answer shows whether the credential was injected (OpenAI answers
 401 without one).
 
 ## OpenAI Codex (ChatGPT subscription): the working setup

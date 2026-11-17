@@ -16,7 +16,7 @@
 #   7. prints the isolation probe (hack/kind-smoke.sh --status), where the API token is and how to port-forward
 #
 # --onecli installs the bundled OneCLI (docs/decisions/0021-bundled-onecli.md) with its externalUrl http://localhost:10254, for
-# a port-forward trial. It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds about 3 minutes. The
+# a port-forward trial. It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
 # gateway. A real model: docs/model-credentials.md.
 #

@@ -90,7 +90,7 @@ hack/kind-smoke.sh --onecli     # also: the orchestrator's way through the gatew
 hack/kind-down.sh               # delete the cluster
 ```
 
-`--onecli` adds about three minutes (it pulls the OneCLI images). It installs the upstream OneCLI chart, a bootstrap
+`--onecli` adds three to five minutes (it pulls the OneCLI images, several hundred MB). It installs the upstream OneCLI chart, a bootstrap
 (account, orchestrator agent token, host allowlist, public CA) and network policies that keep OneCLI's API open only to the
 orchestrator. The dashboard has no Ingress; sign in over `kubectl port-forward`, with the login from a Secret
 ([how, and what works that way](docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)). OneCLI cannot close its

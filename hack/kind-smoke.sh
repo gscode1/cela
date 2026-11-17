@@ -21,6 +21,9 @@
 #   1c. the management API (:10256) answers the orchestrator and not the ingest pod (NetworkPolicy)
 #   4b. in the sandbox: the gateway port is open and the API port is closed
 #
+# GATEWAY_CHECK_HOST=api.openai.com (with --onecli) is the hook for the real-model check: step 1b then asks that host
+# instead of example.com and prints the answer (OpenAI answers 401 when no credential was injected).
+#
 # --status runs step 1 only (kind-up.sh uses it). The API is called from inside an ingest pod (hack/kind-client.mjs): no
 # port-forward, and the API token never leaves the cluster or reaches a log. Only kind contexts are used.
 set -euo pipefail
@@ -103,7 +106,9 @@ fi
 if [[ $onecli -eq 1 ]]; then
   log "the orchestrator routes through the OneCLI gateway (no model call)"
   gateway_js=$(cat "$root/hack/kind-gateway-check.mjs")
-  out=$(k exec deploy/pi-orchestrator -c orchestrator -- node --input-type=module -e "$gateway_js" 2>&1) || {
+  # GATEWAY_CHECK_HOST=<an allowed host> (the real-model check, docs/model-credentials.md) sends the request to that host
+  # instead and only prints the answer: the 403 check below is for the default, a host that is not allowed.
+  out=$(k exec deploy/pi-orchestrator -c orchestrator -- env "GATEWAY_CHECK_HOST=${GATEWAY_CHECK_HOST:-example.com}" node --input-type=module -e "$gateway_js" 2>&1) || {
     printf '%s\n' "$out" >&2
     die "the gateway check failed"
   }
@@ -111,7 +116,9 @@ if [[ $onecli -eq 1 ]]; then
   check "the gateway refuses a CONNECT without the agent token" "$out" "connect-without-token=407"
   check "the gateway accepts the orchestrator's agent token" "$out" "connect-with-token=200"
   check "the gateway certificate verifies against the CA ConfigMap (issued by OneCLI)" "$out" "tls-verified=true issuer=OneCLI"
-  check "the gateway answered for a host that is not allowed (policy block, nothing left the cluster)" "$out" "answer-status=403"
+  if [[ -z ${GATEWAY_CHECK_HOST:-} ]]; then
+    check "the gateway answered for a host that is not allowed (policy block, nothing left the cluster)" "$out" "answer-status=403"
+  fi
   echo "-- gateway log (agent and rule only):"
   logs=$(k logs deploy/onecli-gateway --tail=200 2>&1 | grep -E 'agent="pi-orchestrator"|BLOCKED' | tail -5) || true
   printf '%s\n' "$logs"
