@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "images",
+    "database",
+    "onecli",
+    "agentSandbox",
+    "sandbox",
+    "security",
+    "networkPolicy",
+    "orchestrator",
+    "ingest",
+    "api",
+    "models",
+    "github"
+  ],
+  "properties": {
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orchestrator", "ingest", "sandbox"],
+      "properties": {
+        "orchestrator": { "$ref": "#/definitions/image" },
+        "ingest": { "$ref": "#/definitions/image" },
+        "sandbox": { "$ref": "#/definitions/image" }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external"],
+      "properties": {
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingSecret", "uriKey", "egress"],
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "uriKey": { "type": "string", "minLength": 1 },
+            "egress": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "podSelector", "cidrs", "port"],
+              "properties": {
+                "namespace": { "type": "string" },
+                "podSelector": { "$ref": "#/definitions/labels" },
+                "cidrs": { "type": "array", "items": { "$ref": "#/definitions/cidr" } },
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "onecli": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "namePrefix", "external"],
+      "properties": {
+        "mode": { "enum": ["external", "disabled"] },
+        "namePrefix": { "type": "string", "pattern": "^[a-z0-9-]{1,39}-$" },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiUrl", "gatewayUrl", "namespace", "podSelector"],
+          "properties": {
+            "apiUrl": { "type": "string", "pattern": "^(https?://[^/:\\s]+(:[0-9]+)?/?)?$" },
+            "gatewayUrl": { "type": "string", "pattern": "^(https?://[^/:\\s]+(:[0-9]+)?/?)?$" },
+            "caConfigMap": { "type": "string" },
+            "agentTokenSecret": { "type": "string" },
+            "adminKeySecret": { "type": "string" },
+            "namespace": { "type": "string", "minLength": 1 },
+            "podSelector": { "$ref": "#/definitions/labels" }
+          }
+        }
+      }
+    },
+    "agentSandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "enum": ["external"] } }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeClassName",
+        "workspaceSize",
+        "masterSecret",
+        "warmPoolReplicas",
+        "resources"
+      ],
+      "properties": {
+        "runtimeClassName": { "type": "string", "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$" },
+        "storageClass": { "type": "string" },
+        "workspaceSize": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)?$"
+        },
+        "masterSecret": { "type": "string", "minLength": 1 },
+        "warmPoolReplicas": { "type": "integer", "minimum": 0 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowInsecureRuntime"],
+      "properties": { "allowInsecureRuntime": { "type": "boolean" } }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "kubeApiCidrs", "dns", "ingest", "orchestrator"],
+      "properties": {
+        "provider": { "enum": ["cilium", "standard"] },
+        "kubeApiCidrs": { "type": "array", "items": { "$ref": "#/definitions/cidr" } },
+        "dns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "podSelector"],
+          "properties": {
+            "namespace": { "type": "string", "minLength": 1 },
+            "podSelector": { "$ref": "#/definitions/labels" }
+          }
+        },
+        "ingest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clients"],
+          "properties": {
+            "clients": { "type": "array", "items": { "type": "object", "minProperties": 1 } }
+          }
+        },
+        "orchestrator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extraEgress"],
+          "properties": { "extraEgress": { "type": "array", "items": { "type": "object" } } }
+        }
+      }
+    },
+    "orchestrator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shards", "resources", "noProxy", "extraEnv"],
+      "properties": {
+        "shards": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "resources": { "$ref": "#/definitions/resources" },
+        "noProxy": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "extraEnv": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "ingest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "resources"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admins", "existingSecret"],
+      "properties": {
+        "admins": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+        },
+        "existingSecret": { "type": "string", "minLength": 1 }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "allowlist", "turnBudget"],
+      "properties": {
+        "default": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "id", "reasoning"],
+          "properties": {
+            "provider": { "type": "string", "pattern": "^[^/,\\s]+$" },
+            "id": { "type": "string", "pattern": "^[^,\\s]+$" },
+            "reasoning": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] }
+          }
+        },
+        "allowlist": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[^/,\\s]+/[^,\\s]+$" }
+        },
+        "turnBudget": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app"],
+      "properties": {
+        "app": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingSecret"],
+          "properties": { "existingSecret": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "Anything but gvisor (including the node default, empty) needs allowInsecureRuntime (ADR 0020, D6).",
+      "if": {
+        "properties": {
+          "security": { "properties": { "allowInsecureRuntime": { "const": false } } }
+        }
+      },
+      "then": {
+        "properties": { "sandbox": { "properties": { "runtimeClassName": { "const": "gvisor" } } } }
+      }
+    },
+    {
+      "description": "An external OneCLI needs both URLs.",
+      "if": { "properties": { "onecli": { "properties": { "mode": { "const": "external" } } } } },
+      "then": {
+        "properties": {
+          "onecli": {
+            "properties": {
+              "external": {
+                "properties": { "apiUrl": { "minLength": 1 }, "gatewayUrl": { "minLength": 1 } }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "The orchestrator and ingest reach the database through a Secret and an egress selector.",
+      "properties": {
+        "database": {
+          "properties": {
+            "external": {
+              "properties": { "existingSecret": { "minLength": 1 } },
+              "anyOf": [
+                {
+                  "properties": {
+                    "egress": { "properties": { "podSelector": { "minProperties": 1 } } }
+                  }
+                },
+                { "properties": { "egress": { "properties": { "cidrs": { "minItems": 1 } } } } }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$|^$" },
+        "digest": { "type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "cidr": { "type": "string", "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$" },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    }
+  }
+}

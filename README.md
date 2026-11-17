@@ -77,21 +77,31 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 
 ## Deploy on your cluster
 
-Prerequisites: the **agent-sandbox controller with extensions** (tested with v1.0.11), a gVisor RuntimeClass named
-`gvisor`, CloudNativePG, OneCLI (tested with v2.20.0), a NetworkPolicy-enforcing CNI such as Cilium, a dynamically
-provisioned StorageClass, and External Secrets or an equivalent way to provision the target Secrets. The supplied
-API/FQDN policies require Cilium CRDs; another CNI needs equivalent policies. Do not use real credentials until the
-isolation suite passes. Build the application and sandbox images for your nodes (amd64 and arm64 are supported).
+The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), installed with `hack/install.sh`
+([install plan](docs/install-plan.md); the `deploy/` manifests are being replaced by it).
 
-1. Review [deploy settings](deploy/README.md). Choose storage (cluster default unless patched), image registry/digests,
-   OneCLI endpoints, secret store/remote keys, and model settings. Match DNS, CNPG, OneCLI and optional ingress-controller
-   policy selectors to your cluster. No public hostname, Envoy installation or ArgoCD repository is required.
-2. Apply the adapted policies and stack, provision Secrets and the OneCLI CA, then deploy your built images
-   ([setup](deploy/README.md), [credentials](docs/model-credentials.md)). Use `KUBE_CONTEXT` to select your context;
-   unset means the current context. Deploy scripts default to namespace `pi-durable-poc`.
-3. Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`.
-   Omit `STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed image digests. See [e2e](docs/e2e.md) for
-   OneCLI ingress rules, secret-store access, prerequisites and the isolation suite (`phase3`). Never test against production.
+Prerequisites (separate from the chart): the **agent-sandbox controller with extensions** (v1.0.11; `hack/agent-sandbox.sh
+external` checks it), a gVisor RuntimeClass named `gvisor` (or `security.allowInsecureRuntime` for evaluation), a Postgres 17
+reachable by URI (CloudNativePG or any other), OneCLI (tested with v2.20.0) unless you only use scripted models, a
+NetworkPolicy-enforcing CNI such as Cilium (or `networkPolicy.provider: standard`), and a dynamically provisioned
+StorageClass. Do not use real credentials until the isolation suite passes. Build the application and sandbox images
+for your nodes (amd64 and arm64 are supported, [build instructions](deploy/README.md#build-images)).
+
+```sh
+# values.yaml: your image digests, database.external (Secret with the URI + egress selector), onecli, models
+KUBE_CONTEXT=your-context hack/install.sh --namespace pi-durable --values local/values.yaml
+```
+
+It creates the namespace with the restricted Pod Security labels and the missing `sandboxd-auth` and `api-auth` Secrets,
+installs the chart and prints the runtime and network-policy state from `GET /admin/status`. Read the
+[chart README](charts/pi-durable/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
+[network policy](docs/network-policy.md) for the isolation rules. The older kustomize base in [deploy settings](deploy/README.md)
+still works until the chart replaces it.
+
+Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`. Omit
+`STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed
+image digests. Every run installs the chart. See [e2e](docs/e2e.md) for OneCLI ingress rules, secret-store access,
+prerequisites and the isolation suite (`phase3`). Never test against production.
 
 ## Development
 

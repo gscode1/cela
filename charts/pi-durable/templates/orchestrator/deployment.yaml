@@ -1,0 +1,131 @@
+{{- /*
+One Deployment per shard, one replica, Recreate: the Postgres adapter allows a single owner per schema, and shard k owns
+the schema durable_s<k> (docs/decisions/0017-schema-sharding.md). Shard 0 keeps the names of a single-shard stack
+(pi-orchestrator, instance label pi-orchestrator); shard k > 0 is pi-orchestrator-<k>.
+*/ -}}
+{{- $root := . -}}
+{{- $onecli := .Values.onecli.external -}}
+{{- range $shard := until (int .Values.orchestrator.shards) }}
+{{- $name := ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: pi-orchestrator
+    app.kubernetes.io/instance: {{ $name }}
+    {{- include "pi-durable.labels" $root | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+      app.kubernetes.io/instance: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-orchestrator
+        app.kubernetes.io/instance: {{ $name }}
+        app.kubernetes.io/part-of: pi-durable
+      annotations:
+        checksum/model-config: {{ include (print $.Template.BasePath "/config.yaml") $root | sha256sum }}
+    spec:
+      serviceAccountName: pi-orchestrator
+      securityContext:
+        {{- include "pi-durable.podSecurityContext" $root | nindent 8 }}
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: orchestrator
+          image: {{ include "pi-durable.image" (dict "name" "orchestrator" "image" $root.Values.images.orchestrator) }}
+          imagePullPolicy: {{ $root.Values.images.orchestrator.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: pi-model-config }
+          env:
+            - { name: HOME, value: /tmp }
+            # The namespace this pod runs in, never written out.
+            - name: PI_ORCH_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: PI_ORCH_WARMPOOL, value: pi-env-pool }
+            - { name: PI_ORCH_PORT, value: "8081" }
+            - { name: PI_DURABLE_SCHEMA, value: durable }
+            - { name: PI_ORCH_SHARD, value: {{ $shard | quote }} }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: PI_DURABLE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ $root.Values.database.external.existingSecret }}, key: {{ $root.Values.database.external.uriKey }} } }
+            # Master key of the per-sandbox sandboxd tokens: HMAC(master, claim). Never reaches a bridge or a sandbox.
+            - name: PI_SANDBOX_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: {{ $root.Values.sandbox.masterSecret }}, key: master } }
+            - name: PI_API_TOKENS
+              valueFrom: { secretKeyRef: { name: {{ $root.Values.api.existingSecret }}, key: tokens } }
+            {{- if eq $root.Values.onecli.mode "external" }}
+            {{- if $onecli.agentTokenSecret }}
+            # Model credentials stay here: the orchestrator is the only pod that holds the agent token.
+            - name: ONECLI_AGENT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $onecli.agentTokenSecret }}, key: agent-token, optional: true } }
+            {{- end }}
+            {{- if $onecli.adminKeySecret }}
+            - name: ONECLI_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ $onecli.adminKeySecret }}, key: api-key, optional: true } }
+            {{- end }}
+            - { name: PI_ONECLI_API, value: {{ $onecli.apiUrl | quote }} }
+            - { name: PI_ONECLI_GATEWAY, value: {{ $onecli.gatewayUrl | quote }} }
+            {{- else }}
+            # OneCLI is disabled: the variables are required at start but unused with scripted models only.
+            - { name: PI_ONECLI_API, value: "http://onecli-disabled.invalid:10256" }
+            - { name: PI_ONECLI_GATEWAY, value: "http://onecli-disabled.invalid:10255" }
+            {{- end }}
+            - { name: PI_ONECLI_NAME_PREFIX, value: {{ $root.Values.onecli.namePrefix | quote }} }
+            - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
+            # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway.
+            - { name: NO_PROXY, value: {{ join "," $root.Values.orchestrator.noProxy | quote }} }
+            {{- if $root.Values.security.allowInsecureRuntime }}
+            - { name: PI_ALLOW_INSECURE_RUNTIME, value: "1" }
+            {{- end }}
+            {{- with $root.Values.orchestrator.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - { name: control, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: control }
+            periodSeconds: 3
+          # /healthz is a pure event-loop check: no Postgres, no drain, and 200 while waiting for the schema lock, so a
+          # standby or a long drain never gets killed. 6 x 10 s of failures means the process is wedged.
+          livenessProbe:
+            httpGet: { path: /healthz, port: control }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # PI_MAX_OPEN_BRIDGES is not set: the cap on open bridges derives from this memory limit (ADR 0018). Keep the
+          # request equal to the limit.
+          resources:
+            {{- toYaml $root.Values.orchestrator.resources | nindent 12 }}
+          securityContext:
+            {{- include "pi-durable.containerSecurityContext" $root | nindent 12 }}
+          volumeMounts:
+            {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
+            - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
+            {{- end }}
+            {{- if $root.Values.github.app.existingSecret }}
+            - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
+            {{- end }}
+      {{- if or (and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap) $root.Values.github.app.existingSecret }}
+      volumes:
+        {{- if and (eq $root.Values.onecli.mode "external") $onecli.caConfigMap }}
+        # Optional so the orchestrator starts before the CA is fetched.
+        - name: onecli-ca
+          configMap: { name: {{ $onecli.caConfigMap }}, optional: true }
+        {{- end }}
+        {{- if $root.Values.github.app.existingSecret }}
+        - name: github-app
+          secret: { secretName: {{ $root.Values.github.app.existingSecret }}, optional: true }
+        {{- end }}
+      {{- end }}
+{{- end }}

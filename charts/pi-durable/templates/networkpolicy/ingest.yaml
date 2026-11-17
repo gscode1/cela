@@ -1,0 +1,47 @@
+{{- /*
+pi-ingest (the session API front, port 8080, label app.kubernetes.io/name=pi-ingest).
+Egress: the database and the orchestrator shards (8081, to proxy the stream). DNS is allow-dns-egress.
+*/ -}}
+{{- if .Values.networkPolicy.ingest.clients }}
+# Ingress: only the clients named in values. `kubectl port-forward` and kubelet probes arrive from the node, which most
+# CNIs always admit; this policy does not cover them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-allow-clients-ingress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingest.clients | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-allow-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-ingest
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-durable.databaseTo" . | trim | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.database.external.egress.port }} }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+      ports:
+        - { protocol: TCP, port: 8081 }

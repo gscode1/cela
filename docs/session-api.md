@@ -254,7 +254,7 @@ never touched, and neither is a session that is `active`, `failed` or `deleting`
 ## Test-only surface
 
 The orchestrator still has the Phase 3 scripted-session surface, now under `/control/...`, behind the same bearer
-token, and only when `PI_ORCH_CONTROL=1` (the production manifest leaves it unset; the e2e overlay `tests/e2e/deploy/kustomization.yaml` sets it so `tests/e2e/run-phase3.sh` keeps running). It
+token, and only when `PI_ORCH_CONTROL=1` (the production manifest leaves it unset; the e2e run sets it through `tests/e2e/chart-values.py` (`orchestrator.extraEnv`) so `tests/e2e/run-phase3.sh` keeps running). It
 bypasses the inbox. `PI_ORCH_TEST_FAULTS=1` makes the orchestrator honour `payload.testFault` on an inbox row, which
 only SQL can write; the Phase 4 crash test uses it to exit between submit and mark.
 

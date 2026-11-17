@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan (image delivery implemented in slice 2; Helm and the other slices remain separate), 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). The image delivery slice is implemented; the remaining work is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 6a (`charts/pi-postgres`) and slice 7 (`hack/agent-sandbox.sh`). The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 

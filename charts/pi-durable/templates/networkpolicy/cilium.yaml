@@ -1,0 +1,77 @@
+{{- if eq .Values.networkPolicy.provider "cilium" }}
+{{- /*
+What a plain NetworkPolicy cannot express (docs/network-policy.md). Needs the Cilium CRDs, so the chart renders it only
+with networkPolicy.provider=cilium. Cilium policies add to the standard ones; they do not conflict.
+*/ -}}
+# The kubernetes Service (ClusterIP:443) is translated to the control-plane node addresses (:6443), and node IPs are not
+# pod IPs. Cilium's `kube-apiserver` entity follows the real endpoints. Both ports are listed because the port the
+# policy sees depends on where service translation happens.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orchestrator-egress-kube-apiserver
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "6443", protocol: TCP }
+---
+# DNS for every pod in the namespace, to CoreDNS only. The Cilium form of allow-dns-egress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: dns-egress-kube-dns-only
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.networkPolicy.dns.namespace }}
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+{{- if .Values.github.app.existingSecret }}
+---
+# The orchestrator mints a GitHub App installation token by calling api.github.com directly (the App key must not leave
+# it). This is the only public host it may reach. toFQDNs needs Cilium to see the DNS answers, so the DNS rule below
+# carries `rules.dns` for that name only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orchestrator-egress-github-api
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.networkPolicy.dns.namespace }}
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchName: api.github.com
+    - toFQDNs:
+        - matchName: api.github.com
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+{{- end }}
+{{- end }}

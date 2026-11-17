@@ -1,7 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chartNames, chartsDir, helmTemplate, renderDocs, type Obj } from "./support/helm.js";
+import {
+  chartNames,
+  chartsDir,
+  helmTemplate,
+  renderDocs,
+  requiredValuesArgs,
+  type Obj,
+} from "./support/helm.js";
 
 // Invariants of the Helm charts (docs/install-plan.md, ADR 0020): they render without a cluster, create nothing
 // cluster-scoped, never hold a secret value, and reject bad values. Pod Security of the rendered pods is checked in
@@ -26,7 +33,10 @@ describe.each(chartNames())("chart %s", (chart) => {
   const path = join(chartsDir, chart);
 
   it("passes helm lint --strict", () => {
-    execFileSync("helm", ["lint", "--strict", path], { encoding: "utf8", timeout: 60_000 });
+    execFileSync("helm", ["lint", "--strict", path, ...requiredValuesArgs(chart)], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
   });
 
   it("renders only namespaced kinds, none of them a Secret", () => {

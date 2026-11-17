@@ -15,9 +15,21 @@ Conversation ids repeat across shards (each schema mints from 2); `(shard, conve
 
 ## Add a shard
 
+With the Helm chart ([charts/pi-durable](../charts/pi-durable/README.md)), raise the value; never lower it:
+
+```bash
+helm upgrade pi-durable charts/pi-durable -n <ns> -f local/values.yaml --set orchestrator.shards=2
+kubectl -n <ns> rollout status deployment/pi-orchestrator-1
+```
+
+The chart renders one Deployment per shard (`pi-orchestrator`, `pi-orchestrator-1`, ...; one replica, strategy `Recreate`),
+the Services `pi-orchestrator-<k>` (and `pi-orchestrator` for shard 0) and sets ingest's `PI_ORCH_SHARDS` and `PI_ORCH_URL`
+together, so a shard cannot exist without its route. `tests/e2e/run.sh shards` installs the chart with `orchestrator.shards=2`.
+
+On the older kustomize stack, `deploy/add-shard.sh` does the same imperatively:
+
 ```bash
 NAMESPACE=pi-durable-poc deploy/add-shard.sh 1   # Deployment + Services, and ingest PI_ORCH_SHARDS=2, PI_ORCH_URL=...{shard}...
-kubectl -n pi-durable-poc rollout status deployment/pi-orchestrator-1
 ```
 
 `add-shard.sh` clones the live `pi-orchestrator`, so it carries the same env and image. Shards can run on different nodes. It is safe to run again. `PI_ORCH_SHARDS` must never decrease.
@@ -32,7 +44,7 @@ If any shard is outside that range, it exits with an error listing the missing r
 its Services; do not delete sessions to bypass the check. Database/migration failures still retry while unready.
 The check runs at startup, not on every request; shard counts must never decrease during a rolling deployment.
 The manifest in `deploy/ingest.yaml` stays single-shard; `kubectl apply` of it again resets both, so run `add-shard.sh`
-after a re-apply.
+after a re-apply (the chart does not have this problem: the shard count is a value).
 
 ## Sizing one shard
 

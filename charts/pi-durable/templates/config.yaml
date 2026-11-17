@@ -1,0 +1,16 @@
+{{- include "pi-durable.validate" . -}}
+# SEED ONLY (docs/decisions/0008-settings-in-postgres.md): ingest writes the model settings to Postgres once, when the
+# row is absent; after that the table wins (PUT /admin/settings). The orchestrator still reads PI_MODEL_ALLOWLIST at
+# start to install the providers it may need.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-model-config
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+data:
+  PI_MODEL_PROVIDER: {{ .Values.models.default.provider | quote }}
+  PI_MODEL_ID: {{ .Values.models.default.id | quote }}
+  PI_MODEL_REASONING: {{ .Values.models.default.reasoning | quote }}
+  PI_MODEL_ALLOWLIST: {{ join "," .Values.models.allowlist | quote }}
+  PI_SESSION_TURN_BUDGET: {{ .Values.models.turnBudget | quote }}

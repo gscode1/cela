@@ -1,0 +1,561 @@
+import { execFileSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
+import {
+  chartsDir,
+  helmTemplate,
+  renderDocs,
+  requiredValuesArgs,
+  type Obj,
+} from "./support/helm.js";
+
+// charts/pi-durable (install slice 4, docs/install-plan.md): every mode renders, the runtime guard holds, nothing is
+// cluster-scoped or a CRD or a CNPG resource, and the network-policy isolation invariants hold on the rendered output.
+// Parsed YAML has no static shape; every field read below is asserted on.
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions */
+
+const chart = "pi-durable";
+// NOTES.txt is printed by an install, not by `helm template`: render it with `helm install --dry-run=client`.
+const execNotes = (args: string[]): string =>
+  execFileSync(
+    "helm",
+    [
+      "install",
+      "rel",
+      `${chartsDir}/${chart}`,
+      "-n",
+      "ns",
+      "--dry-run=client",
+      ...requiredValuesArgs(chart),
+      ...args,
+    ],
+    { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+const docs = (args: string[] = []): Obj[] => renderDocs(chart, args);
+const external = [
+  "--set",
+  "onecli.mode=external",
+  "--set",
+  "onecli.external.apiUrl=http://onecli.onecli:10256",
+  "--set",
+  "onecli.external.gatewayUrl=http://onecli.onecli:10255",
+];
+const insecure = [
+  "--set",
+  "sandbox.runtimeClassName=runc",
+  "--set",
+  "security.allowInsecureRuntime=true",
+];
+const named = (list: Obj[], kind: string, name: string): Obj => {
+  const found = list.find((d) => d.kind === kind && d.metadata.name === name);
+  expect(found, `${kind}/${name}`).toBeDefined();
+  return found ?? {};
+};
+const ofKind = (list: Obj[], kind: string): Obj[] => list.filter((d) => d.kind === kind);
+const envOf = (deployment: Obj): Record<string, Obj> =>
+  Object.fromEntries(
+    deployment.spec.template.spec.containers[0].env.map((e: Obj) => [e.name, e] as const),
+  );
+
+const allowedKinds = new Set([
+  "ConfigMap",
+  "Deployment",
+  "NetworkPolicy",
+  "CiliumNetworkPolicy",
+  "Role",
+  "RoleBinding",
+  "SandboxTemplate",
+  "SandboxWarmPool",
+  "Service",
+  "ServiceAccount",
+]);
+const allowedGroups = new Set([
+  "v1",
+  "apps/v1",
+  "networking.k8s.io/v1",
+  "cilium.io/v2",
+  "rbac.authorization.k8s.io/v1",
+  "extensions.agents.x-k8s.io/v1beta1",
+]);
+
+interface Mode {
+  provider: string;
+  onecli: string;
+  insecure: boolean;
+  shards: number;
+}
+const modes: Mode[] = [];
+for (const provider of ["cilium", "standard"])
+  for (const onecli of ["external", "disabled"])
+    for (const insecureRuntime of [false, true])
+      for (const shards of [1, 3])
+        modes.push({ provider, onecli, insecure: insecureRuntime, shards });
+
+const argsFor = (m: Mode): string[] => [
+  "--set",
+  `networkPolicy.provider=${m.provider}`,
+  ...(m.onecli === "external" ? external : []),
+  ...(m.insecure ? insecure : []),
+  "--set",
+  `orchestrator.shards=${String(m.shards)}`,
+];
+
+describe.each(modes)(
+  "mode $provider / onecli $onecli / insecure $insecure / shards $shards",
+  (m) => {
+    const list = docs(argsFor(m));
+
+    it("renders only the expected namespaced kinds, no CRD, no CNPG resource, nothing cluster-scoped", () => {
+      for (const d of list) {
+        expect(allowedKinds.has(d.kind), `${d.kind} is not an expected kind`).toBe(true);
+        expect(allowedGroups.has(d.apiVersion), `${d.kind} apiVersion ${d.apiVersion}`).toBe(true);
+        expect(d.apiVersion).not.toMatch(/cnpg\.io|postgresql/);
+        expect(d.metadata.namespace ?? "ns").toBe("ns");
+      }
+      expect(ofKind(list, "CiliumNetworkPolicy").length > 0).toBe(m.provider === "cilium");
+    });
+
+    it("has one Recreate Deployment of one replica per shard, and ingest", () => {
+      const orchestrators = ofKind(list, "Deployment").filter((d) =>
+        d.metadata.name.startsWith("pi-orchestrator"),
+      );
+      expect(orchestrators.map((d) => d.metadata.name).sort()).toEqual(
+        Array.from({ length: m.shards }, (_, k) =>
+          k === 0 ? "pi-orchestrator" : `pi-orchestrator-${String(k)}`,
+        ).sort(),
+      );
+      for (const d of orchestrators) {
+        expect(d.spec.replicas).toBe(1);
+        expect(d.spec.strategy.type).toBe("Recreate");
+      }
+      expect(named(list, "Deployment", "pi-ingest").spec.replicas).toBe(2);
+    });
+
+    it("sets the runtime exactly as asked, and tells the orchestrator when it is insecure", () => {
+      const template = named(list, "SandboxTemplate", "pi-env-template");
+      expect(template.spec.podTemplate.spec.runtimeClassName).toBe(m.insecure ? "runc" : "gvisor");
+      for (const d of ofKind(list, "Deployment").filter((x) => x.metadata.name !== "pi-ingest")) {
+        expect(envOf(d).PI_ALLOW_INSECURE_RUNTIME?.value).toBe(m.insecure ? "1" : undefined);
+      }
+    });
+  },
+);
+
+describe("orchestrator and ingest configuration", () => {
+  const list = docs([...external, "--set", "orchestrator.shards=2"]);
+
+  it("takes every required name from values or the downward API", () => {
+    const env = envOf(named(list, "Deployment", "pi-orchestrator"));
+    expect(env.PI_ORCH_NAMESPACE?.valueFrom.fieldRef.fieldPath).toBe("metadata.namespace");
+    expect(env.PI_ORCH_WARMPOOL?.value).toBe("pi-env-pool");
+    expect(env.PI_ONECLI_API?.value).toBe("http://onecli.onecli:10256");
+    expect(env.PI_ONECLI_GATEWAY?.value).toBe("http://onecli.onecli:10255");
+    expect(env.PI_ONECLI_NAME_PREFIX?.value).toBe("pi-session-");
+    expect(env.PI_ORCH_SHARD?.value).toBe("0");
+    expect(envOf(named(list, "Deployment", "pi-orchestrator-1")).PI_ORCH_SHARD?.value).toBe("1");
+    expect(named(list, "SandboxWarmPool", "pi-env-pool").spec.sandboxTemplateRef.name).toBe(
+      "pi-env-template",
+    );
+  });
+
+  it("routes ingest by shard, with one Service per shard and the single-shard name for shard 0", () => {
+    const env = envOf(named(list, "Deployment", "pi-ingest"));
+    expect(env.PI_ORCH_SHARDS?.value).toBe("2");
+    expect(env.PI_ORCH_URL?.value).toBe("http://pi-orchestrator-{shard}:8081");
+    expect(
+      ofKind(list, "Service")
+        .map((s) => s.metadata.name)
+        .sort(),
+    ).toEqual(["pi-ingest", "pi-orchestrator", "pi-orchestrator-0", "pi-orchestrator-1"]);
+    const instance = (name: string) =>
+      named(list, "Service", name).spec.selector["app.kubernetes.io/instance"];
+    expect(instance("pi-orchestrator")).toBe("pi-orchestrator");
+    expect(instance("pi-orchestrator-0")).toBe("pi-orchestrator");
+    expect(instance("pi-orchestrator-1")).toBe("pi-orchestrator-1");
+    const single = envOf(named(docs(), "Deployment", "pi-ingest"));
+    expect(single.PI_ORCH_URL?.value).toBe("http://pi-orchestrator:8081");
+    expect(single.PI_ORCH_SHARDS?.value).toBe("1");
+  });
+
+  it("references Secrets by name and never holds a value", () => {
+    const text = helmTemplate(chart, external);
+    expect(ofKind(list, "Secret")).toEqual([]);
+    const env = envOf(named(list, "Deployment", "pi-orchestrator"));
+    expect(env.PI_DURABLE_DATABASE_URL?.valueFrom.secretKeyRef).toEqual({
+      name: "pi-database",
+      key: "uri",
+    });
+    expect(env.PI_SANDBOX_MASTER_KEY?.valueFrom.secretKeyRef).toEqual({
+      name: "sandboxd-auth",
+      key: "master",
+    });
+    expect(env.PI_API_TOKENS?.valueFrom.secretKeyRef).toEqual({ name: "api-auth", key: "tokens" });
+    // Credentials are the orchestrator's only: ingest holds the database URI and the API tokens, nothing else.
+    const ingest = envOf(named(list, "Deployment", "pi-ingest"));
+    expect(Object.keys(ingest).filter((n) => /ONECLI|MASTER|GITHUB/.test(n))).toEqual([]);
+    expect(text).not.toMatch(/\b(lookup|randAlphaNum|genCA)\b/);
+    expect(text).not.toMatch(/pi-durable-poc|longhorn/);
+  });
+
+  it("wires the optional OneCLI and GitHub references, as optional", () => {
+    const wired = docs([
+      ...external,
+      "--set",
+      "onecli.external.agentTokenSecret=tok",
+      "--set",
+      "onecli.external.adminKeySecret=adm",
+      "--set",
+      "onecli.external.caConfigMap=ca",
+      "--set",
+      "github.app.existingSecret=gh",
+    ]);
+    const o = named(wired, "Deployment", "pi-orchestrator");
+    const env = envOf(o);
+    expect(env.ONECLI_AGENT_TOKEN?.valueFrom.secretKeyRef).toEqual({
+      name: "tok",
+      key: "agent-token",
+      optional: true,
+    });
+    expect(env.ONECLI_API_KEY?.valueFrom.secretKeyRef.name).toBe("adm");
+    const volumes = o.spec.template.spec.volumes;
+    expect(volumes.map((v: Obj) => v.name)).toEqual(["onecli-ca", "github-app"]);
+    expect(volumes[0].configMap).toEqual({ name: "ca", optional: true });
+    expect(volumes[1].secret).toEqual({ secretName: "gh", optional: true });
+    const none = envOf(named(list, "Deployment", "pi-orchestrator"));
+    expect(none.ONECLI_AGENT_TOKEN).toBeUndefined();
+    expect(none.ONECLI_API_KEY).toBeUndefined();
+  });
+
+  it("seeds the model settings from values and restarts the pods when they change", () => {
+    const config = named(list, "ConfigMap", "pi-model-config");
+    expect(config.data.PI_MODEL_PROVIDER).toBe("scripted");
+    expect(config.data.PI_MODEL_ALLOWLIST).toBe("scripted/scripted-1,scripted/scripted-2");
+    const changed = docs([
+      ...external,
+      "--set",
+      "models.default.provider=openai-codex",
+      "--set",
+      "models.default.id=gpt-6.1-terra",
+      "--set-json",
+      'models.allowlist=["openai-codex/gpt-6.1-terra","scripted/scripted-1"]',
+    ]);
+    const sum = (l: Obj[]) =>
+      named(l, "Deployment", "pi-orchestrator").spec.template.metadata.annotations[
+        "checksum/model-config"
+      ];
+    expect(sum(changed)).not.toBe(sum(list));
+    expect(named(changed, "ConfigMap", "pi-model-config").data.PI_MODEL_ALLOWLIST).toBe(
+      "openai-codex/gpt-6.1-terra,scripted/scripted-1",
+    );
+  });
+
+  it("applies image references from a tag, a digest or both, and the workspace storage class", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const l = docs([
+      "--set",
+      `images.orchestrator.digest=${digest}`,
+      "--set",
+      "images.orchestrator.tag=",
+      "--set",
+      `images.sandbox.digest=${digest}`,
+      "--set",
+      "sandbox.storageClass=fast",
+    ]);
+    expect(named(l, "Deployment", "pi-orchestrator").spec.template.spec.containers[0].image).toBe(
+      `ghcr.io/gscode1/pi-orchestrator@${digest}`,
+    );
+    const template = named(l, "SandboxTemplate", "pi-env-template").spec;
+    expect(template.podTemplate.spec.containers[0].image).toBe(
+      `ghcr.io/gscode1/pi-sandbox:test@${digest}`,
+    );
+    expect(template.volumeClaimTemplates[0].spec.storageClassName).toBe("fast");
+  });
+});
+
+describe("the runtime guard", () => {
+  const refuses = (args: string[]) =>
+    expect(() => helmTemplate(chart, args)).toThrow(/gvisor|runtimeClassName/);
+
+  it("refuses any runtime but gvisor, including the node default, without allowInsecureRuntime", () => {
+    refuses(["--set", "sandbox.runtimeClassName=runc"]);
+    refuses(["--set", "sandbox.runtimeClassName=kata"]);
+    refuses(["--set", "sandbox.runtimeClassName="]);
+    refuses([
+      "--set",
+      "sandbox.runtimeClassName=runc",
+      "--set",
+      "security.allowInsecureRuntime=false",
+    ]);
+  });
+
+  it("holds without the schema too (the template fails by itself)", () => {
+    expect(() =>
+      helmTemplate(chart, ["--set", "sandbox.runtimeClassName=runc", "--skip-schema-validation"]),
+    ).toThrow(/not gvisor/);
+  });
+
+  it("accepts the node default or another class with allowInsecureRuntime", () => {
+    const empty = docs([
+      "--set",
+      "sandbox.runtimeClassName=",
+      "--set",
+      "security.allowInsecureRuntime=true",
+    ]);
+    expect(
+      named(empty, "SandboxTemplate", "pi-env-template").spec.podTemplate.spec.runtimeClassName,
+    ).toBeUndefined();
+    expect(
+      envOf(named(empty, "Deployment", "pi-orchestrator")).PI_ALLOW_INSECURE_RUNTIME?.value,
+    ).toBe("1");
+    const kata = docs([
+      "--set",
+      "sandbox.runtimeClassName=kata",
+      "--set",
+      "security.allowInsecureRuntime=true",
+    ]);
+    expect(
+      named(kata, "SandboxTemplate", "pi-env-template").spec.podTemplate.spec.runtimeClassName,
+    ).toBe("kata");
+  });
+
+  it("warns in the notes when the runtime is not gvisor", () => {
+    const notes = execNotes;
+    expect(notes(insecure)).toMatch(/do NOT run under gVisor/);
+    expect(notes([])).not.toMatch(/do NOT run under gVisor/);
+    expect(notes([])).toMatch(/GET \/admin\/status/);
+    expect(notes([])).toMatch(/NetworkPolicies isolate sandboxes only if/);
+  });
+});
+
+describe("network policy invariants", () => {
+  const selectsSandbox = (p: Obj): boolean =>
+    p.spec.podSelector.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox";
+  const targetsOf = (rule: Obj): Obj[] => rule.to ?? [];
+  const nameOfSelector = (t: Obj): string | undefined =>
+    t.podSelector?.matchLabels?.["app.kubernetes.io/name"];
+
+  for (const provider of ["cilium", "standard"]) {
+    describe(`provider ${provider}`, () => {
+      const list = docs([...external, "--set", `networkPolicy.provider=${provider}`]);
+      const policies = ofKind(list, "NetworkPolicy");
+
+      it("denies everything by default and allows DNS to CoreDNS only", () => {
+        const deny = named(policies, "NetworkPolicy", "default-deny-all");
+        expect(deny.spec.podSelector).toEqual({});
+        expect(deny.spec.policyTypes).toEqual(["Ingress", "Egress"]);
+        const dns = named(policies, "NetworkPolicy", "allow-dns-egress");
+        expect(dns.spec.egress[0].to[0].podSelector.matchLabels).toEqual({ "k8s-app": "kube-dns" });
+        expect(dns.spec.egress[0].ports.map((p: Obj) => p.port)).toEqual([53, 53]);
+      });
+
+      it("lets a sandbox reach only DNS, the OneCLI gateway port and the public internet", () => {
+        const egress = policies.filter(selectsSandbox).flatMap((p) => p.spec.egress ?? []);
+        expect(egress.length).toBeGreaterThan(0);
+        for (const rule of egress) {
+          // No rule without a destination (that would be "anywhere").
+          expect(rule.to?.length, "every sandbox egress rule names a destination").toBeGreaterThan(
+            0,
+          );
+          for (const t of targetsOf(rule)) {
+            if (t.ipBlock !== undefined) {
+              expect(t.ipBlock.cidr).toMatch(/^(0\.0\.0\.0\/0|::\/0)$/);
+              const except: string[] = t.ipBlock.except;
+              // The private, CGNAT, link-local (metadata) and loopback ranges stay blocked: cluster, nodes, API.
+              for (const range of [
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16",
+                "169.254.0.0/16",
+              ])
+                if (t.ipBlock.cidr === "0.0.0.0/0") expect(except).toContain(range);
+              expect(except.length).toBeGreaterThan(0);
+            } else {
+              // The only in-cluster destination is the OneCLI gateway, on its port and not the API's.
+              expect(t.namespaceSelector.matchLabels["kubernetes.io/metadata.name"]).toBe("onecli");
+              expect(rule.ports).toEqual([{ protocol: "TCP", port: 10255 }]);
+            }
+          }
+        }
+        for (const p of policies.filter(selectsSandbox)) {
+          expect(p.spec.policyTypes).not.toEqual([]);
+        }
+      });
+
+      it("admits sandboxd (8080, 9090) from the orchestrator only", () => {
+        const ingress = policies.filter(selectsSandbox).flatMap((p) => p.spec.ingress ?? []);
+        expect(ingress).toHaveLength(1);
+        expect(ingress[0]._from.map(nameOfSelector)).toEqual(["pi-orchestrator"]);
+        expect(ingress[0].ports.map((p: Obj) => p.port)).toEqual([8080, 9090]);
+        // No other policy admits traffic to sandboxes or lets anything reach them.
+        const toSandboxes = policies
+          .flatMap((p) => p.spec.egress ?? [])
+          .flatMap(targetsOf)
+          .filter((t) => nameOfSelector(t) === "pi-sandbox");
+        expect(toSandboxes).toHaveLength(1); // the orchestrator's egress rule, from its own policy
+      });
+
+      it("opens the orchestrator to nothing but ingest, and ingest's clients only as configured", () => {
+        const o = named(policies, "NetworkPolicy", "orchestrator-allow-ingress");
+        expect(o.spec.ingress.flatMap((r: Obj) => r._from).map(nameOfSelector)).toEqual([
+          "pi-ingest",
+        ]);
+        expect(
+          policies.find((p) => p.metadata.name === "ingest-allow-clients-ingress"),
+        ).toBeUndefined();
+        const withClients = ofKind(
+          docs([
+            "--set-json",
+            'networkPolicy.ingest.clients=[{"podSelector":{"matchLabels":{"app":"gw"}}}]',
+          ]),
+          "NetworkPolicy",
+        );
+        expect(
+          named(withClients, "NetworkPolicy", "ingest-allow-clients-ingress").spec.ingress[0]._from,
+        ).toEqual([{ podSelector: { matchLabels: { app: "gw" } } }]);
+      });
+
+      it("points the database rules at the configured selector, never at CNPG", () => {
+        for (const name of ["orchestrator-allow-egress", "ingest-allow-egress"]) {
+          const rule = named(policies, "NetworkPolicy", name).spec.egress[0];
+          expect(rule.to).toEqual([
+            { podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-postgres" } } },
+          ]);
+          expect(rule.ports).toEqual([{ protocol: "TCP", port: 5432 }]);
+        }
+        expect(JSON.stringify(list)).not.toMatch(/cnpg|postgres-system/);
+        const custom = ofKind(
+          docs([
+            "--set",
+            "database.external.egress.namespace=db",
+            "--set",
+            "database.external.egress.port=6432",
+            "--set-json",
+            'database.external.egress.cidrs=["10.1.2.3/32"]',
+          ]),
+          "NetworkPolicy",
+        );
+        const rule = named(custom, "NetworkPolicy", "ingest-allow-egress").spec.egress[0];
+        expect(rule.to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]).toBe("db");
+        expect(rule.to[1]).toEqual({ ipBlock: { cidr: "10.1.2.3/32" } });
+        expect(rule.ports[0].port).toBe(6432);
+      });
+
+      it("gives the orchestrator the gateway and the API of OneCLI, on the ports of the URLs", () => {
+        const rule = named(policies, "NetworkPolicy", "orchestrator-allow-egress").spec.egress.find(
+          (r: Obj) => r.to?.[0]?.namespaceSelector !== undefined,
+        );
+        expect(rule.ports.map((p: Obj) => p.port)).toEqual([10255, 10256]);
+        const https = ofKind(
+          docs([
+            "--set",
+            "onecli.mode=external",
+            "--set",
+            "onecli.external.apiUrl=https://api.example",
+            "--set",
+            "onecli.external.gatewayUrl=http://gw.example:8443",
+          ]),
+          "NetworkPolicy",
+        );
+        const sandboxRule = named(https, "NetworkPolicy", "sandbox-allow-onecli-egress").spec
+          .egress[0];
+        expect(sandboxRule.ports).toEqual([{ protocol: "TCP", port: 8443 }]);
+      });
+
+      it(`${provider === "standard" ? "renders" : "does not render"} an orchestrator egress rule to the API server`, () => {
+        const rules = named(policies, "NetworkPolicy", "orchestrator-allow-egress").spec.egress;
+        const toApi = rules.filter((r: Obj) =>
+          (r.ports ?? []).some((p: Obj) => p.port === 443 || p.port === 6443),
+        );
+        if (provider === "cilium") {
+          expect(toApi).toEqual([]);
+          const cilium = named(list, "CiliumNetworkPolicy", "orchestrator-egress-kube-apiserver");
+          expect(cilium.spec.egress[0].toEntities).toEqual(["kube-apiserver"]);
+          return;
+        }
+        expect(toApi).toEqual([
+          {
+            ports: [
+              { protocol: "TCP", port: 443 },
+              { protocol: "TCP", port: 6443 },
+            ],
+          },
+        ]);
+        const pinned = named(
+          ofKind(
+            docs([
+              "--set",
+              "networkPolicy.provider=standard",
+              "--set-json",
+              'networkPolicy.kubeApiCidrs=["10.9.0.1/32","10.9.0.2/32"]',
+            ]),
+            "NetworkPolicy",
+          ),
+          "NetworkPolicy",
+          "orchestrator-allow-egress",
+        ).spec.egress.filter((r: Obj) => (r.ports ?? []).some((p: Obj) => p.port === 443));
+        expect(pinned).toHaveLength(1);
+        expect(pinned[0].to).toEqual([
+          { ipBlock: { cidr: "10.9.0.1/32" } },
+          { ipBlock: { cidr: "10.9.0.2/32" } },
+        ]);
+      });
+    });
+  }
+
+  it("opens api.github.com to the orchestrator only with provider cilium and a GitHub App", () => {
+    const fqdn = (args: string[]) =>
+      docs(args).some((d) => d.metadata.name === "orchestrator-egress-github-api");
+    expect(fqdn([])).toBe(false);
+    expect(fqdn(["--set", "github.app.existingSecret=gh"])).toBe(true);
+    expect(
+      fqdn(["--set", "github.app.existingSecret=gh", "--set", "networkPolicy.provider=standard"]),
+    ).toBe(false);
+  });
+
+  it("renders no sandbox-to-OneCLI rule when OneCLI is disabled", () => {
+    const policies = ofKind(docs(), "NetworkPolicy");
+    expect(policies.find((p) => p.metadata.name === "sandbox-allow-onecli-egress")).toBeUndefined();
+    const orchestrator = named(policies, "NetworkPolicy", "orchestrator-allow-egress").spec.egress;
+    expect(JSON.stringify(orchestrator)).not.toMatch(/onecli/);
+  });
+});
+
+describe("values are validated", () => {
+  const bad: [string, string[], RegExp][] = [
+    ["bundled OneCLI (a later slice)", ["--set", "onecli.mode=bundled"], /onecli\/mode|one of/],
+    [
+      "bundled agent-sandbox (a later slice)",
+      ["--set", "agentSandbox.mode=bundled"],
+      /agentSandbox|one of/,
+    ],
+    ["an external OneCLI without URLs", ["--set", "onecli.mode=external"], /onecli/],
+    [
+      "scripted-only OneCLI with a real provider",
+      ["--set", "models.default.provider=openai-codex"],
+      /disabled|OneCLI/,
+    ],
+    ["an unknown policy provider", ["--set", "networkPolicy.provider=calico"], /provider/],
+    [
+      "no database Secret",
+      ["--set", "database.external.existingSecret="],
+      /existingSecret|database/,
+    ],
+    [
+      "no database egress selector",
+      ["--set-json", "database.external.egress.podSelector={}"],
+      /egress|database/,
+    ],
+    ["an image without a tag or a digest", ["--set", "images.ingest.tag="], /tag or a digest/],
+    ["a malformed digest", ["--set", "images.ingest.digest=sha256:abc"], /digest/],
+    ["zero shards", ["--set", "orchestrator.shards=0"], /shards/],
+    ["an unknown key", ["--set", "bogus=1"], /bogus|additional/],
+    ["a bad OneCLI name prefix", ["--set", "onecli.namePrefix=Bad_"], /namePrefix|pattern/],
+    ["no admins", ["--set-json", "api.admins=[]"], /admins/],
+    ["a bad CIDR", ["--set-json", 'networkPolicy.kubeApiCidrs=["nope"]'], /kubeApiCidrs|pattern/],
+    ["a model without a provider", ["--set-json", 'models.allowlist=["x"]'], /allowlist|pattern/],
+  ];
+  for (const [name, args, message] of bad) {
+    it(`rejects ${name}`, () => {
+      expect(() => helmTemplate(chart, args)).toThrow(message);
+    });
+  }
+});

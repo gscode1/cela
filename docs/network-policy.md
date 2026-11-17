@@ -5,6 +5,12 @@ endpoints enforced in both directions; "Enforcement result"). The repo applies t
 `deploy/cilium` into its namespace (`tests/e2e/run.sh`). The sections below were written before that run: the apply order and
 rollback still describe the procedure, and "UNVERIFIED" marks what the run did not record separately.
 
+The Helm chart [`charts/pi-durable`](../charts/pi-durable/README.md) renders the same policy set from
+`templates/networkpolicy/` (`networkPolicy.provider: cilium` adds the Cilium policies; `standard` replaces the
+`kube-apiserver` entity with an orchestrator egress rule to the API server, `networkPolicy.kubeApiCidrs` or TCP 443/6443 to any;
+the database and OneCLI selectors are values; `packages/orchestrator/test/pi-durable-chart.test.ts` checks the invariants below on the rendered
+output). The `deploy/` files described next are the kustomize form that the chart replaces.
+
 Files:
 
 | Path | What | Applied by |
