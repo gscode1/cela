@@ -333,5 +333,3 @@ REPO=owner/repo NAMESPACE=pi-durable-poc examples/load-50-2026-11-16/run-load.sh
 | [reports/](../examples/load-50-2026-11-16/reports/)                                                       | Each agent's final report, verbatim                                                           |
 | [verified/](../examples/load-50-2026-11-16/verified/)                                                     | The verifier's verdict per finding                                                            |
 | `run-load.sh`, `create-all.mjs`, `multi-stream.mjs`                        | The runner                                                                                    |
-
-
