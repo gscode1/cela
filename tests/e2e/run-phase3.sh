@@ -15,6 +15,8 @@
 #                  (printed, not a failure of the run) only while enforcement is absent: every denied target is
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
 #                  KNOWN-FAIL into FAIL (use it after the migration); NETPOL_ENFORCED=0 forces KNOWN-FAIL.
+#                  The orchestrator's own isolation probe (GET /admin/status networkPolicy) is printed first; with
+#                  NETPOL_ENFORCED=1 a `not-enforced` verdict fails the run before any test.
 #
 # Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the secret sandboxd-auth
 # (deploy/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
@@ -474,6 +476,26 @@ t_isolation() {
   assert "direct public internet is reachable (sandbox-allow-internet-egress)" grep -q '^internet-direct REACHABLE' <<<"$out"
 }
 
+# The isolation probe's own verdict (GET /admin/status, written by the orchestrator, docs/network-policy.md). It only
+# prints, except with NETPOL_ENFORCED=1, where `not-enforced` fails the run. `inconclusive` never fails it.
+netpol_probe_check() {
+  local ingest out state="unknown" reason i
+  ingest=$(k get pods -l app.kubernetes.io/name=pi-ingest -o json |
+    jq -r '[.items[] | select(.status.phase=="Running" and .metadata.deletionTimestamp==null)][0].metadata.name // empty')
+  for i in $(seq 1 40); do
+    out=$(k exec -i "$ingest" -c ingest -- node - call alice GET /admin/status <"$here/client-4b.mjs" 2>/dev/null) || out=""
+    state=$(jq -r '.body.networkPolicy.state // "unknown"' <<<"${out:-null}" 2>/dev/null) || state=unknown
+    [[ $state != unknown && $state != running ]] && break
+    sleep 3
+  done
+  reason=$(jq -r '.body.networkPolicy.detail.reason // "-"' <<<"${out:-null}" 2>/dev/null || echo "-")
+  note "EVIDENCE isolation-probe: $state ($reason)"
+  if [[ $state == not-enforced && ${NETPOL_ENFORCED:-} == 1 ]]; then
+    echo "FAIL: the isolation probe reports not-enforced and NETPOL_ENFORCED=1: $reason" >&2
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------- setup
 log "setup: wait for the database and the orchestrator (overlay and code were pushed by run.sh)"
 # SKIP_SETUP=1 reuses what is deployed (debugging aid).
@@ -489,6 +511,7 @@ wait_owner
 fi
 
 # ---------------------------------------------------------------- run
+netpol_probe_check || exit 1
 # ONLY="double-owner,restart" runs just those tests (debugging aid); the full suite runs when unset.
 isolation_status=""
 record() { # name rc: like the shared one, plus isolation's KNOWN-FAIL (exit 3)

@@ -12,7 +12,8 @@
 #   4. runs hack/agent-sandbox.sh external (read-only check; the controller and CRDs are cluster-wide and are never
 #      installed or changed here)
 #   5. helm upgrade --install, waits for the rollout
-#   6. reads GET /admin/status through ingest and prints the runtime and network-policy state; warnings do not fail
+#   6. reads GET /admin/status through ingest (waits up to 2 min for the isolation probe) and prints the runtime and
+#      network-policy state; warnings do not fail
 #
 # The database (and OneCLI) stay external in this slice: the Secret named by database.external.existingSecret must
 # exist, or DATABASE_URL (a postgres:// URI) in the environment creates it once.
@@ -196,20 +197,25 @@ done
 log "runtime and network-policy state (GET /admin/status)"
 admin=${admins%%,*}
 reader='
-const [admin, expected] = process.argv.slice(1);
+const [admin, expected, final] = process.argv.slice(1);
 const line = (process.env.PI_API_TOKENS ?? "").split("\n").find((l) => l.startsWith(admin + ":"));
 if (line === undefined) { console.error("no token for admin " + admin); process.exit(2); }
 const port = process.env.PI_INGEST_PORT ?? "8080";
 const res = await fetch("http://127.0.0.1:" + port + "/admin/status", { headers: { authorization: "Bearer " + line.slice(admin.length + 1) } });
 if (!res.ok) { console.error("GET /admin/status answered " + String(res.status)); process.exit(2); }
-const { shards } = await res.json();
+const { shards, networkPolicy } = await res.json();
 if (shards.length < Number(expected)) { console.error("waiting: " + String(shards.length) + " of " + expected + " shards reported"); process.exit(3); }
+// Shard 0 probes the network policies a short while after it starts; wait for it, but never fail the install on it.
+if (["unknown", "running"].includes(networkPolicy.state) && final !== "1") { console.error("waiting: the isolation probe has not finished"); process.exit(3); }
 for (const s of shards) console.log("shard " + String(s.shard) + " configuredRuntime=" + s.configuredRuntime + " observedRuntime=" + String(s.observedRuntime) + " networkPolicy=" + s.networkPolicy);
+console.log("isolation-probe state=" + networkPolicy.state + " checkedAt=" + String(networkPolicy.checkedAt) + " reason=" + (networkPolicy.detail?.reason ?? "-"));
 '
 status=
-for _ in $(seq 1 30); do
+for attempt in $(seq 1 60); do
   rc=0
-  status=$(k exec deploy/pi-ingest -c ingest -- node --input-type=module -e "$reader" "$admin" "$shards" 2>"$tmp/status.err") || rc=$?
+  final=0
+  [[ $attempt -lt 60 ]] || final=1
+  status=$(k exec deploy/pi-ingest -c ingest -- node --input-type=module -e "$reader" "$admin" "$shards" "$final" 2>"$tmp/status.err") || rc=$?
   [[ $rc -eq 3 ]] || break
   sleep 2
 done
@@ -219,14 +225,17 @@ if [[ $rc -ne 0 ]]; then
 fi
 printf '%s\n' "$status"
 warned=0
-while read -r _ shard configured _ network; do
-  [[ -n ${shard:-} ]] || continue
+while read -r kind shard configured _ network; do
+  [[ $kind == shard ]] || continue
   if [[ ${configured#configuredRuntime=} != gvisor ]]; then
     echo "WARNING: shard $shard sandboxes run with ${configured#configuredRuntime=}, not gVisor: agent code has container isolation only" >&2
     warned=1
   fi
   if [[ ${network#networkPolicy=} != enforced ]]; then
-    echo "WARNING: shard $shard network policy is ${network#networkPolicy=}: isolation is not verified. NetworkPolicies work only on a CNI that enforces them (nothing is blocked)" >&2
+    case ${network#networkPolicy=} in
+    not-enforced) echo "WARNING: network policy is NOT ENFORCED (isolation probe): a sandbox can reach cluster services. The CNI does not enforce NetworkPolicy, or the policies are missing; nothing is blocked" >&2 ;;
+    *) echo "WARNING: shard $shard network policy is ${network#networkPolicy=}: isolation is not verified. NetworkPolicies work only on a CNI that enforces them (nothing is blocked)" >&2 ;;
+    esac
     warned=1
   fi
 done <<<"$status"

@@ -146,5 +146,14 @@ export type {
   SessionStatus,
   SessionSummary,
 } from "./store.js";
-export { startShardStatus, observeShardRuntime, readShardStatus } from "./shard-status.js";
-export type { ShardStatus } from "./shard-status.js";
+export {
+  PROBE_SHARD,
+  startShardStatus,
+  observeShardRuntime,
+  readShardStatus,
+  markNetworkProbeRunning,
+  recordNetworkProbe,
+  requestNetworkProbe,
+  claimNetworkProbeRequest,
+} from "./shard-status.js";
+export type { NetworkPolicyState, ProbeRequest, ShardStatus } from "./shard-status.js";

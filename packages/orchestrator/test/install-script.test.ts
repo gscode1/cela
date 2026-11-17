@@ -217,8 +217,22 @@ describe("hack/install.sh", () => {
     );
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).toContain("not gVisor");
-    expect(r.stderr).toContain("network policy is not-enforced");
+    expect(r.stderr).toContain("network policy is NOT ENFORCED");
     expect(log()).toContain("runtimeClassName=runc");
+  });
+
+  it("prints the probe line, and does not warn when the probe says enforced", () => {
+    const r = run(base(), {
+      status:
+        "shard 0 configuredRuntime=gvisor observedRuntime=gvisor networkPolicy=enforced\nisolation-probe state=enforced checkedAt=now reason=ok\n",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("isolation-probe state=enforced");
+    expect(r.stderr).not.toContain("network policy");
+  });
+
+  it("asks the status reader to wait for the isolation probe", () => {
+    expect(readFileSync(script, "utf8")).toMatch(/isolation probe has not finished/);
   });
 
   it("warns about an unknown network policy state even with gvisor", () => {

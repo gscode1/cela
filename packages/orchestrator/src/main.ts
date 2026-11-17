@@ -1,5 +1,6 @@
 import {
   applyMigrations,
+  PROBE_SHARD,
   startShardStatus,
   observeShardRuntime,
   conversationsWithExecInFlight,
@@ -25,6 +26,9 @@ import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
 import { InboxLoop } from "./inbox.js";
 import { checkRuntime } from "./runtime.js";
+import { clusterProbeIo } from "./netprobe-cluster.js";
+import { deleteProbePods } from "./netprobe-kube.js";
+import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
 import { observedRuntime, listClaims, listPvcs } from "./kube.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
@@ -97,6 +101,16 @@ async function main(): Promise<void> {
     message: "Network isolation has not been verified",
   });
   log("lock-acquired", { instance: config.instance });
+  // The isolation probe never gates anything: the orchestrator serves sessions whatever it finds (docs/network-policy.md).
+  if (config.shard === PROBE_SHARD) {
+    const io = clusterProbeIo(config, runtime, process.env);
+    const probe = new NetworkProbeLoop(pool, config.shard, () => runNetworkProbe(io));
+    running.netProbe = probe;
+    await deleteProbePods(config.namespace).catch((error: unknown) => {
+      log("netprobe-cleanup-failed", { message: errorMessage(error) });
+    });
+    probe.start(5_000);
+  }
   const sessionKeyOf = async (conversationId: number): Promise<string> => {
     const session = await sessionByConversation(pool, config.shard, conversationId);
     // Conversations the inbox does not know are the test-only /control sessions.

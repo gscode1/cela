@@ -122,6 +122,48 @@ E2e uses the same base, not `local/`. `STORAGE_CLASS` overrides database and wor
 `SANDBOX_IMAGE` to pushed image digests before running. Other customizations belong in `deploy/` or
 `tests/e2e/deploy/`. See [e2e](../docs/e2e.md).
 
+## Reinstall an existing `deploy/` stack from the chart
+
+A stack made from this directory is not upgraded to the chart: its namespace is deleted and recreated, and its sessions,
+workspaces and database are discarded ([install plan](../docs/install-plan.md) section 9a). Keep what is worth keeping
+first; the delete cannot be undone.
+
+1. **Inventory (read-only).** Note the images, the sandbox template (runtime class, resources, workspace size and class),
+   `PI_API_ADMINS`, the model settings, the OneCLI URLs and the CA ConfigMap name, and which `ExternalSecret`s exist.
+   Put them in the cluster's values file under `local/` (git-ignored).
+2. **Back up the runtime config.** Settings, session profiles, skills and the MCP catalog live in Postgres (schema
+   `inbox`). Dump them data-only from the database pod and keep the file outside the repository:
+   `pg_dump --data-only --column-inserts -t inbox.settings -t inbox.settings_history -t inbox.profiles
+   -t inbox.profile_versions -t inbox.skills -t inbox.skill_versions -t inbox.skill_version_files
+   -t inbox.mcp_servers -t inbox.mcp_servers_history`. Check that the file lists your profiles. Save the old `api-auth`
+   owner names (not tokens): the new tokens differ.
+3. **Delete the namespace** while the agent-sandbox controller runs, so the Sandbox finalizers complete. Never touch the
+   CloudNativePG operator, its CRDs or namespace: only this stack's own `Cluster` goes with the namespace. Then list
+   `kubectl get pv | grep <namespace>` and remove Released volumes of this namespace by hand (none remain with a
+   `Delete` storage class).
+4. **Create the database.** `hack/install.sh` creates the namespace with the restricted Pod Security labels and the
+   `sandboxd-auth` and `api-auth` Secrets, then stops until the database URI Secret exists; so run it once, create the
+   `charts/pi-postgres` Secrets and release and the URI Secret, then apply the ExternalSecrets and the OneCLI CA, and
+   run `hack/install.sh` again:
+
+   ```sh
+   hack/install.sh -n <ns> -f local/values.yaml        # stops: the database Secret is missing; namespace and Secrets exist now
+   # pi-postgres-auth (postgres-password, pi-password, onecli-password) from random values, then:
+   helm upgrade --install pi-postgres charts/pi-postgres -n <ns> -f local/postgres-values.yaml --wait
+   # the URI Secret named by database.external.existingSecret: postgres://pi:<pi-password>@pi-postgres.<ns>.svc:5432/pi
+   kubectl -n <ns> apply -f deploy/onecli-externalsecret.yaml -f deploy/repo-externalsecrets.yaml
+   NAMESPACE=<ns> deploy/fetch-onecli-ca.sh              # the chart does not create the CA ConfigMap
+   hack/install.sh -n <ns> -f local/values.yaml
+   ```
+
+5. **Restore the config.** In one transaction truncate the nine `inbox` config tables (the new install seeds a
+   `coding` profile and a settings row; the restored rows replace them) and load the dump; then restart the orchestrator
+   and ingest so their caches reload. Check `GET /admin/settings` and `GET /admin/profiles`.
+6. **Verify.** `GET /admin/status` shows the configured and observed runtime (the observed one appears after the first
+   sandbox exists), run one session through ingest, then `tests/e2e/run.sh smoke`.
+
+The values that carried over in the lab are in [lab notes](../docs/lab-notes.md).
+
 ## agent-sandbox controller and CRDs
 
 The controller and its CRDs are cluster-wide and a prerequisite of this stack. `hack/agent-sandbox.sh` (`KUBE_CONTEXT`
