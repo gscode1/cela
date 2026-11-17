@@ -18,6 +18,9 @@ images/build.sh all --platform linux/arm64       # --load on a native arm64 host
 IMAGE_REPO=registry.example.com/team images/build.sh all --push
 ```
 
+CI (`.github/workflows/images.yml`) runs the same script for every push to `main` and every pull request of this
+repository and publishes to `ghcr.io/<owner>/pi-*:<version>-<short sha>`; the job summary lists the digests.
+
 `IMAGE_REPO` is a registry/repository **prefix**: images are named `pi-orchestrator`, `pi-ingest`, `pi-sandbox`,
 `pi-e2e-driver` beneath it (default: those local names). Every tag is `<root package version>-<git short sha>`.
 Use a clean checkout so the tag identifies its source. The script prints image references and content digests;

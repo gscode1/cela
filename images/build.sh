@@ -40,8 +40,11 @@ for image in "${images[@]}"; do
   # ${a[@]+...} keeps an empty array legal under set -u in bash 3.2 (macOS).
   action=(${output[@]+"${output[@]}"})
   [[ ${#action[@]} -gt 0 ]] || action=(--output "type=oci,dest=pi-$image-$tag.oci.tar")
+  # IMAGE_SOURCE links a registry package to its repository (ghcr.io then inherits the repository's visibility).
+  label=()
+  [[ -z ${IMAGE_SOURCE:-} ]] || label=(--label "org.opencontainers.image.source=$IMAGE_SOURCE")
   docker buildx build --platform "$platform" -f "$root/images/$image/Dockerfile" \
-    -t "$ref" --metadata-file "$work/$image.json" "${action[@]}" "$root"
+    -t "$ref" --metadata-file "$work/$image.json" ${label[@]+"${label[@]}"} "${action[@]}" "$root"
   digest=$(node -e 'const m=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (!m["containerimage.digest"]) process.exit(1); console.log(m["containerimage.digest"])' "$work/$image.json")
   printf 'image: %s\ndigest: %s@%s\n' "$ref" "${ref%:*}" "$digest"
 done
