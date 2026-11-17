@@ -27,6 +27,53 @@ Ingest: `PI_ORCH_SHARDS` (default 1) is the shard count for new sessions; `PI_OR
 The manifest in `deploy/ingest.yaml` stays single-shard; `kubectl apply` of it again resets both, so run `add-shard.sh`
 after a re-apply.
 
+## Sizing one shard
+
+Each shard is one process on one event loop, so size it from its memory limit and its CPU
+([decision 0018](decisions/0018-derived-bridge-cap.md)).
+
+**Memory.** At start the orchestrator derives the cap on open bridges (`PI_MAX_OPEN_BRIDGES`) from the container memory limit:
+
+```
+max = max(1, floor((memoryLimit - 256 MiB) / 24 MiB))
+```
+
+| Memory limit | Cap |
+| --- | --- |
+| 512Mi | 10 |
+| 1Gi | 32 |
+| 2Gi (default) | 74 |
+| 4Gi | 160 |
+| 8Gi | 330 |
+
+- 256 MiB is the base reserve and 24 MiB the cost per open bridge, both about twice the measured values: 115-147 MiB idle
+  and about 11 MiB per bridge (measured 2026-11-17 on the lab cluster, sessions running tool calls through the broker,
+  see [metrics.md](metrics.md)). At the cap the predicted use is about half the limit. The margin is for what one
+  workload did not show: model-only turns, large tool output.
+- `PI_MAX_OPEN_BRIDGES=<n>` overrides it (n of 1 or more), `0` removes the cap, `auto` or unset derives it. The start line
+  `bridge-cap` shows the value, its source (`derived`, `explicit`, `unlimited`) and the limit it used. With no memory limit
+  the cap is unlimited and the line is logged at `warn` level: nothing then bounds the bridges, so set a limit.
+- **Set the memory request equal to the limit** (`deploy/orchestrator.yaml` does). The cap is derived from the limit, and
+  a smaller request lets the scheduler place the Pod on a node that cannot back it.
+- The cap protects memory only. It does not bound Pods, claim creation, CPU or Postgres.
+
+**CPU, the real ceiling.** One orchestrator saturated 1 CPU at 100 sessions running tools at once while using 1.25 GiB of 8Gi.
+Plan about **100 concurrently tool-active sessions per shard at 1 CPU**; that is the largest load tested. Beyond it, add a
+shard (above) rather than a bigger limit: the derived cap at 8Gi (330) is far past what one event loop was shown to serve.
+Nothing above 100 open bridges has been run; the V8 heap limit may be reached before the cgroup limit at the larger caps.
+
+**Saturation signals**
+
+- `cap-wait` p90 in `measure-timing.mjs` (docs/metrics.md) above a second or two, or `bridge-cap-wait` lines: sessions queue
+  for a bridge slot. With a derived cap, that means memory is the limit; raise the limit or add a shard.
+- `nr_throttled` rising in the container's `cpu.stat`: the CPU limit is the limit. Add a shard.
+- `memory-sample` against the limit: the fitted base and per-bridge cost (`measure-timing.mjs`) tell whether the constants
+  still hold.
+
+**Pods.** An evicted env's Pod keeps running until idle suspend (30 minutes), so the cap bounds neither Pods nor claim
+creation. Bound them with a ResourceQuota on the namespace (`count/pods`, and CPU and memory requests) and the warm pool
+size.
+
 ## Behaviour to know
 
 - A shard that is down: its sessions' events stay `pending`, their streams answer 503 with `Retry-After`; other shards are

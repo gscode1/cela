@@ -33,7 +33,7 @@ the cost. No ADR requires the separate process.
 - **Containment.** Every connection's task is wrapped: a rejection or throw destroys only its own sockets, and every
   socket carries an `error` listener. The `bridge: ready` line is still written, so the `bridge-ready` timing phase and
   the start gate work as before.
-- **Unchanged.** `Sandboxes` (ADR 0003 and 0004, the FIFO slot queue, `PI_MAX_OPEN_BRIDGES` = 12) and `StartGate`.
+- **Unchanged.** `Sandboxes` (ADR 0003 and 0004, the FIFO slot queue, `PI_MAX_OPEN_BRIDGES`, 12 then and derived from the memory limit since [0018](0018-derived-bridge-cap.md)) and `StartGate`.
   The cap now bounds relay processes and in-process handles; whether to raise it, and whether to delete `StartGate`, is for
   later and should come from the #58 numbers.
 - **SDK auto-cleanup stays off.** `SandboxClient.enableAutoCleanup()` installs process-wide SIGINT/SIGTERM handlers that

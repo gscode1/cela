@@ -193,7 +193,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   orchestrator was OOM-killed at 512 Mi with about ten bridges otherwise; its limit is now 2 Gi: 1 Gi was also OOM-killed by the parallel lifecycle e2e tests).
 - Per-turn timings (`turn-timing`) and bridge memory (`bridge-rss`, every `PI_BRIDGE_RSS_INTERVAL_SECONDS`, default 60,
   0 = off) are logged as described in `docs/metrics.md`.
-- Open bridges are capped at `PI_MAX_OPEN_BRIDGES` (12): a new open evicts the least recently used idle env, or waits
+- Open bridges are capped at `PI_MAX_OPEN_BRIDGES` (default derived from the memory limit, 74 at 2Gi; `docs/scaling.md`): a new open evicts the least recently used idle env, or waits
   in a FIFO queue when all are in use. `docs/decisions/0004-idle-suspend.md`.
 - **Idle suspend.** A sandbox with no call for 30 minutes (`PI_SANDBOX_IDLE_SUSPEND_SECONDS`, 0 = never; not below the
   eviction age) is suspended: `Sandbox.spec.operatingMode: Suspended` deletes the Pod and keeps the Sandbox, the claim

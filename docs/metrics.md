@@ -45,7 +45,7 @@ reopened after an idle eviction, see the `bridge-*` phases). `spans` are interva
 | Span              | From, to                              | Meaning                                                                                                                   |
 | ----------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `model`           | `input-submitted`, `tool-requested`   | Model time before the first tool call. Not the platform's.                                                                |
-| `cap-wait`        | `tool-requested`, `claim-requested`   | Waiting before the claim is requested: a bridge slot at `PI_MAX_OPEN_BRIDGES`, a recycle under way, credential renewal.  |
+| `cap-wait`        | `tool-requested`, `claim-requested`   | Waiting before the claim is requested: a bridge slot at the bridge cap (`PI_MAX_OPEN_BRIDGES`, derived from the memory limit by default), a recycle under way, credential renewal.  |
 | `claim`           | `claim-requested`, `claim-ready`      | Claim create or resume until Pod Ready. Cold start and resume latency.                                                    |
 | `bridge`          | `bridge-started`, `bridge-ready`      | Relay start plus the broker's sandbox connect. Before ADR 0016 it was the bridge's Node cold start, about 12 s on 250m CPU (plan.md); compare against that.                                                                      |
 | `sandbox-to-exec` | `tool-requested`, `first-exec-sent`   | Time to first instruction: everything the platform adds between the first tool call and the first command being sent, bridge start included. |
@@ -75,10 +75,32 @@ without `/proc` (a Mac) nothing is logged; a failed read never affects a session
 {"t":"...","event":"bridge-rss","session":"6f1c...","conversation":7,"claim":"pi-conv-7","rssBytes":104857600,"open":3}
 ```
 
+### Bridge cap and container memory
+
+At start, one `bridge-cap` line (docs/decisions/0018-derived-bridge-cap.md). `max` is `"unlimited"` when there is no cap;
+the line has `"level":"warn"` and a `warning` when that is because the container has no memory limit.
+
+```json
+{"t":"...","event":"bridge-cap","max":74,"source":"derived","memoryLimitBytes":2147483648,"reserveBytes":268435456,"perBridgeBytes":25165824}
+```
+
+On the same interval as `bridge-rss` (also when no bridge is open), one `memory-sample` line: `memoryCurrentBytes` is the
+container's cgroup `memory.current` (v1: `memory.usage_in_bytes`) when readable, with `memorySource` `cgroup`; otherwise it is
+the orchestrator process's RSS, `memorySource` `rss`, which leaves out the relay processes. `open` and `max` are the open
+bridges and the cap. The cgroup number includes page cache, so it reads a little high.
+
+```json
+{"t":"...","event":"memory-sample","memoryCurrentBytes":251658240,"memorySource":"cgroup","open":10,"max":74}
+```
+
+`measure-timing.mjs` fits a line through the `cgroup` samples (memory against `open`) and prints the base and the cost
+per bridge. Compare them with the 256 MiB and 24 MiB the cap is derived from; they should stay below them. Samples at
+only one `open` value give no fit.
+
 ## Measuring
 
 `tests/e2e/measure-timing.mjs` reads the orchestrator log (read-only `kubectl logs`) and prints n, p50, p90 and max of
-every phase and span by sandbox state, and median and peak bridge RSS per session. It runs from the Mac.
+every phase and span by sandbox state, the base and per-bridge memory fit, and median and peak bridge RSS per session. It runs from the Mac.
 
 ```
 node tests/e2e/measure-timing.mjs --context <kube context> --namespace <namespace> [--since 24h] [--deployment pi-orchestrator]
