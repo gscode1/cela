@@ -124,10 +124,20 @@ export class SettingsCache {
     this.#log(event, message === undefined ? {} : { message });
   }
 
+  /** A method, not a field read: TypeScript narrows `#stopped` to false inside the loop, but stop() can flip it at an await. */
+  #isStopped(): boolean {
+    return this.#stopped;
+  }
+
   async #listen(): Promise<void> {
     while (!this.#stopped) {
       try {
         const client = await this.#pool.connect();
+        // stop() ran while the connect was pending, so it found no listener to release.
+        if (this.#isStopped()) {
+          client.release(true);
+          return;
+        }
         this.#listener = client;
         await new Promise<void>((resolve) => {
           client.on("notification", () => void this.refresh());

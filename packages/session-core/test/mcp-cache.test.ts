@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpCatalogCache } from "../src/mcp-cache.ts";
 import type { McpServerConfig } from "../src/mcp-servers.ts";
 import { putMcpServer } from "../src/mcp-servers.ts";
-import { FakeSettingsDb } from "./fake-settings-db.ts";
+import { FakeListener, FakeSettingsDb } from "./fake-settings-db.ts";
 
 const BASE = { url: "https://mcp.example.com/mcp", readOnly: true };
 
@@ -119,5 +119,20 @@ describe("McpCatalogCache", () => {
     await putMcpServer(db.asPool(), "a", BASE, "alice");
     await c.refresh();
     expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a client whose connect resolves after stop(), and keeps no listener", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    let resolveConnect: (client: FakeListener) => void = () => undefined;
+    db.connect = () => new Promise<FakeListener>((resolve) => (resolveConnect = resolve));
+    const c = cache(db);
+    await c.start();
+    await c.stop();
+    const late = new FakeListener(db);
+    resolveConnect(late);
+    await vi.waitFor(() => expect(late.released).toBe(true));
+    expect(late.channels.size).toBe(0);
+    expect(db.listeners.size).toBe(0);
   });
 });

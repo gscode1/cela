@@ -158,10 +158,8 @@ describe("the pending poll", () => {
   it("leaves backed-off sessions out and serves the oldest pending event first", async () => {
     const inbox = new FakeInbox();
     inbox.add("delete");
-    const loop = new InboxLoop(
-      inbox.pool(),
-      0,
-      () => Promise.reject(new Error("kubernetes unavailable")),
+    const loop = new InboxLoop(inbox.pool(), 0, () =>
+      Promise.reject(new Error("kubernetes unavailable")),
     );
     loop.wake();
     await flush();
@@ -180,6 +178,29 @@ describe("the pending poll", () => {
     loop.wake();
     await flush();
     expect(inbox.polls[2]?.params[1]).toEqual([]);
+  });
+});
+
+describe("the LISTEN connection", () => {
+  it("is released when stop() ran while the connect was pending", async () => {
+    let resolveConnect: (client: pg.PoolClient) => void = () => undefined;
+    const pool = {
+      connect: () => new Promise<pg.PoolClient>((resolve) => (resolveConnect = resolve)),
+      query: () => Promise.resolve({ rows: [] }),
+    } as unknown as pg.Pool;
+    const loop = new InboxLoop(pool, 0, () => Promise.resolve());
+    loop.start();
+    await loop.stop();
+    const release = vi.fn();
+    const on = vi.fn();
+    resolveConnect({
+      release,
+      on,
+      query: vi.fn(),
+      removeAllListeners: vi.fn(),
+    } as unknown as pg.PoolClient);
+    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(true), { timeout: 2_000 });
+    expect(on).not.toHaveBeenCalled();
   });
 });
 
