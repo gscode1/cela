@@ -75,6 +75,28 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [Architecture decision records](docs/decisions/)
 - [Plan, decisions and phase results](plan.md)
 
+## Quick start on kind
+
+One command gives you the whole stack on a laptop, with no cluster, credentials or model account: a kind cluster, the
+agent-sandbox controller, a bundled Postgres, and `pi-durable` on the scripted model (the message text is the script, see
+the [session API](docs/session-api.md)). It needs docker, kind 0.24 or newer, helm 4, kubectl and openssl.
+
+```sh
+hack/kind-up.sh                 # published images for this commit (IMAGE_TAG=<tag> picks another)
+hack/kind-up.sh --build         # or build the images here (native architecture) and load them into the node
+hack/kind-smoke.sh              # a session, a message, a tool call in the sandbox, a replaced Pod, deletion
+hack/kind-down.sh               # delete the cluster
+```
+
+It takes about five minutes (the first run pulls the node image and the application images). It prints where the API token
+is (it never prints the token) and how to port-forward, and shows the isolation probe from `GET /admin/status`. The
+cluster is named `pi-durable` (`--name` or `KIND_CLUSTER_NAME`) and every command uses its own `kind-<name>` context, never
+your current one. **Not for real use:** the sandboxes run under runc, not gVisor
+([values-kind.yaml](charts/pi-durable/values-kind.yaml)). kindnet blocks the sandbox's access to Postgres and the
+orchestrator, but not to hostNetwork Pods (the Kubernetes API server, kubelet, etcd), so the probe reports `not-enforced`
+on kind because the `kube-api` target is reachable; the smoke test accepts that one finding and fails on any other.
+CI runs this on every pull request ([workflow](.github/workflows/kind.yml)).
+
 ## Deploy on your cluster
 
 The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), installed with `hack/install.sh`

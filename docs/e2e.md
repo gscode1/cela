@@ -253,3 +253,10 @@ short Service URLs and the generated database Secret resolve inside that run's n
 gets `PI_ORCH_NAMESPACE` from its own metadata for sandbox probes. Adapt external OneCLI endpoints in both
 `tests/e2e/chart-values.py` and the driver template. Ingest stays unready until stored session shards have configured routes,
 and exits listing missing shards instead of silently sending them to shard 0.
+
+## Without a cluster: kind
+
+`hack/kind-up.sh` creates a local kind cluster with the same chart (runc, kindnet, bundled Postgres, scripted model) and
+`hack/kind-smoke.sh` runs a short session, tool call, Pod replacement and deletion against it; the `kind` workflow runs both
+on every pull request. It is a smoke test of the install path, not these suites: it has no gVisor and does not run
+`phase3`. See [Quick start on kind](../README.md#quick-start-on-kind).
