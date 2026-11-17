@@ -23,6 +23,11 @@ describe("cgroupMemoryFiles", () => {
     ]);
   });
 
+  it("prefers the v1 memory controller on a hybrid host", () => {
+    const text = "9:memory:/\n0::/kubepods/pod1/abc\n";
+    expect(cgroupMemoryFiles(text)).toEqual(["/sys/fs/cgroup/memory/memory.usage_in_bytes"]);
+  });
+
   it("finds nothing without a memory controller", () => {
     expect(cgroupMemoryFiles("")).toEqual([]);
     expect(cgroupMemoryFiles("3:cpu:/x\n")).toEqual([]);

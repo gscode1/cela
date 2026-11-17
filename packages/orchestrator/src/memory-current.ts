@@ -17,18 +17,17 @@ const ROOT = "/sys/fs/cgroup";
  */
 export function cgroupMemoryFiles(procSelfCgroup: string): string[] {
   const lines = procSelfCgroup.split("\n").filter((line) => line.length > 0);
-  const v2 = lines.find((line) => line.startsWith("0::"));
-  if (v2 !== undefined) {
-    const path = v2.slice(3);
-    return path === "/" ? [`${ROOT}/memory.current`] : [`${ROOT}${path}/memory.current`];
-  }
+  // A v1 memory controller wins: on a hybrid host the v2 entry exists too, but memory is not accounted there.
   for (const line of lines) {
     const [, controllers = "", path = ""] = line.split(":");
     if (!controllers.split(",").includes("memory")) continue;
     const root = `${ROOT}/memory/memory.usage_in_bytes`;
     return path === "/" ? [root] : [`${ROOT}/memory${path}/memory.usage_in_bytes`, root];
   }
-  return [];
+  const v2 = lines.find((line) => line.startsWith("0::"));
+  if (v2 === undefined) return [];
+  const path = v2.slice(3);
+  return path === "/" ? [`${ROOT}/memory.current`] : [`${ROOT}${path}/memory.current`];
 }
 
 async function ownCgroupFiles(): Promise<string[]> {
