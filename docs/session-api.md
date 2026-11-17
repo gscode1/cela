@@ -24,7 +24,7 @@ client <- ingest <--proxy SSE--------------------- orchestrator <--Conversation.
 
 ## Endpoints
 
-All routes except the probes need `Authorization: Bearer <token>`. Errors are JSON `{ "error": "..." }`.
+All routes except the probes and the console (below) need `Authorization: Bearer <token>`. Errors are JSON `{ "error": "..." }`.
 
 | Call | Success | Notes |
 |---|---|---|
@@ -80,6 +80,23 @@ characters; any other key is `400`. It is reserved for the future catalog reposi
 nothing acts on it. A skill version is immutable, so its `source` is set when it is created.
 
 `DELETE` is also an inbox row (kind `delete`). `POST .../events` with `kind: "delete"` is refused; use `DELETE`.
+
+### Admin console
+
+`GET` and `HEAD` of `/console` and `/console/*` return the static admin console (`packages/admin-ui`, see the
+[plan](admin-ui-plan.md)). They are answered before the bearer gate and before the schema check, because the page holds
+no secret: the operator's token goes from the browser to `/admin/*` only. Other methods are `405`.
+
+- Served only when `PI_CONSOLE_DIR` names the built bundle (the chart sets `/app/console` with `console.enabled`, default
+  off). Otherwise every console path is `404`.
+- `/console` redirects (`308`) to `/console/`. A path with a file extension is an asset: it is served from the directory
+  or is `404`, never `index.html`. Any other path under `/console/` is a client-side route and gets `index.html`. A path
+  that would leave the directory (`..`, a NUL or a backslash, also percent-encoded) is `404`.
+- Console responses and every `/admin/*` response, including `401`, `403` and errors, carry `Cache-Control: no-store`,
+  `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer`. The console contains no inline script or style.
+- Reach it by port-forward or a route restricted to operators; ingest does not rate-limit failed sign-ins
+  ([chart README](../charts/pi-durable/README.md#admin-console)).
 
 ## Event lifecycle
 
@@ -302,7 +319,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
   owner-only.
 - The chart's `models` values (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
-  list and fallback; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
+  list and fallback; `PI_CONSOLE_DIR` (set only with `console.enabled`) names the console bundle; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 
 ## Known limits

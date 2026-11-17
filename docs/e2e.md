@@ -14,8 +14,8 @@ RUN_ID=ab12cd tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept n
 tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 hours (DRY_RUN=1 lists them)
 ```
 
-Suites: `smoke`, `phase1`, `phase3`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards`, `all` (phase1, phase3, phase4, phase4b).
-`phase4c`, `mcp` and `shards` are not part of `all`; `phase4c` needs `REPO_A` and `REPO_B`, `mcp` needs the internet and the OneCLI host rule
+Suites: `smoke`, `phase1`, `phase3`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards`, `console`, `all` (phase1, phase3, phase4, phase4b).
+`phase4c`, `mcp`, `shards` and `console` are not part of `all`; `phase4c` needs `REPO_A` and `REPO_B`, `mcp` needs the internet and the OneCLI host rule
 for `mcp.deepwiki.com`.
 
 | Variable            | Meaning                                                                                                   |
@@ -274,6 +274,34 @@ short Service URLs and the generated database Secret resolve inside that run's n
 gets `PI_ORCH_NAMESPACE` from its own metadata for sandbox probes. Adapt external OneCLI endpoints in both
 `tests/e2e/chart-values.py` and the driver template. Ingest stays unready until stored session shards have configured routes,
 and exits listing missing shards instead of silently sending them to shard 0.
+
+## The console suite (browser)
+
+`tests/e2e/run.sh console` tests the [admin console](admin-ui-plan.md) in a real browser (Playwright, Chromium). It
+installs the chart with `console.enabled=true` and runs the specs of `packages/admin-ui/e2e/` against
+`http://127.0.0.1:<port>/console/`: sign-in, direct navigation, assets under the CSP, sign-out, reload asking for the token
+again, `401` ("invalid token") against `403` ("valid owner without admin access"), HTML-like API data rendered as text, and
+the security headers. It then runs `helm upgrade` with `console.enabled=false` and checks that `/console/` is `404`.
+
+Unlike the other suites it does not run as a Job in the cluster: a browser needs a display stack the driver image lacks,
+and what it tests is what an operator sees through a `kubectl port-forward svc/pi-ingest`, the supported way in. The
+operator machine therefore needs `pnpm install` and `pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium`.
+The run still creates and deletes its own namespace `pi-e2e-<id>`. `alice` (the run's only `api.admins` owner) is the admin
+and `bob` the owner without admin access; their tokens come from the run's `api-auth` Secret into the environment of the
+Playwright process and are never printed or written to a file. The plan's second admin is not used: the run has one.
+
+The specs take `CONSOLE_BASE_URL`, `CONSOLE_ADMIN_TOKEN`, `CONSOLE_NONADMIN_TOKEN` and `CONSOLE_EXPECT=enabled|disabled`
+(`pnpm --filter @pi-durable-k8s/admin-ui e2e`), so they also run against any other deployment you can reach. Playwright is
+not part of `pnpm check`, which needs no browser.
+
+Without a cluster, the same specs run against the real ingest server code over a stub that answers only the settings read
+(`packages/admin-ui/e2e/local-server.mjs`), one instance with the console and one without:
+
+```sh
+pnpm build
+pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium   # once
+pnpm --filter @pi-durable-k8s/admin-ui e2e:local
+```
 
 ## Without a cluster: kind
 

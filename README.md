@@ -49,6 +49,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | Path                                   | What                                                                                                                       |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                   |
+| `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))       |
 | `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                             |
 | `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                          |
 | `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                        |
