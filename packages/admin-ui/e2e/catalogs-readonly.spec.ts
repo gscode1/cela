@@ -26,7 +26,7 @@ test.describe("catalogs in readOnly mode", () => {
     await expect(page.getByRole("button", { name: "Publish a new version" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Publish a new version" })).toHaveCount(0);
     await page.getByRole("button", { name: "Files" }).click();
-    await expect(page.getByRole("cell", { name: "SKILL.md" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "SKILL.md", exact: true })).toBeVisible();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download zip" }).click();
     expect((await download).suggestedFilename()).toBe(`${name}-v1.zip`);
