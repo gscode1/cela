@@ -1,0 +1,51 @@
+# Least privilege for the orchestrator, namespace-scoped only. It creates and attaches SandboxClaims through the SDK
+# and reads the Sandbox / Pod / Service the SDK resolves. Sandbox lifecycle (docs/decisions/0003 and 0004): `patch` on
+# sandboxes suspends and resumes (spec.operatingMode); `delete` on pods replaces the Pod after an interrupted command;
+# `list` on PVCs lets the orphan sweep (0002) find workspace PVCs whose claim is gone.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pi-orchestrator
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pi-orchestrator
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxclaims]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxwarmpools, sandboxtemplates]
+    verbs: [get]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pi-orchestrator
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: pi-orchestrator
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pi-orchestrator

@@ -1,0 +1,30 @@
+{{- /*
+HTTP surface of each orchestrator shard, ClusterIP, inside the namespace only: /healthz, /readyz and the SSE stream
+(ingest proxies it; the bearer token and the owner are checked again). Only the pod that owns the schema is Ready, so a
+Service always points at the owner. `pi-orchestrator` is shard 0 (the name of a single-shard stack); every shard k also
+has `pi-orchestrator-<k>`, which is what ingest's {shard} URL template names.
+*/ -}}
+{{- $root := . -}}
+{{- $names := list -}}
+{{- range $shard := until (int .Values.orchestrator.shards) }}
+{{- $name := ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0) }}
+{{- $names = append $names (dict "service" (printf "pi-orchestrator-%d" $shard) "instance" $name) }}
+{{- if eq $shard 0 }}
+{{- $names = append $names (dict "service" "pi-orchestrator" "instance" $name) }}
+{{- end }}
+{{- end }}
+{{- range $names }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .service }}
+  labels:
+    {{- include "pi-durable.labels" $root | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: pi-orchestrator
+    app.kubernetes.io/instance: {{ .instance }}
+  ports:
+    - { name: control, port: 8081, targetPort: control }
+{{- end }}

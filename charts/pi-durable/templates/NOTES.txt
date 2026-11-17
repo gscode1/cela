@@ -1,0 +1,35 @@
+pi-durable is installed in namespace {{ .Release.Namespace }}: {{ .Values.orchestrator.shards }} orchestrator shard(s), ingest (the session API), the sandbox template pi-env-template.
+
+  Database:      Secret {{ .Values.database.external.existingSecret }} (external, not managed here)
+  OneCLI:        {{ .Values.onecli.mode }}{{ if eq .Values.onecli.mode "disabled" }} (scripted models only){{ end }}
+  Agent sandbox: {{ .Values.agentSandbox.mode }} (controller and CRDs are not managed here)
+  Runtime:       {{ .Values.sandbox.runtimeClassName | default "(node default)" }}
+  Network policy: {{ .Values.networkPolicy.provider }}
+{{- if ne .Values.sandbox.runtimeClassName "gvisor" }}
+
+WARNING: sandboxes do NOT run under gVisor (security.allowInsecureRuntime=true, runtime {{ .Values.sandbox.runtimeClassName | default "(node default)" | quote }}).
+Agent code runs with container isolation only. Use this for evaluation, never for untrusted code.
+{{- end }}
+
+WARNING: NetworkPolicies isolate sandboxes only if the cluster's CNI enforces them (Cilium, Calico, kindnet since kind
+0.24; flannel alone does not). This chart cannot tell. Without enforcement a sandbox can reach the database, the
+orchestrator and the Kubernetes API. Read the measured state, never assume it:
+{{- if eq .Values.networkPolicy.provider "standard" }}
+provider standard: the orchestrator may reach {{ if .Values.networkPolicy.kubeApiCidrs }}{{ join ", " .Values.networkPolicy.kubeApiCidrs }}{{ else }}ANY address{{ end }} on TCP 443 and 6443 (the API server cannot be named in a plain policy).
+{{- if .Values.networkPolicy.kubeApiCidrs }}
+Repo sessions (github.app) also need api.github.com:443: add it to networkPolicy.orchestrator.extraEgress.
+{{- end }}
+{{- end }}
+
+Read the runtime and network-policy state (GET /admin/status; admin owner: {{ first .Values.api.admins }}):
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/pi-ingest 8080:8080 &
+  TOKEN=$(kubectl -n {{ .Release.Namespace }} get secret {{ .Values.api.existingSecret }} -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^{{ first .Values.api.admins }}://p')
+  curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status
+
+It lists, per shard, the configured and the observed runtime and networkPolicy (unknown until the isolation probe
+exists). Check the orchestrators: kubectl -n {{ .Release.Namespace }} get deploy -l app.kubernetes.io/name=pi-orchestrator
+{{- if gt (int .Values.orchestrator.shards) 1 }}
+
+The shard count can only grow: sessions stay on their shard. Never lower orchestrator.shards.
+{{- end }}

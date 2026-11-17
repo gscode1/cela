@@ -1,0 +1,11 @@
+# The values with no default, so that `helm lint`/`helm template` work without a cluster (charts.test.ts, pod-security.test.ts).
+# A real install supplies its own.
+images:
+  orchestrator: { tag: test }
+  ingest: { tag: test }
+  sandbox: { tag: test }
+database:
+  external:
+    existingSecret: pi-database
+    egress:
+      podSelector: { app.kubernetes.io/name: pi-postgres }

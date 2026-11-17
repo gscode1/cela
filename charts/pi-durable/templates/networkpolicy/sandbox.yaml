@@ -1,0 +1,81 @@
+{{- /*
+Sandboxes (label app.kubernetes.io/name=pi-sandbox from the template, which sets networkPolicyManagement: Unmanaged).
+Invariant: a sandbox reaches DNS, the OneCLI gateway port and the public internet, and nothing else of ours: not the
+orchestrator, ingest, the database, the Kubernetes API, the OneCLI management API or another sandbox.
+*/ -}}
+# A pod-level deny for sandboxes, so removing default-deny-all cannot open them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-default-deny
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+  policyTypes: [Ingress, Egress]
+---
+# Ingress: sandboxd REST (8080) and gRPC (9090) from the orchestrator only. No sandbox-to-sandbox traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-orchestrator-ingress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 9090 }
+{{- if eq .Values.onecli.mode "external" }}
+---
+# Egress: the OneCLI gateway port only (the management API is another port of the same pod and stays unreachable).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-onecli-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-durable.onecliTo" . | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ include "pi-durable.urlPort" .Values.onecli.external.gatewayUrl }} }
+{{- end }}
+---
+# Egress: direct public internet (decision 2026-11-15: package installs for every session). Private, CGNAT,
+# link-local/metadata and loopback ranges stay blocked, so the cluster, the node network and other sandboxes remain
+# unreachable.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-internet-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8]
+        - ipBlock:
+            cidr: "::/0"
+            except: ["fc00::/7", "fe80::/10", "::1/128"]

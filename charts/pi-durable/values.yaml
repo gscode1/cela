@@ -1,0 +1,141 @@
+# The Pi Durable app (docs/install-plan.md D1): orchestrator shards, ingest (the session API), the sandbox template and
+# warm pool, RBAC and network policies. The database, OneCLI and agent-sandbox (controller and CRDs) are NOT part of
+# it: they are separate and only referenced here. One release per namespace: object names are fixed (pi-orchestrator,
+# pi-ingest, pi-env-template, ...) because the policies, the e2e suites and ingest's shard routing rely on them.
+#
+# Secrets are only referenced, never created or generated (D8). hack/install.sh creates the missing ones once.
+
+# Required: a tag or a digest per image (prefer a digest). Build them with images/build.sh; CI publishes them.
+images:
+  orchestrator:
+    repository: ghcr.io/gscode1/pi-orchestrator
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  ingest:
+    repository: ghcr.io/gscode1/pi-ingest
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  sandbox:
+    repository: ghcr.io/gscode1/pi-sandbox
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+database:
+  # Any Postgres 17 (CloudNativePG included) that the orchestrator and ingest reach directly or in session mode, never
+  # through a transaction pooler (the adapter's ownership lock is a session advisory lock). One install per database:
+  # the schema `inbox` is fixed. A bundled Postgres comes with charts/pi-postgres (a separate release).
+  external:
+    existingSecret: "" # required: a Secret in the release namespace that holds the connection URI
+    uriKey: uri
+    # Where the orchestrator and ingest may connect. Required: with default-deny-all the database is otherwise
+    # unreachable. A pod selector (in `namespace`, default: the release namespace) and/or CIDRs.
+    egress:
+      namespace: ""
+      podSelector: {}
+      cidrs: []
+      port: 5432
+
+onecli:
+  # external: use an existing OneCLI (gateway and management API URLs below).
+  # disabled: no OneCLI; the scripted model only (the allowlist may name no other provider).
+  # bundled arrives with install slice 10 and is rejected for now.
+  mode: disabled
+  # Names of the agents and secrets this install creates in OneCLI. A shared OneCLI needs a distinct prefix per install,
+  # because every orchestrator's orphan sweep revokes the agents it does not know (ADR 0013).
+  namePrefix: pi-session-
+  external:
+    apiUrl: "" # required for external, for example http://onecli.onecli:10256 (management API and the CA)
+    gatewayUrl: "" # required for external, for example http://onecli.onecli:10255 (the proxy that injects credentials)
+    caConfigMap: "" # optional: ConfigMap with key ca.pem, the gateway CA the orchestrator trusts (read once at start)
+    agentTokenSecret: "" # optional: Secret with key agent-token (aoc_...), required for any non-scripted model
+    adminKeySecret: "" # optional: Secret with key api-key (oc_...); repo sessions are refused without it
+    # Where OneCLI runs, for the network policies. The ports come from the URLs.
+    namespace: onecli
+    podSelector:
+      app: onecli
+
+agentSandbox:
+  # The controller and its CRDs are cluster-wide and are never installed, upgraded or removed by this chart. Check or
+  # install them with hack/agent-sandbox.sh. bundled arrives with the bundled install steps and is rejected for now.
+  mode: external
+
+sandbox:
+  # Only the operator picks the runtime, never a session caller. Anything but gvisor (including "": the node default,
+  # usually runc) needs security.allowInsecureRuntime, or the chart refuses to render (docs/decisions/0020).
+  runtimeClassName: gvisor
+  storageClass: "" # workspace PVCs; "" = the cluster default. Use a class that reclaims with Delete.
+  workspaceSize: 1Gi
+  masterSecret: sandboxd-auth # Secret with key `master`: HMAC key of every sandbox's token. A backup asset.
+  warmPoolReplicas: 0
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+security:
+  # Acknowledges that the sandbox runtime is not gVisor. The orchestrator refuses to start without it too
+  # (PI_ALLOW_INSECURE_RUNTIME) and reports the configured and the observed runtime in GET /admin/status.
+  allowInsecureRuntime: false
+
+networkPolicy:
+  # cilium: also CiliumNetworkPolicies (kube-apiserver entity, FQDN rule for the GitHub App). Needs the Cilium CRDs.
+  # standard: plain NetworkPolicy only; the orchestrator gets an egress rule to the API server instead.
+  provider: cilium
+  # standard only: the API server's addresses (kubectl get endpoints kubernetes). Empty: TCP 443 and 6443 to any
+  # destination, because a plain policy cannot name the API server.
+  kubeApiCidrs: []
+  dns:
+    namespace: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  ingest:
+    # Who may reach ingest :8080, as raw NetworkPolicy `from` entries, for example an ingress controller:
+    #   - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
+    #     podSelector: { matchLabels: { app.kubernetes.io/name: envoy } }
+    # Empty: no policy (ingest is reachable by port-forward only). kubelet probes and port-forward come from the node.
+    clients: []
+  orchestrator:
+    # Extra raw egress rules, for example api.github.com:443 with provider standard and kubeApiCidrs.
+    extraEgress: []
+
+orchestrator:
+  # One Deployment per shard, one replica each, strategy Recreate (one owner per schema, ADR 0017). The count can only
+  # grow: sessions stay on their shard, and ingest refuses to start when it sees sessions on a shard without a route.
+  shards: 1
+  resources:
+    requests: { cpu: 100m, memory: 2Gi }
+    limits: { cpu: "1", memory: 2Gi }
+  # Added to NO_PROXY (the model dispatcher already bypasses cluster suffixes, the database and the OneCLI API).
+  noProxy: []
+  # Extra environment variables as {name, value} (test switches, tuning).
+  extraEnv: []
+
+ingest:
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+api:
+  # Owners who may call /admin/*. Each needs a token in the Secret.
+  admins: [admin]
+  existingSecret: api-auth # key `tokens`: one `owner:token` line per API owner
+
+# Seeds Postgres once (inbox.settings, ADR 0008); later changes go through PUT /admin/settings. The allowlist decides
+# which providers the orchestrator installs at start. "provider/model", the model id may contain slashes.
+models:
+  default:
+    provider: scripted
+    id: scripted-1
+    reasoning: medium
+  allowlist:
+    - scripted/scripted-1
+    - scripted/scripted-2
+  turnBudget: 100
+
+github:
+  app:
+    existingSecret: "" # optional: keys private-key.pem, app-id, installation-id. Repo sessions are off without it.

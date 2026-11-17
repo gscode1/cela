@@ -79,12 +79,39 @@ for (const { path, text } of files) {
 }
 
 // Rendered Helm charts (charts/*, default values): the same pod kinds, the same checks.
+// pi-durable is rendered a second time with every option that adds a volume, a variable or another Deployment.
+const variants: Record<string, string[][]> = {
+  "pi-durable": [
+    [],
+    [
+      "--set",
+      "onecli.mode=external",
+      "--set",
+      "onecli.external.apiUrl=http://onecli.onecli:10256",
+      "--set",
+      "onecli.external.gatewayUrl=http://onecli.onecli:10255",
+      "--set",
+      "onecli.external.caConfigMap=ca",
+      "--set",
+      "github.app.existingSecret=gh",
+      "--set",
+      "sandbox.runtimeClassName=runc",
+      "--set",
+      "security.allowInsecureRuntime=true",
+      "--set",
+      "orchestrator.shards=3",
+    ],
+  ],
+};
 for (const chart of chartNames()) {
-  for (const doc of renderDocs(chart)) {
-    if (typeof doc.kind !== "string" || !new RegExp(`^(${podKinds})$`).test(doc.kind)) continue;
-    const spec = podSpecOf(doc.kind, doc);
-    expect(spec, `charts/${chart}: ${doc.kind} has no pod spec`).toBeDefined();
-    discovered.push({ file: `charts/${chart} (helm template)`, kind: doc.kind, spec: spec ?? {} });
+  for (const [i, args] of (variants[chart] ?? [[]]).entries()) {
+    for (const doc of renderDocs(chart, args)) {
+      if (typeof doc.kind !== "string" || !new RegExp(`^(${podKinds})$`).test(doc.kind)) continue;
+      const spec = podSpecOf(doc.kind, doc);
+      expect(spec, `charts/${chart}: ${doc.kind} has no pod spec`).toBeDefined();
+      const file = `charts/${chart} (helm template${i > 0 ? `, variant ${String(i)}` : ""})`;
+      discovered.push({ file, kind: doc.kind, spec: spec ?? {} });
+    }
   }
 }
 
@@ -111,6 +138,7 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
       "tests/e2e/runner-pod.yaml",
       "tests/e2e/job.yaml.tpl",
       "charts/pi-postgres (helm template)",
+      "charts/pi-durable (helm template)",
     ]) {
       expect(byFile.has(known), `${known} was not discovered`).toBe(true);
     }

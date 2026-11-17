@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-ingest
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: pi-ingest
+  ports:
+    - { name: http, port: 8080, targetPort: http }

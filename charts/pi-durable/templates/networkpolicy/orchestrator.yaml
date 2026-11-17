@@ -1,0 +1,80 @@
+{{- /*
+pi-orchestrator (every shard, label app.kubernetes.io/name=pi-orchestrator, control port 8081).
+Ingress: ingest (stream proxy) only. Egress: the database, sandboxd on sandbox pods, the OneCLI gateway and API, the
+Kubernetes API (provider-specific below). DNS is allow-dns-egress.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-allow-ingress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-ingest
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-allow-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-orchestrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-durable.databaseTo" . | trim | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.database.external.egress.port }} }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-sandbox
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 9090 }
+    {{- if eq .Values.onecli.mode "external" }}
+    - to:
+        {{- include "pi-durable.onecliTo" . | nindent 8 }}
+      ports:
+        {{- $gateway := include "pi-durable.urlPort" .Values.onecli.external.gatewayUrl }}
+        {{- $api := include "pi-durable.urlPort" .Values.onecli.external.apiUrl }}
+        - { protocol: TCP, port: {{ $gateway }} }
+        {{- if ne $api $gateway }}
+        - { protocol: TCP, port: {{ $api }} }
+        {{- end }}
+    {{- end }}
+    {{- if eq .Values.networkPolicy.provider "standard" }}
+    # A plain policy cannot name the API server (the kubernetes Service is translated to node addresses), so without
+    # kubeApiCidrs this allows 443 and 6443 to any destination. Under default-deny-all the orchestrator could not create
+    # SandboxClaims otherwise. provider cilium uses the kube-apiserver entity instead.
+    {{- if .Values.networkPolicy.kubeApiCidrs }}
+    - to:
+        {{- range .Values.networkPolicy.kubeApiCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    {{- else }}
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.orchestrator.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
