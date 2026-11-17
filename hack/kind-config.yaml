@@ -8,3 +8,12 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
     image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    # expose:begin (hack/kind-up.sh --no-expose cuts these lines). Port mappings exist only when the cluster is created.
+    # They bind the host's loopback only, never on all interfaces, so nothing else on the network reaches them. The container ports
+    # are the NodePorts of ingest.expose (charts/pi-durable) and expose.nodePorts (charts/pi-onecli). The host ports are
+    # fixed: OneCLI's externalUrl is http://localhost:10254 and its dashboard calls the API at localhost:10256.
+    extraPortMappings:
+      - { containerPort: 30080, hostPort: 8080, listenAddress: "127.0.0.1", protocol: TCP } # session API (ingest)
+      - { containerPort: 30254, hostPort: 10254, listenAddress: "127.0.0.1", protocol: TCP } # OneCLI dashboard
+      - { containerPort: 30256, hostPort: 10256, listenAddress: "127.0.0.1", protocol: TCP } # OneCLI management API
+    # expose:end
