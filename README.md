@@ -21,7 +21,8 @@ see the open items in [plan.md](plan.md).
 4. Model calls go through the **OneCLI gateway**, which adds the subscription or API key on the way out.
 5. Tool calls (bash, read, write, edit) run in the session's **sandbox**: a pod from
    [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) under gVisor, with the `pi-env` daemon inside.
-   It is created on the first tool call and keeps its workspace on a PVC. The orchestrator reaches it through an
+   It is created on the first tool call (a repository session's is provisioned and cloned before its first input) and
+   keeps its workspace on a PVC. The orchestrator reaches it through an
    in-process broker and a thin relay per session ([ADR 0016](docs/decisions/0016-in-process-broker.md)); an idle
    sandbox is suspended and resumed by the next tool call.
 6. Progress and answers stream back to the client over SSE.
@@ -39,8 +40,9 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
   database, the Kubernetes API, OneCLI's management API and each other.
 - Each sandbox's daemon accepts only its own token, derived from a master key the orchestrator holds
   ([ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)).
-- No credentials in sandboxes or in the agent: OneCLI holds them and only relays to allowlisted hosts
-  ([host rules](docs/onecli-host-rules.md)).
+- No upstream credentials (model keys, GitHub tokens) in sandboxes or in the agent: OneCLI holds them and only relays to
+  allowlisted hosts ([host rules](docs/onecli-host-rules.md)). A repository session's sandbox can read its own per-session
+  OneCLI proxy token, which is only usable through the gateway ([repo workspace](docs/repo-workspace.md)).
 
 ## Repository layout
 

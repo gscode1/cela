@@ -100,7 +100,9 @@ Enforcement starts per pod the moment any policy selects it, so the safe route i
    `kubectl apply --dry-run=client -k deploy`.)
 4. Run the e2e suites (phase3, phase4, phase4b with `REAL_MODEL=1` once) and watch `hubble observe -n pi-durable-poc
    --verdict AUDIT`. Every AUDIT entry is a missing allow: fix the policy first.
-5. Disable audit mode (enforce). Re-run phase3 with `NETPOL_ENFORCED=1`: isolation must PASS.
+5. Disable audit mode (enforce). Re-run phase3: isolation must PASS. `NETPOL_ENFORCED=1` (makes absent enforcement a FAIL,
+   not KNOWN-FAIL) is read only by `run-phase3.sh`; `tests/e2e/run.sh` and `job.yaml.tpl` do not forward it to the driver Job,
+   so through the runner phase3 stays on `auto`. Read the isolation line yourself: it must say PASS, not KNOWN-FAIL.
 6. In the Argo repo, add `deploy/onecli-policies/` (audit first, as its README says). Check the orchestrator still gets model
    answers and the dashboard still loads.
 7. Last: `deploy/onecli-host-rules.sh --apply` (see `docs/onecli-host-rules.md`), then its verify probes.
@@ -121,8 +123,11 @@ Fast, per layer, in reverse order:
   ```
   A pod with no policy selecting it is open again at once. Deleting only `default-deny-all` is **not** a rollback:
   the per-workload policies still select their pods and keep them default-deny.
-- One workload only (for example Postgres misbehaving): delete that workload's two policies (`postgres-allow-ingress`,
-  `postgres-allow-egress`) and its CNP; the other workloads keep their rules.
+- One workload only (for example Postgres misbehaving): deleting its own policies does not help, because
+  `default-deny-all` and the DNS-only policies (`allow-dns-egress`, `dns-egress-kube-dns-only`) select every pod. Policies
+  only add, so apply a temporary allow-all for that workload instead (for Postgres: `podSelector` `cnpg.io/cluster: pi-pg`,
+  `policyTypes: [Ingress, Egress]`, `ingress: [{}]`, `egress: [{}]`), and delete it once the policy is fixed. Audit mode on
+  that pod's endpoint is the other option.
 - Revert the commits to restore the previous sandbox-only policy set.
 
 Note: `sandbox-allow-dns-egress` from the first version is replaced by `allow-dns-egress`; applying this set does not

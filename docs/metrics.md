@@ -7,7 +7,8 @@ bridge memory can be measured instead of guessed. All of it is JSON log lines on
 ## Where a turn spends its time
 
 A turn starts when the inbox hands an input to the session service (`SessionService.apply`). The sandbox is created
-lazily, at the turn's first tool call, so the order is: input handed to Pi Durable, the model runs, the first tool call
+lazily, at the turn's first tool call (a repository session is the exception: `SessionService.prepare` provisions the
+sandbox and clones before the input is submitted, so that cost is outside the turn timing below), so the order is: input handed to Pi Durable, the model runs, the first tool call
 asks for the sandbox, the claim and bridge come up, the first command is dispatched.
 
 | Phase              | Logged when                                                                                       |

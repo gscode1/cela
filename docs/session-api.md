@@ -29,7 +29,7 @@ All routes except the probes need `Authorization: Bearer <token>`. Errors are JS
 | Call | Success | Notes |
 |---|---|---|
 | `POST /sessions` body `{ profile?, provider?, model?, reasoning?, repo?, branch? }` | `201 { sessionId, profile: { name, version }, provider, model, reasoning? }` | Creates the session for the caller (the token's owner). No conversation or sandbox yet. The body is optional; without it the session runs the default profile and the default model. `profile` (optional) is the name of a session profile (see Session profiles): an unknown, malformed or disabled-for-new profile is `400`; omitted, the settings' `defaultProfile` applies (`coding` unless changed; if that profile is gone or disabled the answer is `503`, never another profile). The profile's definition is stored with the session as a snapshot. `provider` and `model` default to the profile's `defaultModel`, `reasoning` to its `reasoning`, and then to the settings; a request value always wins, and the result is checked against the allowlist and cap as below. `provider` and `model` go together and must be a pair on the allowlist (see Models; the pair is compared field by field, so a provider id containing a slash never matches), else `400 { "error": "model <provider>/<model> is not allowed" }`. `reasoning` (optional) is the effort of the session: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; anything else is `400 { "error": "reasoning must be one of ..." }`, and a level above the operator cap `maxReasoning` is `400 { "error": "reasoning <level> is above the allowed maximum <cap>" }` (see Models). Omitted, the session gets the settings default (none stored when there is none). `repo` (`owner/name` on github.com) and `branch` (optional) give the session a cloned repository workspace, see `docs/repo-workspace.md`; a bad value is `400` (a branch follows git's ref-name rules, e.g. no path component ends in `.lock`) and `branch` without `repo` is `400`. The response echoes the model the session will use (and `repo`/`branch`), and the reasoning effort (`reasoning`, from `PI_MODEL_REASONING`; absent when unset). |
-| `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 64 KiB). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
+| `POST /sessions/{id}/events` body `{ kind, text?, sourceEventId? }` | `202 { eventId, duplicate }` | `kind` is `message`, `steer` or `cancel`. `text` is required for `message` and `steer` (at most 65,536 characters, i.e. JavaScript string length; the whole JSON body is separately limited to 128 KiB in bytes). `sourceEventId` (at most 200 characters) deduplicates. Neither may contain NUL or unpaired surrogates (Postgres cannot store them). `400` invalid body, `409` session is deleting or failed, or the id belongs to another session, `410` session deleted. |
 | `GET /sessions/{id}/stream` | `200 text/event-stream` | See Streaming. `503` with `Retry-After` while the orchestrator is down, `410` for a deleted or deleting session. Ingest picks the orchestrator by the session's shard (`PI_ORCH_URL` with `{shard}`); an orchestrator of another shard answers `421`, which a client does not see. |
 | `GET /sessions/{id}` | `200 { sessionId, status, model: { provider, model, reasoning? }, profile: { name, version }, skills?: [{ name, version, digest }], repoSkills?: true, repoContext?: true, repo?, failure?, createdAt, lastActivityAt, events: { pending, submitted, failed } }` | Answered from Postgres, so it works while the orchestrator is down. `skills` (only when the session's profile has skills) is the exact content the session pinned. `repoSkills: true` and `repoContext: true` are present only when the snapshot turned them on and the session has a repo. `status` is `active`, `failed`, `deleting` or `deleted`; `failure` is present only when `failed`. A session that predates per-session models reports the default model; one that predates profiles reports `profile: { name: "coding", version: 1 }`. |
 | `GET /admin/settings` | `200 { defaultModel, allowlist, reasoning, maxReasoning, defaultProfile, turnBudget, updatedAt, updatedBy }` | Admins only (see Models and failure). `404` if the settings row is not seeded yet. |
@@ -150,8 +150,9 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   `pi-model-config`; `insert ... on conflict do nothing`, so two replicas are safe). After that the table wins and a
   differing environment logs `settings-env-ignored` once at ingest start. The committed seed is OpenAI Codex
   `gpt-6.1-terra` (`gpt-6.1-sol` is allowlisted too, and the scripted models, which the e2e suites select through
-  `PUT /admin/settings` and restore afterwards). The orchestrator still reads `PI_MODEL_ALLOWLIST` at start to install
-  providers, so adding a new provider needs an orchestrator restart.
+  `PUT /admin/settings` and restore afterwards). With an OneCLI token the orchestrator installs every built-in provider at start, whatever
+  the allowlist says, so adding a built-in provider through settings needs no restart. Without a token it installs only the
+  allowlisted providers, and a provider the orchestrator code does not ship needs a new release.
 - **Storage.** The chosen model is stored with the session (`inbox.sessions.model_provider`, `model_id`, `model_reasoning`; migrations
   `002_models.sql`, `003_reasoning.sql`), so changing the default later does not change existing sessions. The orchestrator creates the Pi
   conversation with it; Pi Durable keeps it in the conversation across restarts (`docs/model-credentials.md`).
@@ -204,7 +205,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 
 - `POST /sessions` only inserts `inbox.sessions`. The orchestrator creates the Pi conversation on the first event or
   stream (`inbox.sessions.conversation_id`) and the SandboxClaim `pi-conv-<conversation id>` lazily at the first tool
-  call, through the Harness `env` callback, as before. A session that only chats never gets a sandbox or a PVC.
+  call, through the Harness `env` callback, as before. A session that only chats never gets a sandbox or a PVC. A
+  repository session is the exception: `prepare` provisions the sandbox and clones before the first input is submitted.
 - Ingest does not need Kubernetes access. Only the orchestrator ServiceAccount has `delete` on `sandboxclaims` and
   `persistentvolumeclaims`, namespace-scoped.
 
@@ -252,7 +254,7 @@ never touched, and neither is a session that is `active`, `failed` or `deleting`
 ## Test-only surface
 
 The orchestrator still has the Phase 3 scripted-session surface, now under `/control/...`, behind the same bearer
-token, and only when `PI_ORCH_CONTROL=1` (the manifest sets it so `tests/e2e/run-phase3.sh` keeps running). It
+token, and only when `PI_ORCH_CONTROL=1` (the production manifest leaves it unset; the e2e overlay `tests/e2e/deploy/kustomization.yaml` sets it so `tests/e2e/run-phase3.sh` keeps running). It
 bypasses the inbox. `PI_ORCH_TEST_FAULTS=1` makes the orchestrator honour `payload.testFault` on an inbox row, which
 only SQL can write; the Phase 4 crash test uses it to exit between submit and mark.
 
