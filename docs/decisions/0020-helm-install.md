@@ -1,6 +1,6 @@
 # 0020: Install with Helm releases behind one command
 
-Status: accepted as the direction, 2026-11-17 (issue #104). Not built yet. The plan, slices and acceptance checks are in
+Status: accepted as the direction, 2026-11-17 (issue #104). Built slice by slice: the app chart and `hack/install.sh` exist (slice 4, `charts/pi-durable`); the rest is planned. The plan, slices and acceptance checks are in
 [install-plan.md](../install-plan.md). Builds on [0019](0019-restricted-pod-security.md) (restricted Pod Security) and
 [0013](0013-e2e-namespace-per-run.md) (a namespace per e2e run).
 
