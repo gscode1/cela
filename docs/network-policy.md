@@ -260,4 +260,4 @@ OneCLI's sign-up-open API to it.
 **Residual kind-only risk, not closed here.** kindnet does not filter traffic to the node itself (hostNetwork Pods: the
 Kubernetes API server, kubelet, etcd), so a sandbox on kind can still reach those ports, as the isolation probe's `kube-api`
 target shows. It has no credentials for them (`automountServiceAccountToken` is false), so what it reaches is
-unauthenticated endpoints. An enforcing CNI such as Cilium closes this; that is out of scope for the kind trial.
+unauthenticated endpoints. An enforcing CNI such as Cilium closes this; that is out of scope for the kind trial and tracked in issue #139.

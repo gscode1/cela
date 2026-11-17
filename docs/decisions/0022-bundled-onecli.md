@@ -96,7 +96,7 @@ changes the Consequences above (the dashboard was reachable by port-forward only
   each NodePort and each ClusterIP to be blocked.
 - **Residual risk (kind only, unchanged by this).** kindnet does not filter traffic to the node itself, so a sandbox can
   still reach the API server, kubelet and etcd ports without credentials (`automountServiceAccountToken` is false). Only an
-  enforcing CNI such as Cilium closes that. If the Docker network's gateway were not where host connections arrive from
+  enforcing CNI such as Cilium closes that (issue #139). If the Docker network's gateway were not where host connections arrive from
   on another platform, the install would not be reachable on localhost; it would not become more open, because the rule
   names one address.
 

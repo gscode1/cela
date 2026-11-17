@@ -106,7 +106,7 @@ policies from one address (the Docker gateway of the kind network, a /32) and no
 ([network policy](docs/network-policy.md#kind-localhost-ports-kind-only)). They exist only when the cluster is created:
 `hack/kind-up.sh --no-expose` skips them (use `kubectl port-forward`), and an existing cluster without them is refused, so
 run `hack/kind-down.sh` first. On kind a sandbox can still reach the node's own ports (API server, kubelet) without
-credentials: kindnet cannot filter that; an enforcing CNI such as Cilium would. The
+credentials: kindnet cannot filter that; an enforcing CNI such as Cilium would (tracked in issue #139). The
 cluster is named `pi-durable` (`--name` or `KIND_CLUSTER_NAME`) and every command uses its own `kind-<name>` context, never
 your current one. **Not for real use:** the sandboxes run under runc, not gVisor
 ([values-kind.yaml](charts/pi-durable/values-kind.yaml)). kindnet blocks the sandbox's access to Postgres and the
