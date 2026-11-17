@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, Models } from "@earendil-works/pi-ai";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import type {
   Conversation,
@@ -139,6 +139,8 @@ export class Host {
   readonly #toolSearch: Extension;
   readonly #coding: Extension;
   readonly #unsubscribe: () => void;
+  /** What pi-ai knows here, for the catalog published with the capabilities. */
+  readonly models: Models;
 
   private constructor(
     harness: Harness,
@@ -148,7 +150,9 @@ export class Host {
     toolSearch: Extension,
     coding: Extension,
     unsubscribe: () => void,
+    models: Models,
   ) {
+    this.models = models;
     this.#harness = harness;
     this.#sandboxes = sandboxes;
     this.#storage = storage;
@@ -276,7 +280,7 @@ export class Host {
     // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
     // its tools unavailable until a retry succeeds.
     mcp.start();
-    return new Host(harness, sandboxes, storage, mcp, toolSearch, coding, unsubscribe);
+    return new Host(harness, sandboxes, storage, mcp, toolSearch, coding, unsubscribe, models);
   }
 
   /** Creates the conversation and its sandbox claim, then submits the script as the first input. */
