@@ -1,6 +1,6 @@
 # Namespace baseline and the sandbox policies. Together with networkpolicy-{ingest,orchestrator,postgres,e2e}.yaml
 # this is the whole standard NetworkPolicy set; docs/network-policy.md has the traffic matrix, apply order and rollback.
-# Only a CNI that enforces NetworkPolicy makes these real (Cilium after the c2 migration; flannel ignores them).
+# Only a CNI that enforces NetworkPolicy makes these real (for example Cilium; flannel alone ignores them).
 # Standard policies cannot name the kube-apiserver or match FQDNs: those are in deploy/cilium/ (apply it in the same step).
 #
 # Default deny, both directions, for every pod in the namespace. Everything else is an explicit allow.

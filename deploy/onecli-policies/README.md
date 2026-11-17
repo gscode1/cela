@@ -1,32 +1,16 @@
-# OneCLI network policies (for your Argo repo)
+# Example OneCLI network policies
 
-Status: merged into argo-c2 `applications/onecli` (#53, 2026-11-16) and enforced. This copy is the reference;
-change argo-c2 first and keep this in step.
+Apply these in **your OneCLI namespace**, separately from the agent stack, using kubectl, Kustomize, Helm or your GitOps manager. They require Cilium CRDs and are not included in `deploy/kustomization.yaml`.
 
-These two CiliumNetworkPolicies protect the `onecli` namespace. They are **not applied from this repository** and
-they do not belong in it: `onecli` is managed by ArgoCD from the `argo-c2` repo, and Argo would revert anything applied
-by hand. Copy `ingress.yaml` and `egress.yaml` (or this directory with its `kustomization.yaml`) into the OneCLI app
-path of `argo-c2` and let Argo sync them.
+- `ingress.yaml` admits orchestrators to the gateway (:10255) and management API (:10256), and sandboxes to the gateway only. It also admits e2e namespaces labelled `pi-durable-e2e=true` (see [e2e](../../docs/e2e.md)). Only trusted operators should be able to assign that label.
+- The last ingress entry is an **optional Envoy Gateway example** for dashboard/API/proxy access. Replace its namespace and pod selectors for your ingress controller, or remove it and use port-forward. No public hostname or HTTPRoute is required. Protect dashboard and auth routes from untrusted clients.
+- `egress.yaml` allows DNS, a database and HTTPS to the listed provider, GitHub, package and MCP hosts. It denies private, link-local and shared-address ranges as defence against DNS rebinding. Keep the FQDN list in step with [OneCLI host rules](../../docs/onecli-host-rules.md).
 
-- `ingress.yaml`: :10255 (gateway) from the pi-durable-poc orchestrator and sandboxes and from Envoy; :10256 (API) from
-  the orchestrator and Envoy; :10254 (dashboard) from Envoy only. Envoy is there because HTTPRoute
-  `onecli.example.com` is the only other client found on c2.
-- `egress.yaml`: DNS to kube-dns, the onecli database on `postgres-clusters/pg-db-cluster`, and an FQDN allowlist on
-  :443. Everything else, including cluster, LAN and node addresses, is denied.
+Before applying, patch `metadata.namespace`, the OneCLI pod label (`app=onecli`), the agent namespace (`pi-durable-poc`), DNS selectors, database namespace/cluster (`onecli`/`onecli-db` in this example), and ingress-controller selectors. Add Redis or other dependencies if your OneCLI installation uses them. The database example assumes CloudNativePG; use your database's actual selectors and ports.
 
-e2e run namespaces (`pi-e2e-<id>`, label `pi-durable-e2e=true`) need two more ingress entries in argo-c2, described in
-`docs/e2e.md` ("The argo-c2 change"). This copy is not changed until argo-c2 has them.
+```sh
+kubectl kustomize deploy/onecli-policies   # review first
+kubectl apply -k deploy/onecli-policies   # only after adapting to your installation
+```
 
-Prerequisites and order (details in `docs/network-policy.md`):
-
-1. Cilium is the CNI and `kubectl get crd ciliumnetworkpolicies.cilium.io` succeeds. Until then these manifests fail to
-   sync in Argo (unknown kind).
-2. The pi-durable-poc policies (`deploy/networkpolicy*.yaml`, `deploy/cilium/`) are applied first, so the orchestrator
-   and sandboxes already have their egress allows when OneCLI starts denying anything else.
-3. Put the OneCLI pod in policy audit mode first, read `hubble observe --verdict AUDIT`, then enforce. OneCLI may
-   call hosts not on the list (UNVERIFIED); add them to `egress.yaml` and to the host rules (`docs/onecli-host-rules.md`).
-
-Adding a host (for example an MCP server, `mcp.deepwiki.com`): change `egress.yaml` in the Argo repo first, then this
-copy, then `deploy/onecli-host-rules.sh` (the three lists stay identical).
-
-Rollback: delete the two policies in the Argo repo (a CiliumNetworkPolicy deletion restores allow-all for the pod).
+Start in policy audit mode, inspect Hubble for missing dependencies, then enforce and run the isolation and OneCLI suites. Check that the private CIDR denies do not override access to your database under your Cilium configuration. These examples do not install or configure OneCLI itself.

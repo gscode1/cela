@@ -24,7 +24,7 @@ const walk = (dir: string): string[] =>
 
 describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
   // The long-lived deployment's own manifests (its namespace and the kustomizations that set it) and the reference copy
-  // of the policies that live in the argo-c2 repository.
+  // of the policies applied in the OneCLI namespace.
   const allowedFiles = new Set([
     "deploy/namespace.yaml",
     "deploy/kustomization.yaml",

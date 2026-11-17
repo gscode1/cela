@@ -1,15 +1,5 @@
-# Who may reach the OneCLI pod (namespace onecli, label app=onecli; three containers in one pod: web :10254,
-# gateway :10255, api :10256). Writing an ingress rule for the pod makes everything not listed here denied.
-#
-# Current clients, listed read-only on c2 on 2026-11-15 (every pod, Deployment, CronJob and Job in the cluster searched
-# for onecli.onecli, onecli:10, onecli.example.com): only pi-orchestrator. The other user is the Envoy Gateway data plane,
-# through HTTPRoute onecli.example.com (/ -> web 10254, /v1 /auth /scim -> api 10256, /gw -> gateway 10255).
-#   :10255 gateway  pi-durable-poc orchestrator and sandboxes, plus Envoy (the /gw route)
-#   :10256 api      pi-durable-poc orchestrator, plus Envoy (the dashboard and the admin script reach /v1 through it)
-#   :10254 web      Envoy only (dashboard)
-# Kubelet probes and `kubectl port-forward` come from the local node (host); Cilium admits that by default.
-# If /v1 and /gw must not be reachable from the LAN at all, drop ports 10255 and 10256 from the Envoy rule and use
-# port-forward for admin work; the dashboard then also needs it, because its browser calls go to /v1.
+# Example: admit orchestrators to gateway and API, sandboxes to gateway only.
+# Adapt namespace and pod selectors; the final ingress-controller rule is optional. See README.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -35,6 +25,23 @@ spec:
       toPorts:
         - ports:
             - { port: "10255", protocol: TCP }
+    # Trusted e2e namespaces (only cluster operators may assign this label).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            app.kubernetes.io/name: pi-orchestrator
+      toPorts:
+        - ports:
+            - { port: "10255", protocol: TCP }
+            - { port: "10256", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            app.kubernetes.io/name: pi-sandbox
+      toPorts:
+        - ports:
+            - { port: "10255", protocol: TCP }
+    # Optional ingress-controller example; replace or remove for port-forward-only access.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system

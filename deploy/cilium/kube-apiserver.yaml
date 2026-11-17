@@ -1,7 +1,7 @@
-# Kubernetes API access. A standard NetworkPolicy cannot allow it: the kubernetes Service (10.96.0.1:443) is
-# translated to the control-plane node addresses (<control-plane-ips>:6443 on c2), and node IPs are not pod IPs. Cilium's
+# Kubernetes API access. A standard NetworkPolicy cannot allow it: the kubernetes Service (ClusterIP:443) is
+# translated to the control-plane node addresses (<control-plane-ips>:6443), and node IPs are not pod IPs. Cilium's
 # `kube-apiserver` entity follows the real endpoints. Both 443 and 6443 are listed because the port seen by policy
-# depends on whether service translation happens before the policy check (UNVERIFIED on c2; both are harmless).
+# depends on whether service translation happens before the policy check (verify on your cluster; both are harmless).
 #
 # Who needs it: the orchestrator (SandboxClaim, Pod, PVC calls; the e2e-runner pod has the same label), the e2e driver
 # (everything the suites do through kubectl), and the CNPG instance manager in pi-pg (it watches its Cluster resource).

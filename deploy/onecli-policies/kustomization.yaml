@@ -1,4 +1,4 @@
-# For the user's Argo repo (argo-c2), not applied from here. See README.md.
+# Apply separately in your OneCLI namespace after adapting selectors. See README.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

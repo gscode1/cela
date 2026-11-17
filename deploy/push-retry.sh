@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by deploy/push-code.sh and deploy/push-ingest.sh. The API server (c2 especially) sometimes resets a
+# Sourced by deploy/push-code.sh and deploy/push-ingest.sh. The API server sometimes resets a
 # long-lived kubectl cp/exec stream; one reset must not fail a whole e2e run. Only wrap steps that can be redone
 # safely. PUSH_RETRY_BACKOFF_SECONDS (default 2) is multiplied by the attempt number.
 

@@ -1,18 +1,6 @@
-# Where the OneCLI pod may connect. Writing an egress rule makes everything not listed here denied, so the
-# cluster, the LAN and the node network are closed by default; the only exceptions are below.
-#
-#   DNS     kube-dns, with a DNS proxy rule: toFQDNs only works for names Cilium saw resolved through it.
-#   DB      the onecli database on the shared CNPG cluster (DATABASE_URL points at pg-db-cluster-rw.postgres-clusters:5432).
-#   FQDNs   the host allowlist, :443 only. Keep it in step with the OneCLI host rules (docs/onecli-host-rules.md):
-#           the gateway rules say what a token may ask for, this says where the pod can physically go.
-# The egressDeny block is defence in depth: a public name that resolves to a private address (DNS rebinding) must
-# not be reachable even if it is on the list. The gateway already refuses private targets (v2.20.0); this does not
-# depend on it. Deny wins over allow, so the cluster CIDRs must not swallow the Postgres pod: CIDR rules do not match
-# pod endpoints by default, but that is UNVERIFIED on c2 until Cilium runs. Check with `hubble observe` first.
-#
-# UNVERIFIED: whether web, api or gateway call anything else (update checks, telemetry, ONECLI_EXTERNAL_URL
-# https://onecli.example.com from inside the pod). Roll out with policy audit mode on the pod, read Hubble for
-# would-be drops, then enforce.
+# Example OneCLI egress: DNS, database and public HTTPS allowlist. Adapt dependencies before applying.
+# Private CIDR denies protect against DNS rebinding; verify their interaction with database endpoints.
+# Roll out in audit mode, inspect Hubble, then enforce. See README.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -43,8 +31,8 @@ spec:
               - matchPattern: "*"
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: postgres-clusters
-            cnpg.io/cluster: pg-db-cluster
+            k8s:io.kubernetes.pod.namespace: onecli
+            cnpg.io/cluster: onecli-db
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
