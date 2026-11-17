@@ -51,6 +51,13 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(result.stdout.match(/digest:/g)).toHaveLength(4);
   });
 
+  it("accepts build flags without an image target", () => {
+    const result = run(["--platform", "linux/arm64"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(log().trim().split("\n")).toHaveLength(4);
+    expect(log()).toContain("--load");
+  });
+
   it("publishes only with explicit opt-in and uses IMAGE_REPO as a prefix", () => {
     const result = run(["ingest", "--push"], "registry.example.com/team/");
     expect(result.status, result.stderr).toBe(0);

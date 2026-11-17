@@ -23,7 +23,7 @@ IMAGE_REPO=registry.example.com/team images/build.sh all --push
 Use a clean checkout so the tag identifies its source. The script prints image references and content digests;
 use `registry.example.com/team/pi-orchestrator@sha256:…` in your overlay. Without `--push`, a single native
 platform is loaded into Docker; other builds write `pi-<name>-<tag>.oci.tar` in the current directory. No images
-are published automatically. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
+are published automatically. Omitting the image target builds `all`. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
 
 All Dockerfiles take the repository root as context. App builds use the frozen pnpm lockfile and deploy workspace
 dependencies, including the vendored adapter/SDK and session-core SQL migrations. The driver includes CLI tools,

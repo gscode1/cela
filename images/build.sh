@@ -3,8 +3,8 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 usage() { echo 'usage: images/build.sh [orchestrator|ingest|sandbox|e2e-driver|all] [--push] [--platform linux/amd64,linux/arm64]' >&2; exit 64; }
-image=${1:-all}
-[[ $# -eq 0 ]] || shift
+image=all
+if [[ $# -gt 0 && $1 != --* ]]; then image=$1; shift; fi
 case $image in orchestrator|ingest|sandbox|e2e-driver|all) ;; *) usage ;; esac
 push=0
 platform=linux/amd64,linux/arm64
