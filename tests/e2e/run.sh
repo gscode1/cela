@@ -18,6 +18,8 @@
 # external database of pi-durable), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
 # policies) and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
 # same time, and the long-lived namespace pi-durable-poc is never touched: this script refuses any other prefix.
+#   DB_TLS=1           the run's Postgres requires TLS (charts/pi-postgres tls.requireTls) and pi-durable verifies it
+#                      (database.tls verify-full), with a throwaway CA made for the run (docs/e2e.md)
 #   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
 #   KEEP_NS_ON_FAIL=1  keep it only when the run did not pass
 #   RUN_ID=<id>        use pi-e2e-<id> (default: 6 random hex digits); an existing e2e namespace is reused (re-run in a kept one)
@@ -63,6 +65,9 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 log() { printf '\n## %s\n' "$*"; }
 
+[[ ${DB_TLS:-} =~ ^[01]?$ ]] || { echo "DB_TLS must be unset, 0 or 1" >&2; exit 64; }
+db_tls=${DB_TLS:-0}
+export DB_TLS=$db_tls # read by chart-values.py
 [[ ${NETPOL_ENFORCED:-} =~ ^[01]?$ ]] || { echo "NETPOL_ENFORCED must be unset, 0 or 1" >&2; exit 64; }
 only=${ONLY:-} # ONLY="a,b" runs just those tests of the phase; smoke sets its own list
 [[ ${E2E_PARALLEL:-4} =~ ^[1-9][0-9]*$ ]] || { echo "E2E_PARALLEL must be a positive integer" >&2; exit 64; }
@@ -211,8 +216,33 @@ if ! k get secret pi-postgres-auth >/dev/null 2>&1; then
   k create secret generic pi-postgres-auth --from-file="$work/pgauth" >/dev/null
   rm -rf "$work/pgauth"
 fi
+# DB_TLS=1: a throwaway CA and a server certificate for the Service names, made in the private temp dir and deleted
+# again; only the Secrets stay in the namespace. pi-postgres-tls (kubernetes.io/tls) is for the server, pi-db-tls-ca
+# (the public CA only) for the clients: pi-durable's database.tls and the e2e psql client (fns.sh). A reused namespace
+# keeps both, so the retained database and its certificate stay a pair. No key is ever printed or passed as an argument.
+if [[ $db_tls == 1 ]] && ! { k get secret pi-postgres-tls >/dev/null 2>&1 && k get secret pi-db-tls-ca >/dev/null 2>&1; }; then
+  log "database TLS: throwaway CA and server certificate for pi-postgres.$ns.svc"
+  tls=$work/tls
+  mkdir -p "$tls"
+  chmod 700 "$tls"
+  printf '[req]\ndistinguished_name=dn\nprompt=no\nx509_extensions=ext\n[dn]\nCN=pi-e2e-ca-%s\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n' \
+    "$run_id" >"$tls/ca.cnf"
+  printf '[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:pi-postgres,DNS:pi-postgres.%s,DNS:pi-postgres.%s.svc,DNS:pi-postgres.%s.svc.cluster.local\n' \
+    "$ns" "$ns" "$ns" >"$tls/server.ext"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 7 -config "$tls/ca.cnf" \
+    -keyout "$tls/ca.key" -out "$tls/ca.crt" >/dev/null 2>&1
+  openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=pi-postgres.$ns.svc" \
+    -keyout "$tls/tls.key" -out "$tls/server.csr" >/dev/null 2>&1
+  openssl x509 -req -in "$tls/server.csr" -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial -days 7 \
+    -extfile "$tls/server.ext" -extensions ext -out "$tls/tls.crt" >/dev/null 2>&1
+  openssl verify -CAfile "$tls/ca.crt" "$tls/tls.crt" >/dev/null || { echo "the throwaway server certificate does not verify" >&2; exit 1; }
+  k create secret tls pi-postgres-tls --cert="$tls/tls.crt" --key="$tls/tls.key" --dry-run=client -o yaml | k apply -f - >/dev/null
+  k create secret generic pi-db-tls-ca --from-file=ca.crt="$tls/ca.crt" --dry-run=client -o yaml | k apply -f - >/dev/null
+  rm -rf "$tls"
+fi
 pg_values=(--set persistence.size=1Gi --set persistence.retain=false
   --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"}]')
+[[ $db_tls != 1 ]] || pg_values+=(--set tls.existingSecret=pi-postgres-tls --set tls.requireTls=true)
 [[ -z ${STORAGE_CLASS:-} ]] || pg_values+=(--set "persistence.storageClass=$STORAGE_CLASS")
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-postgres "$root/charts/pi-postgres" --namespace "$ns" \
   "${pg_values[@]}" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm-pg.log" 2>&1 || {
@@ -230,6 +260,65 @@ umask 077
 k create secret generic pi-db-uri --from-file=uri="$work/uri" --dry-run=client -o yaml | k apply -f - >/dev/null
 rm -f "$work/uri"
 k wait --for=condition=Ready pod/pi-postgres-0 --timeout=300s >/dev/null
+
+# DB_TLS=1: prove the server refuses plain TCP, from a client the network policy admits (label e2e-db-client, like
+# the e2e psql Pod). A rejection that is only a refused connection would prove nothing, so the check needs the
+# server's own pg_hba message, and a verified TLS connection with the same role must work (positive control).
+if [[ $db_tls == 1 ]]; then
+  log "database TLS: plain connections must be rejected, verified TLS must work"
+  pg_image=$(k get pod pi-postgres-0 -o jsonpath='{.spec.containers[?(@.name=="postgres")].image}')
+  k delete pod e2e-tls-probe --ignore-not-found --wait=true >/dev/null
+  k create -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-tls-probe
+  labels:
+    app.kubernetes.io/name: e2e-db-client
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: psql
+      image: "$pg_image"
+      command: [sleep, "300"]
+      env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef: {name: pi-postgres-auth, key: pi-password}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: "1", memory: 128Mi}
+      volumeMounts:
+        - {name: db-tls, mountPath: /etc/pi-db-tls, readOnly: true}
+  volumes:
+    - name: db-tls
+      secret: {secretName: pi-db-tls-ca}
+YAML
+  k wait --for=condition=Ready pod/e2e-tls-probe --timeout=300s >/dev/null
+  pg_conn="host=pi-postgres.$ns.svc port=5432 dbname=pi user=pi connect_timeout=10"
+  # shellcheck disable=SC2016 # expanded in the Pod, not here
+  [[ $(k exec e2e-tls-probe -- sh -c 'exec psql "$1 sslmode=verify-full sslrootcert=/etc/pi-db-tls/ca.crt" -X -At -c "select 1"' sh "$pg_conn" 2>&1) == 1 ]] || {
+    echo "database TLS: a verified TLS connection (sslmode=verify-full) to pi-postgres.$ns.svc failed" >&2
+    exit 1
+  }
+  # shellcheck disable=SC2016
+  plain=$(k exec e2e-tls-probe -- sh -c 'exec psql "$1 sslmode=disable" -X -At -c "select 1" 2>&1' sh "$pg_conn" || true)
+  [[ $plain == *"pg_hba.conf"*"no encryption"* ]] || {
+    echo "database TLS: expected the server to reject sslmode=disable with a pg_hba.conf error, got: ${plain:-<no output>}" >&2
+    exit 1
+  }
+  echo "database TLS: plain TCP rejected by the server (pg_hba.conf), verify-full accepted"
+  k delete pod e2e-tls-probe --ignore-not-found --wait=false >/dev/null
+fi
 
 # The chart, installed exactly as a user installs it. Orchestrator shards: the shards suite needs two (docs/scaling.md);
 # the shard count can only grow, so a reused namespace that already has two keeps them.
