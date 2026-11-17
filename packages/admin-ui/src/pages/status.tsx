@@ -126,7 +126,20 @@ export function ShardStatusPage() {
             </ul>
           </Alert>
         )}
-        {summary.healthy && (
+        {summary.notes.length > 0 && (
+          <div
+            className="flex flex-col gap-1 text-sm text-muted-foreground"
+            data-testid="isolation-note"
+          >
+            {summary.healthy && summary.runtimes.length === 0 && (
+              <p>Network isolation is enforced.</p>
+            )}
+            {summary.notes.map((note) => (
+              <p key={note}>{note}</p>
+            ))}
+          </div>
+        )}
+        {summary.healthy && summary.runtimes.length > 0 && (
           <>
             <p
               className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
@@ -143,7 +156,9 @@ export function ShardStatusPage() {
             </details>
           </>
         )}
-        {!summary.healthy && shards.length > 0 && <ShardTable shards={shards} />}
+        {!(summary.healthy && summary.runtimes.length > 0) && shards.length > 0 && (
+          <ShardTable shards={shards} />
+        )}
         {shards.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <Button

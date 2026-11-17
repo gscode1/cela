@@ -70,6 +70,8 @@ export interface IsolationSummary {
   healthy: boolean;
   /** One line per problem, naming the shard when there is more than one. */
   problems: string[];
+  /** Normal states worth a muted line: no sandbox has started yet, so the runtime is not confirmed. */
+  notes: string[];
   /** A probe is running: not a problem, but not healthy yet either. */
   checking: boolean;
   /** The runtimes the sandboxes run under, for the healthy sentence. */
@@ -78,12 +80,15 @@ export interface IsolationSummary {
 
 export function summarizeIsolation(shards: readonly ShardStatus[]): IsolationSummary {
   const problems: string[] = [];
+  const notes: string[] = [];
   const several = shards.length > 1;
   for (const shard of shards) {
     const who = several ? `Shard ${String(shard.shard)}: ` : "";
     const runtime = runtimeText(shard);
     if (shard.observedRuntime === null)
-      problems.push(`${who}no sandbox has started yet, so its runtime is not verified.`);
+      notes.push(
+        `${who}${several ? "n" : "N"}o sandbox has started since the last restart, so the runtime is not confirmed yet.`,
+      );
     else if (runtime.mismatch) problems.push(`${who}${runtime.text}.`);
     if (shard.networkPolicy === "not-enforced")
       problems.push(`${who}network isolation is not enforced.`);
@@ -101,6 +106,7 @@ export function summarizeIsolation(shards: readonly ShardStatus[]): IsolationSum
   return {
     healthy: shards.length > 0 && problems.length === 0 && !checking,
     problems,
+    notes,
     checking,
     runtimes,
   };
