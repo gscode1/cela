@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pi-postgres
+description: A single Postgres 17 instance with the databases and roles pi and onecli, for evaluation (no HA, no backup).
+type: application
+version: 0.1.0
+appVersion: "17"

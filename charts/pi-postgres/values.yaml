@@ -1,0 +1,63 @@
+# Bundled Postgres for pi-durable-k8s (docs/install-plan.md D3). One replica, no HA, no backup: for evaluation.
+# Production uses an external Postgres instead.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Pinned by digest (multi-arch index). Upgrade on purpose; a major version change needs a dump and restore.
+image:
+  repository: postgres
+  tag: 17-bookworm
+  digest: sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+  pullPolicy: IfNotPresent
+
+# Secrets are only referenced, never created or generated here (D8). The Secrets must exist before the install.
+auth:
+  superuser:
+    existingSecret: pi-postgres-auth
+    passwordKey: postgres-password
+  # Application databases. Each role owns its database and is not a superuser; nobody else may connect to it.
+  databases:
+    pi:
+      name: pi
+      role: pi
+      existingSecret: pi-postgres-auth
+      passwordKey: pi-password
+    onecli:
+      name: onecli
+      role: onecli
+      existingSecret: pi-postgres-auth
+      passwordKey: onecli-password
+
+persistence:
+  size: 10Gi
+  storageClass: "" # "" = the cluster default class
+  # true: the PVC survives helm uninstall and a StatefulSet deletion (the data is kept; a later install reuses it).
+  # false: the PVC is deleted with the StatefulSet.
+  retain: true
+
+resources:
+  postgres:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  init:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
+
+# Ingress to 5432 is admitted only from pods matching one of these labels in the same namespace. Add the e2e client or
+# another consumer here. An empty list admits nobody.
+networkPolicy:
+  enabled: true
+  clientSelectors:
+    - { app.kubernetes.io/name: pi-orchestrator }
+    - { app.kubernetes.io/name: pi-ingest }
+    - { app.kubernetes.io/name: onecli }
+
+# Seconds Kubernetes waits for a clean shutdown.
+terminationGracePeriodSeconds: 60
+
+podLabels: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

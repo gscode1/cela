@@ -1,0 +1,142 @@
+{{- $db := .Values.auth.databases }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "pi-postgres.fullname" . }}
+  labels:
+    {{- include "pi-postgres.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ include "pi-postgres.fullname" . }}-headless
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: {{ ternary "Retain" "Delete" .Values.persistence.retain }}
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "pi-postgres.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pi-postgres.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # A change to the init script restarts the Pod, so it runs again.
+        checksum/init: {{ printf "%s%s" (.Files.Get "files/init.sh") (.Files.Get "files/init.sql") | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: {{ include "pi-postgres.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          env:
+            # A subdirectory: the volume root may hold lost+found.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - { name: POSTGRES_USER, value: postgres }
+            {{- include "pi-postgres.secretEnv" (dict "name" "POSTGRES_PASSWORD" "secret" .Values.auth.superuser.existingSecret "key" .Values.auth.superuser.passwordKey) | nindent 12 }}
+          securityContext:
+            {{- include "pi-postgres.containerSecurityContext" . | nindent 12 }}
+          startupProbe:
+            exec: { command: [pg_isready, -q, -h, /var/run/postgresql] }
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 5
+          livenessProbe:
+            exec: { command: [pg_isready, -q, -h, /var/run/postgresql] }
+            periodSeconds: 10
+            failureThreshold: 6
+            timeoutSeconds: 5
+          readinessProbe:
+            exec: { command: [pg_isready, -q, -h, /var/run/postgresql] }
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.resources.postgres | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
+        # Creates the databases and roles on every Pod start (docker-entrypoint only does it on an empty data
+        # directory). The Pod is Ready only after this container is, which is after init.sql succeeded.
+        - name: init
+          image: {{ include "pi-postgres.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [sh, /config/init.sh]
+          env:
+            - { name: PI_ROLE, value: {{ $db.pi.role | quote }} }
+            - { name: PI_DB, value: {{ $db.pi.name | quote }} }
+            {{- include "pi-postgres.secretEnv" (dict "name" "PI_PASSWORD" "secret" $db.pi.existingSecret "key" $db.pi.passwordKey) | nindent 12 }}
+            - { name: ONECLI_ROLE, value: {{ $db.onecli.role | quote }} }
+            - { name: ONECLI_DB, value: {{ $db.onecli.name | quote }} }
+            {{- include "pi-postgres.secretEnv" (dict "name" "ONECLI_PASSWORD" "secret" $db.onecli.existingSecret "key" $db.onecli.passwordKey) | nindent 12 }}
+          securityContext:
+            {{- include "pi-postgres.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            exec: { command: [test, -f, /tmp/init-done] }
+            periodSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources.init | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: init-tmp, mountPath: /tmp }
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: init-tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "pi-postgres.fullname" . }}-init
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "pi-postgres.selectorLabels" . | nindent 10 }}
+        {{- if .Values.persistence.retain }}
+        annotations:
+          helm.sh/resource-policy: keep
+        {{- end }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}

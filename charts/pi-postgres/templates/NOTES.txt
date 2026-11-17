@@ -1,0 +1,16 @@
+Postgres {{ .Chart.AppVersion }} is installing as {{ include "pi-postgres.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+  Service:   {{ include "pi-postgres.fullname" . }}.{{ .Release.Namespace }}.svc:5432
+  Databases: {{ .Values.auth.databases.pi.name }} (role {{ .Values.auth.databases.pi.role }}), {{ .Values.auth.databases.onecli.name }} (role {{ .Values.auth.databases.onecli.role }})
+
+Wait for it:   kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "pi-postgres.fullname" . }}
+
+The passwords are read from the Secrets named in values (auth.*); this chart never creates them. Only Pods matching
+networkPolicy.clientSelectors can connect.
+{{- if .Values.persistence.retain }}
+
+The data volume is kept when you uninstall. Delete it on purpose with:
+  kubectl -n {{ .Release.Namespace }} delete pvc -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+This is a single instance without HA or backups, for evaluation.
