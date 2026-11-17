@@ -3,7 +3,10 @@
 # pod (restarted with Last-Event-ID resume if the exec dies). Output: raw/<label>.stream, raw/timeline.log.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-ns=pi-durable-poc; repo=${REPO:-gscode1/pi-durable-k8s}
+mkdir -p "$here/raw"
+ctx=${KUBE_CONTEXT:-}
+kubectl() { command kubectl ${ctx:+--context="$ctx"} "$@"; }
+ns=${NAMESPACE:-pi-durable-poc}; repo=${REPO:?set REPO to your test owner/repo}
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 ingest() { kubectl -n $ns get pod -l app.kubernetes.io/name=pi-ingest --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
 call() { kubectl -n $ns exec -i "$(ingest)" -c ingest -- node - call alice "$@" <"$here/../../tests/e2e/client.mjs"; }
