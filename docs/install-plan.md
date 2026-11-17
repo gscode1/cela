@@ -289,13 +289,13 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
 11. **DB TLS and cleanup.**
     - 11a (done, issue #132): TLS with verification for both `pg` pools; `database.tls` values; `pi-postgres` can serve
       TLS. `DB_TLS=1 tests/e2e/run.sh <suite>` runs the e2e against a `pi-postgres` that requires TLS (throwaway CA; the run first
-      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Open: a green `DB_TLS=1` run on a cluster.
+      proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Run green on the test cluster on 2026-11-17 (`smoke`: plain TCP rejected by `pg_hba.conf`, `verify-full` accepted).
     - 11b (done, issue #141): `deploy/` is removed. The manifests and `add-shard.sh` the charts replaced are deleted; the
       scripts that e2e and the external-OneCLI path still call moved to `hack/` (`gen-secret.sh`, `gen-api-secret.sh`,
       `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `agent-ruleset.sh` and `.json`, `onecli-policies/`); the ExternalSecret
       examples are in `charts/pi-durable/examples/`; the image build notes are `images/README.md`. The pod-security,
       image-build and e2e-namespace tests read the rendered charts or `hack/`; the stub-kubectl test of `add-shard.sh` went with it.
-    - Done when: e2e passes against an external Postgres that requires TLS (open, see 11a); no doc points at a removed
+    - Done when: e2e passes against an external Postgres that requires TLS (done, see 11a); no doc points at a removed
       script (done).
 
 Deferred (not needed for the PoC): gVisor-on-kind lane, an Ingress/HTTPRoute template, a backup CronJob. The shard
