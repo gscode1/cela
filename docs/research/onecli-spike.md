@@ -1,6 +1,6 @@
 # OneCLI as the credential layer: spike (2026-11-15)
 
-Target: c2 `onecli` deployment, image `ghcr.io/onecli/onecli:latest`, which reports **v1.45.0** (`/api/health`). The `:latest` tag of this all-in-one image stopped at v1.45.0 (2026-07-31). Docs and repo HEAD (v2.20) describe a newer product, so I read source at tag v1.45.0. Live tests used pods in `pi-durable-poc` and dummy values only. All `pi-spike-*` objects are deleted.
+Historical research in one example environment. Target: a test `onecli` deployment, image `ghcr.io/onecli/onecli:latest`, which reports **v1.45.0** (`/api/health`). The `:latest` tag of this all-in-one image stopped at v1.45.0 (2026-07-31). Docs and repo HEAD (v2.20) describe a newer product, so I read source at tag v1.45.0. Live tests used pods in `pi-durable-poc` and dummy values only. All `pi-spike-*` objects are deleted. `onecli.example.com` is a placeholder for the test ingress hostname.
 
 ## Blocking for the plan
 1. **The gateway is an open relay.** A request without a token is not rejected: it gets a raw TCP tunnel to any host:port, including `kubernetes.default.svc:443`, `onecli:10254` and Postgres :5432. There is no host allowlist or deny setting. The 4b/4c egress control therefore has to be a Cilium policy on the gateway pod (FQDN allow, cluster CIDRs denied), not OneCLI config.

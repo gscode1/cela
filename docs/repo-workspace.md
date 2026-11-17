@@ -3,7 +3,7 @@
 `POST /sessions` may carry `{ "repo": "owner/name", "branch": "…" }`. The session then gets `/workspace/repo`, a clone of
 that GitHub repository, and can push to it. Without `repo` nothing changes: no OneCLI agent, no secret, no GitHub call.
 
-Status: run live on c2 on 2026-11-16 (`tests/e2e/run.sh phase4c`, needs `REPO_A` and `REPO_B`): clone, push and branch delete through OneCLI pass, a push to the other repo is refused (plan.md). The items under "Unverified" were not checked separately.
+Status: run live on the example test cluster on 2026-11-16 (`tests/e2e/run.sh phase4c`, needs `REPO_A` and `REPO_B`): clone, push and branch delete through OneCLI pass, a push to the other repo is refused (plan.md). The items under "Unverified" were not checked separately.
 
 ## Input
 

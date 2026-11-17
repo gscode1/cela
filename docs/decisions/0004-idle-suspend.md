@@ -14,7 +14,7 @@ an orchestrator write per call that fails the same way when the orchestrator is 
 (`handleSandboxExpiry` in `controllers/sandbox_controller.go`). It is still an absolute deadline that has to be
 renewed, and `Expired` is not a state the controller resumes from, so it is no substitute for a suspend.
 
-## What `operatingMode: Suspended` does (agent-sandbox v1.0.11, verified in source and on c2)
+## What `operatingMode: Suspended` does (agent-sandbox v1.0.11, verified in source and on the example test cluster)
 
 - `Sandbox.spec.operatingMode` is `Running` (default) or `Suspended`
   (`kubectl explain sandbox.spec.operatingMode`; `clients/k8s/applyconfiguration/api/v1beta1/sandboxspec.go` documents
@@ -25,7 +25,7 @@ renewed, and `Expired` is not a state the controller resumes from, so it is no s
   `Suspended=True` with reason `PodTerminated`; `Ready` is `False` with reason `SandboxSuspended`. The Service stays.
 - A Sandbox owned by a SandboxClaim may be patched, and the claim controller does not revert it. The claim API has no
   operating mode; `extensions/controllers/sandboxclaim_controller.go` only patches the Sandbox's pod-template metadata
-  and labels (`mergePodMetadata`), never the mode. Verified on c2 with a throwaway claim: a merge patch of
+  and labels (`mergePodMetadata`), never the mode. Verified on the example test cluster with a throwaway claim: a merge patch of
   `spec.operatingMode` to `Suspended` removed the Pod within seconds, the PVC (same uid) and the claim stayed, the
   claim reported `Ready=False/SandboxSuspended`, and 40 s later the mode was still `Suspended`. Patching back to
   `Running` gave a Ready Pod in 15 s on the same PVC.

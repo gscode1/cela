@@ -7,3 +7,7 @@ dist/
 .claude/worktrees/
 .DS_Store
 *.tsbuildinfo
+
+# Local deployment overlays and experiment output
+deploy/local/
+examples/*/raw/

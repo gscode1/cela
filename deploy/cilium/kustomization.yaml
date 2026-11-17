@@ -1,5 +1,5 @@
 # CiliumNetworkPolicies for namespace pi-durable-poc: what standard NetworkPolicy cannot express.
-# NOT part of deploy/kustomization.yaml on purpose: the CRDs exist only after the c2 migration to Cilium, and a
+# NOT part of deploy/kustomization.yaml on purpose: the CRDs require Cilium, and a
 # kubectl apply of the main kustomization must keep working before then. Apply this one in the same step as the
 # standard policies once `kubectl get crd ciliumnetworkpolicies.cilium.io` succeeds:
 #   kubectl apply -k deploy/cilium    (then kubectl apply -k deploy)

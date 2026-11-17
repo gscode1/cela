@@ -56,7 +56,7 @@ the cost. No ADR requires the separate process.
   [docs/metrics.md](../metrics.md).
 - The relay's exit code is 0 or 1 by whether the data socket errored; pi-env only needs the exit.
 
-## Measured (2026-11-16, c2, throwaway e2e namespaces, same four phase 4 tests, 5 cold + 1 resumed turn)
+## Measured (2026-11-16, the example test cluster, throwaway e2e namespaces, same four phase 4 tests, 5 cold + 1 resumed turn)
 
 | | before (per-session bridge) | after (relay + broker) |
 | --- | --- | --- |

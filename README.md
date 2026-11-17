@@ -6,7 +6,7 @@ Each session gets an agent that keeps its state in PostgreSQL and resumes after 
 sandbox with a persistent workspace where its tools run. Model and GitHub credentials never reach the agent or the
 sandbox: [OneCLI](https://github.com/onecli/onecli) injects them at its gateway.
 
-**Status: proof of concept.** It runs end to end on a small arm64 lab cluster. It is not hardened for production;
+**Status: proof of concept.** It has been tested end to end in one small arm64 example environment. It is not hardened for production;
 see the open items in [plan.md](plan.md).
 
 ![Architecture](docs/architecture.svg)
@@ -58,7 +58,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | `images/sandbox`, `images/egress-proxy` | Sandbox image (sandboxd + `pi-env` + git); egress proxy image (not built yet)                                              |
 | `deploy/`                               | Kubernetes manifests (namespace, Postgres, orchestrator, ingest, sandbox template, network policies)                       |
 | `tests/e2e`                             | End-to-end suites that run as in-cluster Jobs                                                                              |
-| `examples/`                             | Recorded load-test and bug-hunt runs                                                                                       |
+| `examples/`                             | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
 | `docs/`                                 | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |
 
 ## Docs
@@ -73,6 +73,24 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [Network policy](docs/network-policy.md) and [OneCLI host rules](docs/onecli-host-rules.md)
 - [Architecture decision records](docs/decisions/)
 - [Plan, decisions and phase results](plan.md)
+
+## Deploy on your cluster
+
+Prerequisites: the **agent-sandbox controller with extensions** (tested with v1.0.11), a gVisor RuntimeClass named
+`gvisor`, CloudNativePG, OneCLI (tested with v2.20.0), a NetworkPolicy-enforcing CNI such as Cilium, a dynamically
+provisioned StorageClass, and External Secrets or an equivalent way to provision the target Secrets. The supplied
+API/FQDN policies require Cilium CRDs; another CNI needs equivalent policies. Do not use real credentials until the
+isolation suite passes. The published sandbox image is arm64; build a matching image for other architectures.
+
+1. Review [deploy settings](deploy/README.md). Choose storage (cluster default unless patched), sandbox image/registry,
+   OneCLI endpoints, secret store/remote keys, and model settings. Match DNS, CNPG, OneCLI and optional ingress-controller
+   policy selectors to your cluster. No public hostname, Envoy installation or ArgoCD repository is required.
+2. Apply the adapted policies and stack, provision Secrets and the OneCLI CA, then upload code with the deploy scripts
+   ([setup](deploy/README.md), [credentials](docs/model-credentials.md)). Use `KUBE_CONTEXT` to select your context;
+   unset means the current context. Deploy scripts default to namespace `pi-durable-poc`.
+3. Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`.
+   Omit `STORAGE_CLASS` for the cluster default; set `SANDBOX_IMAGE` for your own image. See [e2e](docs/e2e.md) for
+   OneCLI ingress rules, secret-store access, prerequisites and the isolation suite (`phase3`). Never test against production.
 
 ## Development
 

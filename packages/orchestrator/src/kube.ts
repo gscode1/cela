@@ -252,7 +252,7 @@ export async function listSandboxes(namespace: string): Promise<SandboxInfo[]> {
 
 /**
  * Sets `spec.operatingMode` of the Sandbox that a claim created (same name). The claim controller only syncs the
- * Sandbox's pod metadata and labels, never the mode, so the patch sticks (verified live on c2 and in the controller
+ * Sandbox's pod metadata and labels, never the mode, so the patch sticks (verified in a test environment and in the controller
  * source). False if the Sandbox does not exist.
  */
 export async function setOperatingMode(

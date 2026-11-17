@@ -1,8 +1,8 @@
 # pi-ingest (the session API front, port 8080, label app.kubernetes.io/name=pi-ingest).
 #
-# Ingress choice: clients reach ingest through the Envoy Gateway data plane (namespace envoy-gateway-system, pods
-# app.kubernetes.io/name=envoy, the Gateway `main`), because every HTTPRoute on c2 terminates there. No HTTPRoute for
-# ingest exists yet; when one is added it needs no policy change. The e2e driver is also allowed (it normally
+# Example ingress selectors: Envoy Gateway (namespace envoy-gateway-system, pods
+# app.kubernetes.io/name=envoy). Patch the namespace and pod selectors for your ingress controller.
+# No HTTPRoute is supplied; port-forward works without an ingress controller. The e2e driver is also allowed (it normally
 # execs into an ingest pod instead, which needs no network). `kubectl port-forward` and kubelet probes arrive from the
 # node (host), which Cilium always admits; this policy does not cover them. If clients come from elsewhere
 # (LAN, another namespace), add a `from` entry here instead of widening another policy.

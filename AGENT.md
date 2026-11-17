@@ -2,7 +2,7 @@
 
 ## Project
 
-pi-durable-k8s: a proof of concept for running Pi Durable agents on our own Kubernetes cluster. Agent state is stored in PostgreSQL (CloudNativePG). Tools run in a per-session gVisor sandbox (kubernetes-sigs/agent-sandbox) with a workspace PVC, through a `pi-env` bridge. Sessions are served by a small session API. Stack: TypeScript (Node). License: MIT.
+pi-durable-k8s: a proof of concept for running Pi Durable agents on a Kubernetes cluster. Agent state is stored in PostgreSQL (CloudNativePG). Tools run in a per-session gVisor sandbox (kubernetes-sigs/agent-sandbox) with a workspace PVC, through a `pi-env` bridge. Sessions are served by a small session API. Stack: TypeScript (Node). License: MIT.
 
 Read `plan.md` first. It holds the goal, decisions, architecture, phases and repo layout. Then read `README.md` and `docs/` once they exist. Use the terms in `plan.md` (orchestrator, shard, sandbox-env, broker, SandboxClaim, session API) in code. Do not invent synonyms.
 
@@ -38,7 +38,7 @@ Read `plan.md` first. It holds the goal, decisions, architecture, phases and rep
 - Never commit `.env` files, keys, tokens or credentials. Never print or log secret values.
 - Secrets come from the environment only.
 - Model credentials stay in the orchestrator and are never mounted into sandboxes.
-- Tests use temp data dirs or throwaway namespaces and databases. Never touch production systems; use the lab cluster. E2e suites run through `tests/e2e/run.sh <suite>`, which deploys its own namespace `pi-e2e-<id>` and never touches `pi-durable-poc` ([docs/e2e.md](docs/e2e.md)).
+- Tests use temp data dirs or throwaway namespaces and databases. Never touch production systems; use a dedicated test cluster. E2e suites run through `tests/e2e/run.sh <suite>`, which deploys its own namespace `pi-e2e-<id>` and never touches `pi-durable-poc` ([docs/e2e.md](docs/e2e.md)).
 
 ## Working as an AI agent
 

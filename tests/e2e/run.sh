@@ -27,7 +27,7 @@
 # restart or kill the orchestrator or depend on shared state run alone afterwards. See tests/e2e/fns.sh.
 #
 # The suites run IN the cluster, as a Kubernetes Job (ServiceAccount e2e-driver, in the run namespace), so a
-# result never depends on the laptop's network. The Mac does only this:
+# result never depends on the laptop's network. The operator machine does only this:
 #   1. create the namespace and the stack, the secrets, build and push code (pnpm builds, deploy/push-code.sh and
 #      push-ingest.sh), the Phase 1 bundle, the driver scripts
 #   2. create the Job
@@ -36,7 +36,7 @@
 # whatever the stream missed is printed from the final `kubectl logs`. No test is retried.
 #
 # Current kubectl context (KUBE_CONTEXT); only the run namespace is touched. Exit: 0 all green, 1 a suite failed,
-# 2 the Mac lost contact before the Job finished (the Job is left running; see the message for how to read it).
+# 2 the operator machine lost contact before the Job finished (the Job is left running; see the message for how to read it).
 # The namespace, with the Job and its pods, is deleted at the end; if this script is killed, `tests/e2e/sweep.sh` removes it.
 set -euo pipefail
 
@@ -134,7 +134,7 @@ else
   log "create namespace $ns"
 fi
 ns_touched=1
-# The label is what the OneCLI ingress policy (argo-c2, docs/e2e.md) and the sweeper select on. It must exist before the
+# The label is what the OneCLI ingress policy (docs/e2e.md) and the sweeper select on. It must exist before the
 # first Pod does: Cilium computes a Pod's identity from its namespace labels when the Pod starts. The Pod Security labels
 # are applied here too, on a reused namespace as well (docs/decisions/0019-restricted-pod-security.md); the version is
 # pinned, so keep it equal to deploy/namespace.yaml (a unit test checks).
@@ -172,6 +172,31 @@ patches:
         path: /spec/template/spec/containers/0/env/-
         value: { name: PI_ONECLI_NAME_PREFIX, value: "$onecli_prefix" }
 EOF
+# Optional cluster-specific overrides. JSON entries are valid YAML; quote values rather than interpolate YAML.
+python3 - "$work/stack/kustomization.yaml" <<'PYOVERLAY'
+import json, os, sys
+patches = []
+sc = os.environ.get("STORAGE_CLASS")
+if sc:
+    for kind, name, path in [
+        ("Cluster", "pi-pg", "/spec/storage/storageClass"),
+        ("PersistentVolumeClaim", "orchestrator-code", "/spec/storageClassName"),
+        ("PersistentVolumeClaim", "e2e-driver", "/spec/storageClassName"),
+    ]:
+        patches.append((kind, name, path, sc))
+# Workspaces are per-session scratch, so they may use their own (e.g. single-replica) class.
+workspace_sc = os.environ.get("SANDBOX_STORAGE_CLASS") or sc
+if workspace_sc:
+    patches.append(("SandboxTemplate", "pi-env-template", "/spec/volumeClaimTemplates/0/spec/storageClassName", workspace_sc))
+image = os.environ.get("SANDBOX_IMAGE")
+if image:
+    patches.append(("SandboxTemplate", "pi-env-template", "/spec/podTemplate/spec/containers/0/image", image))
+with open(sys.argv[1], "a") as out:
+    for kind, name, path, value in patches:
+        entry = {"target": {"kind": kind, "name": name},
+                 "patch": json.dumps([{"op": "add", "path": path, "value": value}])}
+        out.write("  - " + json.dumps(entry) + "\n")
+PYOVERLAY
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - %s\n' \
   "$ns" "$(relpath "$root/deploy/cilium" "$work/cilium")" >"$work/cilium/kustomization.yaml"
 
@@ -219,7 +244,7 @@ if has_phase shards; then
   NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/deploy/add-shard.sh" 1
 fi
 if has_phase phase3 || has_phase phase4 || has_phase phase4b || has_phase phase4c || has_phase mcp || has_phase shards; then
-  log "orchestrator and ingest code (build + push on the Mac)"
+  log "orchestrator and ingest code (build + push on the operator machine)"
   NAMESPACE=$ns "$root/deploy/push-code.sh" >/dev/null
   NAMESPACE=$ns "$root/deploy/push-ingest.sh" >/dev/null
 fi

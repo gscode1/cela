@@ -3,10 +3,13 @@
 # Abort rule: a node reports MemoryPressure/DiskPressure/PIDPressure, or more pods outside pi-durable-poc are
 # unhealthy than at the start -> every session is deleted.
 set -uo pipefail
-here=$(cd "$(dirname "$0")" && pwd); ns=pi-durable-poc
+here=$(cd "$(dirname "$0")" && pwd); ns=${NAMESPACE:-pi-durable-poc}
+mkdir -p "$here/raw"
+ctx=${KUBE_CONTEXT:-}
+kubectl() { command kubectl ${ctx:+--context="$ctx"} "$@"; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 ingest() { kubectl -n $ns get pod -l app.kubernetes.io/name=pi-ingest --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
-unhealthy_other() { kubectl get pods -A --no-headers 2>/dev/null | awk '$1!="pi-durable-poc" && $4!="Running" && $4!="Completed" && $4!="Succeeded"' | wc -l | tr -d ' '; }
+unhealthy_other() { kubectl get pods -A --no-headers 2>/dev/null | awk -v ns="$ns" '$1!=ns && $4!="Running" && $4!="Completed" && $4!="Succeeded"' | wc -l | tr -d ' '; }
 pressure() { kubectl get nodes -o json | jq -r '[.items[].status.conditions[] | select((.type|test("Pressure")) and .status=="True") | .type] | join(",")'; }
 base_unhealthy=$(unhealthy_other); echo "$(now) baseline unhealthy-other=$base_unhealthy" >>"$here/raw/timeline.log"
 
@@ -25,9 +28,8 @@ abort_all() {
     claims=$(kubectl -n $ns get sandboxclaims --no-headers 2>/dev/null | wc -l | tr -d ' ')
     pend=$(kubectl -n $ns exec pi-pg-1 -c postgres -- psql -U postgres -d app -At -c "select count(*) filter (where status='pending'), count(*) filter (where status='failed') from inbox.events where created_at > now() - interval '3 hours'" 2>/dev/null | tr '|' '/')
     ing=$(kubectl -n $ns get pods -l app.kubernetes.io/name=pi-ingest --no-headers 2>/dev/null | awk '{s+=$4} END{print s+0}')
-    lh=$(kubectl -n longhorn-system get volumes.longhorn.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
     uo=$(unhealthy_other); pr=$(pressure)
-    echo "$(now) orch=[$o] mem_mib=$([[ $mem == NA ]] && echo NA || echo $((mem/1048576))) claims=$claims sandbox_pods=[${phases}] inbox_pending/failed=$pend ingest_restarts=$ing longhorn_volumes=$lh unhealthy_other=$uo pressure=[$pr]"
+    echo "$(now) orch=[$o] mem_mib=$([[ $mem == NA ]] && echo NA || echo $((mem/1048576))) claims=$claims sandbox_pods=[${phases}] inbox_pending/failed=$pend ingest_restarts=$ing unhealthy_other=$uo pressure=[$pr]"
     if [[ -n $pr ]] && [[ ! -e "$here/raw/ABORTED" ]]; then abort_all "node pressure $pr"; fi
     if (( uo > base_unhealthy + 2 )) && [[ ! -e "$here/raw/ABORTED" ]]; then abort_all "unhealthy pods outside pi-durable-poc: $uo (baseline $base_unhealthy)"; fi
     sleep 15
@@ -35,7 +37,7 @@ abort_all() {
 sampler=$!
 
 echo "$(now) burst-start" >>"$here/raw/timeline.log"
-kubectl -n $ns exec -i "$(ingest)" -c ingest -- node - <"$here/create-all.mjs" >"$here/raw/sessions.txt" 2>&1
+kubectl -n $ns exec -i "$(ingest)" -c ingest -- node - "${REPO:?set REPO to your test owner/repo}" <"$here/create-all.mjs" >"$here/raw/sessions.txt" 2>&1
 echo "$(now) burst-done created=$(grep -cE ' [0-9a-f-]{36} ' "$here/raw/sessions.txt") errors=$(grep -c ERROR "$here/raw/sessions.txt")" >>"$here/raw/timeline.log"
 
 deadline=$(( $(date +%s) + ${MAX_SECONDS:-3600} ))

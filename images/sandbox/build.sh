@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Build and push the sandbox image (sandboxd + pi-env), linux/arm64.
-# Usage: images/sandbox/build.sh [--no-push]
+# Usage: IMAGE_REPO=registry.example.com/team/pi-sandbox images/sandbox/build.sh [--no-push]
+# Default is a local image name; set IMAGE_REPO to a registry you can push to.
 set -euo pipefail
 
 PI_ENV_VERSION=1.5.2
 PI_ENV_SHA256=23094f7089e3ab4410431ced346ee50944ae601ea91aa14061573d23d4e3d8c3  # bin/pi-env-linux-arm64/pi-env
-REPO=docker.io/gsimage/pi-sandbox
+REPO=${IMAGE_REPO:-pi-sandbox}
 # Bump when the Dockerfile changes without a pi-env bump. r2: git and ca-certificates (Phase 4c).
 IMAGE_REV=2
 

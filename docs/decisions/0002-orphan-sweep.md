@@ -57,8 +57,7 @@ never touched.
 A claim created under the shared token (before ADR 0001) belongs to an `active` session and fails every call with the
 "delete the claim and its PVC" error. The sweep does not remove it. The workspace is the only copy of that session's
 files, the session is one the user can still talk to, and ADR 0001 made recreating it an explicit operator decision.
-Deleting the session through `DELETE /sessions/{id}` removes the claim and PVC through the normal path. (This is how the
-leftover test sessions on c2, among them the owners of `pi-conv-5858` and `pi-conv-5873`, were cleaned.)
+Deleting the session through `DELETE /sessions/{id}` removes the claim and PVC through the normal path.
 
 ## Addendum: one sweep per shard (issue #84)
 

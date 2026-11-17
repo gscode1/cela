@@ -1,6 +1,6 @@
 # OneCLI v2 re-check of the v1.45 blockers (2026-11-15)
 
-Follow-up to [onecli-spike.md](onecli-spike.md). c2 `onecli` was upgraded from v1.45.0 (all-in-one `ghcr.io/onecli/onecli:latest`) to **v2.20.0**, pinned by tag and digest. This file re-checks blockers 1–5 from the spike on the live v2 instance, with source references to the v2.20.0 tag. All test objects (`bt-*`) were deleted. No secret values appear here.
+Historical observations from one example environment. Follow-up to [onecli-spike.md](onecli-spike.md). The test `onecli` deployment was upgraded from v1.45.0 (all-in-one `ghcr.io/onecli/onecli:latest`) to **v2.20.0**, pinned by tag and digest. This file re-checks blockers 1–5 from the spike on the live v2 instance, with source references to the v2.20.0 tag. All test objects (`bt-*`) were deleted. No secret values appear here. `onecli.example.com` below is a placeholder for the test ingress hostname, not a required host.
 
 ## Summary
 
@@ -27,12 +27,7 @@ Follow-up to [onecli-spike.md](onecli-spike.md). c2 `onecli` was upgraded from v
   - Org rules are at `/v1/org/policy/rules` (CRUD) and `/v1/org/policy/default` (`{"action":"allow|block"}`).
   - Rule shape: `{"name","action","targets":[{"kind":"network","hostPattern","pathPattern"?,"method"?}]}`. Writes take effect at once.
 - **Git `proxyAuthMethod`** (spike blocker 5). v2 now answers tokenless requests with 407. That should let git/libcurl authenticate without `http.proxyAuthMethod=basic`. **UNVERIFIED**: keep the setting.
-- Backups taken before the upgrade:
-  - `pg_dump` of the `onecli` DB.
-  - CNPG Backup `pre-onecli-v1-45-20261115t152456z`.
-  - A copy of `/app/data`.
-  - Longhorn snapshot `onecli-data-pre-v1-45-20261115t152456z`.
-  - The v1 rollback image is `ghcr.io/onecli/onecli@sha256:d0177458b1f9ecece4abbe9abb6c5f925475357c1734f50a675d83a2ef9c8687`. The DB migration is forward-only, so a rollback also needs a DB restore.
+- Before upgrading, back up the database and OneCLI data volume. The migration is forward-only; rollback needs a database restore.
 
 Post-upgrade health:
 - api `/v1/health`: 200, `version 2.20.0`.
@@ -54,7 +49,7 @@ Source: `apps/gateway/crates/server/src/lib.rs:943-956` (CONNECT) and `:1160-118
 ## 2. Relay scope: PARTIALLY FIXED
 
 **Private and in-cluster targets are refused** with a valid token, on both the MITM lane and the `open` lane. HTTP gets 403 `{"error":"destination_not_allowed"}`. On CONNECT, the MITM lane returns 403 inside the tunnel and the `open` lane returns 403 at CONNECT. Refused targets:
-- `kubernetes.default.svc` and `10.96.0.1`
+- `kubernetes.default.svc` and its service ClusterIP
 - `onecli.onecli.svc.cluster.local:10256` and its ClusterIP
 - a node address (`<node-ip>:50000`) and the LAN gateway
 - `127.0.0.1` and `localhost`
@@ -64,7 +59,7 @@ Source: `apps/gateway/crates/server/src/lib.rs:943-956` (CONNECT) and `:1160-118
 - `100.64.0.1`
 - `<lan-ip>.nip.io` and `127.0.0.1.nip.io`. The error says "it resolves to …", so the check is on the resolved IP and DNS rebinding is covered.
 
-Source: `apps/gateway/crates/proxy/src/egress.rs` (resolver plus `connect_tcp` guard). The opt-in exception is `GATEWAY_ALLOW_PRIVATE_DESTINATIONS` (CIDR/IP/host/`*.suffix`; metadata only by exact IP). It is not set on c2. The gateway's own Postgres and Redis can never be allowlisted.
+Source: `apps/gateway/crates/proxy/src/egress.rs` (resolver plus `connect_tcp` guard). The opt-in exception is `GATEWAY_ALLOW_PRIVATE_DESTINATIONS` (CIDR/IP/host/`*.suffix`; metadata only by exact IP). It is not set on the example test cluster. The gateway's own Postgres and Redis can never be allowlisted.
 
 **Any public host is still relayed by default.** `https://example.com`, `http://example.com` and `https://api.github.com/zen` all returned 200 with the Default Agent token, on both lanes. So a leaked token is still a general-purpose egress proxy to the internet.
 
@@ -78,7 +73,7 @@ Source: `apps/gateway/crates/proxy/src/egress.rs` (resolver plus `connect_tcp` g
 
 ## 3. Per-repo GitHub scoping: NOT FIXED (on this unlicensed instance)
 
-- Connection types: `GET /v1/apps` lists `github` and `github-app` (both `connectionType: oauth`) and `gitlab`. A PAT is a `generic` secret (`validations/secret.ts:272`). No GitHub connection is configured on c2.
+- Connection types: `GET /v1/apps` lists `github` and `github-app` (both `connectionType: oauth`) and `gitlab`. A PAT is a `generic` secret (`validations/secret.ts:272`). No GitHub connection is configured on the example test cluster.
 - **Native scope is enterprise-gated:**
   - The GitHub App grant `session_policy {"repositories":[...]}` would mint a repo-narrowed installation token per request (`packages/api/src/apps/github-app.ts:78-110`). But `granular_access` is enterprise (`entitlements.ts:29`), and writing it calls `assertEntitled("granular_access")` (`providers/hooks/policy-validator.ts:31-34`, which throws in `entitlements-guard.ts:22-24`).
   - On the gateway side, unlicensed means `session_policy = None`. `apps/gateway/crates/proxy/src/connect.rs:452-473` and `:426-429` say "unlicensed, org connections inject UNSCOPED". **An unlicensed GitHub App/OAuth connection injects an account-wide token.**
@@ -129,7 +124,7 @@ Source: `apps/gateway/crates/proxy/src/egress.rs` (resolver plus `connect_tcp` g
 - Live, `/auth/signup` renders "Create account". `POST /auth/sign-up/email` with an invalid email gave a validation error, not "sign-up disabled".
 - Any new sign-up gets its own org, so it can't see the admin org. It does get a working account and can create its own agents, which means gateway egress for anyone who can reach the dashboard.
 - Rate limit: 10 sign-ups per 60 s (`better-auth.ts:262-279`).
-- `onecli.example.com` resolves only to a LAN IP.
+- The example ingress was LAN-only; this is not a security guarantee for other installations.
 - Sessions last 30 days, sliding.
 
-**Implication:** restrict who can reach the dashboard and `/auth/*`. Options are an Envoy Gateway `SecurityPolicy` (IP allowlist or ext-auth/OIDC in front), or not exposing the HTTPRoute at all and using port-forward. Or license enterprise for SSO.
+**Implication:** restrict who can reach the dashboard and `/auth/*`. Options are ingress authentication or an IP allowlist, or not exposing an ingress route at all and using port-forward. Or license enterprise for SSO.

@@ -14,7 +14,7 @@ its proxy token, until something replaces the Pod.
 
 When the orchestrator knows a command was interrupted, it **deletes the sandbox Pod, never the claim or the PVC**. The
 Sandbox controller creates a clean Pod on the same PVC (Phase 3 sandbox-loss behaviour). It applies to every session,
-repo or not: one rule, no flag, and the cost of a recycle is a Pod start (about 15 s on c2, measured).
+repo or not: one rule, no flag, and the cost of a recycle is a Pod start (about 15 s on the example test cluster, measured).
 
 **What counts as interrupted** (`interruptedExec` in `lifecycle.ts`): an `ExecutionEnv.exec` that returned an
 `aborted` or `timeout` error, or threw (the connection to the sandbox broke while it ran). A command that exits by
@@ -43,7 +43,7 @@ fails, the record stays and the next start tries again.
 
 - One extra Postgres write per command burst (two updates: set, clear). Control sessions (no session row) are not
   recorded: a restart does not recycle them, which is the behaviour the Phase 3 suite tests.
-- A recycle takes up to a minute of wall time (gVisor Pod start plus Longhorn re-attach); the tool call that follows
+- A recycle takes up to a minute of wall time (gVisor Pod start plus PVC re-attach); the tool call that follows
   waits for it.
 - A Pod deleted with a 10 s grace can lose writes that were not flushed yet. Only an interrupted command is in that
   position, and its output is already unreliable.

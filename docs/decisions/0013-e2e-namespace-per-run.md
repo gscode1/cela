@@ -20,9 +20,9 @@ for phases 4, 4b, 4c and 3), live sessions were disturbed, and a failed run left
   `pi-e2e-`, so an e2e run cannot touch `pi-durable-poc` even by a typo. The orchestrator reads its namespace from the downward API.
 - **Secrets.** Per-run random `sandboxd-auth` and `api-auth` are generated in the namespace. The credentials of
   OneCLI and GitHub come from the same ExternalSecrets as production: the store is a ClusterSecretStore, so no value is
-  copied by hand and none passes through the Mac. The orchestrator reads them once at start, so it starts at 0 replicas and is scaled up after the ExternalSecrets
+  copied by hand and none passes through the operator machine. The orchestrator reads them once at start, so it starts at 0 replicas and is scaled up after the ExternalSecrets
   are Ready.
-- **Cross-namespace pieces by label.** The namespace carries `pi-durable-e2e=true`. The OneCLI ingress policy (argo-c2) admits
+- **Cross-namespace pieces by label.** The namespace carries `pi-durable-e2e=true`. The OneCLI ingress policy admits
   that label; the sweeper selects on it. A label rather than a list of namespace names, because names are random per run.
 - **Deletion.** The namespace is deleted at the end (waiting until it is gone), unless `KEEP_NS=1`, or `KEEP_NS_ON_FAIL=1` and the run
   failed, or the Job was left unfinished. `tests/e2e/sweep.sh` deletes `pi-e2e-*` namespaces with the label older than N hours (default 6) and runs at the start of every
@@ -41,8 +41,7 @@ for phases 4, 4b, 4c and 3), live sessions were disturbed, and a failed run left
   the independence; none does today.
 - OneCLI agents and secrets outlive the namespace. A killed or swept run leaves its `pi-e2e-<run id>-*` objects behind, and no later
   stack can sweep them (another prefix). `tests/e2e/sweep.sh` does not remove them (it has no OneCLI key); remove them by hand.
-- Until the argo-c2 ingress change is merged, suites that call OneCLI from a run namespace fail (docs/e2e.md).
-  (2026-11-17: merged and live; OneCLI admits labelled run namespaces.)
+- The OneCLI namespace ingress policy must admit labelled run namespaces (docs/e2e.md), regardless of how OneCLI is deployed.
 - Cluster-wide pieces (CNPG operator, agent-sandbox controller, ESO) are shared by all runs. The CNPG operator reconciles up to 10 clusters at once.
 
 ## Addendum: the shards suite (issue #84)

@@ -38,7 +38,7 @@ behaved as an allowlist); check with the probes below after applying.
 
 ## Apply
 
-`deploy/onecli-host-rules.sh`, applied on c2 on 2026-11-16 (the org had no rules before). Dry run by default.
+`deploy/onecli-host-rules.sh`. Dry run by default.
 
 ```sh
 deploy/onecli-host-rules.sh            # prints the plan, makes no request
@@ -81,7 +81,7 @@ Probes from the orchestrator pod through `:10255` with its agent token (not prin
 | `https://registry.npmjs.org/left-pad` | 200 |
 | `https://chatgpt.com/` | 200 |
 
-The Cilium FQDN policy on the OneCLI pod (argo-c2 `applications/onecli`) is the second layer: a host allowed here but
+The Cilium FQDN policy on the OneCLI pod (see `deploy/onecli-policies/`) is the second layer: a host allowed here but
 missing there fails to connect.
 
 Sandboxes still reach public hosts directly (`sandbox-allow-internet-egress`, decision 2026-11-15), so this list only
