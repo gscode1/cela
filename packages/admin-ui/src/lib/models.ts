@@ -92,3 +92,28 @@ export function currentNote(view: ModelView, key: string): string | undefined {
   if (view.mode === "list" && findModel(view.models, key) === undefined) return NOT_AVAILABLE_NOTE;
   return undefined;
 }
+
+export interface PickOption {
+  key: string;
+  label: string;
+  /** Extra words the search matches (the id, the provider). */
+  search?: string;
+  reasoning?: boolean;
+}
+
+/** At most this many matches are listed at a time; the rest is a count, so a 400-model provider stays short. */
+export const MATCH_LIMIT = 20;
+
+/** The options whose label, id or search words contain every word of the query, capped at `limit`. */
+export function filterOptions(
+  options: readonly PickOption[],
+  query: string,
+  limit: number = MATCH_LIMIT,
+): { shown: PickOption[]; more: number } {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = options.filter((option) => {
+    const hay = `${option.label} ${option.key} ${option.search ?? ""}`.toLowerCase();
+    return words.every((word) => hay.includes(word));
+  });
+  return { shown: matches.slice(0, limit), more: Math.max(0, matches.length - limit) };
+}

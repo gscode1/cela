@@ -1,14 +1,35 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox } from "@/components/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { currentNote, groupKeys, idOf, keyOf, modelLabel, providerOf } from "@/lib/models";
-import type { ModelView } from "@/lib/models";
+import {
+  currentNote,
+  groupKeys,
+  isScripted,
+  keyOf,
+  modelLabel,
+  providerOf,
+  SCRIPTED_NOTE,
+} from "@/lib/models";
+import type { ModelView, PickOption } from "@/lib/models";
+import type { CatalogModel } from "@/lib/api/models";
 
-const SEARCH_ABOVE = 15;
+/** More allowlisted models than this and the profile's override becomes a search, and the allowlist folds. */
+export const COMBOBOX_ABOVE = 15;
+
+const optionOf = (model: CatalogModel): PickOption => ({
+  key: keyOf(model),
+  label: model.name ?? model.id,
+  search: model.id,
+  reasoning: model.reasoning,
+});
+
+const providersOf = (view: ModelView): string[] => [
+  ...new Set(view.models.map((model) => model.provider)),
+];
 
 /** One line that says why there is no list; undefined when there is one (or it is still loading). */
 export function ModelNotice({ view }: { view: ModelView }) {
@@ -89,13 +110,12 @@ export function ModelSelect({
       </div>
     );
   }
-  const providers = [...new Set(view.models.map((model) => model.provider))];
+  const providers = providersOf(view);
   const currentProvider = providerOf(value);
   const provider = value === "" ? (providers[0] ?? "") : currentProvider;
   const providerOptions =
     provider === "" || providers.includes(provider) ? providers : [provider, ...providers];
-  const ofProvider = view.models.filter((model) => model.provider === provider);
-  const offered = ofProvider.some((model) => keyOf(model) === value);
+  const options = view.models.filter((model) => model.provider === provider).map(optionOf);
   return (
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 sm:grid-cols-2">
@@ -113,28 +133,23 @@ export function ModelSelect({
             </option>
           ))}
         </Select>
-        <Select
+        <Combobox
           id={id}
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value);
-          }}
-        >
-          {value !== "" && !offered && <option value={value}>{idOf(value)}</option>}
-          {ofProvider.map((model) => (
-            <option key={keyOf(model)} value={keyOf(model)}>
-              {model.name ?? model.id}
-              {model.reasoning ? " · reasoning" : ""}
-            </option>
-          ))}
-        </Select>
+          options={options}
+          display={value === "" ? "" : modelLabel(view.models, value)}
+          placeholder="Search models"
+          onPick={onChange}
+        />
       </div>
       {note !== undefined && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
 
-/** The profile's model override: the allowlisted models, grouped by provider, under their display names. */
+/**
+ * The profile's model override: the allowlisted models, grouped by provider, under their display names. A plain select
+ * while the allowlist is short; a search past `COMBOBOX_ABOVE` entries.
+ */
 export function AllowedModelSelect({
   id,
   value,
@@ -151,6 +166,29 @@ export function AllowedModelSelect({
   onChange: (key: string) => void;
 }) {
   const stale = value !== "" && !allowed.includes(value);
+  if (allowed.length > COMBOBOX_ABOVE) {
+    const options: PickOption[] = [
+      { key: "", label: inheritLabel },
+      ...allowed.map((key) => ({
+        key,
+        label: modelLabel(view.models, key),
+        search: key,
+        reasoning: view.models.find((model) => keyOf(model) === key)?.reasoning === true,
+      })),
+    ];
+    return (
+      <div className="flex flex-col gap-1">
+        <Combobox
+          id={id}
+          options={options}
+          display={value === "" ? inheritLabel : modelLabel(view.models, value)}
+          placeholder="Search models"
+          onPick={onChange}
+        />
+        {stale && <p className="text-xs text-muted-foreground">{value} is not allowed.</p>}
+      </div>
+    );
+  }
   return (
     <Select
       id={id}
@@ -174,9 +212,15 @@ export function AllowedModelSelect({
   );
 }
 
+/** The allowlist after taking `key` out, or after adding it unless it is the default or already there. */
+export const withoutModel = (list: readonly string[], key: string): string[] =>
+  list.filter((entry) => entry !== key);
+export const withModel = (list: readonly string[], key: string, defaultModel: string): string[] =>
+  key === defaultModel || list.includes(key) ? [...list] : [...list, key];
+
 /**
- * The allowlist as a checklist over the catalog. The default model is always in it and shown as such; current entries
- * the catalog does not list stay visible so they can be removed.
+ * The allowlist as the models that are in it, each removable, and an "Add a model" search below. The default model is
+ * always in it and cannot be removed. The catalog is never listed whole: a provider can have hundreds of models.
  */
 export function AllowedModels({
   value,
@@ -189,78 +233,102 @@ export function AllowedModels({
   view: ModelView;
   onChange: (next: string[]) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const listed = new Set(view.models.map(keyOf));
-  // Entries the catalog does not list stay on screen after they are unticked, so a click can be undone.
-  const [seen] = useState(() => [...value]);
-  const extra = [...new Set([...seen, ...value])].filter(
-    (key) => key !== defaultModel && !listed.has(key),
-  );
-  const needle = search.trim().toLowerCase();
-  const shown = view.models.filter(
-    (model) =>
-      keyOf(model) !== defaultModel &&
-      (needle === "" || `${model.name ?? ""} ${keyOf(model)}`.toLowerCase().includes(needle)),
-  );
-  const toggle = (key: string, on: boolean): void => {
-    onChange(on ? [...value, key] : value.filter((entry) => entry !== key));
-  };
-  const row = (key: string, label: string, extraNode?: React.ReactNode, tag?: boolean) => (
-    <div key={key} className="flex flex-wrap items-center gap-2 text-sm">
-      <Checkbox
-        id={`allow-${key}`}
-        checked={value.includes(key)}
-        onChange={(event) => {
-          toggle(key, event.target.checked);
-        }}
-      />
-      <Label htmlFor={`allow-${key}`}>{label}</Label>
-      {tag === true && <Badge variant="outline">reasoning</Badge>}
-      {extraNode}
-    </div>
-  );
+  const providers = providersOf(view);
+  const [picked, setPicked] = useState("");
+  const [all, setAll] = useState(false);
+  const provider = providers.includes(picked) ? picked : (providers[0] ?? "");
+  const entries = [
+    ...(defaultModel === "" ? [] : [defaultModel]),
+    ...value.filter((key) => key !== defaultModel),
+  ];
+  const visible = all ? entries : entries.slice(0, COMBOBOX_ABOVE);
+  const options = view.models
+    .filter(
+      (model) =>
+        model.provider === provider &&
+        keyOf(model) !== defaultModel &&
+        !value.includes(keyOf(model)),
+    )
+    .map(optionOf);
   return (
-    <fieldset className="flex flex-col gap-2 rounded-lg border p-4">
+    <fieldset className="flex flex-col gap-3 rounded-lg border p-4">
       <legend className="px-1 text-sm font-medium">Allowed models</legend>
-      {view.models.length > SEARCH_ABOVE && (
-        <Input
-          aria-label="Search models"
-          placeholder="Search models"
-          value={search}
-          onChange={(event) => {
-            setSearch(event.target.value);
+      <ul className="flex flex-col gap-1.5" data-testid="allowed-models">
+        {visible.map((key) => {
+          const label = modelLabel(view.models, key);
+          const note = isScripted(key) ? undefined : currentNote(view, key);
+          return (
+            <li key={key} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="break-all">{label}</span>
+              <span className="text-xs text-muted-foreground">{providerOf(key)}</span>
+              {key === defaultModel && <Badge variant="outline">default</Badge>}
+              {note !== undefined && <span className="text-xs text-muted-foreground">{note}</span>}
+              {key !== defaultModel && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2"
+                  aria-label={`Remove ${label} (${providerOf(key)})`}
+                  onClick={() => {
+                    onChange(withoutModel(value, key));
+                  }}
+                >
+                  {"×"}
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {entries.length > visible.length && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="self-start"
+          onClick={() => {
+            setAll(true);
           }}
-        />
+        >
+          Show all {entries.length}
+        </Button>
       )}
-      <div className="flex flex-col gap-1.5" data-testid="allowed-models">
-        {defaultModel !== "" && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Checkbox id="allow-default" checked disabled />
-            <Label htmlFor="allow-default">{modelLabel(view.models, defaultModel)}</Label>
-            <Badge variant="outline">default</Badge>
+      {entries.some(isScripted) && <p className="text-xs text-muted-foreground">{SCRIPTED_NOTE}</p>}
+      {view.mode === "list" && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="allowed-add" className="text-xs text-muted-foreground">
+            Add a model
+          </Label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Select
+              aria-label="Provider to add from"
+              value={provider}
+              onChange={(event) => {
+                setPicked(event.target.value);
+              }}
+            >
+              {providers.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+            <Combobox
+              id="allowed-add"
+              options={options}
+              display=""
+              placeholder="Search models"
+              onPick={(key) => {
+                onChange(withModel(value, key, defaultModel));
+              }}
+            />
           </div>
-        )}
-        {extra.map((key) =>
-          row(
-            key,
-            key,
-            <span className="text-xs text-muted-foreground">{currentNote(view, key)}</span>,
-          ),
-        )}
-        {groupKeys(shown.map(keyOf), view.models).map((group) => (
-          <div key={group.provider} className="flex flex-col gap-1.5">
-            <p className="mt-1 text-xs font-medium text-muted-foreground">{group.provider}</p>
-            {group.options.map((option) =>
-              row(option.key, option.label, undefined, option.reasoning),
-            )}
-          </div>
-        ))}
-      </div>
+        </div>
+      )}
       {view.mode !== "list" && view.mode !== "loading" && (
         <ModelIdInput
           id="allowed-custom"
           onUse={(key) => {
-            if (key !== defaultModel && !value.includes(key)) onChange([...value, key]);
+            onChange(withModel(value, key, defaultModel));
           }}
         />
       )}

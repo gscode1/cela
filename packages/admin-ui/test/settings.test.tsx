@@ -87,9 +87,7 @@ describe("settings editor", () => {
       ).toBeInTheDocument();
     });
     // Dropping scripted-2 breaks "fast", which is not the default: a warning.
-    await userEvent.click(
-      screen.getByLabelText("scripted/scripted-2", { selector: "#allow-scripted\\/scripted-2" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Remove scripted-2 (scripted)" }));
     expect(await screen.findByTestId("warnings")).toHaveTextContent("fast");
     expect(screen.getByRole("button", { name: "Save settings" })).toBeEnabled();
 
@@ -180,18 +178,62 @@ describe("settings editor", () => {
     const admin = createFakeAdmin();
     admin.settings = { ...admin.settings, defaultModel: "scripted/scripted-1" };
     await open(admin);
-    expect(screen.getByText(/Test model — replays the message as a script/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Test model — replays the message as a script/).length,
+    ).toBeGreaterThan(0);
     const provider = screen.getByLabelText("Provider");
     expect(within(provider).queryByText("anthropic")).not.toBeInTheDocument();
     await userEvent.selectOptions(provider, "openai");
-    expect(screen.getByLabelText("Default model")).toHaveValue("openai/gpt-fast");
-    await userEvent.click(screen.getByLabelText("GPT Think", { selector: "[id^=allow-]" }));
+    expect(screen.getByLabelText("Default model")).toHaveValue("GPT Fast");
+    await userEvent.type(screen.getByLabelText("Add a model"), "think");
+    await userEvent.click(screen.getByRole("option", { name: /GPT Think/ }));
+    expect(within(screen.getByTestId("allowed-models")).getByText("GPT Think")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await screen.findByTestId("saved");
     expect(admin.writes[0]?.body).toMatchObject({
       defaultModel: "openai/gpt-fast",
       allowlist: ["openai/gpt-fast", "scripted/scripted-1", "openai/gpt-think"],
     });
+  });
+
+  it("lists only the allowed models, notes the test provider once and never lists the catalog", async () => {
+    const admin = createFakeAdmin();
+    await open(admin);
+    const list = screen.getByTestId("allowed-models");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("default")).toBeInTheDocument();
+    expect(within(list).queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Allowed models" })).getAllByText(
+        /Test model — replays the message as a script/,
+      ),
+    ).toHaveLength(1);
+    expect(screen.queryByText("GPT Fast")).not.toBeInTheDocument();
+  });
+
+  it("keeps a 400-model provider short and finds a model by typing", async () => {
+    const admin = createFakeAdmin();
+    admin.models = {
+      ...admin.models,
+      models: Array.from({ length: 400 }, (_, index) => ({
+        provider: "openai",
+        id: `m-${String(index)}`,
+        name: `Model ${String(index)}`,
+        reasoning: false,
+      })),
+    };
+    await open(admin);
+    await userEvent.selectOptions(screen.getByLabelText("Provider to add from"), "openai");
+    const add = screen.getByLabelText("Add a model");
+    await userEvent.click(add);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(20);
+    expect(screen.getByText(/380 more/)).toBeInTheDocument();
+    await userEvent.type(add, "Model 399");
+    await userEvent.keyboard("{Enter}");
+    expect(within(screen.getByTestId("allowed-models")).getByText("Model 399")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByTestId("saved");
+    expect((admin.writes[0]?.body as { allowlist: string[] }).allowlist).toContain("openai/m-399");
   });
 
   it("says why there is no list, and keeps the current values with a field for a model id", async () => {

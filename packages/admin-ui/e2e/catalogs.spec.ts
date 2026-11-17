@@ -632,8 +632,11 @@ test.describe("isolation", () => {
     const alert = page.getByRole("alert");
     await expect(alert).toContainText("Shard 1: configured gvisor, observed node default.");
     await expect(alert).toContainText("Shard 1: network isolation is not enforced.");
-    await expect(alert).toContainText("Shard 2: no sandbox has started yet");
+    await expect(alert).not.toContainText("no sandbox has started");
     await expect(page.getByTestId("isolation-ok")).toHaveCount(0);
+    await expect(page.getByTestId("isolation-note")).toHaveText(
+      "Shard 2: no sandbox has started since the last restart, so the runtime is not confirmed yet.",
+    );
     await expect(page.getByRole("columnheader", { name: "Shard" })).toBeVisible();
     const first = page.getByTestId("shard-0");
     await expect(first).toContainText("enforced");
@@ -648,6 +651,17 @@ test.describe("isolation", () => {
     await expect(third).toContainText("not checked yet");
     await expect(page.getByText("runtimeClassName")).toHaveCount(0);
     await shot(page, "isolation-problem.png");
+  });
+
+  test("right after a restart: a neutral note, no alert", async ({ page, request }) => {
+    await request.put("/__fake/status", { data: { shards: [report({ observedRuntime: null })] } });
+    await signInAndGo(page, "/console/status");
+    await expect(page.getByTestId("isolation-note")).toContainText(
+      "No sandbox has started since the last restart, so the runtime is not confirmed yet.",
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByTestId("isolation-ok")).toHaveCount(0);
+    await shot(page, "isolation-neutral.png");
   });
 
   test("re-checking turns a not-yet-checked report into the healthy line", async ({

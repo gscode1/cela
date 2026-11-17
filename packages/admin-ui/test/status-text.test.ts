@@ -57,6 +57,21 @@ describe("isolation summary", () => {
     ]);
   });
 
+  it("treats a shard without a sandbox yet as a neutral note, not a problem", () => {
+    const fresh = summarizeIsolation([shard({ observedRuntime: null })]);
+    expect(fresh).toMatchObject({ healthy: true, problems: [], runtimes: [] });
+    expect(fresh.notes).toEqual([
+      "No sandbox has started since the last restart, so the runtime is not confirmed yet.",
+    ]);
+    const two = summarizeIsolation([shard(), shard({ shard: 1, observedRuntime: null })]);
+    expect(two.notes).toEqual([
+      "Shard 1: no sandbox has started since the last restart, so the runtime is not confirmed yet.",
+    ]);
+    expect(
+      summarizeIsolation([shard({ observedRuntime: null, networkPolicy: "not-enforced" })]),
+    ).toMatchObject({ healthy: false, problems: ["network isolation is not enforced."] });
+  });
+
   it("treats a running probe as neither healthy nor a problem", () => {
     expect(summarizeIsolation([shard({ networkPolicy: "running" })])).toMatchObject({
       healthy: false,

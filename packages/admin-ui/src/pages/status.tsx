@@ -126,15 +126,30 @@ export function ShardStatusPage() {
             </ul>
           </Alert>
         )}
+        {summary.notes.length > 0 && (
+          <div
+            className="flex flex-col gap-1 text-sm text-muted-foreground"
+            data-testid="isolation-note"
+          >
+            {summary.healthy && summary.runtimes.length === 0 && (
+              <p>Network isolation is enforced.</p>
+            )}
+            {summary.notes.map((note) => (
+              <p key={note}>{note}</p>
+            ))}
+          </div>
+        )}
         {summary.healthy && (
           <>
-            <p
-              className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
-              data-testid="isolation-ok"
-            >
-              Sandboxes run under {summary.runtimes.map(runtimeName).join(" and ")} and network
-              isolation is enforced.
-            </p>
+            {summary.runtimes.length > 0 && (
+              <p
+                className="rounded-lg border border-green-600/40 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-300"
+                data-testid="isolation-ok"
+              >
+                Sandboxes run under {summary.runtimes.map(runtimeName).join(" and ")} and network
+                isolation is enforced.
+              </p>
+            )}
             <details>
               <summary className="cursor-pointer text-sm font-medium">Details</summary>
               <div className="mt-2">

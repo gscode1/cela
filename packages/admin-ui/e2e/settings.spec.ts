@@ -14,9 +14,7 @@ test.describe("global settings", () => {
     page,
   }) => {
     await signIn(page, "/console/settings");
-    await expect(page.getByLabel("Default model", { exact: true })).toHaveValue(
-      "scripted/scripted-1",
-    );
+    await expect(page.getByLabel("Default model", { exact: true })).toHaveValue("scripted-1");
     await expect(page.getByLabel("Default profile")).toHaveValue("coding");
     await expect(page.getByRole("heading", { name: "Review before saving" })).toHaveCount(0);
 
@@ -78,7 +76,7 @@ test.describe("global settings", () => {
       page.getByLabel("Default profile").locator(`option[value="${fast}"]`),
     ).toBeAttached();
 
-    await page.getByLabel("scripted/scripted-2", { exact: true }).uncheck();
+    await page.getByRole("button", { name: "Remove scripted-2 (scripted)" }).click();
     await expect(page.getByTestId("warnings")).toContainText(fast);
     await expect(page.getByTestId("warnings")).toContainText(picky);
     await expect(page.getByRole("button", { name: "Save settings" })).toBeEnabled();
@@ -154,31 +152,41 @@ test.describe("model pickers", () => {
     request,
   }) => {
     await signIn(page, "/console/settings");
-    await expect(page.getByLabel("Provider")).toHaveValue("scripted");
+    await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("scripted");
     await expect(
       page.getByText("Test model — replays the message as a script, no LLM.").first(),
     ).toBeVisible();
-    await expect(page.getByLabel("Provider").locator("option")).toHaveText(["scripted", "openai"]);
+    await expect(page.getByLabel("Provider", { exact: true }).locator("option")).toHaveText([
+      "scripted",
+      "openai",
+      "bulk",
+    ]);
     await shot(page, "cleanup-profiles-settings-scripted");
 
-    await page.getByLabel("Provider").selectOption("openai");
-    await expect(page.getByLabel("Default model", { exact: true })).toHaveValue("openai/gpt-fast");
-    await expect(page.getByLabel("Default model", { exact: true }).locator("option")).toHaveText([
-      "GPT Fast",
-      "GPT Think · reasoning",
+    await page.getByLabel("Provider", { exact: true }).selectOption("openai");
+    const model = page.getByLabel("Default model", { exact: true });
+    await expect(model).toHaveValue("GPT Fast");
+    await model.click();
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+      /GPT Fast/,
+      /GPT Think\s*reasoning/,
     ]);
-    await expect(page.getByLabel("Default reasoning")).toHaveCount(0);
-    await expect(page.getByText("This model has no reasoning levels.")).toBeVisible();
-
-    await page.getByLabel("Default model", { exact: true }).selectOption("openai/gpt-think");
+    await page.getByRole("option", { name: /GPT Think/ }).click();
+    await expect(model).toHaveValue("GPT Think");
     await expect(page.getByLabel("Default reasoning")).toBeVisible();
     // Never offered: the unconfigured provider and the test provider's models.
     await expect(page.getByText("Claude X")).toHaveCount(0);
+
     const allowed = page.getByRole("group", { name: "Allowed models" });
     await expect(allowed.getByText("default")).toBeVisible();
-    await allowed.getByLabel("GPT Fast").check();
-    await expect(allowed.getByLabel("scripted/scripted-2")).toBeChecked();
-    await allowed.getByLabel("scripted/scripted-2").uncheck();
+    await expect(
+      allowed.getByText("Test model — replays the message as a script, no LLM."),
+    ).toHaveCount(1);
+    await allowed.getByLabel("Provider to add from").selectOption("openai");
+    await allowed.getByLabel("Add a model").fill("fast");
+    await allowed.getByRole("option", { name: /GPT Fast/ }).click();
+    await expect(allowed.getByRole("list").getByText("GPT Fast")).toBeVisible();
+    await allowed.getByRole("button", { name: "Remove scripted-2 (scripted)" }).click();
     await shot(page, "cleanup-profiles-settings-pickers");
 
     await page.getByRole("button", { name: "Save settings" }).click();
@@ -195,13 +203,53 @@ test.describe("model pickers", () => {
       "scripted/scripted-1",
     ]);
 
-    // The saved allowlist comes back as checked boxes.
+    // The saved allowlist comes back as entries.
     await page.reload();
     await page.getByLabel("Token").fill((await import("./env")).tokens().admin);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(
-      page.getByRole("group", { name: "Allowed models" }).getByLabel("GPT Fast"),
-    ).toBeChecked();
+      page.getByRole("group", { name: "Allowed models" }).getByText("GPT Fast"),
+    ).toBeVisible();
+  });
+
+  test("stays short with a provider of 300 models, and adds one by searching", async ({
+    page,
+    request,
+  }) => {
+    await signIn(page, "/console/settings");
+    await page.getByLabel("Provider", { exact: true }).selectOption("bulk");
+    const model = page.getByLabel("Default model", { exact: true });
+    await model.click();
+    await model.fill("model-2 vendor-3");
+    const options = page.getByRole("listbox").getByRole("option");
+    expect(await options.count()).toBeLessThanOrEqual(20);
+    await shot(page, "picker-scale-default-combobox");
+    await page.keyboard.press("Enter");
+    await expect(model).toHaveValue(/Bulk Model 2\d\d/);
+
+    const allowed = page.getByRole("group", { name: "Allowed models" });
+    await allowed.getByLabel("Provider to add from").selectOption("bulk");
+    const add = allowed.getByLabel("Add a model");
+    await add.click();
+    await expect(allowed.getByRole("listbox").getByRole("option")).toHaveCount(20);
+    await expect(allowed.getByText(/^279 more/)).toBeVisible();
+    await add.fill("Bulk Model 150");
+    await allowed
+      .getByRole("listbox")
+      .getByRole("option", { name: /Bulk Model 150/ })
+      .click();
+    await expect(allowed.getByRole("list").getByText("Bulk Model 150")).toBeVisible();
+    await shot(page, "picker-scale-allowed-added");
+
+    // The page stays a screenful: no list of the catalog anywhere.
+    expect(await page.getByRole("listitem").count()).toBeLessThan(50);
+    expect(await page.locator("input[type=checkbox]").count()).toBeLessThan(50);
+    expect(await page.evaluate(() => document.body.scrollHeight)).toBeLessThan(3000);
+
+    await page.getByRole("button", { name: "Save settings" }).click();
+    await expect(page.getByTestId("saved")).toHaveText("Settings saved.");
+    const stored = await api<{ allowlist: string[] }>(request, "GET", "/admin/settings");
+    expect(stored.allowlist.some((key) => key.includes("model-150"))).toBe(true);
   });
 
   test("says so when no model credential is configured, and takes a typed model id", async ({
@@ -214,7 +262,7 @@ test.describe("model pickers", () => {
       "No model credentials are configured in OneCLI yet.",
     );
     await expect(page.getByTestId("current-model")).toHaveText("scripted/scripted-1");
-    await expect(page.getByLabel("Provider")).toHaveCount(0);
+    await expect(page.getByLabel("Provider", { exact: true })).toHaveCount(0);
     await shot(page, "cleanup-profiles-settings-none-configured");
 
     await page.locator("#default-model-custom").fill("openai/typed-model");
@@ -222,7 +270,7 @@ test.describe("model pickers", () => {
     await expect(page.getByTestId("current-model")).toHaveText("openai/typed-model");
     await page.locator("#allowed-custom").fill("openai/also-typed");
     await page.getByRole("button", { name: "Use" }).nth(1).click();
-    await expect(page.getByLabel("openai/also-typed")).toBeChecked();
+    await expect(page.getByTestId("allowed-models").getByText("also-typed")).toBeVisible();
     await page.getByRole("button", { name: "Save settings" }).click();
     // The server checks the id against its full catalog.
     await expect(
