@@ -75,3 +75,28 @@ So "the first account owns the install" (the plan's earlier sentence) is false, 
 
 A real model call and a Codex login through the bundled gateway; OAuth and GitHub App flows against a real provider;
 `database.external` with TLS; Cilium; an upgrade of the upstream chart; the bootstrap as a Job.
+
+## Addendum: kind publishes the dashboard and API on localhost (issue #138)
+
+Decision: on kind only, `hack/kind-up.sh` publishes the session API and the bundled OneCLI dashboard and API on the
+host's loopback (`localhost:8080`, `:10254`, `:10256`) instead of needing `kubectl port-forward`. `--no-expose` opts out. This
+changes the Consequences above (the dashboard was reachable by port-forward only) for kind and for nothing else.
+
+- **Mechanism.** kind `extraPortMappings` bound to `127.0.0.1` (created with the cluster; a reused cluster without them is
+  refused, with the fix), NodePort Services with `externalTrafficPolicy: Local` (`ingest.expose` in `charts/pi-durable`,
+  `expose` in `charts/pi-onecli`, both off by default, so real-cluster renders are unchanged), and exactly one extra
+  ingress source: an `ipBlock` /32. The host ports are fixed because `externalUrl` is `http://localhost:10254` and the
+  dashboard calls the API at `localhost:10256`.
+- **The source address was measured, not assumed.** On Docker Desktop for Mac (kind v0.33, kindnet, node image 1.37) a
+  `curl localhost:<port>` arrives at the pod as the IPv4 gateway of the Docker network `kind` (`172.20.0.1`), with
+  `externalTrafficPolicy: Local`. Without Local the address would be rewritten. The rule is that /32, never the node IP and
+  never the subnet: a sandbox can reach the node and the subnet, and the management API takes a sign-up from whoever
+  reaches it. The schemas reject any value that is not an IPv4 /32.
+- **Check.** `hack/kind-smoke.sh` calls the three ports from the host, and, from a real sandbox, expects the node IP on
+  each NodePort and each ClusterIP to be blocked.
+- **Residual risk (kind only, unchanged by this).** kindnet does not filter traffic to the node itself, so a sandbox can
+  still reach the API server, kubelet and etcd ports without credentials (`automountServiceAccountToken` is false). Only an
+  enforcing CNI such as Cilium closes that (issue #139). If the Docker network's gateway were not where host connections arrive from
+  on another platform, the install would not be reachable on localhost; it would not become more open, because the rule
+  names one address.
+

@@ -800,3 +800,65 @@ describe("values are validated", () => {
     });
   }
 });
+
+describe("ingest.expose (kind only)", () => {
+  const on = [
+    "--set",
+    "ingest.expose.enabled=true",
+    "--set",
+    "ingest.expose.sourceCidr=172.20.0.1/32",
+  ];
+  const list = docs(external);
+
+  it("renders nothing for it by default and keeps the ClusterIP Service as it is", () => {
+    expect(JSON.stringify(list)).not.toMatch(/nodeport|NodePort/i);
+    expect(list.some((d) => d.metadata.name === "ingest-allow-expose-ingress")).toBe(false);
+    expect(named(list, "Service", "pi-ingest").spec.type).toBeUndefined();
+  });
+
+  it("adds a NodePort Service with externalTrafficPolicy Local, and leaves the ClusterIP Service alone", () => {
+    const withExpose = docs([...external, ...on]);
+    const service = named(withExpose, "Service", "pi-ingest-nodeport");
+    expect(service.spec.type).toBe("NodePort");
+    expect(service.spec.externalTrafficPolicy).toBe("Local");
+    expect(service.spec.selector).toEqual({ "app.kubernetes.io/name": "pi-ingest" });
+    expect(service.spec.ports.map((p: Obj) => [p.port, p.nodePort])).toEqual([[8080, 30080]]);
+    expect(named(withExpose, "Service", "pi-ingest")).toEqual(named(list, "Service", "pi-ingest"));
+  });
+
+  it("admits ingest on 8080 from that one /32 and from no pod or namespace", () => {
+    const policy = named(
+      docs([...external, ...on]),
+      "NetworkPolicy",
+      "ingest-allow-expose-ingress",
+    );
+    expect(policy.spec.podSelector.matchLabels).toEqual({ "app.kubernetes.io/name": "pi-ingest" });
+    expect(JSON.parse(JSON.stringify(policy.spec.ingress).replaceAll('"_from"', '"from"'))).toEqual(
+      [
+        {
+          from: [{ ipBlock: { cidr: "172.20.0.1/32" } }],
+          ports: [{ protocol: "TCP", port: 8080 }],
+        },
+      ],
+    );
+  });
+
+  const bad: [string, string[]][] = [
+    ["a source that is not a /32", ["ingest.expose.sourceCidr=172.20.0.0/16"]],
+    ["an empty source", ["ingest.expose.sourceCidr="]],
+    ["an IPv6 source", ["ingest.expose.sourceCidr=fc00::1/128"]],
+    ["0.0.0.0/32", ["ingest.expose.sourceCidr=0.0.0.0/32"]],
+  ];
+  for (const [name, sets] of bad) {
+    it(`rejects ${name} when expose is on`, () => {
+      const args = ["ingest.expose.enabled=true", ...sets].flatMap((s) => ["--set", s]);
+      expect(() => helmTemplate(chart, [...external, ...args])).toThrow(/sourceCidr|pattern|not/);
+    });
+  }
+
+  it("rejects a NodePort outside 30000-32767", () => {
+    expect(() =>
+      helmTemplate(chart, [...external, ...on, "--set", "ingest.expose.nodePort=8080"]),
+    ).toThrow(/nodePort|minimum/);
+  });
+});

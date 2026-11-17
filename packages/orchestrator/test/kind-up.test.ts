@@ -17,10 +17,14 @@ const fake = (name: string, body: string) => {
 };
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "kind-up-"));
+  // FAKE_GATEWAYS: what `docker network inspect kind` prints (IPAM gateways, space separated); FAKE_PORTS: what
+  // `docker port <node> 30080/tcp` prints for an existing cluster.
   fake(
     "docker",
     `printf 'docker %s\\n' "$*" >>"$FAKE_LOG"
 [[ $1 == manifest ]] && exit "\${FAKE_MANIFEST_RC:-0}"
+[[ $1 == network ]] && printf '%s' "\${FAKE_GATEWAYS-fc00:f853:ccd:e793::1 172.20.0.1 }"
+[[ $1 == port ]] && printf '%s' "\${FAKE_PORTS:-}"
 exit 0`,
   );
   fake(
@@ -29,6 +33,7 @@ exit 0`,
 case "$1" in
   version) echo "kind v\${FAKE_KIND_VERSION:-0.33.0} go1.27.1 linux/amd64" ;;
   get) printf '%s' "\${FAKE_CLUSTERS:-}" ;;
+  create) while [[ $# -gt 0 ]]; do [[ $1 == --config ]] && cp "$2" "$FAKE_LOG.config"; shift; done ;;
 esac
 exit 0`,
   );
@@ -122,8 +127,83 @@ describe("hack/kind-up.sh", () => {
   });
 
   it("reuses an existing cluster of that name", () => {
-    run(["--name", "demo"], { IMAGE_TAG: "t", FAKE_CLUSTERS: "demo\nother\n" });
+    run(["--name", "demo"], {
+      IMAGE_TAG: "t",
+      FAKE_CLUSTERS: "demo\nother\n",
+      FAKE_PORTS: "127.0.0.1:8080",
+    });
     expect(log()).not.toContain("kind create");
+  });
+});
+
+describe("hack/kind-up.sh localhost ports", () => {
+  const config = () => readFileSync(join(dir, "log.config"), "utf8");
+
+  it("maps the three host ports on 127.0.0.1 only, to the NodePorts the charts use", () => {
+    const text = readFileSync(join(root, "hack/kind-config.yaml"), "utf8");
+    const mappings = [
+      ...text.matchAll(/containerPort: (\d+), hostPort: (\d+), listenAddress: "([^"]+)"/g),
+    ];
+    expect(mappings.map((m) => [m[1], m[2]])).toEqual([
+      ["30080", "8080"],
+      ["30254", "10254"],
+      ["30256", "10256"],
+    ]);
+    // Never 0.0.0.0: the host's other interfaces must not reach them.
+    for (const m of mappings) expect(m[3]).toBe("127.0.0.1");
+    expect(text).not.toMatch(/0\.0\.0\.0/);
+    const ingest = readFileSync(join(root, "charts/pi-durable/values.yaml"), "utf8");
+    expect(ingest).toMatch(/nodePort: 30080/);
+    const onecli = readFileSync(join(root, "charts/pi-onecli/values.yaml"), "utf8");
+    expect(onecli).toMatch(/nodePorts: \{ web: 30254, api: 30256 \}/);
+  });
+
+  it("creates the cluster with the mappings and reads the IPv4 gateway (not the first, IPv6, entry)", () => {
+    run(["--name", "demo"], { IMAGE_TAG: "t" });
+    expect(config()).toContain("extraPortMappings:");
+    expect(log()).toContain("docker network inspect kind");
+  });
+
+  it("--no-expose creates the cluster without mappings and never asks Docker for the gateway", () => {
+    const r = run(["--name", "demo", "--no-expose"], { IMAGE_TAG: "t" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cannot reach the cluster through context kind-demo");
+    expect(config()).not.toContain("extraPortMappings");
+    expect(config()).not.toContain("expose:");
+    expect(config()).toContain("kindest/node");
+    expect(log()).not.toContain("network inspect");
+  });
+
+  it("refuses an existing cluster without the mappings, and says what to do", () => {
+    const r = run(["--name", "demo"], { IMAGE_TAG: "t", FAKE_CLUSTERS: "demo\n" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("without the localhost port mappings");
+    expect(r.stderr).toContain("hack/kind-down.sh --name demo");
+    expect(r.stderr).toContain("--no-expose");
+  });
+
+  it("reuses an existing cluster without the mappings when --no-expose is given", () => {
+    const r = run(["--name", "demo", "--no-expose"], { IMAGE_TAG: "t", FAKE_CLUSTERS: "demo\n" });
+    expect(r.stderr).not.toContain("port mappings");
+    expect(r.stderr).toContain("cannot reach the cluster through context kind-demo");
+  });
+
+  it("stops when the network has no IPv4 gateway, instead of admitting a wider range", () => {
+    const r = run(["--name", "demo"], { IMAGE_TAG: "t", FAKE_GATEWAYS: "fc00:f853:ccd:e793::1 " });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cannot read the IPv4 gateway");
+  });
+
+  it("passes the gateway as a /32 to the install, and to OneCLI only with --onecli", () => {
+    const kindUp = readFileSync(script, "utf8");
+    expect(kindUp).toContain(
+      '--set ingest.expose.enabled=true --set "ingest.expose.sourceCidr=$expose_cidr"',
+    );
+    expect(kindUp).toContain("expose_cidr=$gateway/32");
+    expect(kindUp).toMatch(
+      /\[\[ \$onecli -eq 0 \]\] \|\| extra_args\+=\(--onecli-expose-cidr "\$expose_cidr"\)/,
+    );
+    expect(kindUp).toMatch(/--no-expose\) expose=0/);
   });
 });
 

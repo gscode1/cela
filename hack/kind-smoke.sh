@@ -24,6 +24,13 @@
 # GATEWAY_CHECK_HOST=api.openai.com (with --onecli) is the hook for the real-model check: step 1b then asks that host
 # instead of example.com and prints the answer (OpenAI answers 401 when no credential was injected).
 #
+# When the cluster was made with the localhost ports (hack/kind-up.sh default; the Service pi-ingest-nodeport exists), it
+# also checks, without --status:
+#   1d. from this machine: localhost:8080 (the session API: /healthz answers 200, /sessions without a token 401) and, with
+#       OneCLI, localhost:10254 (dashboard) and localhost:10256 (management API) answer
+#   4c. from the sandbox: the node IP on each exposed NodePort and each ClusterIP Service port are blocked. A sandbox must
+#       not reach ingest or OneCLI's API through the published ports (only the Docker gateway /32 is admitted)
+#
 # --status runs step 1 only (kind-up.sh uses it). The API is called from inside an ingest pod (hack/kind-client.mjs): no
 # port-forward, and the API token never leaves the cluster or reaches a log. Only kind contexts are used.
 set -euo pipefail
@@ -102,6 +109,37 @@ if ! grep -q '^isolation-probe state=enforced ' <<<"$status"; then
 fi
 [[ $status_only -eq 0 ]] || exit 0
 
+# ------------------------------------------------------------------ 1d. the localhost ports
+exposed=0
+[[ -z $(k get service pi-ingest-nodeport --ignore-not-found -o name) ]] || exposed=1
+onecli_exposed=0
+[[ -z $(k get service onecli-web-nodeport --ignore-not-found -o name) ]] || onecli_exposed=1
+if [[ $exposed -eq 1 ]]; then
+  log "from this machine: the published localhost ports (no port-forward)"
+  command -v curl >/dev/null 2>&1 || die "curl is required for the localhost checks"
+  http() { # url -> the HTTP status, retried while the port does not answer yet
+    local code="" _
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null) || code=000
+      [[ $code != 000 ]] && break
+      sleep 2
+    done
+    echo "$code"
+  }
+  out="localhost:8080/healthz $(http http://localhost:8080/healthz)
+localhost:8080/sessions $(http http://localhost:8080/sessions)"
+  printf '%s\n' "$out"
+  check "the session API answers on localhost:8080 (/healthz 200)" "$out" "healthz 200"
+  check "it asks for a token (/sessions without one: 401)" "$out" "sessions 401"
+  if [[ $onecli_exposed -eq 1 ]]; then
+    out="localhost:10254 $(http http://localhost:10254/)
+localhost:10256/v1/health $(http http://localhost:10256/v1/health)"
+    printf '%s\n' "$out"
+    check "the OneCLI dashboard answers on localhost:10254" "$out" "10254 (200|30[0-9])"
+    check "the OneCLI management API answers on localhost:10256" "$out" "health 200"
+  fi
+fi
+
 # ------------------------------------------------------------------ 1b-1c. bundled OneCLI
 if [[ $onecli -eq 1 ]]; then
   log "the orchestrator routes through the OneCLI gateway (no model call)"
@@ -169,6 +207,35 @@ if [[ $onecli -eq 1 ]]; then
   out=$(api ask "$session" "$(script_json "net-$marker" "$cmd")" "net-$marker" 600)
   check "the sandbox reaches the OneCLI gateway" "$out" "gw-open"
   check "the sandbox does not reach the OneCLI management API" "$out" "api-closed"
+fi
+
+if [[ $exposed -eq 1 ]]; then
+  log "from the sandbox: the published NodePorts (on the node IP) and the ClusterIP Services are blocked"
+  node_ip=$(kubectl --context "$ctx" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  [[ $node_ip =~ ^[0-9.]+$ ]] || die "cannot read the node IP: '$node_ip'"
+  # "<ip> <port>" pairs: each NodePort on the node IP, then the ClusterIP of the Service behind it.
+  pairs=("$node_ip $(k get service pi-ingest-nodeport -o jsonpath='{.spec.ports[0].nodePort}')"
+    "$(k get service pi-ingest -o jsonpath='{.spec.clusterIP} {.spec.ports[0].port}')")
+  if [[ $onecli_exposed -eq 1 ]]; then
+    for svc in web api; do
+      pairs+=("$node_ip $(k get service "onecli-$svc-nodeport" -o jsonpath='{.spec.ports[0].nodePort}')"
+        "$(k get service "onecli-$svc" -o jsonpath='{.spec.clusterIP} {.spec.ports[0].port}')")
+    done
+  fi
+  cmd=""
+  for pair in "${pairs[@]}"; do
+    # shellcheck disable=SC2086
+    set -- $pair
+    cmd+="if timeout 5 bash -c 'exec 3<>/dev/tcp/\$0/\$1' $1 $2 2>/dev/null; then echo OPEN-$1-$2; else echo blocked-$1-$2; fi; "
+  done
+  out=$(api ask "$session" "$(script_json "exp-$marker" "$cmd")" "exp-$marker" 900)
+  printf '%s\n' "$out"
+  for pair in "${pairs[@]}"; do
+    # shellcheck disable=SC2086
+    set -- $pair
+    check "the sandbox does not reach $1:$2" "$out" "blocked-$1-$2"
+  done
+  ! grep -q 'OPEN-' <<<"$out" || die "a sandbox reached an exposed port (see above)"
 fi
 
 # ------------------------------------------------------------------ 5. replace the Pod

@@ -86,19 +86,27 @@ hack/kind-up.sh                 # published images for this commit (IMAGE_TAG=<t
 hack/kind-up.sh --build         # or build the images here (native architecture) and load them into the node
 hack/kind-smoke.sh              # a session, a message, a tool call in the sandbox, a replaced Pod, deletion
 hack/kind-up.sh --build --onecli  # the same plus the bundled OneCLI (credential gateway), for real models
+hack/kind-up.sh --build --no-expose  # no localhost ports (8080, 10254, 10256): use kubectl port-forward
 hack/kind-smoke.sh --onecli     # also: the orchestrator's way through the gateway, and the OneCLI API closed to everyone else
 hack/kind-down.sh               # delete the cluster
 ```
 
 `--onecli` adds three to five minutes (it pulls the OneCLI images, several hundred MB). It installs the upstream OneCLI chart, a bootstrap
 (account, orchestrator agent token, host allowlist, public CA) and network policies that keep OneCLI's API open only to the
-orchestrator. The dashboard has no Ingress; sign in over `kubectl port-forward`, with the login from a Secret
-([how, and what works that way](docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)). OneCLI cannot close its
+orchestrator. The dashboard has no Ingress; on kind it is on `http://localhost:10254` (see below), and the login is in a
+Secret ([how, and what works that way](docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)). OneCLI cannot close its
 sign-up, so never put its API or dashboard behind an Ingress without blocking `/auth/signup` and `/auth/sign-up*`
 ([ADR 0022](docs/decisions/0022-bundled-onecli.md)).
 
 It takes about five minutes (the first run pulls the node image and the application images). It prints where the API token
-is (it never prints the token) and how to port-forward, and shows the isolation probe from `GET /admin/status`. The
+is (it never prints the token), shows the isolation probe from `GET /admin/status`, and tells you where to reach things: the
+session API on `http://localhost:8080` and, with `--onecli`, the dashboard on `http://localhost:10254` (and its API on
+`:10256`), with no `kubectl port-forward`. These ports are published on 127.0.0.1 only, are admitted by the network
+policies from one address (the Docker gateway of the kind network, a /32) and not from sandboxes
+([network policy](docs/network-policy.md#kind-localhost-ports-kind-only)). They exist only when the cluster is created:
+`hack/kind-up.sh --no-expose` skips them (use `kubectl port-forward`), and an existing cluster without them is refused, so
+run `hack/kind-down.sh` first. On kind a sandbox can still reach the node's own ports (API server, kubelet) without
+credentials: kindnet cannot filter that; an enforcing CNI such as Cilium would (tracked in issue #139). The
 cluster is named `pi-durable` (`--name` or `KIND_CLUSTER_NAME`) and every command uses its own `kind-<name>` context, never
 your current one. **Not for real use:** the sandboxes run under runc, not gVisor
 ([values-kind.yaml](charts/pi-durable/values-kind.yaml)). kindnet blocks the sandbox's access to Postgres and the

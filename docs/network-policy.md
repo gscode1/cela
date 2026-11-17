@@ -220,6 +220,7 @@ the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release
 | orchestrator, sandboxes | OneCLI gateway | 10255 | model and MCP calls, sandbox traffic |
 | OneCLI api, web | gateway | 10255 | the dashboard's and the API's own calls |
 | nobody | OneCLI web (dashboard) | 10254 | port-forward only; `web.allowFrom` opens it to chosen peers |
+| the Docker gateway of the kind network, one /32 (`expose.enabled`, kind only) | OneCLI web, api | 10254, 10256 | the host's `localhost:10254` and `:10256` ([below](#kind-localhost-ports-kind-only)) |
 | OneCLI pods | `pi-postgres` | 5432 | the `onecli` database (pi-postgres admits `app.kubernetes.io/name=onecli`) |
 | OneCLI pods | CoreDNS | 53 | |
 | OneCLI gateway | public internet (not private, CGNAT, link-local, loopback) | any | model, GitHub and package hosts, as for sandboxes |
@@ -231,3 +232,32 @@ an account creates is not covered by our host rules; its agent tokens work on th
 `example.com` fetch that the first organization's rules blocked). Reaching `:10256` is the whole attack, so this table is the
 control, and it only works on a CNI that enforces NetworkPolicy. `hack/kind-smoke.sh --onecli` checks it live: the
 orchestrator gets HTTP 200 from the API, the ingest pod and a sandbox do not connect, and a sandbox does reach the gateway.
+
+## kind: localhost ports (kind only)
+
+`hack/kind-up.sh` (default; `--no-expose` turns it off) publishes the session API on the host's `localhost:8080` and, with
+`--onecli`, the OneCLI dashboard and API on `localhost:10254` and `:10256`, so nothing needs `kubectl port-forward`
+([ADR 0022 addendum](decisions/0022-bundled-onecli.md#addendum-kind-publishes-the-dashboard-and-api-on-localhost-issue-138)).
+Real clusters render none of this (`ingest.expose.enabled` and `expose.enabled` are false).
+
+The path: the host's `127.0.0.1:<port>` (a kind `extraPortMapping`, loopback only) to the node container, to a NodePort
+Service with `externalTrafficPolicy: Local` (`pi-ingest-nodeport` 30080, `onecli-web-nodeport` 30254,
+`onecli-api-nodeport` 30256), to the pod. `Local` keeps the client's source address. Connections made on the host arrive
+from the **IPv4 gateway of the Docker network `kind`** (measured on Docker Desktop for Mac: `172.20.0.1`; read by
+`hack/kind-up.sh` from `docker network inspect kind`, where the first entry can be IPv6). One policy per exposed component
+admits exactly that address as an `ipBlock` `/32` (the chart schema rejects anything wider or empty):
+`ingest-allow-expose-ingress` and `<release>-{web,api}-allow-expose-ingress`.
+
+| From | To | Port | Note |
+| --- | --- | --- | --- |
+| the Docker gateway, one /32 | ingest | 8080 | the host's `localhost:8080` |
+| the Docker gateway, one /32 | OneCLI web, api | 10254, 10256 | the host's `localhost:10254`, `:10256` |
+| a sandbox | the node IP on a NodePort, or any exposed ClusterIP | those ports | **blocked** (not the /32); `hack/kind-smoke.sh` checks it from a real sandbox |
+
+The node IP and the Pod network are not admitted: a sandbox can reach the node, so admitting either would open ingest and
+OneCLI's sign-up-open API to it.
+
+**Residual kind-only risk, not closed here.** kindnet does not filter traffic to the node itself (hostNetwork Pods: the
+Kubernetes API server, kubelet, etcd), so a sandbox on kind can still reach those ports, as the isolation probe's `kube-api`
+target shows. It has no credentials for them (`automountServiceAccountToken` is false), so what it reaches is
+unauthenticated endpoints. An enforcing CNI such as Cilium closes this; that is out of scope for the kind trial and tracked in issue #139.

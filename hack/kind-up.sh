@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--timeout 10m]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--timeout 10m]
 #
 #   1. checks docker, kind (>= 0.24: kindnet enforces NetworkPolicy from there), helm, kubectl and openssl
-#   2. creates the kind cluster (hack/kind-config.yaml: pinned node image, kindnet); an existing cluster of that name is
-#      reused, so a second run upgrades the install
+#   2. creates the kind cluster (hack/kind-config.yaml: pinned node image, kindnet, and port mappings that publish the
+#      session API on localhost:8080 and, with --onecli, the OneCLI dashboard and API on localhost:10254 and :10256); an
+#      existing cluster of that name is reused, so a second run upgrades the install. Port mappings exist only at creation:
+#      a cluster that lacks them is refused (kind-down first, or --no-expose)
 #   3. images: published ones from ghcr.io/gscode1 (default: the tag build.sh gives HEAD, 0.0.0-<short sha>), or with
 #      --build built here for the native architecture and loaded into the node
 #   4. hack/agent-sandbox.sh bundled (controller and CRDs; skipped when they exist)
 #   5. the namespace, random Secrets (never printed) and charts/pi-postgres
+#      Expose (default): ingest.expose and OneCLI's expose add NodePort Services (externalTrafficPolicy Local) and one
+#      NetworkPolicy source each: the IPv4 gateway of the Docker network `kind`, as a /32 (docker network inspect),
+#      which is where the host's localhost connections arrive from. Sandboxes are not admitted
+#      (docs/decisions/0022-bundled-onecli.md, addendum). --no-expose: no mappings, no Services, port-forward as before
 #   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
 #      network policies, OneCLI disabled (or, with --onecli, bundled: install.sh runs hack/onecli.sh first), the scripted
 #      model only
-#   7. prints the isolation probe (hack/kind-smoke.sh --status), where the API token is and how to port-forward
+#   7. prints the isolation probe (hack/kind-smoke.sh --status), where the API token is and the localhost URLs (or how to
+#      port-forward, with --no-expose)
 #
-# --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254, for
-# a port-forward trial. It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
+# --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
+# which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
 # gateway. A real model: docs/model-credentials.md.
 #
@@ -32,11 +39,12 @@ namespace=pi-durable
 timeout=10m
 build=0
 onecli=0
+expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
 min_kind=0.24.0
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--timeout 10m]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--timeout 10m]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1" >&2
   exit 64
 }
@@ -53,6 +61,7 @@ while [[ $# -gt 0 ]]; do
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
+  --no-expose) expose=0; shift ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -132,8 +141,33 @@ fi
 log "kind cluster $name"
 if kind get clusters 2>/dev/null | grep -qx -- "$name"; then
   echo "cluster $name exists, reused"
+  if [[ $expose -eq 1 ]]; then
+    # Port mappings are fixed when the node container is created. Say so instead of installing something unreachable.
+    [[ -n $(docker port "$name-control-plane" 30080/tcp 2>/dev/null) ]] ||
+      die "cluster $name exists without the localhost port mappings (8080, 10254, 10256), and kind cannot add them later. Run hack/kind-down.sh --name $name and start again, or pass --no-expose to keep this cluster and use port-forward."
+  fi
 else
-  kind create cluster --name "$name" --config "$root/hack/kind-config.yaml" --wait 180s
+  config=$root/hack/kind-config.yaml
+  if [[ $expose -eq 0 ]]; then
+    config=$(mktemp -d)/kind-config.yaml
+    sed '/# expose:begin/,/# expose:end/d' "$root/hack/kind-config.yaml" >"$config"
+  fi
+  kind create cluster --name "$name" --config "$config" --wait 180s
+fi
+expose_cidr=""
+if [[ $expose -eq 1 ]]; then
+  # Where connections to the published ports come from, as the pods see them: the gateway of the kind Docker network
+  # (measured on Docker Desktop for Mac and on Linux). The first entry may be IPv6, so pick the IPv4 one. A /32: the node
+  # and the Pod network must not be admitted, a sandbox can reach both.
+  gateways=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' 2>/dev/null || true)
+  for gateway in $gateways; do
+    if [[ $gateway =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then expose_cidr=$gateway/32; break; fi
+  done
+  [[ -n $expose_cidr ]] || die "cannot read the IPv4 gateway of the Docker network 'kind' (got: '${gateways:-nothing}'). Pass --no-expose to skip the localhost ports."
+  echo "localhost ports: 8080 (session API)$([[ $onecli -eq 0 ]] || echo ", 10254 and 10256 (OneCLI)"), admitted from $expose_cidr only"
+  # extra_args, not set_args: --build rebuilds set_args from scratch.
+  extra_args+=(--set ingest.expose.enabled=true --set "ingest.expose.sourceCidr=$expose_cidr")
+  [[ $onecli -eq 0 ]] || extra_args+=(--onecli-expose-cidr "$expose_cidr")
 fi
 # Everything below names its context. The current context of the user's kubeconfig is never used.
 k get nodes >/dev/null || die "cannot reach the cluster through context $ctx"
@@ -222,9 +256,19 @@ The API token (owner admin) is in the Secret api-auth, key tokens, as lines of o
 
   kubectl --context $ctx -n $namespace get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p'
 
+TXT
+if [[ $expose -eq 1 ]]; then
+  cat <<TXT
+The session API is on http://localhost:8080 (published on 127.0.0.1 only; no port-forward needed).
+TXT
+else
+  cat <<TXT
 Reach the session API on localhost:8080:
 
   kubectl --context $ctx -n $namespace port-forward svc/pi-ingest 8080:8080
+TXT
+fi
+cat <<TXT
 
 Smoke test:   hack/kind-smoke.sh --name $name --namespace $namespace
 Remove it:    hack/kind-down.sh --name $name
@@ -238,8 +282,20 @@ fi
 if [[ $onecli -eq 1 ]]; then
   cat <<TXT
 
-Bundled OneCLI runs in $namespace; its API and dashboard have no Ingress and only the orchestrator reaches the API.
+Bundled OneCLI runs in $namespace; only the orchestrator reaches its API from inside the cluster.
 Prove that the orchestrator routes through the gateway:  hack/kind-smoke.sh --name $name --namespace $namespace --onecli
+TXT
+  if [[ $expose -eq 1 ]]; then
+    cat <<TXT
+The dashboard is on http://localhost:10254 and its API on http://localhost:10256 (127.0.0.1 only). Sign in (the login is
+in the Secret pi-onecli-admin and is not printed):
+
+  open http://localhost:10254/auth/login
+  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
+  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # or xclip
+TXT
+  else
+    cat <<TXT
 Sign in to the dashboard (two port-forwards; the login is in the Secret pi-onecli-admin and is not printed):
 
   kubectl --context $ctx -n $namespace port-forward svc/onecli-web 10254:10254 &
@@ -247,6 +303,9 @@ Sign in to the dashboard (two port-forwards; the login is in the Secret pi-onecl
   open http://localhost:10254/auth/login
   kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
   kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # or xclip
+TXT
+  fi
+  cat <<TXT
 
 Then connect a provider there (docs/model-credentials.md) and set models in your values to use it.
 TXT

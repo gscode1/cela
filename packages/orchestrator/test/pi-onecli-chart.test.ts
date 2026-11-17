@@ -108,8 +108,65 @@ describe("charts/pi-onecli", () => {
     ).toBeUndefined();
   });
 
+  describe("expose (kind only)", () => {
+    const on = ["--set", "expose.enabled=true", "--set", "expose.sourceCidr=172.20.0.1/32"];
+
+    it("renders nothing for it by default", () => {
+      expect(JSON.stringify(list)).not.toMatch(/nodeport|NodePort|ipBlock":\{"cidr":"1/i);
+      expect(list.filter((d) => d.kind !== "NetworkPolicy")).toEqual([]);
+    });
+
+    it("adds a NodePort Service per component, with externalTrafficPolicy Local and the fixed ports", () => {
+      const services = docs(on).filter((d) => d.kind === "Service");
+      expect(services.map((s) => s.metadata.name).sort()).toEqual([
+        "onecli-api-nodeport",
+        "onecli-web-nodeport",
+      ]);
+      for (const s of services) {
+        expect(s.spec.type).toBe("NodePort");
+        expect(s.spec.externalTrafficPolicy).toBe("Local");
+      }
+      const port = (name: string) =>
+        named(services, name).spec.ports.map((p: Obj) => [p.port, p.nodePort]);
+      expect(port("onecli-web-nodeport")).toEqual([[10254, 30254]]);
+      expect(port("onecli-api-nodeport")).toEqual([[10256, 30256]]);
+      // The gateway is never exposed.
+      expect(JSON.stringify(services)).not.toContain("10255");
+    });
+
+    it("admits the one /32 to those pods and ports, and nothing else changes in the other policies", () => {
+      const withExpose = docs(on);
+      for (const component of ["web", "api"]) {
+        const policy = named(withExpose, `onecli-${component}-allow-expose-ingress`);
+        expect(policy.spec.podSelector.matchLabels["app.kubernetes.io/component"]).toBe(component);
+        expect(policy.spec.ingress).toEqual([
+          {
+            from: [{ ipBlock: { cidr: "172.20.0.1/32" } }],
+            ports: [{ protocol: "TCP", port: component === "web" ? 10254 : 10256 }],
+          },
+        ]);
+      }
+      const same = (name: string) => expect(named(withExpose, name)).toEqual(named(list, name));
+      same("onecli-api-allow-ingress");
+      same("onecli-gateway-allow-ingress");
+      same("onecli-default-deny");
+    });
+  });
+
   describe("values.schema.json rejects bad values", () => {
     const bad: [string, string[], RegExp][] = [
+      [
+        "a non-/32 source when expose is on",
+        ["--set", "expose.enabled=true", "--set", "expose.sourceCidr=172.20.0.0/16"],
+        /sourceCidr|pattern/,
+      ],
+      ["an empty source when expose is on", ["--set", "expose.enabled=true"], /sourceCidr|pattern/],
+      [
+        "0.0.0.0/32 when expose is on",
+        ["--set", "expose.enabled=true", "--set", "expose.sourceCidr=0.0.0.0/32"],
+        /sourceCidr|not/,
+      ],
+      ["a NodePort outside the range", ["--set", "expose.nodePorts.api=10256"], /api|minimum/],
       ["a bad release name", ["--set", "release=Bad_Name"], /release|pattern/],
       ["an unknown key", ["--set", "bogus=1"], /bogus|additional/],
       ["a non-string label", ["--set-json", "clients.orchestrator.app=1"], /orchestrator|string/],

@@ -2,6 +2,7 @@
 # Install the bundled OneCLI into one namespace (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md):
 #
 #   hack/onecli.sh [--namespace pi-durable] [--external-url http://localhost:10254] [--release onecli] [--timeout 10m]
+#                  [--expose-source-cidr A.B.C.D/32]
 #
 #   1. creates the Secrets that do not exist yet, never regenerating one (losing SECRET_ENCRYPTION_KEY makes every stored
 #      credential unreadable): onecli-database (DATABASE_URL of the `onecli` database and role) and onecli-secrets (the
@@ -18,6 +19,10 @@
 # --external-url is OneCLI's own `externalUrl`: the origin the dashboard is reached at. The default
 # http://localhost:10254 is for `kubectl port-forward` (see docs/model-credentials.md); it turns on the chart's
 # allowInsecureExternalUrl. Any other http URL is refused; use an https URL of your own edge.
+#
+# --expose-source-cidr is for kind only (hack/kind-up.sh): it adds NodePort Services for the dashboard (30254) and the
+# management API (30256), and admits that one /32 (the Docker gateway of the kind network, where the host's localhost
+# connections arrive from) to them (charts/pi-onecli `expose`). Without it nothing is exposed.
 #
 # Environment: KUBE_CONTEXT (kubectl and helm context; unset: the current one); ONECLI_DATABASE_URL (a postgres:// URI for
 # the database, used only to create onecli-database; unset: derived from the Secret pi-postgres-auth of charts/pi-postgres,
@@ -38,9 +43,10 @@ namespace=pi-durable
 release=onecli
 external_url=http://localhost:10254
 timeout=10m
+expose_cidr=""
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] [--external-url URL] [--release NAME] [--timeout 10m]" >&2
+  echo "usage: ${0##*/} [--namespace NS] [--external-url URL] [--release NAME] [--timeout 10m] [--expose-source-cidr A.B.C.D/32]" >&2
   exit 64
 }
 die() {
@@ -55,6 +61,7 @@ while [[ $# -gt 0 ]]; do
   --external-url) [[ $# -ge 2 ]] || usage; external_url=$2; shift 2 ;;
   --release) [[ $# -ge 2 ]] || usage; release=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
+  --expose-source-cidr) [[ $# -ge 2 ]] || usage; expose_cidr=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
   esac
@@ -62,6 +69,7 @@ done
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
 [[ $release =~ ^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$ ]] || die "bad release name '$release'"
 [[ $external_url =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die "bad --external-url '$external_url' (scheme, host and optional port, no path)"
+[[ -z $expose_cidr || $expose_cidr =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || die "bad --expose-source-cidr '$expose_cidr' (one IPv4 address as /32)"
 allow_insecure=false
 if [[ $external_url == http://* ]]; then
   case ${external_url#http://} in
@@ -124,7 +132,8 @@ fi
 
 # ------------------------------------------------------------------ 2. policies
 log "network policies (charts/pi-onecli)"
-helm_ upgrade --install pi-onecli "$root/charts/pi-onecli" --namespace "$namespace" --set "release=$release" --wait --timeout "$timeout"
+helm_ upgrade --install pi-onecli "$root/charts/pi-onecli" --namespace "$namespace" --set "release=$release" \
+  ${expose_cidr:+--set expose.enabled=true --set "expose.sourceCidr=$expose_cidr"} --wait --timeout "$timeout"
 
 # ------------------------------------------------------------------ 3. the upstream chart
 log "OneCLI $onecli_version (upstream chart, release $release)"
@@ -142,4 +151,8 @@ log "bootstrap (account, admin key, agent token, host rules, CA)"
 ONECLI_RELEASE=$release KUBE_CONTEXT=$ctx "$root/hack/onecli-bootstrap.sh" -n "$namespace"
 
 echo
-echo "OneCLI is installed in $namespace. The dashboard is not exposed: docs/model-credentials.md says how to sign in."
+if [[ -n $expose_cidr ]]; then
+  echo "OneCLI is installed in $namespace. The dashboard and the API are on the host's localhost:10254 and :10256 (kind only)."
+else
+  echo "OneCLI is installed in $namespace. The dashboard is not exposed: docs/model-credentials.md says how to sign in."
+fi

@@ -24,7 +24,8 @@
 #
 # Inputs: --namespace/-n (default pi-durable), --values/-f (repeatable), --set (repeatable, passed to helm),
 # --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
-# http://localhost:10254, see hack/onecli.sh); KUBE_CONTEXT selects the kubectl and helm context (unset:
+# http://localhost:10254, see hack/onecli.sh), --onecli-expose-cidr (kind only: passed to hack/onecli.sh as
+# --expose-source-cidr); KUBE_CONTEXT selects the kubectl and helm context (unset:
 # the current one); DATABASE_URL as above.
 set -euo pipefail
 
@@ -36,9 +37,10 @@ timeout=10m
 values=()
 sets=()
 onecli_url=""
+onecli_expose_cidr=""
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL]" >&2
+  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL] [--onecli-expose-cidr A.B.C.D/32]" >&2
   exit 64
 }
 die() {
@@ -54,6 +56,7 @@ while [[ $# -gt 0 ]]; do
   --set) [[ $# -ge 2 ]] || usage; sets+=("$2"); shift 2 ;;
   --release) [[ $# -ge 2 ]] || usage; release=$2; shift 2 ;;
   --onecli-external-url) [[ $# -ge 2 ]] || usage; onecli_url=$2; shift 2 ;;
+  --onecli-expose-cidr) [[ $# -ge 2 ]] || usage; onecli_expose_cidr=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -199,7 +202,7 @@ if [[ $onecli_mode == bundled ]]; then
   onecli_release=$(rendered_value PI_ONECLI_API | sed -n 's#^http://\(.*\)-api\..*#\1#p')
   [[ -n $onecli_release ]] || die "could not read the OneCLI release name from the rendered chart"
   KUBE_CONTEXT=$ctx "$root/hack/onecli.sh" --namespace "$namespace" --release "$onecli_release" --timeout "$timeout" \
-    ${onecli_url:+--external-url "$onecli_url"}
+    ${onecli_url:+--external-url "$onecli_url"} ${onecli_expose_cidr:+--expose-source-cidr "$onecli_expose_cidr"}
 fi
 
 # ------------------------------------------------------------------ 5. install

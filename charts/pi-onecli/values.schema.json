@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["release", "clients", "database", "dns", "web", "gateway"],
+  "required": ["release", "clients", "database", "dns", "web", "gateway", "expose"],
   "properties": {
     "release": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" },
     "clients": {
@@ -44,9 +44,35 @@
       "additionalProperties": false,
       "required": ["egressInternet"],
       "properties": { "egressInternet": { "type": "boolean" } }
+    },
+    "expose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "sourceCidr", "nodePorts"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "sourceCidr": { "type": "string" },
+        "nodePorts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["web", "api"],
+          "properties": {
+            "web": { "type": "integer", "minimum": 30000, "maximum": 32767 },
+            "api": { "type": "integer", "minimum": 30000, "maximum": 32767 }
+          }
+        }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": { "properties": { "sourceCidr": { "$ref": "#/definitions/host32" } } }
     }
   },
   "definitions": {
+    "host32": {
+      "description": "One IPv4 address as /32: a wider range would admit more than the host's gateway.",
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/32$",
+      "not": { "const": "0.0.0.0/32" }
+    },
     "labels": {
       "type": "object",
       "minProperties": 1,

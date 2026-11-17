@@ -254,6 +254,9 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
      the smoke test fails on any other reachable target and warns about `kube-api`, and `NETPOL_ENFORCED=1` stays for
      Cilium (the nightly lane). Whether the probe should treat that target as not applicable on a CNI that does not
      filter hostNetwork Pods is an open point for the probe (slice 9).
+     Issue #138 adds localhost ports on kind (session API 8080, OneCLI 10254 and 10256) without port-forward, behind a /32
+     ingress rule for the Docker gateway of the kind network ([ADR 0022 addendum](decisions/0022-bundled-onecli.md)).
+     The kindnet limit above is unchanged by it: a sandbox still reaches the node's own ports.
 9. **Isolation probe.**
    - The orchestrator runs the probe at start and on `POST /admin/status/probe`, and writes `enforced | not-enforced |
      inconclusive` to its status row. NOTES.txt, `install.sh` and `kind-up.sh` print it.
