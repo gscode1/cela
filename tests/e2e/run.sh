@@ -62,6 +62,7 @@ k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 log() { printf '\n## %s\n' "$*"; }
 
+[[ ${NETPOL_ENFORCED:-} =~ ^[01]?$ ]] || { echo "NETPOL_ENFORCED must be unset, 0 or 1" >&2; exit 64; }
 only=${ONLY:-} # ONLY="a,b" runs just those tests of the phase; smoke sets its own list
 [[ ${E2E_PARALLEL:-4} =~ ^[1-9][0-9]*$ ]] || { echo "E2E_PARALLEL must be a positive integer" >&2; exit 64; }
 label=""
@@ -257,7 +258,7 @@ run_phase() { # phase1|phase3|phase4
   job=e2e-driver-$name-$(date +%s)
   keep_job=0
   log "$name: Job $job"
-  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__E2E_PARALLEL__|${E2E_PARALLEL:-4}|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" -e "s|__ONECLI_NAME_PREFIX__|$onecli_prefix|" "$here/job.yaml.tpl" | k create -f - >/dev/null
+  sed -e "s|__JOB__|$job|" -e "s|__PHASE__|$phase|" -e "s|__IMAGE__|$IMAGE|" -e "s|__ONLY__|$only|" -e "s|__E2E_PARALLEL__|${E2E_PARALLEL:-4}|" -e "s|__NETPOL_ENFORCED__|${NETPOL_ENFORCED:-}|" -e "s|__REAL_MODEL__|${REAL_MODEL:-0}|" -e "s|__REPO_A__|${REPO_A:-}|" -e "s|__REPO_B__|${REPO_B:-}|" -e "s|__ONECLI_NAME_PREFIX__|$onecli_prefix|" "$here/job.yaml.tpl" | k create -f - >/dev/null
 
   # Live view only. Best effort: if this stream dies the run is unaffected; the final logs fill the gap.
   (

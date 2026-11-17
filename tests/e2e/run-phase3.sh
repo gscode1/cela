@@ -10,7 +10,7 @@
 #   sandbox-loss   delete the sandbox Pod; a new Pod mounts the same PVC; the next tool call works
 #   concurrency    two sessions at once, separate sandboxes and PVCs, no cross-access
 #   isolation      a sandbox cannot reach the orchestrator, Postgres, another sandbox, the Kubernetes API, the OneCLI
-#                  API or the internet, and can reach the OneCLI gateway (the control). It must PASS once the CNI
+#                  API or ingest, and can reach public internet and the OneCLI gateway (controls). It must PASS once the CNI
 #                  enforces NetworkPolicy (Cilium, deploy/networkpolicy*.yaml + deploy/cilium/). It is KNOWN-FAIL
 #                  (printed, not a failure of the run) only while enforcement is absent: every denied target is
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
@@ -400,7 +400,8 @@ auth_codes() { # orchestrator-pod claim-a claim-b -> JSON of status codes
       hashB: await code(sha(tb)), tokenB: await code(tb) }));' "$2" "$3"
 }
 t_isolation() {
-  local a b out probe reach blocked control hint codes
+  local a b out probe reach blocked control hint codes source host port label service ip target
+  local targets=()
   hint=$(cni_hint)
   note "CNI: $hint"
   a=$(new_session "$(mkscript -f iso-a 'echo noop')")
@@ -412,14 +413,45 @@ t_isolation() {
   assert_jq "B's own token is accepted (the probe works)" "$codes" '.tokenB==200'
   assert_jq "B rejects no token, A's token, the hash of A's token and the hash of B's token" "$codes" \
     '[.none,.tokenA,.hashA,.hashB]|all(.==401 or .==403)'
+  # shellcheck disable=SC2016 # The sandbox shell expands the probe arguments.
   probe='probe() { if timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; then echo "$3 REACHABLE"; else echo "$3 BLOCKED"; fi; }; '
-  probe+="probe pi-orchestrator.$ns.svc.cluster.local 8081 orchestrator; "
-  probe+="probe pi-pg-rw.$ns.svc.cluster.local 5432 postgres; "
-  probe+="probe pi-conv-$b.$ns.svc.cluster.local 8080 other-sandbox-rest; "
-  probe+="probe pi-conv-$b.$ns.svc.cluster.local 9090 other-sandbox-grpc; "
-  probe+="probe kubernetes.default.svc.cluster.local 443 kube-api; "
-  probe+="probe onecli.onecli.svc.cluster.local 10256 onecli-api; "
-  probe+="probe onecli.onecli.svc.cluster.local 10254 onecli-web; "
+  # Every denied address has its own positive control before the sandbox tests it. A failed control is a
+  # FAIL, never evidence of isolation. Service and endpoint Pod IPs exercise DNS/VIP and direct paths separately.
+  targets+=("driver pi-orchestrator.$ns.svc.cluster.local 8081 orchestrator")
+  targets+=("orchestrator pi-pg-rw.$ns.svc.cluster.local 5432 postgres")
+  targets+=("driver pi-ingest.$ns.svc.cluster.local 8080 ingest")
+  targets+=("orchestrator pi-conv-$b.$ns.svc.cluster.local 8080 other-sandbox-rest")
+  targets+=("orchestrator pi-conv-$b.$ns.svc.cluster.local 9090 other-sandbox-grpc")
+  targets+=("driver kubernetes.default.svc.cluster.local 443 kube-api")
+  targets+=("orchestrator onecli.onecli.svc.cluster.local 10256 onecli-api")
+  for service in pi-orchestrator pi-pg-rw pi-ingest "pi-conv-$b"; do
+    case $service in
+    pi-orchestrator) source=driver; port=8081; label=orchestrator ;;
+    pi-pg-rw) source=orchestrator; port=5432; label=postgres ;;
+    pi-ingest) source=driver; port=8080; label=ingest ;;
+    *) source=orchestrator; port=8080; label=other-sandbox-rest ;;
+    esac
+    ip=$(k get endpoints "$service" -o jsonpath='{.subsets[0].addresses[0].ip}')
+    assert "$service has a ready Pod endpoint" test -n "$ip"
+    targets+=("$source $ip $port $label-pod")
+    [[ $service != "pi-conv-$b" ]] || targets+=("orchestrator $ip 9090 other-sandbox-grpc-pod")
+  done
+  for target in "${targets[@]}"; do
+    read -r source host port label <<<"$target"
+    if [[ $source == driver ]]; then
+      # shellcheck disable=SC2016 # The child shell, not the driver, expands positional arguments.
+      assert "positive control $label ($host:$port) from driver" timeout 5 bash -c 'exec 3<>/dev/tcp/$1/$2' sh "$host" "$port"
+    else
+      assert "positive control $label ($host:$port) from orchestrator" k exec "$(owner_pod)" -c orchestrator -- node --input-type=module -e '
+        import net from "node:net";
+        const socket = net.connect({host: process.argv[1], port: Number(process.argv[2])});
+        socket.setTimeout(5000);
+        socket.on("connect", () => { socket.destroy(); process.exit(0); });
+        socket.on("timeout", () => { socket.destroy(); process.exit(1); });
+        socket.on("error", () => process.exit(1));' "$host" "$port"
+    fi
+    probe+="probe $host $port $label; "
+  done
   probe+="probe 1.1.1.1 443 internet-direct; "
   probe+="probe onecli.onecli.svc.cluster.local 10255 onecli-gateway"
   send_input "$a" "$(mkscript -f probed "$probe")"
@@ -433,6 +465,7 @@ t_isolation() {
   # The gateway is allowed with or without enforcement, so check it before the known-fail exit: a dead gateway
   # must not be hidden behind "NetworkPolicy is not enforced".
   assert "the probe works: the OneCLI gateway :10255 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
+  assert "every target produced exactly one verdict" test "$((reach + blocked))" -eq "${#targets[@]}"
   if [[ $reach -gt 0 && $blocked -eq 0 && ${NETPOL_ENFORCED:-auto} != 1 ]] || [[ ${NETPOL_ENFORCED:-auto} == 0 ]]; then
     note "no enforcement observed: all $reach denied targets reachable ($hint)"
     exit 3 # KNOWN-FAIL: NetworkPolicy is not enforced yet
