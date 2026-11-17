@@ -9,5 +9,5 @@ dist/
 *.tsbuildinfo
 
 # Local deployment overlays and experiment output
-deploy/local/
+/local/
 examples/*/raw/
