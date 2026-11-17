@@ -118,10 +118,16 @@ export class InboxLoop {
 
   async #tick(): Promise<void> {
     try {
+      // Sessions that cannot be started now (in flight, or waiting out a delete backoff) stay out of the query: with
+      // a bare `limit` 100 of them would fill the page and starve every other session. Oldest pending event first.
+      const now = Date.now();
+      const skip = [...this.#inFlight];
+      for (const [id, until] of this.#notBefore) if (until > now) skip.push(id);
       const { rows } = await this.#pool.query<{ session_id: string }>(
-        `select distinct e.session_id from inbox.events e join inbox.sessions s on s.id = e.session_id
-          where e.status = 'pending' and s.shard = $1 limit 100`,
-        [this.#shard],
+        `select e.session_id from inbox.events e join inbox.sessions s on s.id = e.session_id
+          where e.status = 'pending' and s.shard = $1 and not (e.session_id = any($2::uuid[]))
+          group by e.session_id order by min(e.created_at), e.session_id limit 100`,
+        [this.#shard, skip],
       );
       for (const { session_id: sessionId } of rows) {
         if (this.#inFlight.has(sessionId) || this.#inFlight.size >= MAX_PARALLEL_SESSIONS) continue;
