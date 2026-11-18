@@ -265,13 +265,6 @@ describe("McpTools with an identity", () => {
 
   const ECHO = { name: "echo", description: "e", inputSchema: { type: "object", properties: {} } };
 
-  function open(
-    identity: Parameters<typeof McpTools.prototype.apply>[0] extends never ? never : unknown,
-  ) {
-    void identity;
-  }
-  void open;
-
   async function until(check: () => boolean): Promise<void> {
     for (let i = 0; i < 300; i += 1) {
       if (check()) return;
