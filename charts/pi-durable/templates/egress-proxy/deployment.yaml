@@ -1,0 +1,102 @@
+{{- /*
+The egress proxy (epic #50, ADR 0035): a CONNECT proxy that judges every connection by the rules in Postgres, on the
+address the host resolved to. Stateless: two replicas, each loads the rules itself and reports to egress.proxy_status.
+Nothing in this slice sends sandbox traffic here (the sandbox proxy environment and the network cutover come later).
+*/ -}}
+{{- if .Values.egressProxy.enabled }}
+{{- $e := .Values.egressProxy }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-egress-proxy
+  labels:
+    app.kubernetes.io/name: pi-egress-proxy
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $e.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-egress-proxy
+        app.kubernetes.io/part-of: pi-durable
+    spec:
+      # No Kubernetes API access: the proxy needs none, and it is the one component a sandbox talks to.
+      automountServiceAccountToken: false
+      serviceAccountName: pi-egress-proxy
+      securityContext:
+        {{- include "pi-durable.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: pi-egress-proxy
+      containers:
+        - name: egress-proxy
+          image: {{ include "pi-durable.image" (dict "name" "egressProxy" "image" .Values.images.egressProxy) }}
+          imagePullPolicy: {{ .Values.images.egressProxy.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - { name: EGRESS_VERSION, value: {{ .Values.images.egressProxy.tag | default .Values.images.egressProxy.digest | quote }} }
+            # The URI of the read-only role (ADR 0035): it reads the egress rule tables and writes egress.proxy_status.
+            - name: EGRESS_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ $e.database.existingSecret }}, key: {{ $e.database.uriKey }} } }
+            {{- if ne .Values.database.tls.mode "disable" }}
+            - { name: PI_DURABLE_DATABASE_TLS_MODE, value: {{ .Values.database.tls.mode | quote }} }
+            {{- if .Values.database.tls.caKey }}
+            - { name: PI_DURABLE_DATABASE_TLS_CA_FILE, value: /etc/pi-database-tls/ca.crt }
+            {{- end }}
+            {{- if .Values.database.tls.certKey }}
+            - { name: PI_DURABLE_DATABASE_TLS_CERT_FILE, value: /etc/pi-database-tls/tls.crt }
+            - { name: PI_DURABLE_DATABASE_TLS_KEY_FILE, value: /etc/pi-database-tls/tls.key }
+            {{- end }}
+            {{- end }}
+            - { name: EGRESS_POLL, value: {{ $e.rules.pollInterval | quote }} }
+            # After this long without a successful read the proxy denies every connection.
+            - { name: EGRESS_STALE_AFTER, value: {{ $e.rules.staleAfter | quote }} }
+            # What no rule can open: these names are resolved at start and every 30 s, the database host of the URI
+            # and the Kubernetes API's ClusterIP (KUBERNETES_SERVICE_HOST) are added by the proxy itself.
+            - { name: EGRESS_PLATFORM_HOSTS, value: {{ include "pi-durable.egressPlatformHosts" . | quote }} }
+            - { name: EGRESS_PLATFORM_CIDRS, value: {{ include "pi-durable.egressPlatformCidrs" . | quote }} }
+            - { name: EGRESS_LISTEN, value: ":3128" }
+            - { name: EGRESS_HEALTH_LISTEN, value: ":3130" }
+          ports:
+            - { name: proxy, containerPort: 3128 }
+            - { name: health, containerPort: 3130 }
+          # Ready once the first rules were read and the proxy listens. It stays ready when the database is gone: it
+          # then answers every request with a deny that says why, instead of refusing the connection.
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml $e.resources | nindent 12 }}
+          securityContext:
+            {{- include "pi-durable.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          {{- if include "pi-durable.databaseTlsEnabled" . }}
+          volumeMounts:
+            {{- include "pi-durable.databaseTlsMount" . | nindent 12 }}
+          {{- end }}
+      {{- if include "pi-durable.databaseTlsEnabled" . }}
+      volumes:
+        {{- include "pi-durable.databaseTlsVolume" . | nindent 8 }}
+      {{- end }}
+{{- end }}

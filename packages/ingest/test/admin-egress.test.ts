@@ -540,7 +540,7 @@ describe("admin egress explain and status", () => {
     }
   });
 
-  it("reports the revision and counts, with the proxy fields as placeholders", async () => {
+  it("reports the revision, the counts and what each proxy replica says", async () => {
     const { base, db } = await start();
     expect(await json(await call(base, "alice", "GET", `${BASE}/status`))).toMatchObject({
       revision: 0,
@@ -554,11 +554,52 @@ describe("admin egress explain and status", () => {
       host: "a.example.com",
     });
     db.insertRaw({ host: "10.0.0.1" });
-    expect(await json(await call(base, "alice", "GET", `${BASE}/status`))).toMatchObject({
-      revision: 2,
-      ruleSets: 1,
-      rules: 1,
-      invalid: 1,
+    const at = new Date("2026-11-18T12:00:00Z");
+    db.proxyStatus.push(
+      {
+        replica: "pi-egress-proxy-a",
+        revision: 2,
+        state: "serving",
+        last_read_at: at,
+        started_at: at,
+        version: "test",
+        updated_at: at,
+        silent_seconds: 3,
+      },
+      {
+        replica: "pi-egress-proxy-b",
+        revision: 1,
+        state: "serving",
+        last_read_at: at,
+        started_at: at,
+        version: "test",
+        updated_at: at,
+        silent_seconds: 300,
+      },
+    );
+    const status = await json(await call(base, "alice", "GET", `${BASE}/status`));
+    expect(status).toMatchObject({ revision: 2, ruleSets: 1, rules: 1, invalid: 1 });
+    expect((status as { proxy: unknown }).proxy).toEqual({
+      replicas: [
+        {
+          name: "pi-egress-proxy-a",
+          revision: 2,
+          state: "serving",
+          lastReadAt: at.toISOString(),
+          startedAt: at.toISOString(),
+          updatedAt: at.toISOString(),
+          version: "test",
+        },
+        {
+          name: "pi-egress-proxy-b",
+          revision: 1,
+          state: "silent",
+          lastReadAt: at.toISOString(),
+          startedAt: at.toISOString(),
+          updatedAt: at.toISOString(),
+          version: "test",
+        },
+      ],
     });
   });
 });

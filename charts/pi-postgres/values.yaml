@@ -28,6 +28,15 @@ auth:
       role: onecli
       existingSecret: pi-postgres-auth
       passwordKey: onecli-password
+  # The egress proxy's read-only role (charts/pi-durable egressProxy, ADR 0035), created in the `pi` database: it may
+  # connect and gets the grants of egress.grant_proxy_reader (read the egress rule tables, write its own status row).
+  # Off by default; the app's migration 025 grants a role named pi_egress, and the init sidecar grants any name once the
+  # egress schema exists.
+  egressReader:
+    enabled: false
+    role: pi_egress
+    existingSecret: pi-postgres-auth
+    passwordKey: egress-password
 
 # Serve TLS. A Secret (kubernetes.io/tls shape) holding the server certificate chain and key; this chart never creates
 # it (D8). The certificate must name the Service (`<release>`, `<release>.<ns>.svc`) for clients that verify-full, and
@@ -63,6 +72,8 @@ networkPolicy:
     - { app.kubernetes.io/name: pi-orchestrator }
     - { app.kubernetes.io/name: pi-ingest }
     - { app.kubernetes.io/name: onecli }
+    # The egress proxy reads the rules (auth.egressReader). Harmless while no such pod exists.
+    - { app.kubernetes.io/name: pi-egress-proxy }
 
 # Seconds Kubernetes waits for a clean shutdown.
 terminationGracePeriodSeconds: 60

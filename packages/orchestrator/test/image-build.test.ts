@@ -45,17 +45,17 @@ describe("image delivery replaces mutable code uploads", () => {
   it("builds all images for both architectures without publishing by default", () => {
     const result = run(["all"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(4);
+    expect(log().trim().split("\n")).toHaveLength(5);
     expect(log()).toContain("--platform linux/amd64,linux/arm64");
     expect(log()).toContain("type=oci,dest=");
     expect(log()).not.toMatch(/--push|--load/);
-    expect(result.stdout.match(/digest:/g)).toHaveLength(4);
+    expect(result.stdout.match(/digest:/g)).toHaveLength(5);
   });
 
   it("accepts build flags without an image target", () => {
     const result = run(["--platform", "linux/arm64"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(4);
+    expect(log().trim().split("\n")).toHaveLength(5);
     expect(log()).toContain("--load");
   });
 

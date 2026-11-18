@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--cni kindnet|cilium]
-#                   [--timeout 10m] [--verbose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--egress-proxy] [--no-expose]
+#                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
 # only when a step fails (its last lines and the log's path). --verbose, or CI set in the environment, streams all of it.
@@ -40,8 +40,14 @@
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
 # gateway. A real model: docs/model-credentials.md.
 #
-# Images: IMAGE_TAG (default as above) applies to all three; ORCH_IMAGE, INGEST_IMAGE and SANDBOX_IMAGE (a tag or digest
-# reference, for example ghcr.io/gscode1/pi-ingest@sha256:...) override one image. IMAGE_REPO (default ghcr.io/gscode1)
+# --egress-proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md) turns on the egress proxy: the bundled Postgres
+# creates the read-only role pi_egress (auth.egressReader), this script makes the Secret pi-egress-database with its URI,
+# and the install sets egressProxy.enabled, the database Secret and a client admission for the namespace pi-egress-test
+# (where hack/egress-smoke.sh runs its test pods). --set key=value (repeatable) is passed to hack/install.sh as it is,
+# after everything this script sets, for example --set egressProxy.rules.staleAfter=30s.
+#
+# Images: IMAGE_TAG (default as above) applies to all of them; ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE and
+# EGRESS_PROXY_IMAGE (a tag or digest reference, for example ghcr.io/gscode1/pi-ingest@sha256:...) override one image. IMAGE_REPO (default ghcr.io/gscode1)
 # is the registry prefix. NETPOL_ENFORCED=1 fails the run unless the isolation probe says enforced (CI sets it).
 # Run the smoke test afterwards: hack/kind-smoke.sh. Remove everything: hack/kind-down.sh.
 set -euo pipefail
@@ -52,6 +58,8 @@ namespace=pi-durable
 timeout=10m
 build=0
 onecli=0
+egress_proxy=0
+user_sets=()
 expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
 min_kind=0.24.0
@@ -62,8 +70,8 @@ verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--cni kindnet|cilium] [--timeout 10m] [--verbose]" >&2
-  echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--egress-proxy] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
+  echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
 die() {
@@ -79,6 +87,8 @@ while [[ $# -gt 0 ]]; do
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
+  --egress-proxy) egress_proxy=1; shift ;;
+  --set) [[ $# -ge 2 ]] || usage; user_sets+=(--set "$2"); shift 2 ;;
   --no-expose) expose=0; shift ;;
   --cni) [[ $# -ge 2 ]] || usage; cni=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
@@ -182,6 +192,7 @@ tag=${IMAGE_TAG:-$version-$(git -C "$root" rev-parse --short HEAD)}
 ref_orchestrator=${ORCH_IMAGE:-$repo/pi-orchestrator:$tag}
 ref_ingest=${INGEST_IMAGE:-$repo/pi-ingest:$tag}
 ref_sandbox=${SANDBOX_IMAGE:-$repo/pi-sandbox:$tag}
+ref_egress_proxy=${EGRESS_PROXY_IMAGE:-$repo/pi-egress-proxy:$tag}
 set_args=()
 extra_args=()
 [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
@@ -203,6 +214,7 @@ add_image_sets() { # key ref: --set images.<key>.repository/tag/digest from a "r
 add_image_sets orchestrator "$ref_orchestrator"
 add_image_sets ingest "$ref_ingest"
 add_image_sets sandbox "$ref_sandbox"
+[[ $egress_proxy -eq 0 && $build -eq 0 ]] || add_image_sets egressProxy "$ref_egress_proxy"
 manifest_ok() { # the registry can be slow: three tries
   for _ in 1 2 3; do
     docker manifest inspect "$1" >/dev/null 2>&1 && return 0
@@ -212,9 +224,11 @@ manifest_ok() { # the registry can be slow: three tries
 }
 if [[ $build -eq 0 ]]; then
   # Fail now, not after a 3 minute install, when the images were not published for this commit.
-  for ref in "$ref_orchestrator" "$ref_ingest" "$ref_sandbox"; do
+  refs=("$ref_orchestrator" "$ref_ingest" "$ref_sandbox")
+  [[ $egress_proxy -eq 0 ]] || refs+=("$ref_egress_proxy")
+  for ref in "${refs[@]}"; do
     manifest_ok "$ref" ||
-      die "image $ref cannot be pulled. Set IMAGE_TAG (or ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE) to published images, or use --build to build them here."
+      die "image $ref cannot be pulled. Set IMAGE_TAG (or ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE) to published images, or use --build to build them here."
   done
 fi
 
@@ -289,20 +303,21 @@ fi
 if [[ $build -eq 1 ]]; then
   step "build the images (native architecture) and load them into the node"
   case $(uname -m) in aarch64 | arm64) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
-  for image in orchestrator ingest sandbox; do
+  for image in orchestrator ingest sandbox egress-proxy; do
     IMAGE_REPO=$repo "$root/images/build.sh" "$image" --platform "$platform" >/dev/null
   done
   # build.sh names them <repo>/pi-<image>:<version>-<short sha>; the install refs must be exactly those.
   built=$version-$(git -C "$root" rev-parse --short HEAD)
-  for image in orchestrator ingest sandbox; do
+  for image in orchestrator ingest sandbox egress-proxy; do
     kind load docker-image "$repo/pi-$image:$built" --name "$name"
   done
   set_args=()
   for image in orchestrator ingest sandbox; do
     add_image_sets "$image" "$repo/pi-$image:$built"
   done
+  add_image_sets egressProxy "$repo/pi-egress-proxy:$built"
   # IfNotPresent would be enough, Never makes a missing load a clear error instead of a pull of a tag nobody published.
-  for image in orchestrator ingest sandbox; do set_args+=(--set "images.$image.pullPolicy=Never"); done
+  for image in orchestrator ingest sandbox egressProxy; do set_args+=(--set "images.$image.pullPolicy=Never"); done
 fi
 
 # ------------------------------------------------------------------ 4. agent-sandbox
@@ -332,27 +347,51 @@ fi
 kn() { k -n "$namespace" "$@"; }
 if [[ -z $(kn get secret pi-postgres-auth --ignore-not-found -o name) ]]; then
   # Values go through files, never argv (visible in ps) or stdout. Existing Secrets are never regenerated.
-  for key in postgres-password pi-password onecli-password; do
+  for key in postgres-password pi-password onecli-password egress-password; do
     openssl rand -hex 24 | tr -d '\n' >"$tmp/$key"
   done
   kn create secret generic pi-postgres-auth --from-file=postgres-password="$tmp/postgres-password" \
-    --from-file=pi-password="$tmp/pi-password" --from-file=onecli-password="$tmp/onecli-password" >/dev/null
+    --from-file=pi-password="$tmp/pi-password" --from-file=onecli-password="$tmp/onecli-password" \
+    --from-file=egress-password="$tmp/egress-password" >/dev/null
   echo "pi-postgres-auth: created (random passwords)"
 else
   echo "pi-postgres-auth: exists, kept"
 fi
+pg_args=()
+if [[ $egress_proxy -eq 1 ]]; then
+  # The read-only role of the egress proxy (the app's database user cannot create roles). A Secret kept from an older run
+  # has no egress-password: add it, once.
+  if [[ -z $(kn get secret pi-postgres-auth -o jsonpath='{.data.egress-password}') ]]; then
+    openssl rand -hex 24 | tr -d '\n' >"$tmp/egress-password"
+    printf '{"data":{"egress-password":"%s"}}' "$(base64 <"$tmp/egress-password" | tr -d '\n')" >"$tmp/patch.json"
+    kn patch secret pi-postgres-auth --type merge --patch-file "$tmp/patch.json" >/dev/null
+  fi
+  pg_args+=(--set auth.egressReader.enabled=true)
+fi
 helm --kube-context "$ctx" upgrade --install pi-postgres "$root/charts/pi-postgres" --namespace "$namespace" \
-  --set persistence.storageClass=standard --set persistence.size=2Gi --wait --timeout "$timeout"
+  --set persistence.storageClass=standard --set persistence.size=2Gi ${pg_args[@]+"${pg_args[@]}"} --wait --timeout "$timeout"
 
 # The URI of the app's database for install.sh, which creates the Secret pi-database once (and keeps an existing one).
 pi_password=$(kn get secret pi-postgres-auth -o jsonpath='{.data.pi-password}' | base64 -d)
 DATABASE_URL="postgres://pi:$pi_password@pi-postgres.$namespace.svc:5432/pi"
 export DATABASE_URL
+if [[ $egress_proxy -eq 1 ]]; then
+  # The proxy's own Secret: the URI of the read-only role. Written through a file, never argv or stdout; kept if it exists.
+  if [[ -z $(kn get secret pi-egress-database --ignore-not-found -o name) ]]; then
+    egress_password=$(kn get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | base64 -d)
+    printf 'postgres://pi_egress:%s@pi-postgres.%s.svc:5432/pi' "$egress_password" "$namespace" >"$tmp/egress-uri"
+    kn create secret generic pi-egress-database --from-file=uri="$tmp/egress-uri" >/dev/null
+    unset egress_password
+    echo "pi-egress-database: created (the URI of the read-only role pi_egress)"
+  fi
+  extra_args+=(--set egressProxy.enabled=true --set egressProxy.database.existingSecret=pi-egress-database
+    --set 'egressProxy.clients[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=pi-egress-test')
+fi
 
 # ------------------------------------------------------------------ 6. pi-durable
 step "install pi-durable$([[ $onecli -eq 0 ]] || echo ' and OneCLI') (hack/install.sh)"
 KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/pi-durable/values-kind.yaml" \
-  ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} --timeout "$timeout"
+  ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} ${user_sets[@]+"${user_sets[@]}"} --timeout "$timeout"
 unset DATABASE_URL pi_password
 
 # ------------------------------------------------------------------ 7. isolation probe
@@ -478,6 +517,7 @@ fi
 heading "Next"
 echo "  Smoke test    hack/kind-smoke.sh --name $name --namespace $namespace$([[ $onecli -eq 0 ]] || echo ' --onecli')"
 echo "  Try a session docs/session-api.md (the scripted model: the message text is the script)"
+[[ $egress_proxy -eq 0 ]] || echo "  Egress proxy  hack/egress-smoke.sh --name $name --namespace $namespace"
 echo "  Remove        hack/kind-down.sh --name $name"
 [[ -z $log_file ]] || echo "  Full log      $log_file"
 echo

@@ -13,6 +13,12 @@ The orchestrator and ingest connect to Postgres with TLS that always verifies th
 `verify-full` checks chain and host name; `verify-ca` checks the chain only. There is no `require`: encrypting without
 verifying protects only against passive listeners.
 
+The egress proxy (`packages/egress-proxy`, [ADR 0035](decisions/0035-egress-proxy-runtime.md)) reads the same three
+variables, with the same rules: unset leaves the URI in charge, `verify-ca` **requires** the CA file (`PI_DURABLE_DATABASE_TLS_CA_FILE is
+required when PI_DURABLE_DATABASE_TLS_MODE is verify-ca`, and the proxy does not start), only `verify-full` may use the
+system roots, the client certificate and key come together. The proxy's URI is its own (the read-only role); the chart
+sets the variables from `database.tls` and mounts the same Secret.
+
 ## Precedence with the URI
 
 - Mode unset: the URI is used as is (`sslmode` there, then `PGSSLMODE`).

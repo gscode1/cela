@@ -1,4 +1,4 @@
-# Builds the four images (orchestrator, ingest, sandbox, e2e-driver) for linux/amd64 and linux/arm64 with
+# Builds the five images (orchestrator, ingest, sandbox, egress-proxy, e2e-driver) for linux/amd64 and linux/arm64 with
 # images/build.sh and pushes them to ghcr.io/<owner>, tagged <version>-<short sha>. Pull requests from forks only
 # build: their token cannot write packages.
 name: images

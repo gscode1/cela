@@ -147,6 +147,51 @@ function ruleSnapshot(rule: EgressRuleSpec, owner: Pick<EvaluableRule, "ruleSet"
 
 type Db = pg.Pool | pg.PoolClient;
 
+/** A proxy replica is silent when it has not reported for this long (it reports every few seconds). */
+export const PROXY_SILENT_SECONDS = 30;
+
+/** What one proxy replica reports in `egress.proxy_status` (ADR 0035). */
+export interface ProxyReplicaStatus {
+  name: string;
+  /** The revision the replica serves; null until its first successful read. */
+  revision: number | null;
+  /** `starting`, `serving` or `stale` as the replica says, or `silent` when it has stopped reporting. */
+  state: "starting" | "serving" | "stale" | "silent";
+  /** The replica's last successful read of the rules. */
+  lastReadAt: Date | null;
+  startedAt: Date;
+  /** The replica's last report. */
+  updatedAt: Date;
+  version: string;
+}
+
+/** The replicas that report, by name, with the silent ones marked (the clock is the database's). */
+export async function readProxyStatus(db: Db): Promise<ProxyReplicaStatus[]> {
+  const { rows } = await db.query<{
+    replica: string;
+    revision: string | number | null;
+    state: "starting" | "serving" | "stale";
+    last_read_at: Date | null;
+    started_at: Date;
+    version: string;
+    updated_at: Date;
+    silent_seconds: string | number;
+  }>(
+    `select replica, revision, state, last_read_at, started_at, version, updated_at,
+            extract(epoch from clock_timestamp() - updated_at) as silent_seconds
+       from egress.proxy_status order by replica`,
+  );
+  return rows.map((row) => ({
+    name: row.replica,
+    revision: row.revision === null ? null : Number(row.revision),
+    state: Number(row.silent_seconds) > PROXY_SILENT_SECONDS ? "silent" : row.state,
+    lastReadAt: row.last_read_at,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    version: row.version,
+  }));
+}
+
 /**
  * The revision, every rule set and every rule from one statement, so one snapshot. They come back as JSON columns of
  * one row (dates as ISO strings). Invalid rows are reported, not thrown.

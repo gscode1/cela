@@ -101,12 +101,58 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- else -}}
 {{- fail (printf "onecli.mode %q is not supported yet (bundled, external or disabled)" .Values.onecli.mode) -}}
 {{- end -}}
+{{- if .Values.egressProxy.enabled -}}
+{{- if not .Values.egressProxy.database.existingSecret -}}
+{{- fail "egressProxy.enabled needs egressProxy.database.existingSecret: a Secret with the connection URI of the proxy's read-only role (docs/decisions/0035-egress-proxy-runtime.md)" -}}
+{{- end -}}
+{{- if not (or .Values.images.egressProxy.tag .Values.images.egressProxy.digest) -}}
+{{- fail "egressProxy.enabled needs images.egressProxy.tag or digest (images/build.sh egress-proxy prints them)" -}}
+{{- end -}}
+{{- range $i, $p := .Values.egressProxy.privateEgress -}}
+{{- $hasCidr := not (empty $p.cidr) -}}
+{{- $hasSelector := or (hasKey $p "namespaceSelector") (hasKey $p "podSelector") -}}
+{{- if and (not $hasCidr) (not $hasSelector) -}}
+{{- fail (printf "egressProxy.privateEgress[%d] needs a cidr, or a namespaceSelector (with an optional podSelector)" $i) -}}
+{{- end -}}
+{{- if and $hasCidr $hasSelector -}}
+{{- fail (printf "egressProxy.privateEgress[%d]: use either a cidr or selectors, not both" $i) -}}
+{{- end -}}
+{{- if not $p.ports -}}
+{{- fail (printf "egressProxy.privateEgress[%d] needs ports: private destinations are opened per port" $i) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not (has .Values.networkPolicy.provider (list "cilium" "standard")) -}}
 {{- fail "networkPolicy.provider must be cilium or standard" -}}
 {{- end -}}
 {{- if and (or .Values.ingest.httpRoute.enabled .Values.ingest.ingress.enabled) (not .Values.networkPolicy.ingest.clients) -}}
 {{- fail "ingest.httpRoute or ingest.ingress is on but networkPolicy.ingest.clients is empty: default-deny-all would drop the gateway's traffic. Admit its pods there (values.yaml has an Envoy Gateway example)." -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Names the egress proxy resolves and blocks as "the platform" (ADR 0035): the namespace's own Services (ingest, every
+orchestrator shard, the OneCLI API and gateway when in the cluster) and the kubernetes Service. The database host and
+the Kubernetes API's ClusterIP are added by the proxy from its own URI and environment. Comma separated.
+*/}}
+{{- define "pi-durable.egressPlatformHosts" -}}
+{{- $ns := .Release.Namespace -}}
+{{- $hosts := list (printf "pi-ingest.%s.svc" $ns) "kubernetes.default.svc" -}}
+{{- range $shard := until (int .Values.orchestrator.shards) -}}
+{{- $hosts = append $hosts (printf "%s.%s.svc" (ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0)) $ns) -}}
+{{- end -}}
+{{- if ne .Values.onecli.mode "disabled" -}}
+{{- $o := include "pi-durable.onecli" . | fromJson -}}
+{{- range (list $o.apiUrl $o.gatewayUrl) -}}
+{{- $hosts = append $hosts (first (splitList ":" (urlParse .).host)) -}}
+{{- end -}}
+{{- end -}}
+{{- concat $hosts .Values.egressProxy.platform.hosts | uniq | join "," -}}
+{{- end -}}
+
+{{/* Addresses the egress proxy blocks as the platform: the operator's cidrs, the API server addresses and the database's cidrs. */}}
+{{- define "pi-durable.egressPlatformCidrs" -}}
+{{- concat .Values.egressProxy.platform.cidrs .Values.networkPolicy.kubeApiCidrs .Values.database.external.egress.cidrs | uniq | join "," -}}
 {{- end -}}
 
 {{/* A restricted container-level security context (ADR 0019); the Pod sets user, group and seccomp. */}}

@@ -32,3 +32,20 @@ SELECT format('ALTER DATABASE %I OWNER TO %I', db, role) FROM wanted \gexec
 -- Each role reaches its own database only.
 SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', db) FROM wanted \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', db, role) FROM wanted \gexec
+
+-- The egress proxy's read-only role (epic #50, ADR 0035), only when auth.egressReader.enabled sets EGRESS_ROLE. It may
+-- connect to the app database and read and write what egress.grant_proxy_reader grants (the egress rule tables to read,
+-- its own status table to write). The grants live in the app's migration 025, which can only run once the app has
+-- started: the migration grants them to a role named pi_egress that exists, and this block grants them again when the role
+-- is created after the migration ran (or has another name), as soon as the function exists.
+\getenv egress_role EGRESS_ROLE
+\getenv egress_password EGRESS_PASSWORD
+\if :{?egress_role}
+SELECT format('CREATE ROLE %I LOGIN', :'egress_role')
+ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'egress_role') \gexec
+SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'egress_role', :'egress_password') \gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'pi_db', :'egress_role') \gexec
+\connect :"pi_db"
+SELECT format('SELECT egress.grant_proxy_reader(%L)', :'egress_role')
+ WHERE to_regprocedure('egress.grant_proxy_reader(name)') IS NOT NULL \gexec
+\endif

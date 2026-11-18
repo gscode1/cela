@@ -234,13 +234,16 @@ export {
   deleteRuleSet,
   EGRESS_RULES_CHANNEL,
   listEgressHistory,
+  PROXY_SILENT_SECONDS,
   readEgress,
+  readProxyStatus,
   updateEgressRule,
   updateRuleSet,
 } from "./egress-store.js";
 export type {
   EgressData,
   EgressHistoryEntry,
+  ProxyReplicaStatus,
   RuleOwner,
   StoredEgressRule,
   StoredRuleSet,

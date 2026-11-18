@@ -4,6 +4,7 @@ images:
   orchestrator: { tag: test }
   ingest: { tag: test }
   sandbox: { tag: test }
+  egressProxy: { tag: test }
 database:
   external:
     existingSecret: pi-database

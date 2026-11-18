@@ -231,7 +231,7 @@ func newEnv(t *testing.T, o envOpts) *env {
 	}
 	p, err := Build(Options{
 		Principals:               st,
-		Policy:                   st,
+		Authorizer:               st,
 		UpstreamAddr:             upAddr,
 		UpstreamHandshakeTimeout: o.handshake,
 		MaxTunnelAge:             o.maxAge,

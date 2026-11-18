@@ -3,17 +3,32 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "nameOverride": { "type": "string" },
-    "fullnameOverride": { "type": "string" },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
       "required": ["repository", "tag", "digest"],
       "properties": {
-        "repository": { "type": "string", "minLength": 1 },
-        "tag": { "type": "string", "minLength": 1 },
-        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "pullPolicy": {
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
       }
     },
     "auth": {
@@ -21,14 +36,42 @@
       "additionalProperties": false,
       "required": ["superuser", "databases"],
       "properties": {
-        "superuser": { "$ref": "#/definitions/secretRef" },
+        "superuser": {
+          "$ref": "#/definitions/secretRef"
+        },
         "databases": {
           "type": "object",
           "additionalProperties": false,
           "required": ["pi", "onecli"],
           "properties": {
-            "pi": { "$ref": "#/definitions/database" },
-            "onecli": { "$ref": "#/definitions/database" }
+            "pi": {
+              "$ref": "#/definitions/database"
+            },
+            "onecli": {
+              "$ref": "#/definitions/database"
+            }
+          }
+        },
+        "egressReader": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "role", "existingSecret", "passwordKey"],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+            },
+            "existingSecret": {
+              "type": "string",
+              "minLength": 1
+            },
+            "passwordKey": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -38,30 +81,63 @@
       "additionalProperties": false,
       "required": ["existingSecret", "certKey", "keyKey", "requireTls"],
       "properties": {
-        "existingSecret": { "type": "string" },
-        "certKey": { "type": "string", "minLength": 1 },
-        "keyKey": { "type": "string", "minLength": 1 },
-        "requireTls": { "type": "boolean" }
+        "existingSecret": {
+          "type": "string"
+        },
+        "certKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requireTls": {
+          "type": "boolean"
+        }
       },
-      "if": { "properties": { "requireTls": { "const": true } } },
-      "then": { "properties": { "existingSecret": { "minLength": 1 } } }
+      "if": {
+        "properties": {
+          "requireTls": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "existingSecret": {
+            "minLength": 1
+          }
+        }
+      }
     },
     "persistence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["size", "retain"],
       "properties": {
-        "size": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)?$" },
-        "storageClass": { "type": "string" },
-        "retain": { "type": "boolean" }
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)?$"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "retain": {
+          "type": "boolean"
+        }
       }
     },
     "resources": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "postgres": { "$ref": "#/definitions/resources" },
-        "init": { "$ref": "#/definitions/resources" }
+        "postgres": {
+          "$ref": "#/definitions/resources"
+        },
+        "init": {
+          "$ref": "#/definitions/resources"
+        }
       }
     },
     "networkPolicy": {
@@ -69,23 +145,52 @@
       "additionalProperties": false,
       "required": ["enabled", "clientSelectors"],
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "clientSelectors": {
           "type": "array",
           "items": {
             "type": "object",
             "minProperties": 1,
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         }
       }
     },
-    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
-    "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
-    "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
-    "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
-    "tolerations": { "type": "array", "items": { "type": "object" } },
-    "affinity": { "type": "object" }
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    }
   },
   "definitions": {
     "secretRef": {
@@ -93,8 +198,14 @@
       "additionalProperties": false,
       "required": ["existingSecret", "passwordKey"],
       "properties": {
-        "existingSecret": { "type": "string", "minLength": 1 },
-        "passwordKey": { "type": "string", "minLength": 1 }
+        "existingSecret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "passwordKey": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "database": {
@@ -102,18 +213,34 @@
       "additionalProperties": false,
       "required": ["name", "role", "existingSecret", "passwordKey"],
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
-        "role": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
-        "existingSecret": { "type": "string", "minLength": 1 },
-        "passwordKey": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$"
+        },
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$"
+        },
+        "existingSecret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "passwordKey": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "resources": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "requests": { "type": "object" },
-        "limits": { "type": "object" }
+        "requests": {
+          "type": "object"
+        },
+        "limits": {
+          "type": "object"
+        }
       }
     }
   }
