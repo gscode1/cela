@@ -1,4 +1,4 @@
-# 0030: An MCP adapter lets coding agents use sessions, polling first, MCP tasks later
+# 0031: An MCP adapter lets coding agents use sessions, polling first, MCP tasks later
 
 Status: accepted, 2026-11-17 (issue #158), amended 2026-11-18 after review. Implementation: issue #195.
 
