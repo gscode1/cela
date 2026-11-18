@@ -56,13 +56,13 @@ spec:
             - name: EGRESS_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ $e.database.existingSecret }}, key: {{ $e.database.uriKey }} } }
             {{- if ne .Values.database.tls.mode "disable" }}
-            - { name: EGRESS_DATABASE_TLS_MODE, value: {{ .Values.database.tls.mode | quote }} }
+            - { name: PI_DURABLE_DATABASE_TLS_MODE, value: {{ .Values.database.tls.mode | quote }} }
             {{- if .Values.database.tls.caKey }}
-            - { name: EGRESS_DATABASE_TLS_CA_FILE, value: /etc/pi-database-tls/ca.crt }
+            - { name: PI_DURABLE_DATABASE_TLS_CA_FILE, value: /etc/pi-database-tls/ca.crt }
             {{- end }}
             {{- if .Values.database.tls.certKey }}
-            - { name: EGRESS_DATABASE_TLS_CERT_FILE, value: /etc/pi-database-tls/tls.crt }
-            - { name: EGRESS_DATABASE_TLS_KEY_FILE, value: /etc/pi-database-tls/tls.key }
+            - { name: PI_DURABLE_DATABASE_TLS_CERT_FILE, value: /etc/pi-database-tls/tls.crt }
+            - { name: PI_DURABLE_DATABASE_TLS_KEY_FILE, value: /etc/pi-database-tls/tls.key }
             {{- end }}
             {{- end }}
             - { name: EGRESS_POLL, value: {{ $e.rules.pollInterval | quote }} }

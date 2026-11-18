@@ -28,32 +28,50 @@ type DBTLS struct {
 }
 
 func (t DBTLS) config(serverName string) (*tls.Config, error) {
+	const modeVar, caVar, certVar, keyVar = "PI_DURABLE_DATABASE_TLS_MODE", "PI_DURABLE_DATABASE_TLS_CA_FILE", "PI_DURABLE_DATABASE_TLS_CERT_FILE", "PI_DURABLE_DATABASE_TLS_KEY_FILE"
 	switch t.Mode {
-	case "", "disable":
+	case "":
+		for name, v := range map[string]string{caVar: t.CAFile, certVar: t.CertFile, keyVar: t.KeyFile} {
+			if v != "" {
+				return nil, fmt.Errorf("%s is set but %s is not", name, modeVar)
+			}
+		}
+		return nil, nil
+	case "disable":
+		for name, v := range map[string]string{caVar: t.CAFile, certVar: t.CertFile, keyVar: t.KeyFile} {
+			if v != "" {
+				return nil, fmt.Errorf("%s is set but %s is disable", name, modeVar)
+			}
+		}
 		return nil, nil
 	case "verify-ca", "verify-full":
 	default:
-		return nil, fmt.Errorf("database tls mode %q is not disable, verify-ca or verify-full", t.Mode)
+		return nil, fmt.Errorf("%s must be one of disable, verify-ca, verify-full (got %q)", modeVar, t.Mode)
 	}
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
+	// verify-ca skips the host-name check, so the trust anchor must be explicit: with the system roots any publicly
+	// trusted certificate for any name would pass (same rule as session-core's db-tls.ts).
+	if t.Mode == "verify-ca" && t.CAFile == "" {
+		return nil, fmt.Errorf("%s is required when %s is verify-ca", caVar, modeVar)
 	}
+	if (t.CertFile != "") != (t.KeyFile != "") {
+		return nil, fmt.Errorf("%s and %s must be set together", certVar, keyVar)
+	}
+	var pool *x509.CertPool
 	if t.CAFile != "" {
 		pem, err := os.ReadFile(t.CAFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: cannot read the file", caVar)
 		}
 		pool = x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, errors.New("database tls: no certificate in the CA file")
+			return nil, fmt.Errorf("%s: no certificate in the file", caVar)
 		}
-	}
+	} // verify-full without a CA file: nil RootCAs means the system roots, with the name checked
 	c := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	if t.CertFile != "" || t.KeyFile != "" {
+	if t.CertFile != "" {
 		cert, err := tls.LoadX509KeyPair(t.CertFile, t.KeyFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s/%s: cannot load the client certificate", certVar, keyVar)
 		}
 		c.Certificates = []tls.Certificate{cert}
 	}
@@ -61,9 +79,12 @@ func (t DBTLS) config(serverName string) (*tls.Config, error) {
 		c.ServerName = serverName
 		return c, nil
 	}
-	// verify-ca: the chain must verify, the name need not match.
-	c.InsecureSkipVerify = true //nolint:gosec // the chain is verified below
+	// verify-ca: the chain must verify against the CA file; the name need not match.
+	c.InsecureSkipVerify = true //nolint:gosec // the chain is verified below against the explicit CA
 	c.VerifyConnection = func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return errors.New("no server certificate")
+		}
 		opts := x509.VerifyOptions{Roots: pool, Intermediates: x509.NewCertPool()}
 		for _, ic := range cs.PeerCertificates[1:] {
 			opts.Intermediates.AddCert(ic)

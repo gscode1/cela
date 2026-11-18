@@ -66,10 +66,10 @@ func run() error {
 	defer stop()
 
 	db, err := egress.OpenDB(ctx, dbURI, egress.DBTLS{
-		Mode:     os.Getenv("EGRESS_DATABASE_TLS_MODE"),
-		CAFile:   os.Getenv("EGRESS_DATABASE_TLS_CA_FILE"),
-		CertFile: os.Getenv("EGRESS_DATABASE_TLS_CERT_FILE"),
-		KeyFile:  os.Getenv("EGRESS_DATABASE_TLS_KEY_FILE"),
+		Mode:     os.Getenv("PI_DURABLE_DATABASE_TLS_MODE"),
+		CAFile:   os.Getenv("PI_DURABLE_DATABASE_TLS_CA_FILE"),
+		CertFile: os.Getenv("PI_DURABLE_DATABASE_TLS_CERT_FILE"),
+		KeyFile:  os.Getenv("PI_DURABLE_DATABASE_TLS_KEY_FILE"),
 	})
 	if err != nil {
 		return err
