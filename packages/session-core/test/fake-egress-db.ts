@@ -70,6 +70,17 @@ export class FakeEgressDb {
     updated_at: Date;
     silent_seconds: number;
   }[] = [];
+  /** egress.principals (ADR 0036); the table's trigger notifies `principals` on every write that changes a row. */
+  principals: {
+    session_id: string;
+    token_hash: string;
+    token_salt: string;
+    profile_name: string | null;
+    profile_version: number | null;
+    rule_sets: string[];
+    pod_ip: string | null;
+    revoked_at: Date | null;
+  }[] = [];
   #nextRule = 1;
   #pending: string[] = [];
   #snapshot:
@@ -129,6 +140,73 @@ export class FakeEgressDb {
     });
   }
 
+  #principalQuery(text: string, params: unknown[]): Result {
+    const done = (rows: unknown[] = []): Result => Promise.resolve({ rows, rowCount: rows.length });
+    const row = this.principals.find((p) => p.session_id === params[0]);
+    if (text.startsWith("select token_salt, revoked_at from egress.principals")) {
+      return done(row === undefined ? [] : [row]);
+    }
+    if (text.startsWith("insert into egress.principals")) {
+      if (row !== undefined) return done();
+      const [id, hash, salt, name, version, sets] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        number | null,
+        string[],
+      ];
+      if (this.principals.some((p) => p.token_hash === hash))
+        throw new Error("duplicate token_hash");
+      this.principals.push({
+        session_id: id,
+        token_hash: hash,
+        token_salt: salt,
+        profile_name: name,
+        profile_version: version,
+        rule_sets: sets,
+        pod_ip: null,
+        revoked_at: null,
+      });
+      this.notifications.push("principals");
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
+    if (text.startsWith("update egress.principals set pod_ip")) {
+      if (row === undefined || row.revoked_at !== null || row.pod_ip === params[1]) return done();
+      row.pod_ip = params[1] as string | null;
+      this.notifications.push("principals");
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
+    if (text.startsWith("update egress.principals set revoked_at")) {
+      if (row === undefined || row.revoked_at !== null) return done();
+      row.revoked_at = new Date();
+      row.pod_ip = null;
+      this.notifications.push("principals");
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
+    if (text.startsWith("select session_id from egress.principals where revoked_at is null")) {
+      return done(
+        this.principals
+          .filter((p) => p.revoked_at === null)
+          .map((p) => ({ session_id: p.session_id })),
+      );
+    }
+    if (text.startsWith("select count(*) filter")) {
+      const live = this.principals.filter((p) => p.revoked_at === null);
+      return done([
+        {
+          active: String(live.length),
+          with_pod_ip: String(live.filter((p) => p.pod_ip !== null).length),
+          revoked: String(this.principals.length - live.length),
+        },
+      ]);
+    }
+    if (text.startsWith("select profile_name, rule_sets, revoked_at from egress.principals")) {
+      return done(row === undefined ? [] : [row]);
+    }
+    throw new Error(`FakeEgressDb: unhandled principals statement: ${text.slice(0, 80)}`);
+  }
+
   query(sql: string, params: unknown[] = []): Result {
     const done = (rows: unknown[] = []): Result => Promise.resolve({ rows, rowCount: rows.length });
     const text = sql.replace(/\s+/g, " ").trim();
@@ -162,6 +240,7 @@ export class FakeEgressDb {
     if (text.includes("from egress.proxy_status")) {
       return done([...this.proxyStatus].sort((a, b) => a.replica.localeCompare(b.replica)));
     }
+    if (text.includes("egress.principals")) return this.#principalQuery(text, params);
     if (text.startsWith("select pg_advisory_xact_lock")) return done();
     if (text.startsWith("select pg_notify")) {
       if (params[0] === "egress_rules") this.#pending.push(String(params[1]));

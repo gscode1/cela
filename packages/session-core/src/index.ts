@@ -248,3 +248,14 @@ export type {
   StoredEgressRule,
   StoredRuleSet,
 } from "./egress-store.js";
+export {
+  deriveEgressToken,
+  ensurePrincipal,
+  hashEgressToken,
+  livePrincipalSessions,
+  principalCounts,
+  principalRuleSets,
+  revokePrincipal,
+  setPrincipalPodIp,
+} from "./egress-principals.js";
+export type { PrincipalCounts, PrincipalSpec } from "./egress-principals.js";

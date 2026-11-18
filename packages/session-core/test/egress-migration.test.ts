@@ -96,3 +96,46 @@ describe("migration 025_egress_proxy.sql", () => {
     expect(sql).toMatch(/create or replace function egress\.grant_proxy_reader/);
   });
 });
+
+const SQL_026 = readFile(
+  new URL("../migrations/026_egress_principals.sql", import.meta.url),
+  "utf8",
+);
+
+/** The principals (ADR 0036): the proxy reads them without the salt and writes nothing of them. */
+describe("migration 026_egress_principals.sql", () => {
+  it("keeps the table in the egress schema, idempotent, with no reference into inbox", async () => {
+    const sql = (await SQL_026).replace(/--.*$/gm, "");
+    expect([...sql.matchAll(/create table if not exists ([\w.]+)/g)].map((m) => m[1])).toEqual([
+      "egress.principals",
+    ]);
+    expect(sql).not.toMatch(/\binbox\./);
+    expect(sql).not.toMatch(/\bdrop\b/);
+    expect(sql).not.toMatch(/create role|alter role/i);
+  });
+
+  it("stores a token hash and a salt, never the token", async () => {
+    const sql = (await SQL_026).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/token_hash\s+text not null/);
+    expect(sql).not.toMatch(/\btoken\s+text/);
+  });
+
+  it("lets the proxy role read principals by column, without the salt, and write only its status", async () => {
+    const sql = (await SQL_026).replace(/--.*$/gm, "");
+    const column = /grant select \(([^)]*)\) on egress\.principals/.exec(sql);
+    expect(column?.[1]).toBeDefined();
+    expect(column?.[1]).not.toMatch(/token_salt/);
+    const writes = [
+      ...sql.matchAll(
+        /grant\s+(?:[^']*?\b(?:insert|update|delete|all|truncate)\b[^']*?)\s+on\s+([\w., ]+?)\s+to/gi,
+      ),
+    ];
+    expect(writes.map((m) => m[1])).toEqual(["egress.proxy_status"]);
+  });
+
+  it("notifies the channel the proxy listens on after every write", async () => {
+    const sql = (await SQL_026).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/pg_notify\('egress_rules'/);
+    expect(sql).toMatch(/after insert or update or delete on egress\.principals/);
+  });
+});
