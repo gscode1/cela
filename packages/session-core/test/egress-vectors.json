@@ -1,0 +1,2448 @@
+{
+  "now": "2026-11-18T12:00:00Z",
+  "cases": [
+    {
+      "name": "exact allow in an applies-to-all set",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "registry.npmjs.org",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "registry.npmjs.org",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "set that does not apply is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "prof",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "profile names the set",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "prof",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "profileRuleSets": ["prof"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "rule of an unknown set is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "ghost",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "profileRuleSets": ["ghost"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "no rules is default deny",
+      "rules": [],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "deny beats a more specific allow",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "deny",
+          "host": ".example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "denied-by-rule",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "deny of a session beats allow of a set",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": null,
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "effect": "deny",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "sessionId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "denied-by-rule",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "session deny of another session is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": null,
+          "sessionId": "22222222-2222-4222-8222-222222222222",
+          "effect": "deny",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "sessionId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "deny suffix beats star allow",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "deny",
+          "host": ".bad.example",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "x.bad.example",
+        "port": 443,
+        "addresses": ["93.184.216.34"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "denied-by-rule",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "exact beats suffix (routes differ)",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": ".github.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "api.github.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "api.github.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "longer suffix beats shorter",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": ".example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": ".api.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "x.api.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "suffix does not match the apex",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": ".example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "suffix matches any depth",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": ".example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.b.c.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "star allows any public host",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "anything.test",
+        "port": 443,
+        "addresses": ["93.184.216.34"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "star without addresses allows by name",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "anything.test",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "named allow beats star",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "api.github.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "api.github.com",
+        "port": 443,
+        "addresses": ["93.184.216.34"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "conflicting routes at equal specificity",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all2",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "conflicting-routes",
+        "matchedRuleId": null,
+        "conflictingRuleIds": ["1", "2"]
+      }
+    },
+    {
+      "name": "equal routes are no conflict, older rule reported",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all2",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "session rule beats a set rule on the same host",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": null,
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "sessionId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "set rule beats nothing for another session",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": null,
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "sessionId": "22222222-2222-4222-8222-222222222222"
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "session id is compared case-insensitively",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": null,
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "sessionId": "11111111-1111-4111-8111-111111111111"
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "session rule needs a session",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": null,
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "expired rule is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": "2026-11-18T11:59:59Z",
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "rule expiring now is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": "2026-11-18T12:00:00Z",
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "rule not yet expired applies",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": "2026-11-18T12:00:01Z",
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "expired deny no longer denies",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "deny",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": "2026-01-01T00:00:00Z",
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "port not listed",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 8443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "port listed",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [80, 443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 80
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "deny on another port does not apply",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "deny",
+          "host": "a.example.com",
+          "ports": [80],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "host is compared lowercase",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "A.Example.COM",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "one trailing dot is ignored",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com.",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "two trailing dots are invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com..",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ip literal as host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "10.0.0.1",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "integer ip as host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "2130706433",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "hex ip as host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "0x7f.1",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "underscore host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a_b.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "empty host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "overlong host is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-host",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "port zero is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 0
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-port",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "port above 65535 is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 70000
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-port",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "fractional port is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 44.5
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-port",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "loopback is always blocked, even with star",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "evil.example.com",
+        "port": 443,
+        "addresses": ["127.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "metadata address is always blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["169.254.169.254"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "this-network 0.0.0.0 is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["0.0.0.0"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "multicast is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["224.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "reserved 240/4 is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["240.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv6 loopback is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv6 unspecified is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv6 link-local is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["fe80::1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv6 multicast is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["ff02::1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ec2 ipv6 metadata is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["fd00:ec2::254"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv4-mapped loopback is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::ffff:127.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv4-mapped hex loopback is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::ffff:7f00:1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "ipv4-mapped private is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::ffff:10.0.0.5"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "ipv4-mapped public is public",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::ffff:8.8.8.8"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "blocked address wins over a private rule for its cidr",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["127.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "one blocked address among public ones denies",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34", "169.254.169.254"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "allowed host resolving to a private address needs private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["10.1.2.3"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "star does not reach private addresses",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["192.168.1.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "cgnat is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["100.64.1.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "documentation range is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["203.0.113.9"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "ipv6 ula is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["fd12:3456::1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "ipv6 public is allowed by star",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["2606:4700::1111"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "private exact rule allows a private address",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.internal.example",
+          "ports": [8080],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.internal.example",
+        "port": 8080,
+        "addresses": ["10.1.2.3"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1",
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private rule needs the port",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.internal.example",
+          "ports": [8080],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.internal.example",
+        "port": 8081,
+        "addresses": ["10.1.2.3"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private cidr rule contains the address",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "10.20.0.0/16",
+          "ports": [5432],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "db.example.com",
+        "port": 5432,
+        "addresses": ["10.20.3.4"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1",
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private cidr rule does not contain the address",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "10.20.0.0/16",
+          "ports": [5432],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "db.example.com",
+        "port": 5432,
+        "addresses": ["10.21.3.4"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private cidr rule covers a mapped address",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "10.20.0.0/16",
+          "ports": [5432],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "db.example.com",
+        "port": 5432,
+        "addresses": ["::ffff:10.20.3.4"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1",
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private ipv6 cidr rule",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "fd12:3456::/32",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "db.example.com",
+        "port": 443,
+        "addresses": ["fd12:3456::9"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1",
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "private rule does not allow a public address",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "private exact rule is a name candidate without addresses",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "public and private records both need a rule",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34", "10.0.0.9"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "public and private records, private rule missing",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34", "10.0.0.9"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "addresses that need different routes",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34", "10.0.0.9"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "mixed-routes",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "invalid address text",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["not-an-ip"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-address",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "leading-zero ipv4 is invalid",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["010.0.0.1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "invalid-address",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "empty addresses list judges names only",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": []
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "onecli route is reported for an exact host",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "api.github.com",
+          "ports": [443],
+          "route": "onecli",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "api.github.com",
+        "port": 443,
+        "addresses": ["93.184.216.34"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "onecli",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "deny wins over private allow",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": true,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "deny",
+          "host": "svc.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "svc.example.com",
+        "port": 443,
+        "addresses": ["10.0.0.9"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "denied-by-rule",
+        "matchedRuleId": "2"
+      }
+    },
+    {
+      "name": "profile and applies-to-all sets combine",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "a.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "2",
+          "ruleSet": "prof",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "b.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        },
+        {
+          "id": "3",
+          "ruleSet": "prof2",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "c.example.com",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "c.example.com",
+        "port": 443,
+        "profileRuleSets": ["prof"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "default-deny",
+        "matchedRuleId": null
+      }
+    }
+  ],
+  "ruleSets": [
+    {
+      "name": "all",
+      "appliesToAll": true
+    },
+    {
+      "name": "all2",
+      "appliesToAll": true
+    },
+    {
+      "name": "prof",
+      "appliesToAll": false
+    },
+    {
+      "name": "prof2",
+      "appliesToAll": false
+    }
+  ]
+}

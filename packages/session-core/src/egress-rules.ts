@@ -433,6 +433,22 @@ export interface EgressRequest {
   now: Date;
 }
 
+/**
+ * Why a decision came out as it did, as a stable word (`reason` is prose for people). The Go evaluator of the proxy
+ * returns the same words, and packages/session-core/test/egress-vectors.json pins both to the same answers.
+ */
+export type EgressReasonKind =
+  | "allowed"
+  | "default-deny"
+  | "denied-by-rule"
+  | "conflicting-routes"
+  | "always-blocked"
+  | "needs-private"
+  | "invalid-host"
+  | "invalid-port"
+  | "invalid-address"
+  | "mixed-routes";
+
 export interface EgressDecision {
   decision: "allow" | "deny";
   /** The allow's route; null for a deny. */
@@ -445,6 +461,7 @@ export interface EgressDecision {
   conflictingRuleIds?: string[];
   /** The decision turned on `private`: an address was private, so only a private rule could allow it. */
   needsPrivate?: boolean;
+  reasonKind: EgressReasonKind;
   reason: string;
 }
 
@@ -485,11 +502,16 @@ function describe(rule: EvaluableRule): string {
   return `rule ${rule.id} (${owner}, ${kind} ${rule.host}${rule.private ? ", private" : ""})`;
 }
 
-const deny = (reason: string, rule?: EvaluableRule): EgressDecision => ({
+const deny = (
+  reason: string,
+  reasonKind: EgressReasonKind,
+  rule?: EvaluableRule,
+): EgressDecision => ({
   decision: "deny",
   route: null,
   matchedRuleId: rule?.id ?? null,
   ruleSet: rule?.ruleSet ?? null,
+  reasonKind,
   reason,
 });
 
@@ -506,6 +528,7 @@ function bestAllow(allows: EvaluableRule[], target: string): EgressDecision | un
     return {
       ...deny(
         `${target} is denied: conflicting routes between ${best.map(describe).join(" and ")}`,
+        "conflicting-routes",
       ),
       conflictingRuleIds: best.map((rule) => rule.id),
     };
@@ -515,6 +538,7 @@ function bestAllow(allows: EvaluableRule[], target: string): EgressDecision | un
     route: winner.route,
     matchedRuleId: winner.id,
     ruleSet: winner.ruleSet,
+    reasonKind: "allowed",
     reason: `${target} is allowed by ${describe(winner)}`,
   };
 }
@@ -544,10 +568,10 @@ export function evaluateEgress(
   const host = normalizeHost(request.host);
   const target = `${host}:${String(request.port)}`;
   if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65535) {
-    return deny(`port ${String(request.port)} is not valid`);
+    return deny(`port ${String(request.port)} is not valid`, "invalid-port");
   }
   const error = dnsNameError(host);
-  if (error !== undefined) return deny(`${target} is denied: ${error}`);
+  if (error !== undefined) return deny(`${target} is denied: ${error}`, "invalid-host");
 
   const named = new Set(request.profileRuleSets ?? []);
   const active = new Set(
@@ -567,14 +591,15 @@ export function evaluateEgress(
     .filter((rule) => rule.effect === "deny")
     .sort((a, b) => hostRank(b) - hostRank(a) || idOrder(a, b))[0];
   if (firstDeny !== undefined) {
-    return deny(`${target} is denied by ${describe(firstDeny)}`, firstDeny);
+    return deny(`${target} is denied by ${describe(firstDeny)}`, "denied-by-rule", firstDeny);
   }
   const allowsByName = byName.filter((rule) => rule.effect === "allow");
 
   if (request.addresses === undefined || request.addresses.length === 0) {
     // Names only. A private rule by exact host is a candidate: whether it is needed depends on the address.
     return (
-      bestAllow(allowsByName, target) ?? deny(`${target} matches no allow rule (default deny)`)
+      bestAllow(allowsByName, target) ??
+      deny(`${target} matches no allow rule (default deny)`, "default-deny")
     );
   }
 
@@ -583,10 +608,14 @@ export function evaluateEgress(
     const kind = classifyAddress(text);
     let decision: EgressDecision;
     if (kind === "invalid")
-      return deny(`${target} is denied: "${text.slice(0, 64)}" is not an IP address`);
+      return deny(
+        `${target} is denied: "${text.slice(0, 64)}" is not an IP address`,
+        "invalid-address",
+      );
     if (kind === "blocked") {
       return deny(
         `${target} is denied: it resolves to ${text}, an always-blocked address (loopback, link-local or metadata, multicast or reserved) that no rule can allow`,
+        "always-blocked",
       );
     }
     if (kind === "public") {
@@ -594,7 +623,7 @@ export function evaluateEgress(
         bestAllow(
           allowsByName.filter((rule) => !rule.private),
           target,
-        ) ?? deny(`${target} matches no allow rule (default deny)`);
+        ) ?? deny(`${target} matches no allow rule (default deny)`, "default-deny");
     } else {
       const address = parseIp(text.toLowerCase());
       const mapped =
@@ -613,6 +642,7 @@ export function evaluateEgress(
       decision = bestAllow(candidates, target) ?? {
         ...deny(
           `${target} resolves to ${text}, a private address; it needs an allow rule with private: true (an exact host or a cidr that contains it)`,
+          "needs-private",
         ),
         needsPrivate: true,
       };
@@ -622,9 +652,10 @@ export function evaluateEgress(
     if (result !== undefined && result.route !== decision.route) {
       return deny(
         `${target} is denied: its addresses need different routes (${String(result.route)} and ${String(decision.route)})`,
+        "mixed-routes",
       );
     }
     result ??= decision;
   }
-  return result ?? deny(`${target} matches no allow rule (default deny)`);
+  return result ?? deny(`${target} matches no allow rule (default deny)`, "default-deny");
 }
