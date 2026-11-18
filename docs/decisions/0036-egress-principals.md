@@ -87,7 +87,7 @@ through the same `EgressPrincipals`. Until then a repo session has no principal.
 before the sandbox is destroyed, so the token is dead from the next notification whatever happens to the claim. The orphan
 sweep revokes the principal of any deleted session and, on shard 0, of an unknown one (`revoke-egress`, first in the action
 list so the action limit cannot starve it). A revoked row stays for audit; a deleted session never gets a new principal
-(`ensurePrincipal` returns nothing for a revoked row). Open tunnels are not closed (slice 7).
+(`ensurePrincipal` returns nothing for a revoked row). The principal's open tunnels are closed on the next snapshot ([0039](0039-egress-revocation.md)).
 
 ### Admin
 

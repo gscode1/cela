@@ -7,91 +7,87 @@ import (
 	"time"
 )
 
-// Registry tracks the upstream connection of every open tunnel by session, so
-// that a session's tunnels can be closed on demand and no tunnel outlives
-// maxAge. Closing the upstream side ends the tunnel: goproxy then closes the
-// client side.
+// tunnelInfo is what a tunnel was decided on. The registry keeps it so a later snapshot can be asked the same
+// question again: would the new rules still let this session open this tunnel?
+type tunnelInfo struct {
+	session string
+	host    string // normalized destination name (the origin's, also for route=onecli)
+	port    int
+	addrs   []string // the addresses the decision checked; the direct route dialled the first
+	route   Route
+	// upstreamKey is a hash of the OneCLI token the tunnel was opened with (route=onecli only). The token itself is
+	// never kept. A rotated binding changes it, and the tunnel is closed so the next connection uses the new token.
+	upstreamKey [32]byte
+}
+
+// revoked is a tunnel the registry closed on a re-evaluation, with the reason (rule-denied, principal-revoked,
+// route-changed, binding-removed, binding-changed or stale).
+type revoked struct {
+	tunnelInfo
+	reason string
+}
+
+// Registry tracks the upstream connection of every open tunnel, with the inputs of its decision, so that tunnels the
+// current rules would no longer allow can be closed, and so that no tunnel outlives maxAge (the backstop for anything
+// the re-evaluation misses). Closing the upstream side ends the tunnel: goproxy then closes the client side.
 type Registry struct {
-	maxAge time.Duration
-	mu     sync.Mutex
-	conns  map[string]map[*trackedConn]struct{}
-	// revokedAt is when CloseSession last ran for a session. A dial whose
-	// ACL decision predates the close can still reach Track afterwards; Track
-	// closes it, so it cannot outlive the close for up to maxAge. A request
-	// authorized after the close has a later time and is unaffected, so no
-	// re-grant step is needed. An entry matters only while such a dial can
-	// still arrive, so entries older than horizon are pruned.
-	revokedAt map[string]time.Time
-	// horizon is the longest span from a request being authorized to its
-	// connection reaching Track. Build derives it from the dial timeouts.
-	horizon time.Duration
-	now     func() time.Time
+	maxAge  time.Duration
+	mu      sync.Mutex
+	conns   map[string]map[*trackedConn]struct{}
+	revoked atomic.Int64
 }
 
 func NewRegistry(maxAge time.Duration) *Registry {
-	return &Registry{maxAge: maxAge, conns: map[string]map[*trackedConn]struct{}{}, revokedAt: map[string]time.Time{}, horizon: time.Minute, now: time.Now}
+	return &Registry{maxAge: maxAge, conns: map[string]map[*trackedConn]struct{}{}}
 }
 
-// Track registers c under session and returns the wrapper to use in its place.
-// authorizedAt is when the request was authorized, taken before the ACL
-// decision: a close at or after that moment revokes this connection too.
-func (r *Registry) Track(session string, authorizedAt time.Time, c net.Conn) net.Conn {
-	t := &trackedConn{Conn: c, session: session, reg: r}
-	// The timer is installed before t is published, under t.mu, so a
-	// concurrent CloseSession (or a very short timer) either sees it and
-	// stops it or runs after it is set.
+// Track registers c with the inputs of its decision and returns the wrapper to use in its place. The caller re-judges
+// the tunnel after Track (Proxy.dial): a snapshot that arrived between the decision and now has swept before the
+// tunnel was registered and cannot have closed it, while one that arrives after is swept with the tunnel in place.
+func (r *Registry) Track(info tunnelInfo, c net.Conn) *trackedConn {
+	t := &trackedConn{Conn: c, info: info, reg: r}
+	// The timer is installed before t is published, under t.mu, so a concurrent Close (or a very short timer) either
+	// sees it and stops it or runs after it is set.
 	t.mu.Lock()
 	if r.maxAge > 0 {
 		t.timer = time.AfterFunc(r.maxAge, func() { _ = t.Close() })
 	}
 	t.mu.Unlock()
 	r.mu.Lock()
-	r.prune()
-	at, ok := r.revokedAt[session]
-	revoked := ok && !at.Before(authorizedAt)
-	// Close sets closed before it takes r.mu to remove t, so a t that was
-	// already closed (a very short max age) is never published and leaked.
-	if !revoked && !t.closed.Load() {
-		set := r.conns[session]
+	// Close sets closed before it takes r.mu to remove t, so a t that was already closed (a very short max age) is
+	// never published and leaked.
+	if !t.closed.Load() {
+		set := r.conns[info.session]
 		if set == nil {
 			set = map[*trackedConn]struct{}{}
-			r.conns[session] = set
+			r.conns[info.session] = set
 		}
 		set[t] = struct{}{}
 	}
 	r.mu.Unlock()
-	if revoked {
-		_ = t.Close()
-	}
 	return t
 }
 
-// prune drops revocations no pending dial can still be subject to. The caller
-// holds r.mu.
-func (r *Registry) prune() {
-	cutoff := r.now().Add(-r.horizon)
-	for session, at := range r.revokedAt {
-		if at.Before(cutoff) {
-			delete(r.revokedAt, session)
+// Revalidate asks judge about every open tunnel and closes those it gives a reason for. It returns what it closed.
+// judge runs outside the registry lock (it reads the snapshot), on a copy of the tunnel list.
+func (r *Registry) Revalidate(judge func(tunnelInfo) string) []revoked {
+	r.mu.Lock()
+	var all []*trackedConn
+	for _, set := range r.conns {
+		for c := range set {
+			all = append(all, c)
 		}
 	}
-}
-
-// CloseSession closes every open tunnel of the session and returns how many.
-func (r *Registry) CloseSession(session string) int {
-	r.mu.Lock()
-	r.prune()
-	r.revokedAt[session] = r.now()
-	set := r.conns[session]
-	conns := make([]*trackedConn, 0, len(set))
-	for c := range set {
-		conns = append(conns, c)
-	}
 	r.mu.Unlock()
-	for _, c := range conns {
-		_ = c.Close()
+	var out []revoked
+	for _, c := range all {
+		if reason := judge(c.info); reason != "" {
+			if c.closeRevoked() {
+				out = append(out, revoked{c.info, reason})
+			}
+		}
 	}
-	return len(conns)
+	return out
 }
 
 // Open returns the number of open tunnels of the session.
@@ -101,26 +97,58 @@ func (r *Registry) Open(session string) int {
 	return len(r.conns[session])
 }
 
+// Total returns the number of open tunnels.
+func (r *Registry) Total() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, set := range r.conns {
+		n += len(set)
+	}
+	return n
+}
+
+// Revoked is how many tunnels the registry has closed on a re-evaluation since it started.
+func (r *Registry) Revoked() int64 { return r.revoked.Load() }
+
 func (r *Registry) remove(t *trackedConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if set := r.conns[t.session]; set != nil {
+	if set := r.conns[t.info.session]; set != nil {
 		delete(set, t)
 		if len(set) == 0 {
-			delete(r.conns, t.session)
+			delete(r.conns, t.info.session)
 		}
 	}
 }
 
 type trackedConn struct {
 	net.Conn
-	session string
+	info    tunnelInfo
 	reg     *Registry
 	mu      sync.Mutex // guards timer
 	timer   *time.Timer
 	closed  atomic.Bool
+	revoked atomic.Bool
 	once    sync.Once
 	err     error
+}
+
+// closeRevoked closes the tunnel and says whether this call was the one that ended it (a tunnel that already ended on
+// its own is not counted as revoked).
+func (t *trackedConn) closeRevoked() bool {
+	if t.closed.Load() {
+		return false
+	}
+	won := false
+	if t.revoked.CompareAndSwap(false, true) {
+		won = !t.closed.Load()
+	}
+	_ = t.Close()
+	if won {
+		t.reg.revoked.Add(1)
+	}
+	return won
 }
 
 func (t *trackedConn) Close() error {

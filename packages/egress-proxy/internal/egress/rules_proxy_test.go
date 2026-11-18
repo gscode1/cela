@@ -60,6 +60,7 @@ type rulesEnv struct {
 	proxyAddr string
 	origin    *fakeOrigin
 	dialed    func() []string
+	p         *Proxy
 }
 
 type rulesEnvOpts struct {
@@ -76,6 +77,10 @@ type rulesEnvOpts struct {
 	// upstream is the OneCLI stand-in's address (host:port); bindingKey opens the snapshot's bindings.
 	upstream   string
 	bindingKey []byte
+	// source replaces the snapshot source (a Loader); onDial runs inside the direct dial, between the ACL decision and
+	// the tunnel being tracked.
+	source SnapshotSource
+	onDial func()
 }
 
 // newRulesEnv serves the production wiring (Rules, anonymous principals, private ranges opened to the evaluator). The
@@ -85,7 +90,7 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 	origin := newFakeOrigin(t)
 	var mu sync.Mutex
 	var dialed []string
-	src := sourceFunc(func() (*Snapshot, bool) {
+	var src SnapshotSource = sourceFunc(func() (*Snapshot, bool) {
 		if o.stale != nil && o.stale.Load() {
 			return nil, false
 		}
@@ -94,6 +99,9 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 		}
 		return o.snap, true
 	})
+	if o.source != nil {
+		src = o.source
+	}
 	dns := &sequenceResolver{calls: map[string]int{}, data: o.dns}
 	var principals Principals
 	if o.principals {
@@ -116,6 +124,9 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 				mu.Lock()
 				dialed = append(dialed, address)
 				mu.Unlock()
+				if o.onDial != nil {
+					o.onDial()
+				}
 				return net.DialTimeout(network, origin.ln.Addr().String(), timeout)
 			}
 		},
@@ -128,6 +139,7 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 	return &rulesEnv{
 		proxyAddr: strings.TrimPrefix(srv.URL, "http://"),
 		origin:    origin,
+		p:         p,
 		dialed: func() []string {
 			mu.Lock()
 			defer mu.Unlock()

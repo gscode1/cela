@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -317,71 +316,6 @@ func endsWithin(br *bufio.Reader, d time.Duration) (time.Duration, bool) {
 		return time.Since(start), true
 	case <-time.After(d):
 		return d, false
-	}
-}
-
-func TestCloseSessionEndsItsTunnelsOnly(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, envOpts{})
-	_, brA1 := openStream(t, e, "a1.example:443", tokA)
-	_, brA2 := openStream(t, e, "a2.example:443", tokA)
-	cB, brB := openStream(t, e, "b1.example:443", tokB)
-	for _, br := range []*bufio.Reader{brA1, brA2, brB} {
-		if err := readTick(br); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if e.p.Registry.Open("a") != 2 || e.p.Registry.Open("b") != 1 {
-		t.Fatalf("registry: a=%d b=%d", e.p.Registry.Open("a"), e.p.Registry.Open("b"))
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/admin/sessions/a/close-tunnels", nil)
-	req.Header.Set("Authorization", "Bearer admin-secret")
-	e.admin.ServeHTTP(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"closed":2`) {
-		t.Fatalf("admin: %d %s", rec.Code, rec.Body.String())
-	}
-	for i, br := range []*bufio.Reader{brA1, brA2} {
-		if d, ok := endsWithin(br, time.Second); !ok {
-			t.Errorf("session a stream %d still open after 1s", i)
-		} else {
-			t.Logf("stream %d ended after %v", i, d)
-		}
-	}
-	// B keeps streaming.
-	_ = cB.SetDeadline(time.Now().Add(ioWait))
-	for i := 0; i < 5; i++ {
-		if err := readTick(brB); err != nil {
-			t.Fatalf("session b stream broke: %v", err)
-		}
-	}
-	if e.p.Registry.Open("b") != 1 {
-		t.Error("session b tunnel was removed")
-	}
-	deadline := time.Now().Add(time.Second)
-	for e.p.Registry.Open("a") != 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if n := e.p.Registry.Open("a"); n != 0 {
-		t.Errorf("session a still has %d tracked tunnels", n)
-	}
-}
-
-func TestAdminNeedsToken(t *testing.T) {
-	t.Parallel()
-	reg := NewRegistry(0)
-	h := AdminHandler(reg, "admin-secret")
-	for _, auth := range []string{"", "Bearer wrong", "admin-secret"} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/admin/sessions/a/close-tunnels", nil)
-		if auth != "" {
-			req.Header.Set("Authorization", auth)
-		}
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("auth %q: status %d", auth, rec.Code)
-		}
 	}
 }
 

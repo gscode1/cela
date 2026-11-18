@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// Tracking connections while CloseSession runs must not race, and no
-// connection may stay open with a live timer once it has been closed.
-func TestRegistryTrackRacesCloseSession(t *testing.T) {
+// Tracking, closing and revalidating at once must not race, and no connection may stay open with a live timer once it
+// has been closed.
+func TestRegistryTrackRacesRevalidate(t *testing.T) {
 	r := NewRegistry(time.Hour)
 	var wg sync.WaitGroup
 	conns := make(chan net.Conn, 200)
@@ -19,14 +19,14 @@ func TestRegistryTrackRacesCloseSession(t *testing.T) {
 			defer wg.Done()
 			a, b := net.Pipe()
 			defer b.Close()
-			tc := r.Track("s", time.Now(), a)
+			tc := r.Track(tunnelInfo{session: "s"}, a)
 			conns <- tc
 			_ = tc.Close()
 		}()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.CloseSession("s")
+			r.Revalidate(func(tunnelInfo) string { return "test" })
 		}()
 	}
 	done := make(chan struct{})
@@ -57,7 +57,7 @@ func TestRegistryTimerFiresDuringTrack(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		a, b := net.Pipe()
 		defer b.Close()
-		r.Track("s", time.Now(), a)
+		r.Track(tunnelInfo{session: "s"}, a)
 	}
 	deadline := time.Now().Add(ioWait)
 	for r.Open("s") != 0 {
@@ -68,76 +68,34 @@ func TestRegistryTimerFiresDuringTrack(t *testing.T) {
 	}
 }
 
-type fakeClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
-
-func (c *fakeClock) now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
-func (c *fakeClock) advance(d time.Duration) {
-	c.mu.Lock()
-	c.t = c.t.Add(d)
-	c.mu.Unlock()
-}
-
-func newClockRegistry() (*Registry, *fakeClock) {
-	clk := &fakeClock{t: time.Unix(1000, 0)}
+func TestRegistryRevalidateClosesOnlyWhatJudgeDenies(t *testing.T) {
 	r := NewRegistry(time.Hour)
-	r.now = clk.now
-	r.horizon = time.Minute
-	return r, clk
-}
-
-func closedAfterTrack(r *Registry, session string, at time.Time) bool {
-	a, b := net.Pipe()
-	defer b.Close()
-	return r.Track(session, at, a).(*trackedConn).closed.Load()
-}
-
-// A dial authorized before CloseSession is closed when it reaches Track, even
-// if another request was authorized in between; one authorized after works.
-func TestRegistryDialAuthorizedBeforeCloseIsClosed(t *testing.T) {
-	r, clk := newClockRegistry()
-	before := clk.now()
-	clk.advance(time.Second)
-	r.CloseSession("s")
-	clk.advance(time.Second)
-	between := clk.now() // another request authorized after the close
-	clk.advance(time.Second)
-
-	if !closedAfterTrack(r, "s", before) {
-		t.Fatal("dial authorized before the close survived")
+	mk := func(session, host string) (*trackedConn, net.Conn) {
+		a, b := net.Pipe()
+		return r.Track(tunnelInfo{session: session, host: host}, a), b
 	}
-	if closedAfterTrack(r, "s", between) {
-		t.Fatal("request authorized after the close was revoked")
+	keep, kb := mk("a", "ok.example.com")
+	drop, db := mk("a", "bad.example.com")
+	defer kb.Close()
+	defer db.Close()
+	out := r.Revalidate(func(i tunnelInfo) string {
+		if i.host == "bad.example.com" {
+			return "rule-denied"
+		}
+		return ""
+	})
+	if len(out) != 1 || out[0].host != "bad.example.com" || out[0].reason != "rule-denied" {
+		t.Fatalf("revoked %+v", out)
 	}
-	// The later request must not undo the revocation of the earlier dial.
-	if !closedAfterTrack(r, "s", before) {
-		t.Fatal("a later authorization undid the revocation")
+	if keep.closed.Load() || !drop.closed.Load() {
+		t.Fatalf("keep closed=%v drop closed=%v", keep.closed.Load(), drop.closed.Load())
 	}
-	if closedAfterTrack(r, "other", before) {
-		t.Fatal("other session was revoked")
+	if r.Open("a") != 1 || r.Revoked() != 1 {
+		t.Fatalf("open=%d revoked=%d", r.Open("a"), r.Revoked())
 	}
-}
-
-func TestRegistryPrunesRevocationsAfterHorizon(t *testing.T) {
-	r, clk := newClockRegistry()
-	r.CloseSession("old")
-	clk.advance(2 * time.Minute)
-	r.CloseSession("new")
-	r.mu.Lock()
-	_, oldKept := r.revokedAt["old"]
-	_, newKept := r.revokedAt["new"]
-	r.mu.Unlock()
-	if oldKept || !newKept {
-		t.Fatalf("after CloseSession: old kept=%v new kept=%v", oldKept, newKept)
-	}
-	clk.advance(2 * time.Minute)
-	closedAfterTrack(r, "x", clk.now()) // Track prunes too
-	r.mu.Lock()
-	n := len(r.revokedAt)
-	r.mu.Unlock()
-	if n != 0 {
-		t.Fatalf("revokedAt has %d entries after the horizon", n)
+	// A tunnel that ended on its own is not counted as revoked.
+	_ = keep.Close()
+	if out := r.Revalidate(func(tunnelInfo) string { return "x" }); len(out) != 0 || r.Revoked() != 1 {
+		t.Fatalf("a closed tunnel was revoked again: %+v", out)
 	}
 }

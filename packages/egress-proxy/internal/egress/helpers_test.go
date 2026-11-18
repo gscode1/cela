@@ -189,7 +189,6 @@ type env struct {
 	p         *Proxy
 	up        *fakeUpstream
 	origin    *fakeOrigin
-	admin     http.Handler
 }
 
 type envOpts struct {
@@ -252,7 +251,6 @@ func newEnv(t *testing.T, o envOpts) *env {
 	return &env{
 		proxyAddr: strings.TrimPrefix(srv.URL, "http://"),
 		p:         p, up: up, origin: origin,
-		admin: AdminHandler(p.Registry, "admin-secret"),
 	}
 }
 
