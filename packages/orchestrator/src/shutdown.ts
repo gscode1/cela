@@ -8,6 +8,7 @@ export interface Running {
   service?: { stop(): void };
   sweeper?: { stop(): void };
   netProbe?: { stop(): void };
+  modelCredentials?: { stop(): void };
   /** The Harness host, once opened. */
   host?: { close(): Promise<void> };
   /** Set while `Host.open` runs: a signal in that window waits for it, then closes the host it produced. */
@@ -35,6 +36,7 @@ export function createShutdown(deps: ShutdownDeps): (signal: string) => void {
       running.service?.stop();
       running.sweeper?.stop();
       running.netProbe?.stop();
+      running.modelCredentials?.stop();
       await running.inbox?.stop();
       await running.settings?.stop();
       await running.mcpCatalog?.stop();

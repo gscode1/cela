@@ -10,6 +10,8 @@ export function useModelView(): ModelView {
   const query = useQuery({
     queryKey: ["models"],
     queryFn: ({ signal }) => getModels(token ?? "", signal),
+    // The credential hint changes behind the console (a secret added in OneCLI, ADR 0025): coming back to the tab shows it.
+    refetchOnWindowFocus: true,
   });
   return viewOf(query.data, query.isError ? query.error.message : undefined, query.isPending);
 }

@@ -177,6 +177,8 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
    table wins** and a differing ConfigMap value only logs `settings-env-ignored`. Change them with
    `PUT /admin/settings` (`docs/session-api.md`), no restart. With an OneCLI token the orchestrator installs every built-in
    provider at start, so adding a built-in provider needs no restart (without a token only allowlisted providers are installed).
+   A credential added to OneCLI later also needs no restart: shard 0 re-reads OneCLI's secrets every 30 s, and the console's
+   model pickers list the provider once its hint is `configured` ([ADR 0025](decisions/0025-model-catalog.md)).
 
 | Key (seed only)          | Setting (admin API)                                                                                       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |

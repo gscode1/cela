@@ -5,9 +5,16 @@ import {
   publishCapabilities,
   readProfiles,
 } from "@pi-durable-k8s/session-core";
+import type { Models } from "@earendil-works/pi-ai";
 import { validateProfileDefinition } from "@pi-durable-k8s/session-core";
-import type { Capabilities, ProfileDefinition } from "@pi-durable-k8s/session-core";
+import type {
+  Capabilities,
+  ModelProviderStatus,
+  ProfileDefinition,
+} from "@pi-durable-k8s/session-core";
+import type { OrchestratorConfig } from "./config.js";
 import { log } from "./log.js";
+import { providerCredentials } from "./providers.js";
 
 /**
  * At start: publishes the installed coding tools and extensions (ingest checks admin writes of profiles against them,
@@ -71,4 +78,61 @@ export async function liveConversationProfiles(
     log("profile-tools-reapply-skipped", { message: errorMessage(error) });
   }
   return found;
+}
+
+export interface ModelCredentialsDeps {
+  models: Models;
+  config: Pick<OrchestratorConfig, "onecli">;
+  listSecrets: () => Promise<readonly { hostPattern?: string }[]>;
+  /** Writes the hint (`publishModelProviders`); true if it changed. */
+  publish: (providers: readonly ModelProviderStatus[]) => Promise<boolean>;
+}
+
+/**
+ * Keeps the per-provider credential hint (ADR 0025) current, so a secret added to OneCLI shows in the console without a
+ * restart. Shard 0 runs it. A failed listing keeps the last hint: publishing `unknown` would empty the console's model
+ * list on every OneCLI blip. The catalog itself changes only with a new image, so it stays a start-time publish.
+ */
+export class ModelCredentialsLoop {
+  readonly #deps: ModelCredentialsDeps;
+  #running = false;
+  #timer: NodeJS.Timeout | undefined;
+
+  constructor(deps: ModelCredentialsDeps) {
+    this.#deps = deps;
+  }
+
+  start(intervalMs: number): void {
+    this.#timer = setInterval(() => void this.run(), intervalMs);
+    this.#timer.unref();
+  }
+
+  stop(): void {
+    if (this.#timer !== undefined) clearInterval(this.#timer);
+  }
+
+  /** One check. Returns whether the hint changed; never throws. Skipped while the previous one still runs. */
+  async run(): Promise<boolean> {
+    if (this.#running) return false;
+    this.#running = true;
+    try {
+      const d = this.#deps;
+      const secrets = await d.listSecrets();
+      const providers = await providerCredentials(d.models, d.config, () =>
+        Promise.resolve(secrets),
+      );
+      const changed = await d.publish(providers);
+      if (changed) {
+        log("model-credentials-refreshed", {
+          configured: providers.filter((p) => p.credential === "configured").map((p) => p.provider),
+        });
+      }
+      return changed;
+    } catch (error) {
+      log("model-credentials-refresh-failed", { message: errorMessage(error) });
+      return false;
+    } finally {
+      this.#running = false;
+    }
+  }
 }

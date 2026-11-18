@@ -646,6 +646,18 @@ export class FakeSettingsDb {
       };
       return done();
     }
+    if (text.startsWith("update inbox.orchestrator_capabilities set model_providers")) {
+      const [providers] = params as [string];
+      const next = JSON.parse(providers) as unknown;
+      if (
+        this.capabilities === undefined ||
+        JSON.stringify(this.capabilities.model_providers) === JSON.stringify(next)
+      ) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      this.capabilities = { ...this.capabilities, model_providers: next };
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
     if (text.startsWith("insert into inbox.sessions (")) {
       const [id, owner, subject, provider, model, reasoning, repo, branch, pName, pVersion, pSnap] =
         params as (string | null)[];

@@ -34,9 +34,21 @@ and ingest already learns the installed tools from it through `inbox.orchestrato
   `unknown` when there is no admin key or the listing fails (logged, never fatal). The hint is not proof (the key may be
   invalid, the agent may lack the grant); only the first turn proves a credential. It is never used to refuse a model, and it
   depends on the orchestrator's OneCLI admin key, which issue #65 plans to move out; then it will become `unknown` or move
-  with the key. It is refreshed at start only.
+  with the key. It is published at start and refreshed every 30 s (amendment below).
 
 ## Consequences
 
-A catalog is as old as the orchestrator process: a pi-ai upgrade shows after the rollout, and a secret added to OneCLI shows in
-the hint after the next start. The console can offer pickers and warn on `missing` without a new round trip to the orchestrator.
+A catalog is as old as the orchestrator process: a pi-ai upgrade shows after the rollout. A secret added to OneCLI shows in the
+hint within about 30 s (amendment below). The console can offer pickers and warn on `missing` without a new round trip to the orchestrator.
+
+## Amendment: the credential hint is refreshed without a restart (issue #242)
+
+A Codex login added in OneCLI after the start did not show in the console until the orchestrator restarted. Now shard 0's
+orchestrator (the probe shard, when it has a OneCLI admin key) re-lists OneCLI's secrets every 30 s and writes only
+`model_providers`, and only when it changed (`publishModelProviders`, a plain `update`: no row before the start publish, so
+nothing is written then). One shard writes, so the shards do not fight over the row between starts; the start publish of
+every shard still writes it, as before. A failed listing keeps the last hint instead of writing `unknown`, which would empty
+the console's model list on every OneCLI blip; at start a failure still gives `unknown`. The catalog itself (`models`) is
+still written at start only: it changes only with a new image. The console refetches `GET /admin/models` when its window
+regains focus. Cost: one `GET /v1/secrets` every 30 s, the same call the orphan sweep makes. A refresh button was considered
+and rejected: it needs a request row, a route and a pickup loop, and the loop alone is enough.
