@@ -157,5 +157,27 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
 
 ## Live verification (2026-11-18)
 
-`hack/egress-mcp-smoke.sh` on a throwaway kind cluster with Cilium, bundled OneCLI and the proxy. Results are recorded in the
-pull request of this slice.
+`hack/egress-mcp-smoke.sh`, throwaway kind cluster `pi-egress` (Cilium, bundled OneCLI v2, the egress proxy, runc sandboxes), against
+the real DeepWiki MCP server and `httpbingo.org` (which echoes request headers) with dummy OneCLI secrets: all checks passed (the
+last run in full; two earlier runs found the 50-character identifier limit below and script mistakes).
+
+| Check | Result |
+|---|---|
+| PUT of a new server, until the gateway lets its host through | 1.0 to 1.6 s (bar: 10 s); includes the probe's own 0.4 s |
+| the orchestrator learning of it to `mcp-tools-ready` (real DeepWiki tools) | 0.8 to 1.3 s |
+| derived rule in `mcp-catalog`, read-only | `system: true`; hand edits of the set and of a rule are `409`; a profile naming it is `400` |
+| hand-made host rule | unchanged (same priority, action, name, host) before, after the PUT, 35 s later and after the deletes |
+| terminal block | one, last, behind the owned allow (copy first); recreated by the reconciler, same name |
+| session whose profile names the server | `tool_search` then `mcp__<server>__read_wiki_structure`: a real, non-error DeepWiki result |
+| session whose profile does not | `tool_unavailable`; explain denies the host for its sandbox; its sandbox's CONNECT through the proxy is refused (407), and so is the naming session's |
+| per-session identity (two credentialed servers on one host, dummy secrets) | session A's agent holds exactly `smoke-key-a`, B's exactly `smoke-key-b`; through the real gateway the origin saw only `X-Smoke-A` on A's request and only `X-Smoke-B` on B's; B's agent sent none of A's credential to A's URL; a session with no credentialed server has no agent |
+| revocation | deleting session A removed its MCP agent 0.7 s later; B's was untouched |
+| idempotency | the rule list (priorities included) was identical 35 s later: nothing was recreated |
+| DELETE of the servers | the gateway blocked the host again 0.9 to 1.1 s later; the owned rules and derived rules were gone; a new call of a session that had the tool is `tool_unavailable` |
+
+Found live: OneCLI refuses an agent identifier over 50 characters (`400`), which sized the names above; and a catalog PUT that
+changes nothing writes nothing, so a hand-removed owned rule comes back with the next 30 s poll, not at once.
+
+**Not verified:** a credentialed server that speaks real MCP behind OneCLI (no third-party credential was used; the dummy servers
+provision the identities and prove injection per agent, but never list a tool); two shards racing for the reconciler's lock
+(unit-tested with a fake); an orchestrator MCP call that was in flight when its server was deleted (the design lets it finish).

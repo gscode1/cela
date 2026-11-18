@@ -14,7 +14,7 @@
 # the start (an operator who never opened that host), and is not put back: use a throwaway cluster.
 #
 #   1. a hand-made host rule is recorded; mcp.deepwiki.com is blocked at the gateway
-#   2. PUT /admin/mcp-servers/deepwiki: the gateway lets the host through within 10 s and the tools are listed; the derived
+#   2. PUT /admin/mcp-servers/$dw: the gateway lets the host through within 10 s and the tools are listed; the derived
 #      rule is in the read-only system set, the hand-made rule is unchanged, the terminal block is still one and last
 #   3. a session whose profile names deepwiki calls its tool; one whose profile does not gets tool_unavailable and no route,
 #      and the sandbox of neither can reach the host through the egress proxy
@@ -49,6 +49,12 @@ done
 [[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl node jq; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
+# A deleted server name is never created again (ADR 0027), so every run uses fresh names. No hyphen in them: the tool name is
+# mcp__<name>__<tool>.
+run=$RANDOM
+dw=smokedw$run
+ea=smokeea$run
+eb=smokeeb$run
 kubectl config get-contexts -o name | grep -qx -- "$ctx" || die "no kubectl context $ctx (kind cluster $name)"
 k() { kubectl --context "$ctx" -n "$namespace" "$@"; }
 
@@ -67,6 +73,7 @@ refute() { # what, output, pattern
   ok "$1"
 }
 now_ms() { node -e 'console.log(Date.now())'; }
+t_start=$(now_ms)
 
 # ------------------------------------------------------------------ the APIs, from inside the cluster
 client=$root/tests/e2e/client-4b.mjs
@@ -102,17 +109,21 @@ send_script() { # session needle steps-json -> the results JSON
 }
 
 sessions=()
+# Profiles keep a server from being deleted while their current version names it (ADR 0027): publish versions without it
+# first. Used at the start (a failed earlier run may have left servers) and at the end.
+reset_catalog() {
+  for p in smoke-with smoke-a smoke-b; do api PUT "/admin/profiles/$p" '{"definition":{"instructions":"no MCP"},"enabledForNew":false}' >/dev/null 2>&1; done
+  # Every server this script ever made (names start with smoke), not only this run's: a failed run leaves its own.
+  api GET /admin/mcp-servers 2>/dev/null | jq -r '.body.servers[]? | select(.name | startswith("smoke")) | "\(.name) \(.revision)"' |
+    while read -r s rev; do api DELETE "/admin/mcp-servers/$s?expectedRevision=$rev" >/dev/null 2>&1; done
+}
 cleanup() {
   local rc=$?
   set +e
   echo
   echo "## cleanup"
   for s in ${sessions[@]+"${sessions[@]}"}; do api DELETE "/sessions/$s" >/dev/null 2>&1; done
-  for p in smoke-with smoke-a smoke-b; do api PUT "/admin/profiles/$p" '{"enabledForNew":false}' >/dev/null 2>&1; done
-  for s in deepwiki smoke-echo-a smoke-echo-b; do
-    rev=$(api GET "/admin/mcp-servers/$s" 2>/dev/null | jq -r '.body.revision // empty')
-    [[ -z $rev ]] || api DELETE "/admin/mcp-servers/$s?expectedRevision=$rev" >/dev/null 2>&1
-  done
+  reset_catalog
   sleep 8
   driver drop-rule smoke-handmade-allow >/dev/null 2>&1
   driver drop-secret smoke-key-a >/dev/null 2>&1
@@ -131,7 +142,13 @@ jq -e '.proxy.replicas | map(select(.state == "serving")) | length >= 1' <<<"$st
 ok "a proxy replica serves"
 
 # ------------------------------------------------------------------ 1. before
-echo "## 1. before: a hand-made rule, and mcp.deepwiki.com blocked at the gateway"
+echo "## 1. before: a clean slate, a hand-made rule, and mcp.deepwiki.com blocked at the gateway"
+reset_catalog
+until [[ -z $(driver rules | grep ' pi-egress-allow-' || true) ]]; do
+  (($(now_ms) - t_start < 90000)) || fail "owned host rules from an earlier run did not go away" "$(driver rules)"
+  sleep 1
+done
+ok "no catalog servers and no pi-egress-allow rules left from an earlier run"
 driver drop-rule pi-allow-mcp.deepwiki.com
 driver handmade smoke-handmade-allow handmade.smoke.example
 sleep 2
@@ -142,9 +159,9 @@ ok "hand-made rule: $hand_before"
 check "the gateway blocks mcp.deepwiki.com" "$(driver probe mcp.deepwiki.com)" "^blocked$"
 
 # ------------------------------------------------------------------ 2. catalog PUT
-echo "## 2. PUT /admin/mcp-servers/deepwiki: reachable within 10 s"
+echo "## 2. PUT /admin/mcp-servers/$dw: reachable within 10 s"
 t0=$(now_ms)
-api_ok PUT /admin/mcp-servers/deepwiki '{"url":"https://mcp.deepwiki.com/mcp","readOnly":true}' >/dev/null
+api_ok PUT /admin/mcp-servers/$dw '{"url":"https://mcp.deepwiki.com/mcp","readOnly":true}' >/dev/null
 reached=""
 while true; do
   p=$(driver probe mcp.deepwiki.com)
@@ -160,9 +177,9 @@ echo "  the gateway let mcp.deepwiki.com through $reached ms after the PUT retur
 ((reached < limit_ms)) || fail "reachable only after $reached ms (the epic's bar is 10 s)"
 ok "reachable within $((limit_ms / 1000)) s ($reached ms)"
 tools_by=$((t0 + 20000))
-while [[ -z $(log_time mcp-tools-ready deepwiki) ]] && (($(now_ms) < tools_by)); do sleep 0.5; done
-added=$(log_time mcp-server-added deepwiki)
-ready=$(log_time mcp-tools-ready deepwiki)
+while [[ -z $(log_time mcp-tools-ready "$dw") ]] && (($(now_ms) < tools_by)); do sleep 0.5; done
+added=$(log_time mcp-server-added "$dw")
+ready=$(log_time mcp-tools-ready "$dw")
 [[ -n $added && -n $ready ]] || fail "the orchestrator logged no mcp-server-added / mcp-tools-ready for deepwiki"
 echo "  mcp-server-added to mcp-tools-ready in the orchestrator's log: $((ready - added)) ms"
 ((ready - added < limit_ms)) || fail "the tools were listed only $((ready - added)) ms after the orchestrator saw the change"
@@ -190,21 +207,21 @@ check "and it is the last rule, behind the new allow" "$last" " block pi-block-a
 
 # ------------------------------------------------------------------ 3. sessions
 echo "## 3. a session whose profile names deepwiki calls it; one whose profile does not cannot"
-api_ok PUT /admin/profiles/smoke-with '{"definition":{"mcpServers":["deepwiki"]},"enabledForNew":true}' >/dev/null
+api_ok PUT /admin/profiles/smoke-with "$(jq -nc --arg s "$dw" '{definition:{mcpServers:[$s]},enabledForNew:true}')" >/dev/null
 s_with=$(new_session smoke-with)
 sessions+=("$s_with")
 s_without=$(new_session)
 sessions+=("$s_without")
-res=$(send_script "$s_with" mcp-done '[{"tool":"tool_search","args":{"query":"read wiki structure of a repository"}},{"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
+res=$(send_script "$s_with" mcp-done '[{"tool":"tool_search","args":{"query":"read wiki structure of a repository"}},{"tool":"mcp__'"$dw"'__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
 check "the session whose profile names deepwiki got its tool result" "$res" '"found":true'
 jq -e '.results | length >= 2 and (.[1].isError | not)' <<<"$res" >/dev/null || fail "the MCP call returned an error" "$(cut -c1-400 <<<"$res")"
 ok "and the call was a real, non-error result from DeepWiki"
-res=$(send_script "$s_without" mcp-none '[{"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
+res=$(send_script "$s_without" mcp-none '[{"tool":"mcp__'"$dw"'__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
 jq -e '.results[0].isError == true and (.results[0].text | test("not available"))' <<<"$res" >/dev/null || fail "the session without the profile did not get tool_unavailable" "$(cut -c1-400 <<<"$res")"
 ok "the session whose profile does not name it gets tool_unavailable"
 why=$(api_ok POST /admin/egress/explain "{\"host\":\"mcp.deepwiki.com\",\"sessionId\":\"$s_without\"}")
 check "explain: no rule lets that session's sandbox reach the host" "$why" '"decision":"deny"'
-check "explain lists the MCP server on the host" "$why" '"mcp":\{"ruleSet":"mcp-catalog","servers":\[\{"name":"deepwiki"'
+check "explain lists the MCP server on the host" "$why" '"mcp":\{"ruleSet":"mcp-catalog","servers":\[\{"name":"'"$dw"'"'
 check "explain with the naming profile says so" "$(api_ok POST /admin/egress/explain '{"host":"mcp.deepwiki.com","profile":"smoke-with"}')" '"namedByProfile":true'
 check "and says not for the profile that does not" "$(api_ok POST /admin/egress/explain '{"host":"mcp.deepwiki.com","profile":"coding"}')" '"namedByProfile":false'
 # The sandbox's own connection: the proxy judges it by the session's rule sets; the derived set applies to nobody.
@@ -223,19 +240,26 @@ echo "## 4. two credentialed servers: each session's OneCLI agent holds only its
 driver secret smoke-key-a httpbingo.org X-Smoke-A dummy-credential-a
 driver secret smoke-key-b httpbingo.org X-Smoke-B dummy-credential-b
 t1=$(now_ms)
-api_ok PUT /admin/mcp-servers/smoke-echo-a '{"url":"https://httpbingo.org/anything/a","readOnly":true,"onecliSecret":"smoke-key-a"}' >/dev/null
-api_ok PUT /admin/mcp-servers/smoke-echo-b '{"url":"https://httpbingo.org/anything/b","readOnly":true,"onecliSecret":"smoke-key-b"}' >/dev/null
+api_ok PUT /admin/mcp-servers/$ea '{"url":"https://httpbingo.org/anything/a","readOnly":true,"onecliSecret":"smoke-key-a"}' >/dev/null
+api_ok PUT /admin/mcp-servers/$eb '{"url":"https://httpbingo.org/anything/b","readOnly":true,"onecliSecret":"smoke-key-b"}' >/dev/null
 while [[ $(driver probe httpbingo.org) != reachable* ]]; do
   (($(now_ms) - t1 < 60000)) || fail "httpbingo.org is still blocked after 60 s"
   sleep 0.3
 done
 ok "the gateway let httpbingo.org through $(($(now_ms) - t1)) ms after the first PUT"
 set_json=$(api_ok GET /admin/egress/rule-sets/mcp-catalog)
-check "one derived rule for the host, route onecli, naming both servers" "$(jq -c '.rules | map(select(.host=="httpbingo.org")) | map({route, note})' <<<"$set_json")" '"route":"onecli","note":"MCP server smoke-echo-a, smoke-echo-b"'
-check "a discovery agent of each credentialed server holds exactly its own secret (a)" "$(driver grants pi-session-d-smoke-echo-a)" "^smoke-key-a$"
-check "(b)" "$(driver grants pi-session-d-smoke-echo-b)" "^smoke-key-b$"
-api_ok PUT /admin/profiles/smoke-a '{"definition":{"mcpServers":["smoke-echo-a"]},"enabledForNew":true}' >/dev/null
-api_ok PUT /admin/profiles/smoke-b '{"definition":{"mcpServers":["smoke-echo-b"]},"enabledForNew":true}' >/dev/null
+check "one derived rule for the host, route onecli, naming both servers" "$(jq -c '.rules | map(select(.host=="httpbingo.org")) | map({route, note})' <<<"$set_json")" '"route":"onecli","note":"MCP server '"$ea, $eb"'"'
+# The discovery agents appear when discovery runs, a moment after the host is open (the secret already exists).
+for srv in a b; do
+  for _ in $(seq 1 30); do
+    [[ $(driver grants "pi-session-d-smoke-echo-$srv") != no-agent ]] && break
+    sleep 1
+  done
+done
+check "a discovery agent of each credentialed server holds exactly its own secret (a)" "$(driver grants pi-session-d-$ea)" "^smoke-key-a$"
+check "(b)" "$(driver grants pi-session-d-$eb)" "^smoke-key-b$"
+api_ok PUT /admin/profiles/smoke-a "$(jq -nc --arg s "$ea" '{definition:{mcpServers:[$s]},enabledForNew:true}')" >/dev/null
+api_ok PUT /admin/profiles/smoke-b "$(jq -nc --arg s "$eb" '{definition:{mcpServers:[$s]},enabledForNew:true}')" >/dev/null
 sa=$(new_session smoke-a)
 sessions+=("$sa")
 sb=$(new_session smoke-b)
@@ -280,9 +304,9 @@ ok "and the hand-made rule is still as it was"
 echo "## 6. deleting the servers: blocked again within 10 s, rules gone"
 # Profiles keep a server from being deleted while their current version names it (ADR 0027): publish versions without it.
 for p in smoke-with smoke-a smoke-b; do api_ok PUT "/admin/profiles/$p" '{"definition":{"instructions":"no MCP"},"enabledForNew":false}' >/dev/null; done
-rev=$(api_ok GET /admin/mcp-servers/deepwiki | jq -r '.revision')
+rev=$(api_ok GET /admin/mcp-servers/$dw | jq -r '.revision')
 t3=$(now_ms)
-api_ok DELETE "/admin/mcp-servers/deepwiki?expectedRevision=$rev" >/dev/null
+api_ok DELETE "/admin/mcp-servers/$dw?expectedRevision=$rev" >/dev/null
 while [[ $(driver probe mcp.deepwiki.com) != blocked ]]; do
   (($(now_ms) - t3 < 60000)) || fail "mcp.deepwiki.com is still reachable 60 s after the delete"
   sleep 0.3
@@ -291,11 +315,11 @@ gone=$(($(now_ms) - t3))
 echo "  the gateway blocked mcp.deepwiki.com again $gone ms after the DELETE returned"
 ((gone < limit_ms)) || fail "blocked only after $gone ms"
 ok "unreachable within $((limit_ms / 1000)) s ($gone ms)"
-res=$(send_script "$s_with" mcp-after '[{"tool":"mcp__deepwiki__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
-jq -e '.results[0].isError == true and (.results[0].text | test("not available"))' <<<"$res" >/dev/null || fail "a new call after the delete was not tool_unavailable" "$(cut -c1-300 <<<"$res")"
+res=$(send_script "$s_with" mcp-after '[{"tool":"mcp__'"$dw"'__read_wiki_structure","args":{"repoName":"facebook/react"}}]')
+jq -e '.results | last | .isError == true and (.text | test("not available"))' <<<"$res" >/dev/null || fail "a new call after the delete was not tool_unavailable" "$(cut -c1-300 <<<"$res")"
 ok "a new call of the session that had the tool is tool_unavailable"
 check "the derived rule is gone" "$(api_ok GET /admin/egress/rule-sets/mcp-catalog | jq -c '.rules | map(.host)')" '^\["httpbingo.org"\]$'
-for s in smoke-echo-a smoke-echo-b; do
+for s in $ea $eb; do
   rev=$(api_ok GET "/admin/mcp-servers/$s" | jq -r '.revision')
   api_ok DELETE "/admin/mcp-servers/$s?expectedRevision=$rev" >/dev/null
 done
