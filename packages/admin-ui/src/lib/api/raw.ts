@@ -1,17 +1,4 @@
-import { ApiError } from "@/lib/api";
-
-async function errorText(res: Response): Promise<string> {
-  try {
-    const body: unknown = await res.json();
-    if (typeof body === "object" && body !== null && "error" in body) {
-      const { error } = body;
-      if (typeof error === "string") return error;
-    }
-  } catch {
-    // Not JSON: fall through to the status line.
-  }
-  return `HTTP ${String(res.status)}`;
-}
+import { apiErrorOf } from "@/lib/api";
 
 /**
  * A call to the admin API of the same origin that keeps the `Response`, for the callers that need the status (`200`
@@ -31,7 +18,7 @@ export async function adminRequest(
     request.body = JSON.stringify(init.body);
   }
   const res = await fetch(path, request);
-  if (!res.ok) throw new ApiError(res.status, await errorText(res));
+  if (!res.ok) throw await apiErrorOf(res);
   return res;
 }
 

@@ -42,6 +42,42 @@ async function openProfile(admin: FakeAdmin, name: string): Promise<void> {
 
 const publish = () => screen.getByRole("button", { name: "Publish new version" });
 
+describe("deleting a profile", () => {
+  it("is offered only for a disabled profile that is not the default", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    expect(screen.getByRole("button", { name: "Delete profile" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Disable for new sessions" }));
+    await screen.findByText("review is disabled for new sessions.");
+    expect(screen.getByRole("button", { name: "Delete profile" })).toBeEnabled();
+  });
+
+  it("asks for the name, deletes with the revision and goes back to the list", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" }, false);
+    await openProfile(admin, "review");
+    await userEvent.click(screen.getByRole("button", { name: "Delete profile" }));
+    const panel = screen.getByRole("generic", { name: "Delete review" });
+    expect(panel).toHaveTextContent("cannot be undone");
+    expect(panel).toHaveTextContent("can never be used again");
+    const confirm = within(panel).getByRole("button", { name: "Delete review" });
+    expect(confirm).toBeDisabled();
+    await userEvent.type(within(panel).getByLabelText("Type review to confirm"), "revie");
+    expect(confirm).toBeDisabled();
+    await userEvent.type(within(panel).getByLabelText("Type review to confirm"), "w");
+    await userEvent.click(confirm);
+    await screen.findByRole("table", { name: "Profiles" });
+    expect(admin.profiles.some((profile) => profile.name === "review")).toBe(false);
+    expect(
+      admin.fetch.mock.calls.some(
+        ([path, init]) =>
+          path.startsWith("/admin/profiles/review?expectedRevision=1") && init?.method === "DELETE",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("profile list", () => {
   it("lists name, version, state, default and last actor, and shows invalid ones with their errors", async () => {
     const admin = createFakeAdmin();
