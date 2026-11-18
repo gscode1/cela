@@ -21,6 +21,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   profile: null,
   usage: null,
   sandboxSize: null,
+  networkMode: "proxied",
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

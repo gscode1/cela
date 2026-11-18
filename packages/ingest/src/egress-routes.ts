@@ -290,9 +290,21 @@ export async function handleAdminEgress(
     }
     if (method === "GET") {
       const data = await readEgress(pool);
+      // The session's network mode, so the console can mark a direct one (no rule applies to it, ADR 0038); null when
+      // the session does not exist.
+      const found = await pool.query<{ network_mode: string | null }>(
+        "select network_mode from inbox.sessions where id = $1",
+        [sessionId],
+      );
       say(200, {
         revision: data.revision,
         rules: data.rules.filter((rule) => rule.sessionId === sessionId).map(ruleJson),
+        networkMode:
+          found.rows[0] === undefined
+            ? null
+            : found.rows[0].network_mode === "direct"
+              ? "direct"
+              : "proxied",
       });
       return;
     }

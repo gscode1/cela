@@ -327,6 +327,7 @@ const sessionRow = (overrides: Partial<SessionRow> = {}): SessionRow => ({
   profile: null,
   usage: null,
   sandboxSize: null,
+  networkMode: "proxied",
   createdAt: new Date(),
   lastActivityAt: new Date(),
   ...overrides,

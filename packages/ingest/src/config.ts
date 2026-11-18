@@ -37,6 +37,11 @@ export interface IngestConfig {
   consoleCatalogs: ConsoleCatalogs;
   /** `PI_SANDBOX_SIZES` and `PI_SANDBOX_DEFAULT_SIZE` (docs/decisions/0030-sandbox-sizes.md); undefined: no sizes. */
   sandboxSizes: SandboxSizes | undefined;
+  /**
+   * `PI_ALLOW_DIRECT_SANDBOX_EGRESS=true` (the chart's `security.allowDirectSandboxEgress`): profiles and sessions may
+   * use `networkMode: direct` (docs/decisions/0038-network-modes.md). Default false: the API refuses it.
+   */
+  allowDirectSandboxEgress: boolean;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -88,5 +93,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     consoleDir: env.PI_CONSOLE_DIR?.trim() || undefined,
     consoleCatalogs: parseConsoleCatalogs(env.PI_CONSOLE_CATALOGS),
     sandboxSizes: parseSandboxSizes(env),
+    allowDirectSandboxEgress: env.PI_ALLOW_DIRECT_SANDBOX_EGRESS?.trim() === "true",
   };
 }

@@ -5,7 +5,10 @@ import { buildProbePod } from "./netprobe-pod.js";
 import { connectsHere, probePodName, resolveHost } from "./netprobe.js";
 import type { ProbeIo } from "./netprobe.js";
 
-/** Public address used as the allowed TCP control when no OneCLI gateway is configured (sandboxes may reach the internet). */
+/**
+ * Public address used as the allowed TCP control when neither the egress proxy nor a OneCLI gateway is configured
+ * (before the network cutover, sandboxes may reach the internet).
+ */
 const PUBLIC_CONTROL = { host: "1.1.1.1", port: 443 };
 const POD_TIMEOUT_MS = 100_000;
 
@@ -29,8 +32,13 @@ export function clusterProbeIo(
 ): ProbeIo {
   const podName = env.POD_NAME;
   const gateway = endpoint(config.onecli.gateway, 80);
+  // With the egress proxy on, the sandbox reaches the proxy and nothing else (ADR 0038): the proxy is the allowed
+  // control, and the OneCLI gateway, which sandboxes used to reach, becomes a denied target.
+  const proxy =
+    config.egressProxyUrl === undefined ? undefined : endpoint(config.egressProxyUrl, 3128);
   return {
-    control: gateway ?? PUBLIC_CONTROL,
+    control: proxy ?? gateway ?? PUBLIC_CONTROL,
+    proxyOnly: proxy !== undefined,
     reachableHere: (host, port) => connectsHere(host, port),
     targets: async () => {
       const wanted: { name: string; host: string | undefined; port: number }[] = [];
@@ -60,6 +68,13 @@ export function clusterProbeIo(
           name: "onecli-api",
           host: await resolveHost(onecliApi.host),
           port: onecliApi.port,
+        });
+      }
+      if (proxy !== undefined && gateway !== undefined) {
+        wanted.push({
+          name: "onecli-gateway",
+          host: await resolveHost(gateway.host),
+          port: gateway.port,
         });
       }
       const sandboxIp = await anySandboxPodIp(config.namespace).catch(() => undefined);

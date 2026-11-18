@@ -156,3 +156,13 @@ readinessProbe `periodSeconds` 10 against 1 (not measured yet, see #82: run.sh r
 | 1 s          | resumed | TODO | TODO   | TODO      |
 
 Bridge RSS per open session (same run, before ADR 0016, when each bridge was its own Node process): p50 about 126 MiB, peak 133 MiB, with up to 5 bridges open. Since ADR 0016 an open env costs about 11 MiB (measured 2026-11-17, see [scaling](scaling.md)).
+
+## Direct network mode
+
+`direct-egress-sandbox` (level `warn`), one line each time the orchestrator attaches the sandbox of a session in network mode
+`direct` (open internet, no egress rules, no audit; [ADR 0038](decisions/0038-network-modes.md)). The count of live direct
+sessions is `directSessions` in `GET /admin/status`.
+
+```json
+{"t":"...","event":"direct-egress-sandbox","level":"warn","session":"6f1c...","claim":"pi-conv-7"}
+```

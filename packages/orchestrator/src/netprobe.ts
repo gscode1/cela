@@ -16,8 +16,12 @@ import type { ProbePlan } from "./netprobe-pod.js";
 export interface ProbeIo {
   /** An address:port the probe should try from a sandbox's network position, resolved to IPs. */
   targets(): Promise<{ name: string; host: string; port: number }[]>;
-  /** The allowed TCP control: the OneCLI gateway, else a public address. */
+  /** The allowed TCP control: the egress proxy; without it the OneCLI gateway, else a public address. */
   control: { host: string; port: number };
+  /** The sandbox has the proxy only and no DNS (the network cutover, ADR 0038): no DNS control, an address for the control. */
+  proxyOnly?: boolean;
+  /** Pause before a probe is repeated because the proxy, its only allowed control, was not answering yet; default 10 s. */
+  retryDelayMs?: number;
   /** TCP connect from the orchestrator, which is allowed to reach every denied target but the one it is. */
   reachableHere(host: string, port: number): Promise<boolean>;
   /** Starts the probe Pod with the plan, waits, returns its report, deletes the Pod. */
@@ -26,7 +30,22 @@ export interface ProbeIo {
 
 const DNS_CONTROL_NAME = "kubernetes.default.svc.cluster.local";
 
+/**
+ * With the proxy as the only allowed control, a probe at the orchestrator's start can run before the proxy is ready: the
+ * control then fails and the verdict is `inconclusive`. That is repeated a few times before it is reported.
+ */
 export async function runNetworkProbe(io: ProbeIo): Promise<ProbeResult> {
+  const attempts = io.proxyOnly === true ? 4 : 1;
+  let result = await probeOnce(io);
+  for (let attempt = 1; attempt < attempts; attempt++) {
+    if (result.state !== "inconclusive" || result.controls?.allowedTcp !== false) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, io.retryDelayMs ?? 10_000));
+    result = await probeOnce(io);
+  }
+  return result;
+}
+
+async function probeOnce(io: ProbeIo): Promise<ProbeResult> {
   const found = await io.targets();
   const targets: DeniedTarget[] = await Promise.all(
     found.map(async (t) => ({
@@ -35,9 +54,13 @@ export async function runNetworkProbe(io: ProbeIo): Promise<ProbeResult> {
       upFromOrchestrator: await io.reachableHere(t.host, t.port),
     })),
   );
+  const control =
+    io.proxyOnly === true
+      ? { ...io.control, host: (await resolveHost(io.control.host)) ?? io.control.host }
+      : io.control;
   const { report, failure } = await io.runPod({
-    dnsName: DNS_CONTROL_NAME,
-    control: io.control,
+    ...(io.proxyOnly === true ? {} : { dnsName: DNS_CONTROL_NAME }),
+    control,
     targets: found,
   });
   return decide(targets, report, failure);

@@ -35,6 +35,8 @@ export interface FakeAdmin {
   profiles: FakeProfile[];
   invalid: { name: string; message: string }[];
   tools: string[];
+  /** The chart's security.allowDirectSandboxEgress, as `GET /admin/network-modes` reports it. */
+  directAllowed: boolean;
   /** The `GET /admin/models` answer (default view). */
   models: Record<string, unknown>;
   mcp: { name: string; url: string; enabled: boolean }[];
@@ -83,6 +85,7 @@ export function createFakeAdmin(): FakeAdmin {
     ],
     invalid: [],
     tools: ["read", "write", "edit", "bash"],
+    directAllowed: false,
     models: {
       models: [
         { provider: "openai", id: "gpt-fast", name: "GPT Fast", reasoning: false },
@@ -224,6 +227,13 @@ export function createFakeAdmin(): FakeAdmin {
     }
     if (route === "/admin/models") return reply(200, admin.models);
     if (route === "/admin/tools") return reply(200, { tools: admin.tools, source: "orchestrator" });
+    if (route === "/admin/network-modes") {
+      return reply(200, {
+        modes: admin.directAllowed ? ["proxied", "direct"] : ["proxied"],
+        defaultMode: "proxied",
+        directAllowed: admin.directAllowed,
+      });
+    }
     if (route === "/admin/mcp-servers") return reply(200, { servers: admin.mcp, invalid: [] });
     if (route === "/admin/skills")
       return reply(200, { skills: admin.skills.map(({ name }) => ({ name })) });

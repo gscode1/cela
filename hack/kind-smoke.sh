@@ -213,7 +213,12 @@ if [[ $onecli -eq 1 ]]; then
   tcp="timeout 5 bash -c 'exec 3<>/dev/tcp/\$0/\$1' "
   cmd="if $tcp onecli-gateway.$namespace.svc 10255 2>/dev/null; then echo gw-open; else echo gw-closed; fi; if $tcp onecli-api.$namespace.svc 10256 2>/dev/null; then echo api-open; else echo api-closed; fi"
   out=$(api ask "$session" "$(script_json "net-$marker" "$cmd")" "net-$marker" 600)
-  check "the sandbox reaches the OneCLI gateway" "$out" "gw-open"
+  if [[ -n $(k get deploy pi-orchestrator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]]; then
+    # The network cutover (ADR 0038): a sandbox reaches OneCLI only through the egress proxy.
+    check "the sandbox does not reach the OneCLI gateway directly (the egress proxy is on)" "$out" "gw-closed"
+  else
+    check "the sandbox reaches the OneCLI gateway" "$out" "gw-open"
+  fi
   check "the sandbox does not reach the OneCLI management API" "$out" "api-closed"
 fi
 

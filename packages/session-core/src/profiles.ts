@@ -1,6 +1,8 @@
 import type pg from "pg";
 import { RULE_SET_NAME } from "./egress-rules.js";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
+import { DIRECT_NOT_ALLOWED, isNetworkMode, NETWORK_MODES } from "./network-mode.js";
+import type { NetworkMode } from "./network-mode.js";
 import { SANDBOX_SIZE_NAME } from "./sandbox-sizes.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
@@ -61,6 +63,7 @@ const KEYS = [
   "sandboxSize",
   "sandboxSizes",
   "egressRuleSets",
+  "networkMode",
 ] as const;
 
 /**
@@ -112,6 +115,12 @@ export interface ProfileDefinition {
    * cannot be deleted. Absent: only the sets that apply to all.
    */
   egressRuleSets?: string[];
+  /**
+   * How the profile's sandboxes reach the network (docs/decisions/0038-network-modes.md): `proxied` (the egress proxy
+   * only, under the rules) or `direct` (the open internet, no rules, no audit; only where the chart sets
+   * `security.allowDirectSandboxEgress`). Fixed per session when it is created. Absent: `proxied`.
+   */
+  networkMode?: NetworkMode;
 }
 
 export interface ProfileRef {
@@ -274,6 +283,12 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     if (typeof sizes === "string") return sizes;
     definition.sandboxSizes = sizes;
   }
+  if (body.networkMode !== undefined) {
+    if (!isNetworkMode(body.networkMode)) {
+      return `networkMode must be one of ${NETWORK_MODES.join(", ")}`;
+    }
+    definition.networkMode = body.networkMode;
+  }
   return ordered(definition);
 }
 
@@ -338,8 +353,17 @@ export function checkProfileNames(
     models?: readonly string[];
     /** The deployment's sandbox sizes; undefined (no sizes) refuses any size a profile names. */
     sandboxSizes?: readonly string[];
+    /** Whether the deployment allows `networkMode: direct` (security.allowDirectSandboxEgress); absent: no. */
+    allowDirectEgress?: boolean;
+    /** Why a direct profile cannot have these credentials (directModeConflict), evaluated by the caller. */
+    directConflict?: (definition: ProfileDefinition) => string | undefined;
   },
 ): string | undefined {
+  if (definition.networkMode === "direct") {
+    if (known.allowDirectEgress !== true) return DIRECT_NOT_ALLOWED;
+    const conflict = known.directConflict?.(definition);
+    if (conflict !== undefined) return conflict;
+  }
   if (
     definition.defaultModel !== undefined &&
     known.models !== undefined &&

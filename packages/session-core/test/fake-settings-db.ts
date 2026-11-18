@@ -120,6 +120,8 @@ export class FakeSettingsDb {
   readonly mcpHistory: McpHistoryRow[] = [];
   /** Names of the rule sets in egress.rule_sets, which profile writes check `egressRuleSets` against. */
   egressRuleSets = new Set<string>();
+  /** Raw rows of egress.rule_sets and egress.rules that `readEgress` returns (network mode checks, ADR 0038). */
+  egressRows: { rule_sets: unknown[]; rules: unknown[] } = { rule_sets: [], rules: [] };
   /** inbox.profiles and inbox.profile_versions; `coding` version 1 is what migration 008 seeds. */
   profiles = new Map<string, ProfileRowF>([
     [
@@ -262,6 +264,17 @@ export class FakeSettingsDb {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     if (deletion !== undefined) return deletion;
+    if (text.startsWith("select shard, configured_runtime")) return done([]);
+    if (text.includes("from egress.revisions")) {
+      return done([{ revision: 0, ...this.egressRows }]);
+    }
+    if (text.startsWith("select count(*) as n from inbox.sessions where network_mode = 'direct'")) {
+      return done([
+        {
+          n: String([...this.sessions.values()].filter((r) => r.network_mode === "direct").length),
+        },
+      ]);
+    }
     if (text.startsWith("select name from egress.rule_sets")) {
       return done(
         (params[0] as string[])
@@ -671,6 +684,7 @@ export class FakeSettingsDb {
       const [id, owner, subject, provider, model, reasoning, repo, branch, pName, pVersion, pSnap] =
         params as (string | null)[];
       const sandboxSize = (params[12] ?? null) as string | null;
+      const networkMode = (params[13] ?? null) as string | null;
       if (pName !== null) {
         // Only while the profile is still at the snapshot's version and open to new sessions (store.ts).
         const current = this.profiles.get(String(pName));
@@ -702,6 +716,7 @@ export class FakeSettingsDb {
         profile_version: pVersion,
         profile_snapshot: pSnap === null ? null : (JSON.parse(String(pSnap)) as unknown),
         sandbox_size: sandboxSize,
+        network_mode: networkMode,
         created_at: new Date(),
         last_activity_at: new Date(),
       });

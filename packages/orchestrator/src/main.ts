@@ -42,6 +42,7 @@ import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
 import { observedPod, listClaims, listPvcs } from "./kube.js";
 import { claimNameFor, conversationOfName } from "./lifecycle.js";
 import { EgressPrincipals } from "./egress.js";
+import { warmPoolFor } from "./warm-pool.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -182,9 +183,11 @@ async function main(): Promise<void> {
   });
   const hooks: SandboxHooks = {
     // The session's size picks its pool; a session from before sizes keeps the unsized one.
+    // Its network mode picks the pool of that size (ADR 0038); a session from before sizes and modes keeps `pi-env-pool`.
     warmPoolOf: async (conversationId) => {
-      const size = (await sessionByConversation(pool, config.shard, conversationId))?.sandboxSize;
-      return size === null || size === undefined ? undefined : `${config.warmPool}-${size}`;
+      const session = await sessionByConversation(pool, config.shard, conversationId);
+      if (session === undefined) return undefined;
+      return warmPoolFor(config.warmPool, session.sandboxSize, session.networkMode);
     },
     // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {
@@ -194,6 +197,17 @@ async function main(): Promise<void> {
         await observeShardRuntime(pool, config.shard, pod.runtime);
       } catch (error) {
         log("runtime-observe-failed", { claim: claimName, error: errorMessage(error) });
+      }
+      try {
+        const id = conversationOfName(config.shard, claimName);
+        const direct =
+          id === undefined ? undefined : await sessionByConversation(pool, config.shard, id);
+        // The counter of ADR 0038 (docs/metrics.md): one line per attach of a sandbox with the open internet, no rules, no audit.
+        if (direct?.networkMode === "direct") {
+          log("direct-egress-sandbox", { level: "warn", session: direct.id, claim: claimName });
+        }
+      } catch {
+        // A metric must never fail the attach.
       }
       if (egress === undefined) return;
       // Records the Pod's address before the first command. A failure only means the proxy refuses this session's token

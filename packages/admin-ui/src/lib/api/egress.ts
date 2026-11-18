@@ -165,7 +165,7 @@ export function listSessionRules(
   token: string,
   sessionId: string,
   signal?: AbortSignal,
-): Promise<{ revision: number; rules: EgressRule[] }> {
+): Promise<{ revision: number; rules: EgressRule[]; networkMode: "proxied" | "direct" | null }> {
   return adminJson(token, `${base}/sessions/${encodeURIComponent(sessionId)}/rules`, init(signal));
 }
 

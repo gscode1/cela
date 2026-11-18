@@ -150,6 +150,7 @@ describe("turn budget", () => {
     profile: null,
     usage: null,
     sandboxSize: null,
+    networkMode: "proxied",
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

@@ -1175,7 +1175,7 @@ describe("egressProxy (ADR 0035)", () => {
     expect(env.EGRESS_PLATFORM_HOSTS?.value).toContain("kubernetes.default.svc");
   });
 
-  it("tells the orchestrators where the proxy is only when it is enabled, and leaves anonymous requests allowed", () => {
+  it("tells the orchestrators where the proxy is only when it is enabled, and requires a token unless told otherwise", () => {
     const orchestrator = (list: Obj[]) =>
       envOf(
         list.find(
@@ -1185,34 +1185,14 @@ describe("egressProxy (ADR 0035)", () => {
     expect(orchestrator(docs()).PI_EGRESS_PROXY_URL).toBeUndefined();
     const all = docs(on);
     expect(orchestrator(all).PI_EGRESS_PROXY_URL?.value).toBe("http://pi-egress-proxy.ns.svc:3128");
+    // ADR 0038: with the cutover, nothing but a sandbox with its token reaches the proxy by default.
     expect(envOf(named(all, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
-      "false",
-    );
-    const strict = docs([...on, "--set", "egressProxy.requireAuth=true"]);
-    expect(envOf(named(strict, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
       "true",
     );
-  });
-
-  it("adds only the sandbox's egress to the proxy port; the other sandbox policies are unchanged (cutover is slice 6)", () => {
-    const sandboxPolicies = (list: Obj[]) =>
-      ofKind(list, "NetworkPolicy").filter(
-        (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
-      );
-    const added = "sandbox-allow-egress-proxy-egress";
-    const withProxy = sandboxPolicies(docs(on));
-    expect(JSON.stringify(withProxy.filter((p) => p.metadata.name !== added))).toBe(
-      JSON.stringify(sandboxPolicies(docs())),
+    const lax = docs([...on, "--set", "egressProxy.requireAuth=false"]);
+    expect(envOf(named(lax, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
+      "false",
     );
-    expect(sandboxPolicies(docs()).some((p) => p.metadata.name === added)).toBe(false);
-    const policy = named(withProxy, "NetworkPolicy", added).spec;
-    expect(policy.policyTypes).toEqual(["Egress"]);
-    expect(policy.egress).toEqual([
-      {
-        to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-egress-proxy" } } }],
-        ports: [{ protocol: "TCP", port: 3128 }],
-      },
-    ]);
   });
 
   it("opens the internet minus private ranges, the database and only the listed private destinations", () => {
@@ -1327,5 +1307,220 @@ describe("egressProxy (ADR 0035)", () => {
       }
       expect(error).toContain("egressProxy.binding.existingSecret");
     });
+  });
+});
+
+describe("network cutover and network modes (ADR 0038)", () => {
+  const on = [
+    "--set",
+    "egressProxy.enabled=true",
+    "--set",
+    "egressProxy.database.existingSecret=pi-egress-database",
+    "--set",
+    "egressProxy.binding.existingSecret=pi-egress-binding",
+  ];
+  const gate = ["--set", "security.allowDirectSandboxEgress=true"];
+  const selectsSandbox = (p: Obj): boolean =>
+    p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox";
+  const sandboxPolicies = (list: Obj[]): Obj[] =>
+    ofKind(list, "NetworkPolicy").filter(selectsSandbox);
+  const names = (list: Obj[]): string[] => list.map((p) => p.metadata.name).sort();
+  const excludesSandboxes = (selector: Obj): boolean =>
+    JSON.stringify(selector.matchExpressions) ===
+    JSON.stringify([{ key: "app.kubernetes.io/name", operator: "NotIn", values: ["pi-sandbox"] }]);
+  const modeOf = (t: Obj): string =>
+    t.spec.podTemplate.metadata.labels["pi-durable.dev/network-mode"];
+
+  describe("without the egress proxy (the cutover is off)", () => {
+    const list = docs([...external]);
+
+    it("keeps the sandbox policies as before: DNS, the OneCLI gateway and the internet", () => {
+      expect(names(sandboxPolicies(list))).toEqual([
+        "sandbox-allow-internet-egress",
+        "sandbox-allow-onecli-egress",
+        "sandbox-allow-orchestrator-ingress",
+        "sandbox-default-deny",
+      ]);
+      expect(named(list, "NetworkPolicy", "allow-dns-egress").spec.podSelector).toEqual({});
+      expect(
+        named(list, "CiliumNetworkPolicy", "dns-egress-kube-dns-only").spec.endpointSelector,
+      ).toEqual({});
+    });
+
+    it("renders only proxied templates and pools, and no direct object", () => {
+      for (const t of ofKind(list, "SandboxTemplate")) expect(modeOf(t)).toBe("proxied");
+      expect(JSON.stringify(list)).not.toContain("direct");
+    });
+
+    it("refuses the gate: there is no direct mode without the proxy", () => {
+      expect(() => docs([...external, ...gate])).toThrow(
+        /allowDirectSandboxEgress needs egressProxy/,
+      );
+    });
+  });
+
+  for (const provider of ["cilium", "standard"]) {
+    describe(`with the egress proxy, gate off, provider ${provider}`, () => {
+      const list = docs([...on, "--set", `networkPolicy.provider=${provider}`, ...external]);
+
+      it("lets a sandbox reach the egress proxy port and nothing else", () => {
+        expect(names(sandboxPolicies(list))).toEqual([
+          "sandbox-allow-egress-proxy-egress",
+          "sandbox-allow-orchestrator-ingress",
+          "sandbox-default-deny",
+        ]);
+        const egress = sandboxPolicies(list).flatMap((p) => p.spec.egress ?? []);
+        expect(egress).toEqual([
+          {
+            to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-egress-proxy" } } }],
+            ports: [{ protocol: "TCP", port: 3128 }],
+          },
+        ]);
+      });
+
+      it("withholds the namespace-wide DNS from sandboxes, in the standard and the Cilium form", () => {
+        expect(
+          excludesSandboxes(named(list, "NetworkPolicy", "allow-dns-egress").spec.podSelector),
+        ).toBe(true);
+        if (provider === "cilium") {
+          expect(
+            excludesSandboxes(
+              named(list, "CiliumNetworkPolicy", "dns-egress-kube-dns-only").spec.endpointSelector,
+            ),
+          ).toBe(true);
+        }
+      });
+
+      it("renders no sandbox-to-OneCLI policy, no direct policy, template or pool", () => {
+        expect(JSON.stringify(list)).not.toContain("sandbox-allow-onecli-egress");
+        expect(JSON.stringify(list)).not.toContain("direct");
+        for (const t of ofKind(list, "SandboxTemplate")) expect(modeOf(t)).toBe("proxied");
+      });
+
+      it("requires a token at the proxy", () => {
+        expect(envOf(named(list, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
+          "true",
+        );
+      });
+    });
+
+    describe(`with the egress proxy and the gate on, provider ${provider}`, () => {
+      const list = docs([
+        ...on,
+        ...gate,
+        "--set",
+        `networkPolicy.provider=${provider}`,
+        "--set",
+        "networkPolicy.sandbox.extraEgressExcept={203.0.113.0/24,2001:db8::/32}",
+        ...external,
+      ]);
+
+      it("adds DNS and the internet for the direct label only; the base policy is unchanged", () => {
+        expect(names(sandboxPolicies(list))).toEqual([
+          "sandbox-allow-egress-proxy-egress",
+          "sandbox-allow-orchestrator-ingress",
+          "sandbox-default-deny",
+          "sandbox-direct-allow-egress",
+        ]);
+        const base = named(list, "NetworkPolicy", "sandbox-allow-egress-proxy-egress").spec;
+        // The proxy policy selects every sandbox, so a Pod with a missing or unknown mode gets the proxy only.
+        expect(base.podSelector).toEqual({
+          matchLabels: { "app.kubernetes.io/name": "pi-sandbox" },
+        });
+        expect(base.egress).toHaveLength(1);
+        const direct = named(list, "NetworkPolicy", "sandbox-direct-allow-egress").spec;
+        expect(direct.podSelector.matchLabels).toEqual({
+          "app.kubernetes.io/name": "pi-sandbox",
+          "pi-durable.dev/network-mode": "direct",
+        });
+      });
+
+      it("keeps every except range and extraEgressExcept in the direct policy", () => {
+        const direct = named(list, "NetworkPolicy", "sandbox-direct-allow-egress").spec;
+        const blocks = direct.egress.flatMap((r: Obj) => r.to).filter((t: Obj) => t.ipBlock);
+        const v4 = blocks.find((t: Obj) => t.ipBlock.cidr === "0.0.0.0/0").ipBlock.except;
+        const v6 = blocks.find((t: Obj) => t.ipBlock.cidr === "::/0").ipBlock.except;
+        expect(v4).toEqual([
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "100.64.0.0/10",
+          "169.254.0.0/16",
+          "127.0.0.0/8",
+          "203.0.113.0/24",
+        ]);
+        expect(v6).toEqual(["fc00::/7", "fe80::/10", "::1/128", "2001:db8::/32"]);
+      });
+
+      it("gives a direct sandbox DNS to CoreDNS only, and no OneCLI gateway", () => {
+        const direct = named(list, "NetworkPolicy", "sandbox-direct-allow-egress").spec;
+        const dns = direct.egress.find((r: Obj) => r.ports?.some((p: Obj) => p.port === 53));
+        expect(dns.to).toEqual([
+          {
+            namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "kube-system" } },
+            podSelector: { matchLabels: { "k8s-app": "kube-dns" } },
+          },
+        ]);
+        expect(JSON.stringify(direct)).not.toContain("onecli");
+      });
+
+      it("grants nothing beyond the proxy to a sandbox policy that does not select the direct label", () => {
+        for (const p of sandboxPolicies(list)) {
+          if (p.metadata.name === "sandbox-direct-allow-egress") continue;
+          const to = (p.spec.egress ?? []).flatMap((r: Obj) => r.to);
+          expect(
+            to.every(
+              (t: Obj) => t.podSelector?.matchLabels?.["app.kubernetes.io/name"] !== undefined,
+            ),
+            p.metadata.name,
+          ).toBe(true);
+          expect(JSON.stringify(to)).not.toContain("ipBlock");
+        }
+      });
+
+      it("renders a direct template and a non-warm pool per size, and the unsized pair, labelled direct", () => {
+        const templates = ofKind(list, "SandboxTemplate");
+        const direct = templates.filter((t) => modeOf(t) === "direct").map((t) => t.metadata.name);
+        expect(direct.sort()).toEqual(
+          ["", "-l", "-m", "-s", "-xl"].map((suffix) => `pi-env-direct-template${suffix}`).sort(),
+        );
+        expect(templates.filter((t) => modeOf(t) === "proxied")).toHaveLength(5);
+        for (const t of templates) {
+          expect(t.metadata.labels["pi-durable.dev/network-mode"]).toBe(modeOf(t));
+        }
+        const pools = ofKind(list, "SandboxWarmPool").filter((p) =>
+          p.metadata.name.startsWith("pi-env-direct-pool"),
+        );
+        expect(pools).toHaveLength(5);
+        for (const p of pools) {
+          expect(p.spec.replicas).toBe(0);
+          expect(p.spec.sandboxTemplateRef.name).toBe(
+            p.metadata.name.replace("pi-env-direct-pool", "pi-env-direct-template"),
+          );
+        }
+      });
+
+      it("tells ingest the gate is on, and warns in the notes", () => {
+        expect(
+          envOf(named(list, "Deployment", "pi-ingest")).PI_ALLOW_DIRECT_SANDBOX_EGRESS?.value,
+        ).toBe("true");
+        const notes = execNotes([...on, ...gate, ...external]);
+        expect(notes).toMatch(/WARNING: security\.allowDirectSandboxEgress=true/);
+        expect(execNotes([...on, ...external])).not.toMatch(/allowDirectSandboxEgress=true/);
+      });
+    });
+  }
+
+  it("tells ingest the gate is off by default", () => {
+    expect(
+      envOf(named(docs(), "Deployment", "pi-ingest")).PI_ALLOW_DIRECT_SANDBOX_EGRESS?.value,
+    ).toBe("false");
+  });
+
+  it("says in the notes that the cutover is off without the proxy", () => {
+    expect(execNotes(external)).toMatch(
+      /egressProxy\.enabled=false, so the network cutover is off/,
+    );
+    expect(execNotes([...on, ...external])).not.toMatch(/cutover is off/);
   });
 });

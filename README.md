@@ -46,22 +46,22 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 
 ## Repository layout
 
-| Path                                   | What                                                                                                                       |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                   |
-| `packages/mcp`                         | Stdio MCP adapter: coding agents start and follow sessions through the session API ([docs](docs/mcp-adapter.md))           |
-| `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))       |
-| `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                             |
-| `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                          |
-| `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                        |
-| `packages/egress-proxy`                | Go module: Smokescreen chained to OneCLI, a spike not yet deployed ([ADR 0012](docs/decisions/0012-egress-proxy-spike.md)) |
-| `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                 |
-| `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                          |
-| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)            |
-| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                |
-| `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                              |
-| `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
-| `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |
+| Path                                   | What                                                                                                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                                       |
+| `packages/mcp`                         | Stdio MCP adapter: coding agents start and follow sessions through the session API ([docs](docs/mcp-adapter.md))                               |
+| `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))                           |
+| `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                                                 |
+| `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                                              |
+| `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                                            |
+| `packages/egress-proxy`                | Go module: the egress proxy, Smokescreen with rules from Postgres and a OneCLI route ([ADR 0035](docs/decisions/0035-egress-proxy-runtime.md)) |
+| `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                                     |
+| `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                                              |
+| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)                                |
+| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                                    |
+| `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                                                  |
+| `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                                           |
+| `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                                               |
 
 ## Docs
 
@@ -142,6 +142,13 @@ It creates the namespace with the restricted Pod Security labels and the missing
 installs the chart and prints the runtime and network-policy state from `GET /admin/status`. Read the
 [chart README](charts/pi-durable/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
 [network policy](docs/network-policy.md) for the isolation rules.
+
+**Sandbox network.** With `egressProxy.enabled` a sandbox reaches the egress proxy and nothing else (no DNS, no direct
+internet, no direct OneCLI gateway): every connection is judged by the egress rules and audited. That is the default
+`proxied` network mode. A profile can opt into `networkMode: direct` (open internet and DNS, no rules, no audit; private,
+cluster and platform addresses stay blocked) only when the operator sets `security.allowDirectSandboxEgress`, which the
+console flags as "unfiltered, unaudited". Without the proxy the sandbox policies are unchanged (every sandbox has
+direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
 
 Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`. Omit
 `STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed

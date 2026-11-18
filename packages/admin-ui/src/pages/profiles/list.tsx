@@ -7,6 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { describeIntent, hasIntent, intentFromSearch, searchOf } from "@/lib/profile-links";
 import { useProfilesQuery } from "@/lib/queries";
+import { UnfilteredBadge } from "@/pages/profiles/pickers";
 
 export function ProfileList() {
   const profiles = useProfilesQuery();
@@ -68,6 +69,11 @@ export function ProfileList() {
                       <Badge className="ml-2" variant="outline">
                         default
                       </Badge>
+                    )}
+                    {profile.definition.networkMode === "direct" && (
+                      <span className="ml-2">
+                        <UnfilteredBadge />
+                      </span>
                     )}
                     {!profile.enabledForNew && (
                       <Badge className="ml-2" variant="destructive">

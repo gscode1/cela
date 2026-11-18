@@ -118,7 +118,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
 
 - **Policies:**
   - Ingress allow-lists for the orchestrator (from ingest only), Postgres (from orchestrator and ingest), and sandboxd (from the orchestrator).
-  - Sandbox egress: OneCLI gateway, DNS, and direct public internet. Private, LAN and metadata ranges are excluded. This was decided 2026-11-15 so every session can install packages; revisit gateway+allowlist later.
+  - Sandbox egress: OneCLI gateway, DNS, and direct public internet. Private, LAN and metadata ranges are excluded. This was decided 2026-11-15 so every session can install packages; Reversed for installs with the egress proxy on ([ADR 0038](docs/decisions/0038-network-modes.md)): a sandbox then reaches the proxy only, unless its profile opts into `networkMode: direct` behind `security.allowDirectSandboxEgress`.
   - In the `onecli` namespace, admit only the orchestrator and sandboxes.
 - **Historical OneCLI v1.45 management API finding (2026-11-15):**
   - On the example test cluster, `onecli:10254/v1/agents` returns agents including their `accessToken`, and `/v1/secrets` returns metadata, with no authentication.

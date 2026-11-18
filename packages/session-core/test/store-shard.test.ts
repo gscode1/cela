@@ -43,7 +43,7 @@ describe("sharded store functions", () => {
     // $12 is the shard count, $13 the sandbox size (ADR 0030).
     expect(insert?.params[11]).toBe(3);
     expect(insert?.params[12]).toBe("m");
-    expect(insert?.sql).toMatch(/shard, sandbox_size\)/);
+    expect(insert?.sql).toMatch(/shard, sandbox_size, network_mode\)/);
     expect(insert?.sql).toMatch(/generate_series\(0, \$12::int - 1\)/);
     expect(insert?.sql).toMatch(/status = 'active'/);
     expect(insert?.sql).toMatch(/order by coalesce\(a\.n, 0\), c\.shard limit 1/);

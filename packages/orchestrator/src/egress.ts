@@ -1,3 +1,5 @@
+import dns from "node:dns/promises";
+import net from "node:net";
 import {
   boundSessions,
   deleteBinding,
@@ -60,13 +62,29 @@ export interface EgressPrincipalsDeps {
    * written, so a repo session is refused rather than run without its credential.
    */
   bindingKey?: Buffer | undefined;
-  /** `http://host:port` of the proxy Service. */
+  /**
+   * `http://host:port` of the proxy Service. A proxied sandbox has no DNS (ADR 0038), so the environment carries the
+   * address this name resolves to, looked up here, where DNS works.
+   */
   proxyUrl: string;
+  /** One IPv4 address of a host name; only tests change this. */
+  resolve?: (host: string) => Promise<string | undefined>;
   /** The orchestrator's master key (the one sandbox tokens derive from). */
   master: () => string;
   now?: () => number;
   /** Only tests change this. */
   sleep?: (ms: number) => Promise<void>;
+}
+
+/** How long the address of the proxy Service is kept: a ClusterIP lives as long as the Service, this only bounds a stale one. */
+export const PROXY_ADDRESS_TTL_MS = 60_000;
+
+async function lookupIpv4(host: string): Promise<string | undefined> {
+  try {
+    return (await dns.lookup(host, { family: 4 })).address;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The longest a session waits for the proxies to serve a rule it just created. */
@@ -80,6 +98,7 @@ export class EgressPrincipals {
   readonly #recorded = new Map<string, { ip: string | undefined; checkedAt: number }>();
   /** The OneCLI token last sealed for each session by this process. */
   readonly #bound = new Map<string, string>();
+  #proxyAddress: { url: string; until: number } | undefined;
 
   constructor(deps: EgressPrincipalsDeps) {
     this.#deps = deps;
@@ -89,7 +108,27 @@ export class EgressPrincipals {
     return this.#deps.now?.() ?? Date.now();
   }
 
+  /**
+   * The proxy URL a sandbox is given: the Service's address instead of its name, because a proxied sandbox cannot resolve
+   * names. A name that does not resolve fails the call (a sandbox with a proxy it cannot reach has no network at all).
+   */
+  async #proxyForSandbox(): Promise<string> {
+    const cached = this.#proxyAddress;
+    if (cached !== undefined && cached.until > this.#now()) return cached.url;
+    const url = new URL(this.#deps.proxyUrl);
+    if (net.isIP(url.hostname) === 0) {
+      const ip = await (this.#deps.resolve ?? lookupIpv4)(url.hostname);
+      if (ip === undefined) throw new Error(`the egress proxy ${url.hostname} does not resolve`);
+      url.hostname = ip;
+    }
+    const resolved = url.toString().replace(/\/$/, "");
+    this.#proxyAddress = { url: resolved, until: this.#now() + PROXY_ADDRESS_TTL_MS };
+    return resolved;
+  }
+
   async #token(session: SessionRow): Promise<Redacted | undefined> {
+    // A direct session has no proxy path: no principal, no token, no proxy environment (ADR 0038).
+    if (session.networkMode === "direct") return undefined;
     const stored = session.profile;
     // A snapshot that does not validate gives no rule sets (only those that apply to all): fail closed, not open.
     const definition = stored === null ? {} : validateProfileDefinition(stored.snapshot);
@@ -124,7 +163,9 @@ export class EgressPrincipals {
   async shellEnv(session: SessionRow): Promise<Record<string, string> | undefined> {
     if (session.status === "deleted" || session.status === "deleting") return undefined;
     const token = await this.#token(session);
-    return token === undefined ? undefined : buildEgressEnv({ proxy: this.#deps.proxyUrl, token });
+    return token === undefined
+      ? undefined
+      : buildEgressEnv({ proxy: await this.#proxyForSandbox(), token });
   }
 
   /**

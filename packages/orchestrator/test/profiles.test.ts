@@ -64,6 +64,7 @@ const session = (profile: SessionRow["profile"], conversationId: number | null):
   profile,
   usage: null,
   sandboxSize: null,
+  networkMode: "proxied",
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

@@ -1,4 +1,5 @@
 import type { V1Pod } from "@kubernetes/client-node";
+import { NETWORK_MODE_LABEL } from "@pi-durable-k8s/session-core";
 
 /** Ties a probe Pod to the orchestrator that made it, for the cleanup of leftovers. */
 export const PROBE_LABEL = "pi-durable-k8s/netprobe";
@@ -9,7 +10,8 @@ export const SANDBOX_NAME = "pi-sandbox";
 export const PROBE_DEADLINE_SECONDS = 120;
 
 export interface ProbePlan {
-  dnsName: string;
+  /** The name for the DNS control; absent: none (a proxied sandbox has no DNS, docs/decisions/0038-network-modes.md). */
+  dnsName?: string;
   control: { host: string; port: number };
   targets: { name: string; host: string; port: number }[];
 }
@@ -30,8 +32,8 @@ const tcp = (host, port) => new Promise((resolve) => {
   socket.once("error", (e) => resolve(e.code === "ECONNREFUSED" ? "refused" : "error"));
 });
 (async () => {
-  const report = { dns: false, control: "error", targets: {} };
-  try { await dns.lookup(plan.dnsName); report.dns = true; } catch {}
+  const report = { dns: plan.dnsName === undefined ? null : false, control: "error", targets: {} };
+  if (plan.dnsName !== undefined) { try { await dns.lookup(plan.dnsName); report.dns = true; } catch {} }
   report.control = await tcp(plan.control.host, plan.control.port);
   await Promise.all(plan.targets.map(async (t) => { report.targets[t.name] = await tcp(t.host, t.port); }));
   console.log("NETPROBE " + JSON.stringify(report));
@@ -63,6 +65,8 @@ export function buildProbePod(input: ProbePodInput): V1Pod {
       name: input.name,
       labels: {
         [SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+        // The strictest position, so one probe covers both modes: whatever it cannot reach, a direct sandbox cannot either.
+        [NETWORK_MODE_LABEL]: "proxied",
         [PROBE_LABEL]: String(input.shard),
       },
     },

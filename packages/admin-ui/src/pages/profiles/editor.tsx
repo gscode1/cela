@@ -38,6 +38,7 @@ import type { ProfileForm } from "@/lib/profile-form";
 import {
   keys,
   useMcpPickerQuery,
+  useNetworkModesQuery,
   useRuleSetsQuery,
   useSandboxSizesQuery,
   useProfilesQuery,
@@ -49,6 +50,7 @@ import {
   Fieldset,
   EgressRuleSetPicker,
   McpPicker,
+  NetworkModePicker,
   SandboxSizePicker,
   SkillPicker,
   ToolList,
@@ -90,6 +92,7 @@ export function ProfileEditor({
   const mcp = useMcpPickerQuery();
   const ruleSets = useRuleSetsQuery();
   const sandboxSizes = useSandboxSizesQuery();
+  const networkModes = useNetworkModesQuery();
   const skills = useSkillPickerQuery();
   const models = useModelView();
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
@@ -385,6 +388,13 @@ export function ProfileEditor({
             catalog={sandboxSizes.data}
             onChange={(change) => {
               edit(change);
+            }}
+          />
+          <NetworkModePicker
+            mode={form.networkMode}
+            catalog={networkModes.data}
+            onChange={(networkMode) => {
+              edit({ networkMode });
             }}
           />
           <McpPicker

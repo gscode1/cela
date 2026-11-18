@@ -39,6 +39,7 @@ function setup(now: () => number = () => 0, bindingKey: Buffer | null = BINDING_
   const egress = new EgressPrincipals({
     pool: db.asPool(),
     proxyUrl: PROXY,
+    resolve: () => Promise.resolve("10.96.1.2"),
     bindingKey: bindingKey ?? undefined,
     master: () => MASTER,
     now,
@@ -76,13 +77,58 @@ describe("buildEgressEnv", () => {
 });
 
 describe("EgressPrincipals", () => {
+  it("gives the sandbox the proxy's address, not its name: a proxied sandbox has no DNS (ADR 0038)", async () => {
+    let lookups = 0;
+    let clock = 0;
+    const db = new FakeEgressDb();
+    const egress = new EgressPrincipals({
+      pool: db.asPool(),
+      proxyUrl: PROXY,
+      master: () => MASTER,
+      now: () => clock,
+      resolve: (host) => {
+        lookups += 1;
+        return Promise.resolve(host === "pi-egress-proxy.ns.svc" ? "10.96.1.2" : undefined);
+      },
+    });
+    const env = await egress.shellEnv(session(A));
+    expect(env?.HTTPS_PROXY).toMatch(/^http:\/\/x:[^@]+@10\.96\.1\.2:3128$/);
+    expect(env?.HTTPS_PROXY).not.toContain("pi-egress-proxy");
+    await egress.shellEnv(session(B));
+    expect(lookups).toBe(1);
+    clock += 61_000;
+    await egress.shellEnv(session(A));
+    expect(lookups).toBe(2);
+  });
+
+  it("fails the call when the proxy name does not resolve, rather than hand out an unusable proxy", async () => {
+    const db = new FakeEgressDb();
+    const egress = new EgressPrincipals({
+      pool: db.asPool(),
+      proxyUrl: PROXY,
+      master: () => MASTER,
+      resolve: () => Promise.resolve(undefined),
+    });
+    await expect(egress.shellEnv(session(A))).rejects.toThrow(/does not resolve/);
+  });
+
+  it("gives a direct session no principal, no token and no proxy environment (ADR 0038)", async () => {
+    const { egress, db } = setup();
+    const direct = session(A, { networkMode: "direct", profile: null });
+    expect(await egress.shellEnv(direct)).toBeUndefined();
+    await egress.attached(direct, "10.1.2.3");
+    expect(db.principals).toHaveLength(0);
+    // The same session as proxied does get one.
+    expect(await egress.shellEnv(session(A, { networkMode: "proxied" }))).toBeDefined();
+  });
+
   it("serves repo sessions too: a principal and the proxy environment, no OneCLI variable", async () => {
     const { egress, db } = setup();
     const repo = repoSession(A);
     await egress.attached(repo, "10.244.0.9");
     expect(db.principals).toHaveLength(1);
     const env = await egress.shellEnv(repo);
-    expect(env?.HTTPS_PROXY).toContain("@pi-egress-proxy.ns.svc:3128");
+    expect(env?.HTTPS_PROXY).toContain("@10.96.1.2:3128");
   });
 
   it("creates the principal on attach with the profile's rule sets and the Pod address, then hands out the env", async () => {
@@ -96,9 +142,7 @@ describe("EgressPrincipals", () => {
       pod_ip: "10.244.0.9",
     });
     const env = await egress.shellEnv(session(A));
-    expect(env?.HTTPS_PROXY).toMatch(
-      /^http:\/\/x:[A-Za-z0-9_-]{43}@pi-egress-proxy\.ns\.svc:3128$/,
-    );
+    expect(env?.HTTPS_PROXY).toMatch(/^http:\/\/x:[A-Za-z0-9_-]{43}@10\.96\.1\.2:3128$/);
     // The password is the token whose hash the principal holds, and never the hash or the salt.
     const token = new URL(env?.HTTPS_PROXY ?? "").password;
     expect(db.principals[0]?.token_hash).not.toContain(token);
@@ -114,6 +158,7 @@ describe("EgressPrincipals", () => {
     const restarted = new EgressPrincipals({
       pool: db.asPool(),
       proxyUrl: PROXY,
+      resolve: () => Promise.resolve("10.96.1.2"),
       master: () => MASTER,
     });
     expect((await restarted.shellEnv(session(A)))?.HTTPS_PROXY).toBe(first?.HTTPS_PROXY);
@@ -231,6 +276,7 @@ describe("EgressPrincipals", () => {
     const slow = new EgressPrincipals({
       pool: db.asPool(),
       proxyUrl: PROXY,
+      resolve: () => Promise.resolve("10.96.1.2"),
       bindingKey: BINDING_KEY,
       master: () => MASTER,
       now: () => now,
@@ -258,6 +304,7 @@ describe("EgressPrincipals", () => {
     const waiting = new EgressPrincipals({
       pool: stuck.db.asPool(),
       proxyUrl: PROXY,
+      resolve: () => Promise.resolve("10.96.1.2"),
       bindingKey: BINDING_KEY,
       master: () => MASTER,
       now: () => now,

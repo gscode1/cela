@@ -63,6 +63,18 @@ describe("profile form round trips", () => {
     });
   });
 
+  it("round-trips the network mode: proxied is left out, direct is sent, a stored spelling is kept", () => {
+    expect(
+      definitionFromForm(formFromDefinition({ instructions: "x" }), { instructions: "x" }),
+    ).toEqual({
+      instructions: "x",
+    });
+    const direct: ProfileDefinition = { instructions: "x", networkMode: "direct" };
+    expect(definitionFromForm(formFromDefinition(direct), direct)).toEqual(direct);
+    const explicit: ProfileDefinition = { networkMode: "proxied" };
+    expect(definitionFromForm(formFromDefinition(explicit), explicit)).toEqual(explicit);
+  });
+
   it("keeps sandbox sizes set through the API when the console saves an edit elsewhere", () => {
     const stored: ProfileDefinition = { instructions: "x", sandboxSize: "l", sandboxSizes: ["xl"] };
     expect(
