@@ -526,6 +526,7 @@ export class FakeEgressDb {
             ],
       );
     }
+    if (text.startsWith("select network_mode from inbox.sessions")) return done([]);
     return Promise.reject(new Error(`FakeEgressDb: unexpected statement ${text.slice(0, 60)}`));
   }
 }

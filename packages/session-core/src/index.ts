@@ -194,6 +194,17 @@ export {
   claimNetworkProbeRequest,
 } from "./shard-status.js";
 export type { NetworkPolicyState, ProbeRequest, ShardStatus } from "./shard-status.js";
+export {
+  DEFAULT_NETWORK_MODE,
+  DIRECT_NOT_ALLOWED,
+  countDirectSessions,
+  NETWORK_MODES,
+  NETWORK_MODE_LABEL,
+  directModeConflict,
+  isNetworkMode,
+  networkModeOf,
+} from "./network-mode.js";
+export type { NetworkMode } from "./network-mode.js";
 export { SANDBOX_SIZE_NAME, chooseSandboxSize, parseSandboxSizes } from "./sandbox-sizes.js";
 export type { SandboxSize, SandboxSizes } from "./sandbox-sizes.js";
 export {
