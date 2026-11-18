@@ -105,7 +105,7 @@ export async function recordDeletion(
 /** Profiles whose current version pins the skill or names the MCP server, by name. */
 export async function profilesReferring(
   client: Db,
-  kind: "skill" | "mcp-server",
+  kind: "skill" | "mcp-server" | "egress-rule-set",
   name: string,
 ): Promise<{ name: string; version: number }[]> {
   const { rows } = await client.query<{ name: string; version: number }>(
@@ -114,7 +114,9 @@ export async function profilesReferring(
       where ${
         kind === "skill"
           ? "v.definition->'skills' @> jsonb_build_array(jsonb_build_object('name', $1::text))"
-          : "v.definition->'mcpServers' ? $1"
+          : kind === "mcp-server"
+            ? "v.definition->'mcpServers' ? $1"
+            : "v.definition->'egressRuleSets' ? $1"
       }
       order by p.name`,
     [name],

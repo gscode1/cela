@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { RULE_SET_NAME } from "./egress-rules.js";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
 import { SANDBOX_SIZE_NAME } from "./sandbox-sizes.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
@@ -59,6 +60,7 @@ const KEYS = [
   "repoContext",
   "sandboxSize",
   "sandboxSizes",
+  "egressRuleSets",
 ] as const;
 
 /**
@@ -104,6 +106,12 @@ export interface ProfileDefinition {
   sandboxSize?: string;
   /** Sizes a caller may ask for in `POST /sessions`, besides the default; absent: none, only the default. */
   sandboxSizes?: string[];
+  /**
+   * Names of egress rule sets (docs/decisions/0034-egress-rules.md) whose rules apply to this profile's sessions, on
+   * top of the sets that apply to all. Each must exist when the profile is written, and a set a current version names
+   * cannot be deleted. Absent: only the sets that apply to all.
+   */
+  egressRuleSets?: string[];
 }
 
 export interface ProfileRef {
@@ -220,6 +228,11 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     const servers = nameList("mcpServers", body.mcpServers, MCP_SERVER_NAME, "MCP server");
     if (typeof servers === "string") return servers;
     definition.mcpServers = servers;
+  }
+  if (body.egressRuleSets !== undefined) {
+    const sets = nameList("egressRuleSets", body.egressRuleSets, RULE_SET_NAME, "rule set");
+    if (typeof sets === "string") return sets;
+    definition.egressRuleSets = sets;
   }
   if (body.skills !== undefined) {
     const skills = skillRefs(body.skills);
@@ -508,6 +521,17 @@ export interface PutProfileInput {
   expectedRevision?: number;
 }
 
+/** The names among `names` that are not rule sets of the `egress` schema. */
+async function missingRuleSets(client: pg.PoolClient, names: readonly string[]): Promise<string[]> {
+  if (names.length === 0) return [];
+  const { rows } = await client.query<{ name: string }>(
+    "select name from egress.rule_sets where name = any($1::text[])",
+    [[...names]],
+  );
+  const found = new Set(rows.map((row) => row.name));
+  return names.filter((name) => !found.has(name));
+}
+
 /**
  * Creates a profile or updates it from `by`. A changed definition is a new version (the old rows stay, immutable); an
  * identical one is a no-op. `known` is what the names are checked against, only when a new version would be written.
@@ -545,6 +569,11 @@ export async function putProfile(
     const goneServers = await deletedAmong(client, "mcp-server", definition?.mcpServers ?? []);
     if (goneServers.length > 0) {
       return { ok: false, message: `MCP server ${goneServers.join(", ")} was deleted` };
+    }
+    // Checked under the catalog lock a rule set delete also takes, so a set cannot vanish between check and write.
+    const goneSets = await missingRuleSets(client, definition?.egressRuleSets ?? []);
+    if (goneSets.length > 0) {
+      return { ok: false, message: `egressRuleSets: "${goneSets.join('", "')}" does not exist` };
     }
     // Always in this order (profile, then default), and `updateSettings` takes only the second: no cycle.
     if (input.enabledForNew === false) {

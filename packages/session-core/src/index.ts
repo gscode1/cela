@@ -196,3 +196,52 @@ export {
 export type { NetworkPolicyState, ProbeRequest, ShardStatus } from "./shard-status.js";
 export { SANDBOX_SIZE_NAME, chooseSandboxSize, parseSandboxSizes } from "./sandbox-sizes.js";
 export type { SandboxSize, SandboxSizes } from "./sandbox-sizes.js";
+export {
+  ALWAYS_BLOCKED_CIDRS,
+  ANY_HOST,
+  classifyAddress,
+  DEFAULT_RULE_PORTS,
+  EGRESS_EFFECTS,
+  EGRESS_ROUTES,
+  evaluateEgress,
+  MAX_EGRESS_RULES,
+  MAX_RULE_NOTE,
+  MAX_RULE_PORTS,
+  MAX_RULE_SETS,
+  normalizeHost,
+  PRIVATE_CIDRS,
+  RULE_SET_NAME,
+  ruleHostError,
+  ruleSetNameError,
+  sessionIdError,
+  validateEgressRule,
+  validateRuleSet,
+} from "./egress-rules.js";
+export type {
+  EgressDecision,
+  EgressEffect,
+  EgressRequest,
+  EgressRoute,
+  EgressRuleSpec,
+  EvaluableRule,
+  EvaluableRuleSet,
+  RuleSetSpec,
+} from "./egress-rules.js";
+export {
+  createEgressRule,
+  createRuleSet,
+  deleteEgressRule,
+  deleteRuleSet,
+  EGRESS_RULES_CHANNEL,
+  listEgressHistory,
+  readEgress,
+  updateEgressRule,
+  updateRuleSet,
+} from "./egress-store.js";
+export type {
+  EgressData,
+  EgressHistoryEntry,
+  RuleOwner,
+  StoredEgressRule,
+  StoredRuleSet,
+} from "./egress-store.js";

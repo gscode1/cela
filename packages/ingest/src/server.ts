@@ -3,6 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import type pg from "pg";
 import { orchestratorUrlFor } from "./config.js";
+import { handleAdminEgress } from "./egress-routes.js";
 import { isConsolePath, serveConsole, setConsoleHeaders } from "./console.js";
 import type { ConsoleCatalogs } from "./console.js";
 import {
@@ -420,6 +421,10 @@ async function handleAdminRoutes(
   }
   if (parts[1] === "mcp-servers") {
     await handleAdminMcpServers(req, res, deps, principal, url, parts);
+    return;
+  }
+  if (parts[1] === "egress") {
+    await handleAdminEgress(req, res, deps.pool, principal.owner, url, parts);
     return;
   }
   if (parts[1] === "profiles") {
