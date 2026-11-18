@@ -150,6 +150,11 @@ cluster and platform addresses stay blocked) only when the operator sets `securi
 console flags as "unfiltered, unaudited". Without the proxy the sandbox policies are unchanged (every sandbox has
 direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
 
+A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, default off) runs the
+sandbox image plus Chromium, Playwright CLI and agent-browser, always through the egress proxy and without credentials.
+Seed the `browser` profile and its two skills with `hack/seed-browser-profile.mjs`; check a cluster with
+`hack/browser-smoke.sh`. See [ADR 0041](docs/decisions/0041-browser-sandbox.md).
+
 Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`. Omit
 `STORAGE_CLASS` for the cluster default; set `ORCH_IMAGE`, `INGEST_IMAGE`, `DRIVER_IMAGE` and `SANDBOX_IMAGE` to your pushed
 image digests. Every run installs the chart. See [e2e](docs/e2e.md) for OneCLI ingress rules, secret-store access,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--egress-proxy] [--no-expose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--egress-proxy] [--browser] [--no-expose]
 #                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
@@ -35,6 +35,11 @@
 # that reaches the node. Slower to start (Cilium's images, about two minutes) and the node needs the images from quay.io.
 # kindnet stays the fast default. The CNI is fixed when the cluster is created: a reused cluster must match --cni.
 #
+# --browser (issue #48, docs/decisions/0041-browser-sandbox.md) enables the browser sandbox flavour
+# (sandbox.flavours.browser.enabled) with the image pi-sandbox-browser (SANDBOX_BROWSER_IMAGE overrides it; --build builds it
+# too: the image is about 1.6 GB, so it is built only on request). It needs the egress proxy (--egress-proxy): a browser
+# profile is proxied.
+#
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
 # which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
@@ -59,6 +64,7 @@ timeout=10m
 build=0
 onecli=0
 egress_proxy=0
+browser=0
 user_sets=()
 expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
@@ -70,7 +76,7 @@ verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--egress-proxy] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
@@ -88,6 +94,7 @@ while [[ $# -gt 0 ]]; do
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
   --egress-proxy) egress_proxy=1; shift ;;
+  --browser) browser=1; shift ;;
   --set) [[ $# -ge 2 ]] || usage; user_sets+=(--set "$2"); shift 2 ;;
   --no-expose) expose=0; shift ;;
   --cni) [[ $# -ge 2 ]] || usage; cni=$2; shift 2 ;;
@@ -193,6 +200,7 @@ ref_orchestrator=${ORCH_IMAGE:-$repo/pi-orchestrator:$tag}
 ref_ingest=${INGEST_IMAGE:-$repo/pi-ingest:$tag}
 ref_sandbox=${SANDBOX_IMAGE:-$repo/pi-sandbox:$tag}
 ref_egress_proxy=${EGRESS_PROXY_IMAGE:-$repo/pi-egress-proxy:$tag}
+ref_sandbox_browser=${SANDBOX_BROWSER_IMAGE:-$repo/pi-sandbox-browser:$tag}
 set_args=()
 extra_args=()
 [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
@@ -215,6 +223,8 @@ add_image_sets orchestrator "$ref_orchestrator"
 add_image_sets ingest "$ref_ingest"
 add_image_sets sandbox "$ref_sandbox"
 [[ $egress_proxy -eq 0 && $build -eq 0 ]] || add_image_sets egressProxy "$ref_egress_proxy"
+[[ $browser -eq 0 ]] || add_image_sets sandboxBrowser "$ref_sandbox_browser"
+[[ $browser -eq 0 ]] || extra_args+=(--set sandbox.flavours.browser.enabled=true)
 manifest_ok() { # the registry can be slow: three tries
   for _ in 1 2 3; do
     docker manifest inspect "$1" >/dev/null 2>&1 && return 0
@@ -226,6 +236,7 @@ if [[ $build -eq 0 ]]; then
   # Fail now, not after a 3 minute install, when the images were not published for this commit.
   refs=("$ref_orchestrator" "$ref_ingest" "$ref_sandbox")
   [[ $egress_proxy -eq 0 ]] || refs+=("$ref_egress_proxy")
+  [[ $browser -eq 0 ]] || refs+=("$ref_sandbox_browser")
   for ref in "${refs[@]}"; do
     manifest_ok "$ref" ||
       die "image $ref cannot be pulled. Set IMAGE_TAG (or ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE) to published images, or use --build to build them here."
@@ -303,12 +314,14 @@ fi
 if [[ $build -eq 1 ]]; then
   step "build the images (native architecture) and load them into the node"
   case $(uname -m) in aarch64 | arm64) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
-  for image in orchestrator ingest sandbox egress-proxy; do
+  images=(orchestrator ingest sandbox egress-proxy)
+  [[ $browser -eq 0 ]] || images+=(sandbox-browser)
+  for image in "${images[@]}"; do
     IMAGE_REPO=$repo "$root/images/build.sh" "$image" --platform "$platform" >/dev/null
   done
   # build.sh names them <repo>/pi-<image>:<version>-<short sha>; the install refs must be exactly those.
   built=$version-$(git -C "$root" rev-parse --short HEAD)
-  for image in orchestrator ingest sandbox egress-proxy; do
+  for image in "${images[@]}"; do
     kind load docker-image "$repo/pi-$image:$built" --name "$name"
   done
   set_args=()
@@ -316,8 +329,10 @@ if [[ $build -eq 1 ]]; then
     add_image_sets "$image" "$repo/pi-$image:$built"
   done
   add_image_sets egressProxy "$repo/pi-egress-proxy:$built"
+  [[ $browser -eq 0 ]] || add_image_sets sandboxBrowser "$repo/pi-sandbox-browser:$built"
   # IfNotPresent would be enough, Never makes a missing load a clear error instead of a pull of a tag nobody published.
   for image in orchestrator ingest sandbox egressProxy; do set_args+=(--set "images.$image.pullPolicy=Never"); done
+  [[ $browser -eq 0 ]] || set_args+=(--set images.sandboxBrowser.pullPolicy=Never)
 fi
 
 # ------------------------------------------------------------------ 4. agent-sandbox

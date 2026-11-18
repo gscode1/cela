@@ -1,0 +1,30 @@
+{
+  "URLBlocklist": [
+    "file://*",
+    "chrome://*",
+    "chrome-untrusted://*",
+    "chrome-extension://*",
+    "devtools://*",
+    "view-source:*",
+    "ftp://*"
+  ],
+  "DownloadDirectory": "/workspace/downloads",
+  "PromptForDownloadLocation": false,
+  "AllowFileSelectionDialogs": false,
+  "DnsOverHttpsMode": "off",
+  "NetworkPredictionOptions": 2,
+  "QuicAllowed": false,
+  "SafeBrowsingProtectionLevel": 0,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "MetricsReportingEnabled": false,
+  "BackgroundModeEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "BrowserNetworkTimeQueriesEnabled": false,
+  "ComponentUpdatesEnabled": false,
+  "TranslateEnabled": false,
+  "SearchSuggestEnabled": false
+}

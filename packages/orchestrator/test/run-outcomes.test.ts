@@ -135,6 +135,7 @@ describe("SessionService after a run answered", () => {
     usage: null,
     sandboxSize: null,
     networkMode: "proxied",
+    sandboxFlavour: "default",
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };
@@ -316,6 +317,7 @@ describe("usage on the session row (#185)", () => {
       usage: null,
       sandboxSize: null,
       networkMode: "proxied",
+      sandboxFlavour: "default",
       createdAt: new Date(),
       lastActivityAt: new Date(),
     };

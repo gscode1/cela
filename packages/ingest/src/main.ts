@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     consoleCatalogs: config.consoleCatalogs,
     sandboxSizes: config.sandboxSizes,
     allowDirectSandboxEgress: config.allowDirectSandboxEgress,
+    browserFlavourEnabled: config.browserFlavourEnabled,
     schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.

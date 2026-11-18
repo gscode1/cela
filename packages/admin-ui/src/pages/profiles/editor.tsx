@@ -39,6 +39,7 @@ import {
   keys,
   useMcpPickerQuery,
   useNetworkModesQuery,
+  useSandboxFlavoursQuery,
   useRuleSetsQuery,
   useSandboxSizesQuery,
   useProfilesQuery,
@@ -51,6 +52,7 @@ import {
   EgressRuleSetPicker,
   McpPicker,
   NetworkModePicker,
+  SandboxFlavourPicker,
   SandboxSizePicker,
   SkillPicker,
   ToolList,
@@ -93,6 +95,7 @@ export function ProfileEditor({
   const ruleSets = useRuleSetsQuery();
   const sandboxSizes = useSandboxSizesQuery();
   const networkModes = useNetworkModesQuery();
+  const sandboxFlavours = useSandboxFlavoursQuery();
   const skills = useSkillPickerQuery();
   const models = useModelView();
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
@@ -395,6 +398,13 @@ export function ProfileEditor({
             catalog={networkModes.data}
             onChange={(networkMode) => {
               edit({ networkMode });
+            }}
+          />
+          <SandboxFlavourPicker
+            flavour={form.sandboxFlavour}
+            catalog={sandboxFlavours.data}
+            onChange={(sandboxFlavour) => {
+              edit({ sandboxFlavour });
             }}
           />
           <McpPicker

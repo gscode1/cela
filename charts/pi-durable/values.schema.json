@@ -33,6 +33,9 @@
         "sandbox": {
           "$ref": "#/definitions/image"
         },
+        "sandboxBrowser": {
+          "$ref": "#/definitions/image"
+        },
         "egressProxy": {
           "$ref": "#/definitions/image"
         }
@@ -272,7 +275,7 @@
     "sandbox": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtimeClassName", "masterSecret", "defaultSize", "sizes"],
+      "required": ["runtimeClassName", "masterSecret", "defaultSize", "sizes", "flavours"],
       "properties": {
         "runtimeClassName": {
           "type": "string",
@@ -288,6 +291,37 @@
         "defaultSize": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,15}$"
+        },
+        "flavours": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["browser"],
+          "properties": {
+            "browser": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "enabled",
+                "resources",
+                "ephemeralStorage",
+                "shmSize",
+                "warmPoolReplicas"
+              ],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "resources": { "$ref": "#/definitions/resources" },
+                "ephemeralStorage": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)?$"
+                },
+                "shmSize": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)?$"
+                },
+                "warmPoolReplicas": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
         },
         "sizes": {
           "type": "object",

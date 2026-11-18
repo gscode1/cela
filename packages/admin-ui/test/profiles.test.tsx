@@ -464,6 +464,32 @@ describe("create", () => {
   });
 });
 
+describe("sandbox flavour", () => {
+  it("disables browser with the reason while the chart does not enable it", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox flavour");
+    expect(within(select).getByRole("option", { name: /^Browser/ })).toBeDisabled();
+    expect(await screen.findByTestId("browser-disabled")).toHaveTextContent(
+      "sandbox.flavours.browser.enabled",
+    );
+  });
+
+  it("offers browser when enabled and explains what it cannot combine with", async () => {
+    const admin = createFakeAdmin();
+    admin.browserEnabled = true;
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox flavour");
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: /^Browser/ })).toBeEnabled();
+    });
+    await userEvent.selectOptions(select, "browser");
+    expect(await screen.findByTestId("browser-note")).toHaveTextContent("credentialed MCP servers");
+  });
+});
+
 describe("network mode", () => {
   it("disables direct with the reason while the chart gate is off", async () => {
     const admin = createFakeAdmin();

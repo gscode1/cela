@@ -22,6 +22,12 @@ images:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
+  # Only needed with sandbox.flavours.browser.enabled.
+  sandboxBrowser:
+    repository: ghcr.io/gscode1/pi-sandbox-browser
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
   # Only needed with egressProxy.enabled.
   egressProxy:
     repository: ghcr.io/gscode1/pi-egress-proxy
@@ -135,6 +141,23 @@ sandbox:
       workspaceSize: 20Gi
       ephemeralStorage: 8Gi
       warmPoolReplicas: 0
+
+  # Sandbox flavours besides the default (docs/decisions/0041-browser-sandbox.md).
+  flavours:
+    # The browser flavour: the sandbox image plus Chromium, Playwright CLI and agent-browser (images/sandbox-browser).
+    # On: renders pi-env-browser[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and lets a
+    # profile say `sandboxFlavour: browser`. Off (the default): none of that exists and the API refuses the field. Needs
+    # images.sandboxBrowser. A browser session never has credentials (no repo, no onecli route, no credentialed MCP).
+    browser:
+      enabled: false
+      # Its own limits, whatever the size: Chromium needs far more memory than a shell (measured: docs/decisions/0041).
+      # The size still sets the workspace volume.
+      resources:
+        requests: { cpu: 500m, memory: 768Mi }
+        limits: { cpu: "1", memory: 1536Mi }
+      ephemeralStorage: 2Gi # the browser's profile and cache live outside /workspace and are wiped at each start
+      shmSize: 256Mi # memory-backed /dev/shm; counts against the memory limit
+      warmPoolReplicas: 0 # warm Pods of each sized proxied browser pool; browser Pods are heavy, keep it 0 unless needed
 
 security:
   # Acknowledges that the sandbox runtime is not gVisor. The orchestrator refuses to start without it too

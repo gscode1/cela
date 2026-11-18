@@ -143,6 +143,12 @@ port, IPv6, UDP/53, DNS, `curl --noproxy '*'`, `NO_PROXY=*` and the OneCLI gatew
 in `direct` the internet works (the IP, the port, IPv6 where the node has it, DNS, UDP) and the private, cluster, metadata
 and platform addresses and the OneCLI gateway still fail.
 
+**Browser sandboxes** ([ADR 0041](decisions/0041-browser-sandbox.md)) add no policy. A browser Pod wears the same
+`app.kubernetes.io/name=pi-sandbox` and `pi-durable.dev/network-mode` labels as any sandbox (plus
+`pi-durable.dev/sandbox-flavour=browser`, which no policy selects on), so a proxied browser reaches the egress proxy on 3128 and
+nothing else: Chromium sends everything to a forwarder on 127.0.0.1 inside the Pod, which tunnels through the proxy. No DNS, no
+UDP. `hack/browser-smoke.sh` shows the cluster, platform, OneCLI, metadata and LAN addresses refused.
+
 ## Assumptions to check before applying
 
 - **Postgres client selectors.** `charts/pi-postgres` admits only the pods named in its `networkPolicy.clientSelectors`

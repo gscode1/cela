@@ -3,6 +3,8 @@ import { RULE_SET_NAME } from "./egress-rules.js";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
 import { DIRECT_NOT_ALLOWED, isNetworkMode, NETWORK_MODES } from "./network-mode.js";
 import type { NetworkMode } from "./network-mode.js";
+import { BROWSER_NOT_ENABLED, isSandboxFlavour, SANDBOX_FLAVOURS } from "./sandbox-flavour.js";
+import type { SandboxFlavour } from "./sandbox-flavour.js";
 import { SANDBOX_SIZE_NAME } from "./sandbox-sizes.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
@@ -64,6 +66,7 @@ const KEYS = [
   "sandboxSizes",
   "egressRuleSets",
   "networkMode",
+  "sandboxFlavour",
 ] as const;
 
 /**
@@ -121,6 +124,11 @@ export interface ProfileDefinition {
    * `security.allowDirectSandboxEgress`). Fixed per session when it is created. Absent: `proxied`.
    */
   networkMode?: NetworkMode;
+  /**
+   * The sandbox image of this profile's sessions (docs/decisions/0041-browser-sandbox.md): `default`, or `browser`
+   * (Chromium and browser tools; only where the chart enables it, and never with credentials). Absent: `default`.
+   */
+  sandboxFlavour?: SandboxFlavour;
 }
 
 export interface ProfileRef {
@@ -289,6 +297,12 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     }
     definition.networkMode = body.networkMode;
   }
+  if (body.sandboxFlavour !== undefined) {
+    if (!isSandboxFlavour(body.sandboxFlavour)) {
+      return `sandboxFlavour must be one of ${SANDBOX_FLAVOURS.join(", ")}`;
+    }
+    definition.sandboxFlavour = body.sandboxFlavour;
+  }
   return ordered(definition);
 }
 
@@ -357,8 +371,17 @@ export function checkProfileNames(
     allowDirectEgress?: boolean;
     /** Why a direct profile cannot have these credentials (directModeConflict), evaluated by the caller. */
     directConflict?: (definition: ProfileDefinition) => string | undefined;
+    /** Whether the deployment renders browser sandboxes (sandbox.flavours.browser.enabled); absent: no. */
+    browserFlavourEnabled?: boolean;
+    /** Why a browser profile cannot have these credentials (browserFlavourConflict), evaluated by the caller. */
+    browserConflict?: (definition: ProfileDefinition) => string | undefined;
   },
 ): string | undefined {
+  if (definition.sandboxFlavour === "browser") {
+    if (known.browserFlavourEnabled !== true) return BROWSER_NOT_ENABLED;
+    const conflict = known.browserConflict?.(definition);
+    if (conflict !== undefined) return conflict;
+  }
   if (definition.networkMode === "direct") {
     if (known.allowDirectEgress !== true) return DIRECT_NOT_ALLOWED;
     const conflict = known.directConflict?.(definition);
