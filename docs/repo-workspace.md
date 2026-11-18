@@ -29,8 +29,15 @@ orchestrator --JWT(App key)--> api.github.com  POST /app/installations/{id}/acce
                {"repositories":["<name>"],"permissions":{"contents":"write","pull_requests":"write","metadata":"read"}}
            <-- 1 h token for that one repository (checked: the answer must list exactly owner/name)
 orchestrator --admin API--> OneCLI: agent <prefix><uuid>, secrets <prefix><uuid>-git / -api, grants
-sandbox command --HTTPS_PROXY=http://x:<agent token>@onecli.onecli:10255--> gateway injects the token
+sandbox command --HTTPS_PROXY=http://x:<agent token>@onecli.onecli:10255--> gateway injects the token   (egress proxy off)
+sandbox command --HTTPS_PROXY=http://x:<egress token>@pi-egress-proxy:3128--> proxy --CONNECT with the agent token
+                  from egress.bindings (sealed)--> OneCLI gateway injects the token                    (egress proxy on, ADR 0037)
 ```
+
+With `egressProxy.enabled` the sandbox holds only its egress token. The agent token is sealed with the binding key into
+`egress.bindings` (the proxy opens it for `route=onecli` tunnels of that session only), and the orchestrator adds session
+rules that send `github.com` and `api.github.com` through OneCLI, removed with the session. Without the proxy the sandbox keeps
+the gateway URL and the agent token as before. See [ADR 0037](decisions/0037-egress-onecli-route.md).
 
 - `<prefix>` is `PI_ONECLI_NAME_PREFIX` (default `pi-session-`; lowercase `[a-z0-9-]`, ending in `-`). Stacks that share a OneCLI
   workspace need different ones: the orphan sweep judges only names with its own prefix (`docs/e2e.md`).
@@ -58,7 +65,8 @@ only that session's commands, through the pi-env protocol to the daemon, not thr
 launcher still strips everything but its allow-list; tested). `sandbox-env` only gained a pass-through option; the bridge
 and the storage adapter are untouched. Set once at env open, so it holds only stable values.
 
-Variables (`workspace.ts` `buildShellEnv`): `HTTPS_PROXY`/`https_proxy` with the agent token, `NO_PROXY=localhost,127.0.0.1,::1`,
+Variables with the egress proxy on: the proxy variables of ADR 0036 (the egress token) plus `buildWorkspaceEnv()`, which is the CA, git and
+identity part of the list below, and no OneCLI address or token. Variables without it (`workspace.ts` `buildShellEnv`): `HTTPS_PROXY`/`https_proxy` with the agent token, `NO_PROXY=localhost,127.0.0.1,::1`,
 `SSL_CERT_FILE` and `GIT_SSL_CAINFO` (system roots + OneCLI CA, `/workspace/.onecli/bundle.pem`), `NODE_EXTRA_CA_CERTS`
 (`/workspace/.onecli/ca.pem`), `NODE_USE_ENV_PROXY=1`, git author identity, and git config through `GIT_CONFIG_COUNT=1`,
 `GIT_CONFIG_KEY_0=http.proxyAuthMethod`, `GIT_CONFIG_VALUE_0=basic`. (`GIT_CONFIG` itself is read only by `git config`, so it is not used.)
@@ -108,6 +116,8 @@ re-sent; a create looks the object up by name again after a failure and POSTs on
 `PI_ONECLI_BACKOFF_MS` (default 500, doubling, capped at 5 s).
 
 ## Unverified
+
+- Through the egress proxy (ADR 0037) the chain sandbox -> proxy -> OneCLI -> origin was run live with a dummy GitHub token (`hack/egress-onecli-smoke.sh`); a real clone and push through it, and the repo A / repo B isolation, still need `tests/e2e/run.sh phase4c` with a GitHub App.
 
 - The OneCLI v2 generic-secret body (`type: "generic"`, `injectionConfig: {headerName, valueFormat}`), `PATCH /v1/secrets/{id}`, the
   response shapes of `GET /v1/agents`, `/v1/secrets` and `GET /v1/agents/{id}/grants`, and `DELETE …/grants/connections/{id}` come

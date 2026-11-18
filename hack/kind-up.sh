@@ -386,6 +386,16 @@ if [[ $egress_proxy -eq 1 ]]; then
   fi
   extra_args+=(--set egressProxy.enabled=true --set egressProxy.database.existingSecret=pi-egress-database
     --set 'egressProxy.clients[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=pi-egress-test')
+  if [[ $onecli -eq 1 ]]; then
+    # The key that seals the sessions' OneCLI tokens for the proxy (ADR 0037): 32 random bytes, kept if it exists
+    # (a new key would leave the stored bindings unreadable until each session is bound again). Never printed.
+    if [[ -z $(kn get secret pi-egress-binding --ignore-not-found -o name) ]]; then
+      openssl rand -base64 32 | tr -d '\n' >"$tmp/binding-key"
+      kn create secret generic pi-egress-binding --from-file=key="$tmp/binding-key" >/dev/null
+      echo "pi-egress-binding: created (the key that seals OneCLI tokens for the egress proxy)"
+    fi
+    extra_args+=(--set egressProxy.binding.existingSecret=pi-egress-binding)
+  fi
 fi
 
 # ------------------------------------------------------------------ 6. pi-durable

@@ -61,9 +61,11 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | orchestrator | `api.github.com` | 443 (+ DNS lookup of that name) | direct call that mints the repo-scoped GitHub App installation token (the App key never leaves the orchestrator); the only public host it may reach | C orchestrator-egress-github-api |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
-| sandbox | OneCLI gateway | 10255 | credentialed traffic (repo sessions): credentials injected | S sandbox-allow-onecli-egress |
+| sandbox | OneCLI gateway | 10255 | credentialed traffic of repo sessions **when the egress proxy is off**; with the proxy on, repo sessions no longer use it and the rule is removed by the network cutover (slice 6) | S sandbox-allow-onecli-egress |
 | sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
-| sandbox | egress proxy | 3128 | plain sessions' tool traffic with a per-session token (ADR 0036); **not rendered by the chart** until the network cutover, see below | applied by hand |
+| sandbox | egress proxy | 3128 | every session's tool traffic with a per-session token (ADR 0036, 0037), additive until the network cutover, see below | S sandbox-allow-egress-proxy-egress (with `egressProxy.enabled`) |
+| egress proxy | OneCLI gateway | 10255 (gateway port only) | the proxy's one upstream: `route=onecli` tunnels carry the session's OneCLI token (ADR 0037); the management API port stays closed | S egress-proxy-allow-onecli-egress (proxy and OneCLI on) |
+| egress proxy (ingress side) | | | OneCLI's gateway admits `app.kubernetes.io/name=pi-egress-proxy` on 10255 | S onecli-gateway-allow-ingress (`charts/pi-onecli`, `clients.egressProxy`) |
 | orchestrator, ingest, sandboxes in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | orchestrator, ingest, sandboxes, e2e driver | CoreDNS | 53 | same, for every pod | same |
 | `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |
@@ -80,8 +82,8 @@ Rows marked "(ingress side)" repeat a flow from the receiving end and add no rul
 
 ## Sandboxes and the egress proxy (until the network cutover)
 
-With `egressProxy.enabled` the orchestrators give plain sessions' tool commands the proxy variables and a per-session token
-([ADR 0036](decisions/0036-egress-principals.md)). The chart then renders one additive sandbox policy, which admits the
+With `egressProxy.enabled` the orchestrators give every session's tool commands, repo sessions included, the proxy variables and
+a per-session token ([ADR 0036](decisions/0036-egress-principals.md), [ADR 0037](decisions/0037-egress-onecli-route.md)). The chart then renders one additive sandbox policy, which admits the
 proxy port and changes nothing else (the sandbox network modes are slice 6 of epic #50): a sandbox still has direct
 internet, and proxy-aware tools now go through the proxy:
 
@@ -98,8 +100,13 @@ spec:
 ```
 
 The proxy accepts a session's token only from that sandbox's Pod address, so a token read inside one sandbox is useless in
-another. Repo sessions keep using the OneCLI gateway until slice 5. `hack/egress-session-smoke.sh` checks all of this on a
-throwaway kind cluster.
+another. A repo session's credentialed hosts (`github.com`, `api.github.com`) go through the proxy to the OneCLI gateway: the
+proxy's own egress to the gateway port is `egress-proxy-allow-onecli-egress`, and OneCLI's gateway ingress admits the proxy
+(`charts/pi-onecli` `clients.egressProxy`). With an **external OneCLI** (`onecli.mode=external`) the operator admits the proxy
+pods on its side: allow ingress to the gateway port (default 10255) from pods labelled `app.kubernetes.io/name=pi-egress-proxy`
+in the proxy's namespace, and nothing for the management API. The sandbox's own `sandbox-allow-onecli-egress` is unchanged until
+the network cutover. `hack/egress-session-smoke.sh` and `hack/egress-onecli-smoke.sh` check all of this on a throwaway kind
+cluster. The binding key (`egressProxy.binding.existingSecret`) is mounted into the proxy and the orchestrators only.
 
 ## Assumptions to check before applying
 
