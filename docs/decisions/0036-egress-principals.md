@@ -97,11 +97,9 @@ wins (`"profile"`), no principal means only the sets that apply to all (`"none"`
 
 ## Consequences
 
-- Sandboxes still have direct internet until slice 6; this slice only makes proxy-aware tools use the proxy. The chart has
-  **no NetworkPolicy that lets a sandbox reach the proxy** (the sandbox policies are untouched, slice 6 designs the network
-  modes). Until then an operator who turns on `egressProxy.enabled` and wants sandboxes to use it applies one policy
-  (docs/network-policy.md); `hack/egress-session-smoke.sh` applies it in its throwaway cluster. Without it the proxy variables
-  point at an address the sandbox cannot reach.
+- Sandboxes still have direct internet until slice 6; this slice only makes proxy-aware tools use the proxy. With
+  `egressProxy.enabled` the chart renders one additive sandbox policy, `sandbox-allow-egress-proxy-egress` (TCP 3128 to the
+  proxy pods only); every other sandbox policy is unchanged, so it opens no destination. Slice 6 designs the network modes.
 - Plain `http://` through the proxy variables fails (CONNECT only); package managers that use http mirrors need https.
 - Tokens live in the sandbox's command environment, readable by the agent: what bounds them is the session's rules, the
   address binding and deletion.

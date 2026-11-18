@@ -6,8 +6,7 @@
 #   hack/egress-session-smoke.sh [--name pi-egress] [--namespace pi-durable]
 #   hack/kind-down.sh --name pi-egress
 #
-# It creates sessions, rules and profiles (named smoke-*), applies one NetworkPolicy that lets sandboxes reach the proxy
-# (the chart has none until the network cutover, slice 6) and runs a Helm upgrade that turns the proxy off and on again,
+# It creates sessions, rules and profiles (named smoke-*), checks the chart's sandbox-to-proxy NetworkPolicy and runs a Helm upgrade that turns the proxy off and on again,
 # so it refuses the cluster pi-durable and any context that is not a kind cluster. It calls the APIs from inside an ingest
 # pod (hack/kind-client.mjs): no API token leaves the cluster. Egress tokens are never printed: the sandbox's proxy
 # variables are shown with the password masked, and a token that has to move between two Pods goes through a shell variable
@@ -128,7 +127,6 @@ cleanup() {
     rev=$(api GET "/admin/profiles/$p" 2>/dev/null | jq_ 'j.revision' 2>/dev/null)
     api DELETE "/admin/profiles/$p?expectedRevision=$rev" >/dev/null 2>&1
   done
-  k delete networkpolicy smoke-sandbox-to-egress-proxy --ignore-not-found >/dev/null 2>&1
   rm -rf "$scratch"
   exit $rc
 }
@@ -147,19 +145,10 @@ done
 ok "the proxy serves revision $(jq_ 'j.revision' <<<"$status")"
 [[ -n $(k get deploy pi-orchestrator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]] || fail "the orchestrator has no PI_EGRESS_PROXY_URL (was the cluster made with --egress-proxy?)"
 ok "the orchestrator has PI_EGRESS_PROXY_URL"
-# The chart has no sandbox-to-proxy allow until the network cutover (slice 6): this one is for the test only.
-k apply -f - >/dev/null <<YAML
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata: { name: smoke-sandbox-to-egress-proxy }
-spec:
-  podSelector: { matchLabels: { app.kubernetes.io/name: pi-sandbox } }
-  policyTypes: [Egress]
-  egress:
-    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: pi-egress-proxy } } }]
-      ports: [{ protocol: TCP, port: 3128 }]
-YAML
-ok "a test NetworkPolicy admits sandbox -> proxy:3128"
+# The chart admits sandbox -> proxy:3128 with egressProxy.enabled (ADR 0036).
+[[ -n $(k get networkpolicy sandbox-allow-egress-proxy-egress --ignore-not-found -o name) ]] ||
+  fail "the chart's NetworkPolicy sandbox-allow-egress-proxy-egress is missing"
+ok "the chart's NetworkPolicy admits sandbox -> proxy:3128"
 
 # ------------------------------------------------------------------ 1. two sessions, two profiles
 echo "## 1. sessions on two profiles; the sandbox has the proxy environment"

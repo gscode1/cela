@@ -81,9 +81,9 @@ Rows marked "(ingress side)" repeat a flow from the receiving end and add no rul
 ## Sandboxes and the egress proxy (until the network cutover)
 
 With `egressProxy.enabled` the orchestrators give plain sessions' tool commands the proxy variables and a per-session token
-([ADR 0036](decisions/0036-egress-principals.md)). The sandbox policies above are **not** changed by it (the sandbox network
-modes are slice 6 of epic #50): a sandbox still has direct internet and no rule admits it to the proxy. To let proxy-aware
-tools reach it before the cutover, apply this one additive policy yourself (the chart does not render it):
+([ADR 0036](decisions/0036-egress-principals.md)). The chart then renders one additive sandbox policy, which admits the
+proxy port and changes nothing else (the sandbox network modes are slice 6 of epic #50): a sandbox still has direct
+internet, and proxy-aware tools now go through the proxy:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -99,7 +99,7 @@ spec:
 
 The proxy accepts a session's token only from that sandbox's Pod address, so a token read inside one sandbox is useless in
 another. Repo sessions keep using the OneCLI gateway until slice 5. `hack/egress-session-smoke.sh` checks all of this on a
-throwaway kind cluster and applies the policy there.
+throwaway kind cluster.
 
 ## Assumptions to check before applying
 

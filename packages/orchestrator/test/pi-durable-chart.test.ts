@@ -1194,14 +1194,25 @@ describe("egressProxy (ADR 0035)", () => {
     );
   });
 
-  it("does not change a sandbox's policies (the network cutover is slice 6)", () => {
+  it("adds only the sandbox's egress to the proxy port; the other sandbox policies are unchanged (cutover is slice 6)", () => {
     const sandboxPolicies = (list: Obj[]) =>
-      JSON.stringify(
-        ofKind(list, "NetworkPolicy").filter(
-          (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
-        ),
+      ofKind(list, "NetworkPolicy").filter(
+        (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
       );
-    expect(sandboxPolicies(docs(on))).toBe(sandboxPolicies(docs()));
+    const added = "sandbox-allow-egress-proxy-egress";
+    const withProxy = sandboxPolicies(docs(on));
+    expect(JSON.stringify(withProxy.filter((p) => p.metadata.name !== added))).toBe(
+      JSON.stringify(sandboxPolicies(docs())),
+    );
+    expect(sandboxPolicies(docs()).some((p) => p.metadata.name === added)).toBe(false);
+    const policy = named(withProxy, "NetworkPolicy", added).spec;
+    expect(policy.policyTypes).toEqual(["Egress"]);
+    expect(policy.egress).toEqual([
+      {
+        to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-egress-proxy" } } }],
+        ports: [{ protocol: "TCP", port: 3128 }],
+      },
+    ]);
   });
 
   it("opens the internet minus private ranges, the database and only the listed private destinations", () => {
