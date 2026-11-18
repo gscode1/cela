@@ -111,10 +111,13 @@ export interface ProfileRef {
   version: number;
 }
 
+/** Whether `name` can be a profile name; the message for a 400 otherwise. */
 export function profileNameError(name: unknown): string | undefined {
-  return typeof name === "string" && PROFILE_NAME.test(name)
-    ? undefined
-    : `profile name must match ${PROFILE_NAME.source}`;
+  if (typeof name !== "string" || !PROFILE_NAME.test(name)) {
+    return `profile name must match ${PROFILE_NAME.source}`;
+  }
+  // `/profiles/new` is the admin console's create route.
+  return name === "new" ? 'profile name "new" is reserved' : undefined;
 }
 
 function nameList(field: string, value: unknown, pattern: RegExp, what: string): string[] | string {

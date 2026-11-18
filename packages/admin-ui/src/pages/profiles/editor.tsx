@@ -24,11 +24,11 @@ import { REASONING_LEVELS, valuesOf } from "@/lib/api/settings";
 import { diffDefinitions } from "@/lib/diff";
 import { profileImpact } from "@/lib/impact";
 import {
-  PROFILE_NAME,
   definitionFromForm,
   definitionProblems,
   executableSkillsWithoutBash,
   isEmptyForm,
+  profileNameProblem,
   readProblems,
   referenceProblems,
   withoutBrokenReferences,
@@ -97,12 +97,11 @@ export function ProfileEditor({
   const changes = diffDefinitions(base, definition);
   const nameProblem = !creating
     ? undefined
-    : !PROFILE_NAME.test(name)
-      ? "Names start with a letter and use lowercase letters, digits and hyphens, at most 32 characters."
-      : profiles.data?.profiles.some((profile) => profile.name === name) === true ||
-          profiles.data?.invalid.some((profile) => profile.name === name) === true
+    : (profileNameProblem(name) ??
+      (profiles.data?.profiles.some((profile) => profile.name === name) === true ||
+      profiles.data?.invalid.some((profile) => profile.name === name) === true
         ? `A profile named "${name}" exists: saving would publish a new version of it.`
-        : undefined;
+        : undefined));
   const problems = definitionProblems(definition);
   const refs =
     tools.data === undefined || mcp.data === undefined
