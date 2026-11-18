@@ -15,7 +15,7 @@ export function ProfileList() {
   const intent = intentFromSearch(params);
   // Carried on to the profile's own route, where the draft is prepared.
   const search = searchOf(intent);
-  // Profiles cannot be deleted (ADR 0010), so disabled ones fold away instead of piling up in the list.
+  // Disabled profiles fold away instead of piling up in the list; deleting one is a separate, deliberate step.
   const [showDisabled, setShowDisabled] = useState(false);
   const disabledCount = data?.profiles.filter((profile) => !profile.enabledForNew).length ?? 0;
   const rows =
@@ -28,7 +28,7 @@ export function ProfileList() {
         <div className="flex flex-col gap-1.5">
           <CardTitle>Session profiles</CardTitle>
           <CardDescription>
-            What a new session gets. Profiles can be disabled, not deleted.
+            What a new session gets. A disabled profile that is not the default can be deleted.
           </CardDescription>
         </div>
         <Link className={buttonVariants()} to="/profiles/new">

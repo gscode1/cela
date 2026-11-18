@@ -109,6 +109,19 @@ export function putProfile(
   return adminPut<PutProfileResult>(token, `/admin/profiles/${encodeURIComponent(name)}`, body);
 }
 
+/** Deletes a disabled profile that is not the default (ADR 0027); a refusal is an `ApiError` 409 with `blockedBy`. */
+export function deleteProfile(
+  token: string,
+  name: string,
+  expectedRevision: number,
+): Promise<{ name: string; deleted: true; lastVersion: number }> {
+  return adminFetch(
+    token,
+    `/admin/profiles/${encodeURIComponent(name)}?expectedRevision=${String(expectedRevision)}`,
+    { method: "DELETE" },
+  );
+}
+
 /*
  * Read-only views of the MCP catalog and the skills, for the editor's pickers. They are the editor's own so that the
  * MCP and skills screens keep their modules; they read the same endpoints (docs/session-api.md).

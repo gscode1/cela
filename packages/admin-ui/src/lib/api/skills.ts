@@ -77,6 +77,20 @@ export async function getSkill(
   return adminJson<SkillDetail>(token, skillPath(name), signal ? { signal } : {});
 }
 
+/**
+ * Deletes a skill with all its versions (ADR 0027). Versions never change, so the current version is the revision the
+ * API checks. A refusal is an `ApiError` 409 with `blockedBy`.
+ */
+export async function deleteSkill(
+  token: string,
+  name: string,
+  currentVersion: number,
+): Promise<{ name: string; deleted: true; lastVersion: number }> {
+  return adminJson(token, `${skillPath(name)}?expectedRevision=${String(currentVersion)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getSkillVersionContent(
   token: string,
   name: string,
