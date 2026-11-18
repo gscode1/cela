@@ -281,7 +281,9 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 ## Deletion
 
 `DELETE /sessions/{id}` answers `202` and queues a `delete` row. From that moment new events get `409` (`410` once deleted). Admission is one conditional insert (`session is active`), so an event whose body was still being read when the session was deleted is refused too, and the session is marked `deleting` before the delete row is written, so every accepted event sorts before it; events
-accepted earlier are still processed first, in order. Then the orchestrator:
+accepted earlier are still processed first, in order: a `message` or `steer` among them ends `failed` ("session is
+being deleted") without a clone or a model run, since the delete behind it would throw that work away; a `cancel` is
+applied. Then the orchestrator:
 
 1. aborts the conversation (withdraws queued input, stops the running turn). If the run is not idle within 30 s, the
    delete goes on: deleting the sandbox in step 3 ends a tool that ignored the abort,

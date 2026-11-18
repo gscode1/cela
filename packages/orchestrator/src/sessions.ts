@@ -302,7 +302,12 @@ export class SessionService {
   async prepare(event: InboxEvent, session: SessionRow): Promise<void> {
     if (event.kind !== "message" && event.kind !== "steer") return;
     // Only a session `apply` would run the input for; the others end in `apply` with their own outcome.
-    if (session.status === "failed" || session.status === "deleted" || session.repo === null)
+    if (
+      session.status === "failed" ||
+      session.status === "deleting" ||
+      session.status === "deleted" ||
+      session.repo === null
+    )
       return;
     if (typeof event.payload.text !== "string" || event.payload.text === "") return;
     const conversationId = await this.ensureConversation(session);
@@ -360,6 +365,9 @@ export class SessionService {
       case "steer": {
         const text = event.payload.text;
         if (typeof text !== "string" || text === "") throw new PermanentError("event has no text");
+        // An input queued before a DELETE: the delete row behind it tears everything down, so provisioning or a model
+        // run for it would only be spent and thrown away.
+        if (session.status === "deleting") throw new PermanentError("session is being deleted");
         if (session.status === "failed") {
           // Retries an abort that failed when the session was failed (see #failSession); throws, and so retries the
           // row, if the abort fails again.

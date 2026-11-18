@@ -431,6 +431,17 @@ describe("SessionService.prepare", () => {
     }
   });
 
+  it("neither prepares nor runs an input queued in front of a delete (session deleting)", async () => {
+    const { svc, calls } = service(() => Promise.resolve());
+    for (const kind of ["message", "steer"] as const) {
+      const input = { ...message, kind };
+      const deleting = sessionRow({ status: "deleting", workspaceReadyAt: new Date() });
+      await svc.prepare(input, deleting);
+      await expect(svc.apply(input, deleting)).rejects.toBeInstanceOf(PermanentError);
+    }
+    expect(calls).toMatchObject({ prepare: 0, submit: 0 });
+  });
+
   it("lets a transient error through as is, to be retried", async () => {
     const { svc } = service(() => Promise.reject(new Error("timeout")));
     await expect(svc.prepare(message, sessionRow())).rejects.toThrow("timeout");
