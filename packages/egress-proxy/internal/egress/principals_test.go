@@ -188,7 +188,7 @@ func TestSnapshotPrincipalsParse(t *testing.T) {
 	 {"session_id":"` + sessB + `","token_hash":"` + HashToken(pTokB) + `","rule_sets":[],"pod_ip":null},
 	 {"session_id":"","token_hash":"` + hash + `","rule_sets":[]},
 	 {"session_id":"cccccccc-3333-4333-8333-333333333333","token_hash":"short","rule_sets":[]}]`
-	s, err := parseSnapshot(1, []byte(`[]`), []byte(`[]`), []byte(rows))
+	s, err := parseSnapshot(1, []byte(`[]`), []byte(`[]`), []byte(rows), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

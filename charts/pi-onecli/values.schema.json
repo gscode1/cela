@@ -8,10 +8,11 @@
     "clients": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["orchestrator", "sandbox", "bootstrap"],
+      "required": ["orchestrator", "sandbox", "egressProxy", "bootstrap"],
       "properties": {
         "orchestrator": { "$ref": "#/definitions/labels" },
         "sandbox": { "$ref": "#/definitions/labels" },
+        "egressProxy": { "$ref": "#/definitions/labels" },
         "bootstrap": { "$ref": "#/definitions/labels" }
       }
     },

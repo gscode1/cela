@@ -10,6 +10,8 @@ import {
   normalizeHost,
   parseExpectedRevision,
   PROFILE_NAME,
+  bindingCounts,
+  hasBinding,
   principalCounts,
   principalRuleSets,
   readEgress,
@@ -384,6 +386,9 @@ export async function handleAdminEgress(
       }),
       // Without addresses only names were judged: whether the host resolves to a private address is not known here.
       addressesChecked: addresses !== undefined && (addresses as string[]).length > 0,
+      // Whether the session has a OneCLI binding at the proxy (ADR 0037). A route=onecli allow is denied by the proxy
+      // without one; null when no session was asked about.
+      binding: typeof sessionId === "string" ? await hasBinding(pool, sessionId) : null,
     });
     return;
   }
@@ -403,6 +408,8 @@ export async function handleAdminEgress(
       invalid: data.invalid.length,
       // Sessions that hold an egress token (ADR 0036): counts only, never a token or a hash.
       principals,
+      // Sessions whose OneCLI token is sealed for the proxy (ADR 0037): counts only.
+      bindings: await bindingCounts(pool),
       // Each proxy replica's last report (ADR 0035): a change has arrived when every serving replica shows its revision.
       proxy: {
         replicas: replicas.map((replica) => ({

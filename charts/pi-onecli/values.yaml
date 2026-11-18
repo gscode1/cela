@@ -12,6 +12,9 @@ clients:
   orchestrator: { app.kubernetes.io/name: pi-orchestrator }
   sandbox: { app.kubernetes.io/name: pi-sandbox }
   bootstrap: { app.kubernetes.io/name: pi-onecli-bootstrap }
+  # The egress proxy of charts/pi-durable (ADR 0037): it chains route=onecli connections to the gateway with the session's
+  # OneCLI token. Admitted on the gateway port only. With the proxy on, sandboxes no longer need the gateway themselves.
+  egressProxy: { app.kubernetes.io/name: pi-egress-proxy }
 
 database:
   podSelector: { app.kubernetes.io/name: pi-postgres }

@@ -75,7 +75,7 @@ spec:
       ports:
         - { protocol: TCP, port: 10256 }
 ---
-# Gateway :10255 (CONNECT proxy): sandboxes and the orchestrator, plus the API and the dashboard.
+# Gateway :10255 (CONNECT proxy): sandboxes, the egress proxy and the orchestrator, plus the API and the dashboard.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -91,6 +91,7 @@ spec:
   ingress:
     - from:
         {{- include "pi-onecli.peer" .Values.clients.sandbox | nindent 8 }}
+        {{- include "pi-onecli.peer" .Values.clients.egressProxy | nindent 8 }}
         {{- include "pi-onecli.peer" .Values.clients.orchestrator | nindent 8 }}
         {{- include "pi-onecli.peer" .Values.clients.bootstrap | nindent 8 }}
         {{- include "pi-onecli.component" (dict "selector" $onecli "component" "api") | nindent 8 }}

@@ -1,25 +1,29 @@
 import {
+  boundSessions,
+  deleteBinding,
   ensurePrincipal,
+  ensureSessionOneCliRules,
+  livePrincipalSessions,
+  putBinding,
+  readProxyStatus,
+  removeSessionRules,
   revokePrincipal,
+  sessionsWithRules,
   setPrincipalPodIp,
   validateProfileDefinition,
 } from "@pi-durable-k8s/session-core";
 import type { SessionRow } from "@pi-durable-k8s/session-core";
 import type pg from "pg";
+import { log } from "./log.js";
 import { Redacted } from "./onecli.js";
 
 /**
- * The egress proxy side of a session (docs/decisions/0036-egress-principals.md). With the proxy enabled, every plain
- * session gets a principal in `egress.principals` (the hash of its egress token, the rule sets of its profile as they
- * were when it was created, its sandbox Pod's address) and its tool commands get the proxy environment. Repo sessions
- * keep the OneCLI environment (`buildShellEnv`) until slice 5 puts OneCLI behind the proxy; `usesEgressProxy` is the one
- * place that says which sessions those are.
+ * The egress proxy side of a session (docs/decisions/0036-egress-principals.md, 0037-egress-onecli-route.md). With the
+ * proxy enabled, every session, repo sessions included, gets a principal in `egress.principals` (the hash of its egress
+ * token, the rule sets of its profile as they were when it was created, its sandbox Pod's address) and its tool commands
+ * get the proxy environment. A repo session also gets a binding (its OneCLI agent token, sealed for the proxy) and
+ * session rules that send `github.com` through OneCLI; the sandbox holds the egress token only.
  */
-
-/** Slice 5 changes this: a repo session then goes through the proxy too, which chains OneCLI behind it. */
-export function usesEgressProxy(session: Pick<SessionRow, "repo">): boolean {
-  return session.repo === null;
-}
 
 const NO_PROXY = "localhost,127.0.0.1,::1";
 
@@ -50,13 +54,23 @@ export function buildEgressEnv(input: { proxy: string; token: Redacted }): Recor
 }
 
 export interface EgressPrincipalsDeps {
-  pool: Pick<pg.Pool, "query">;
+  pool: pg.Pool;
+  /**
+   * Seals the OneCLI tokens of `egress.bindings` (the Secret the proxy mounts too). Undefined: no binding can be
+   * written, so a repo session is refused rather than run without its credential.
+   */
+  bindingKey?: Buffer | undefined;
   /** `http://host:port` of the proxy Service. */
   proxyUrl: string;
   /** The orchestrator's master key (the one sandbox tokens derive from). */
   master: () => string;
   now?: () => number;
+  /** Only tests change this. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** The longest a session waits for the proxies to serve a rule it just created. */
+export const PROPAGATION_WAIT_MS = 10_000;
 
 /** A Pod's address is re-read at most this often by `beforeUse`, so a tool call costs no Kubernetes read most times. */
 export const POD_IP_RECHECK_MS = 10_000;
@@ -64,6 +78,8 @@ export const POD_IP_RECHECK_MS = 10_000;
 export class EgressPrincipals {
   readonly #deps: EgressPrincipalsDeps;
   readonly #recorded = new Map<string, { ip: string | undefined; checkedAt: number }>();
+  /** The OneCLI token last sealed for each session by this process. */
+  readonly #bound = new Map<string, string>();
 
   constructor(deps: EgressPrincipalsDeps) {
     this.#deps = deps;
@@ -95,7 +111,6 @@ export class EgressPrincipals {
    * can send anything. A session that does not use the proxy, or whose principal is revoked, is left alone.
    */
   async attached(session: SessionRow, podIp: string | undefined): Promise<void> {
-    if (!usesEgressProxy(session)) return;
     if ((await this.#token(session)) === undefined) return;
     await this.#record(session.id, podIp);
   }
@@ -105,10 +120,9 @@ export class EgressPrincipals {
     this.#recorded.set(sessionId, { ip: podIp, checkedAt: this.#now() });
   }
 
-  /** The `shellEnv` of a plain session; undefined for a session the proxy does not serve or a revoked principal. */
+  /** The proxy environment of a session; undefined for a session that is going away or whose principal is revoked. */
   async shellEnv(session: SessionRow): Promise<Record<string, string> | undefined> {
-    if (!usesEgressProxy(session) || session.status === "deleted" || session.status === "deleting")
-      return undefined;
+    if (session.status === "deleted" || session.status === "deleting") return undefined;
     const token = await this.#token(session);
     return token === undefined ? undefined : buildEgressEnv({ proxy: this.#deps.proxyUrl, token });
   }
@@ -118,7 +132,6 @@ export class EgressPrincipals {
    * and the token works only from the recorded one. Re-reads the address at most every `POD_IP_RECHECK_MS`.
    */
   async beforeUse(session: SessionRow, readIp: () => Promise<string | undefined>): Promise<void> {
-    if (!usesEgressProxy(session)) return;
     const seen = this.#recorded.get(session.id);
     if (seen === undefined || this.#now() - seen.checkedAt < POD_IP_RECHECK_MS) return;
     const ip = await readIp();
@@ -126,9 +139,66 @@ export class EgressPrincipals {
     else seen.checkedAt = this.#now();
   }
 
-  /** Session deletion: the token is refused by the proxy from the next notification on. Idempotent. */
+  /** Whether a OneCLI binding can be written (the sealing key is configured). */
+  canBind(): boolean {
+    return this.#deps.bindingKey !== undefined;
+  }
+
+  /**
+   * A repo session's OneCLI agent is ready: seal its token for the proxy and make `route=onecli` apply to the hosts
+   * where OneCLI injects its credential. The binding goes first and the rules last: a rule bumps the rules revision, and
+   * once every proxy replica reports that revision it has read the binding too (one statement reads both), so the
+   * session's first call cannot reach the route before the binding is there. Writes only what changed: the same token
+   * is not sealed again in this process, existing rules are not recreated.
+   */
+  async bindOneCli(session: SessionRow, token: Redacted, hosts: readonly string[]): Promise<void> {
+    const key = this.#deps.bindingKey;
+    if (key === undefined) throw new Error("the egress binding key is not configured");
+    const revealed = token.reveal();
+    if (this.#bound.get(session.id) !== revealed) {
+      await putBinding(this.#deps.pool, key, session.id, revealed);
+      this.#bound.set(session.id, revealed);
+    }
+    const revision = await ensureSessionOneCliRules(this.#deps.pool, session.id, hosts);
+    if (revision !== undefined) await this.#awaitProxies(revision, session.id);
+  }
+
+  /** Waits (bounded) until every serving proxy replica has read at least `revision`; a missing replica never blocks. */
+  async #awaitProxies(revision: number, sessionId: string): Promise<void> {
+    const sleep = this.#deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const start = this.#now();
+    for (;;) {
+      const serving = (await readProxyStatus(this.#deps.pool)).filter((r) => r.state === "serving");
+      if (serving.every((r) => r.revision !== null && r.revision >= revision)) return;
+      if (this.#now() - start >= PROPAGATION_WAIT_MS) {
+        log("egress-propagation-timeout", { session: sessionId, revision });
+        return;
+      }
+      await sleep(200);
+    }
+  }
+
+  /**
+   * Session deletion (and the orphan sweep): the egress token is refused by the proxy from the next notification on
+   * (well under 10 s), and the session's binding and session rules are gone. The principal goes first, since a dead
+   * token already ends everything; each step is idempotent, so a retry finishes what a failure left. Open tunnels are
+   * not closed (slice 7).
+   */
   async revoke(sessionId: string): Promise<void> {
     this.#recorded.delete(sessionId);
+    this.#bound.delete(sessionId);
     await revokePrincipal(this.#deps.pool, sessionId);
+    await deleteBinding(this.#deps.pool, sessionId);
+    await removeSessionRules(this.#deps.pool, sessionId);
+  }
+
+  /** Session ids that still hold anything at the proxy (a live principal, a binding, a session rule): the sweep's input. */
+  async live(): Promise<string[]> {
+    const [principals, bound, ruled] = await Promise.all([
+      livePrincipalSessions(this.#deps.pool),
+      boundSessions(this.#deps.pool),
+      sessionsWithRules(this.#deps.pool),
+    ]);
+    return [...new Set([...principals, ...bound, ...ruled])].sort();
   }
 }

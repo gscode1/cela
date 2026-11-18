@@ -1,7 +1,7 @@
 {{- /*
 The egress proxy (epic #50, ADR 0035): a CONNECT proxy that judges every connection by the rules in Postgres, on the
 address the host resolved to. Stateless: two replicas, each loads the rules itself and reports to egress.proxy_status.
-Nothing in this slice sends sandbox traffic here (the sandbox proxy environment and the network cutover come later).
+Sandboxes reach it through their proxy environment (ADR 0036); the network cutover that makes it the only way out is later.
 */ -}}
 {{- if .Values.egressProxy.enabled }}
 {{- $e := .Values.egressProxy }}
@@ -75,6 +75,11 @@ spec:
             # and the Kubernetes API's ClusterIP (KUBERNETES_SERVICE_HOST) are added by the proxy itself.
             - { name: EGRESS_PLATFORM_HOSTS, value: {{ include "pi-durable.egressPlatformHosts" . | quote }} }
             - { name: EGRESS_PLATFORM_CIDRS, value: {{ include "pi-durable.egressPlatformCidrs" . | quote }} }
+            {{- if include "pi-durable.egressOnecliRoute" . }}
+            # route=onecli: the one upstream the proxy dials for it, and the key that opens the sessions' OneCLI tokens.
+            - { name: EGRESS_UPSTREAM_ADDR, value: {{ include "pi-durable.onecliGatewayAddr" . | quote }} }
+            - { name: EGRESS_BINDING_KEY_FILE, value: /etc/pi-egress-binding/key }
+            {{- end }}
             - { name: EGRESS_LISTEN, value: ":3128" }
             - { name: EGRESS_HEALTH_LISTEN, value: ":3130" }
           ports:
@@ -94,12 +99,27 @@ spec:
           securityContext:
             {{- include "pi-durable.containerSecurityContext" . | nindent 12 }}
             readOnlyRootFilesystem: true
-          {{- if include "pi-durable.databaseTlsEnabled" . }}
+          {{- if or (include "pi-durable.databaseTlsEnabled" .) (include "pi-durable.egressOnecliRoute" .) }}
           volumeMounts:
+            {{- if include "pi-durable.databaseTlsEnabled" . }}
             {{- include "pi-durable.databaseTlsMount" . | nindent 12 }}
+            {{- end }}
+            {{- if include "pi-durable.egressOnecliRoute" . }}
+            - { name: egress-binding, mountPath: /etc/pi-egress-binding, readOnly: true }
+            {{- end }}
           {{- end }}
-      {{- if include "pi-durable.databaseTlsEnabled" . }}
+      {{- if or (include "pi-durable.databaseTlsEnabled" .) (include "pi-durable.egressOnecliRoute" .) }}
       volumes:
+        {{- if include "pi-durable.databaseTlsEnabled" . }}
         {{- include "pi-durable.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
+        {{- if include "pi-durable.egressOnecliRoute" . }}
+        # Both the proxy and the orchestrators mount this key, never a sandbox. Required: a pod that cannot open
+        # bindings must not start and silently deny every onecli connection.
+        - name: egress-binding
+          secret:
+            secretName: {{ $e.binding.existingSecret }}
+            items: [{ key: {{ $e.binding.key }}, path: key }]
+        {{- end }}
       {{- end }}
 {{- end }}

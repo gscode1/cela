@@ -193,6 +193,8 @@ export interface ExplainResult {
   /** Where `profileRuleSets` came from: the named profile, the session's own principal (as created), or none. */
   profileSource?: "profile" | "principal" | "none";
   addressesChecked: boolean;
+  /** Whether the asked session has a OneCLI binding at the proxy (a route onecli allow is denied without one); null when no session was asked about. */
+  binding?: boolean | null;
 }
 
 export function explainEgress(token: string, request: ExplainRequest): Promise<ExplainResult> {
@@ -206,6 +208,8 @@ export interface EgressStatus {
   invalid: number;
   /** Sessions with an egress token: live, live with a known Pod address, revoked. */
   principals?: { active: number; withPodIp: number; revoked: number };
+  /** Sessions whose OneCLI token is sealed for the proxy (ADR 0037). */
+  bindings?: { total: number };
   proxy: {
     replicas: {
       name?: string;

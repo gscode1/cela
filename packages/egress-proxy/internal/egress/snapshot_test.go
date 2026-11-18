@@ -19,7 +19,7 @@ func TestParseSnapshotSkipsInvalidRows(t *testing.T) {
 	 {"id":8,"rule_set":"npm","session_id":null,"effect":"allow","host":"10.20.0.0/16","ports":[5432],"route":"direct","allows_private":true,"expires_at":null},
 	 {"id":9,"rule_set":"npm","session_id":null,"effect":"allow","host":"a.example.com","ports":[],"route":"direct","allows_private":false,"expires_at":null}
 	]`
-	s, err := parseSnapshot(12, []byte(sets), []byte(rules), nil)
+	s, err := parseSnapshot(12, []byte(sets), []byte(rules), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +52,10 @@ func TestParseSnapshotSkipsInvalidRows(t *testing.T) {
 
 func TestParseSnapshotRejectsBrokenJSON(t *testing.T) {
 	t.Parallel()
-	if _, err := parseSnapshot(1, []byte(`{`), []byte(`[]`), nil); err == nil {
+	if _, err := parseSnapshot(1, []byte(`{`), []byte(`[]`), nil, nil); err == nil {
 		t.Error("broken rule sets accepted")
 	}
-	if _, err := parseSnapshot(1, []byte(`[]`), []byte(`nope`), nil); err == nil {
+	if _, err := parseSnapshot(1, []byte(`[]`), []byte(`nope`), nil, nil); err == nil {
 		t.Error("broken rules accepted")
 	}
 }

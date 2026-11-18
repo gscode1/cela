@@ -105,6 +105,9 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if not .Values.egressProxy.database.existingSecret -}}
 {{- fail "egressProxy.enabled needs egressProxy.database.existingSecret: a Secret with the connection URI of the proxy's read-only role (docs/decisions/0035-egress-proxy-runtime.md)" -}}
 {{- end -}}
+{{- if and (ne .Values.onecli.mode "disabled") (not .Values.egressProxy.binding.existingSecret) -}}
+{{- fail "egressProxy.enabled with OneCLI needs egressProxy.binding.existingSecret: a Secret with a 32 byte base64 key under `key`, which seals the OneCLI tokens the proxy chains (docs/decisions/0037-egress-onecli-route.md)" -}}
+{{- end -}}
 {{- if not (or .Values.images.egressProxy.tag .Values.images.egressProxy.digest) -}}
 {{- fail "egressProxy.enabled needs images.egressProxy.tag or digest (images/build.sh egress-proxy prints them)" -}}
 {{- end -}}
@@ -149,6 +152,17 @@ the Kubernetes API's ClusterIP are added by the proxy from its own URI and envir
 {{- end -}}
 {{- concat $hosts .Values.egressProxy.platform.hosts | uniq | join "," -}}
 {{- end -}}
+
+{{/* The OneCLI route of the egress proxy (ADR 0037) exists when the proxy and OneCLI are both on. */}}
+{{- define "pi-durable.egressOnecliRoute" -}}
+{{- if and .Values.egressProxy.enabled (ne .Values.onecli.mode "disabled") }}true{{ end -}}
+{{- end }}
+
+{{/* host:port of the OneCLI gateway, the one upstream of the proxy. */}}
+{{- define "pi-durable.onecliGatewayAddr" -}}
+{{- $o := include "pi-durable.onecli" . | fromJson -}}
+{{- printf "%s:%s" (first (splitList ":" (urlParse $o.gatewayUrl).host)) (include "pi-durable.urlPort" $o.gatewayUrl) -}}
+{{- end }}
 
 {{/* Addresses the egress proxy blocks as the platform: the operator's cidrs, the API server addresses and the database's cidrs. */}}
 {{- define "pi-durable.egressPlatformCidrs" -}}

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   applyMigrations,
   PROBE_SHARD,
@@ -7,7 +8,7 @@ import {
   createPool,
   errorMessage,
   listSessionRefs,
-  livePrincipalSessions,
+  parseBindingKey,
   publishModelProviders,
   repoAllowed,
   sessionByConversation,
@@ -40,7 +41,7 @@ import { deleteProbePods } from "./netprobe-kube.js";
 import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
 import { observedPod, listClaims, listPvcs } from "./kube.js";
 import { claimNameFor, conversationOfName } from "./lifecycle.js";
-import { EgressPrincipals, usesEgressProxy } from "./egress.js";
+import { EgressPrincipals } from "./egress.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -146,6 +147,28 @@ async function main(): Promise<void> {
           callApi,
           config.repos.onecliCalls,
         );
+  const skills = new SkillLibrary(pool, config.shard);
+  // The egress proxy (ADRs 0036, 0037): principals, the proxy environment of every session and, for repo sessions,
+  // the OneCLI binding. Off without PI_EGRESS_PROXY_URL. The binding key is read once; a missing or malformed file
+  // is fatal when the proxy is on, because a repo session would otherwise run without its credential.
+  const bindingKey =
+    config.egressProxyUrl === undefined || config.egressBindingKeyFile === undefined
+      ? undefined
+      : parseBindingKey(await readFile(config.egressBindingKeyFile, "utf8"));
+  const egress =
+    config.egressProxyUrl === undefined
+      ? undefined
+      : new EgressPrincipals({
+          pool,
+          proxyUrl: config.egressProxyUrl,
+          bindingKey,
+          master: () => {
+            const master = process.env[ENV.masterKey];
+            if (master === undefined || master === "")
+              throw new Error(`${ENV.masterKey} is not set`);
+            return master;
+          },
+        });
   const repos = new RepoAccess({
     pool,
     onecli,
@@ -155,22 +178,8 @@ async function main(): Promise<void> {
     caFile: config.onecli.caFile,
     fetch: callApi,
     namePrefix: config.repos.namePrefix,
+    egress,
   });
-  const skills = new SkillLibrary(pool, config.shard);
-  // The egress proxy (ADR 0036): principals and the proxy environment of plain sessions. Off without PI_EGRESS_PROXY_URL.
-  const egress =
-    config.egressProxyUrl === undefined
-      ? undefined
-      : new EgressPrincipals({
-          pool,
-          proxyUrl: config.egressProxyUrl,
-          master: () => {
-            const master = process.env[ENV.masterKey];
-            if (master === undefined || master === "")
-              throw new Error(`${ENV.masterKey} is not set`);
-            return master;
-          },
-        });
   const hooks: SandboxHooks = {
     // The session's size picks its pool; a session from before sizes keeps the unsized one.
     warmPoolOf: async (conversationId) => {
@@ -200,12 +209,13 @@ async function main(): Promise<void> {
         log("egress-principal-failed", { claim: claimName, error: errorMessage(error) });
       }
     },
-    // A repo session keeps the OneCLI environment until slice 5; every other session gets the proxy's.
+    // A repo session's env comes from RepoAccess (the egress proxy's with the proxy on, the OneCLI gateway's without);
+    // every other session gets the proxy's, or nothing.
     shellEnv: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);
       if (session === undefined) return undefined;
-      if (egress !== undefined && usesEgressProxy(session)) return egress.shellEnv(session);
-      return repos.shellEnv(session, conversationId);
+      if (session.repo !== null) return repos.shellEnv(session, conversationId);
+      return egress?.shellEnv(session);
     },
     beforeUse: async (conversationId) => {
       await repos.beforeUse(conversationId);
@@ -319,7 +329,7 @@ async function main(): Promise<void> {
           }),
     destroyClaim: (claim, label) => host.destroyOrphanSandbox(claim, label),
     revokeSession: (sessionId) => repos.revokeSession(sessionId),
-    listEgressPrincipals: egress === undefined ? undefined : () => livePrincipalSessions(pool),
+    listEgressPrincipals: egress === undefined ? undefined : () => egress.live(),
     revokeEgress: egress === undefined ? undefined : (sessionId) => egress.revoke(sessionId),
     graceMs: config.sweep.graceMs,
     maxActions: config.sweep.maxActions,

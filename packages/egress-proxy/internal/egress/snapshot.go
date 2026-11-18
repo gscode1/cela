@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -16,12 +17,49 @@ type Snapshot struct {
 	// byHash and bySession index the principals that are not revoked (a revoked or deleted one is not in the snapshot).
 	byHash    map[string]Principal
 	bySession map[string]Principal
+	// bindings are the sealed OneCLI tokens by session id (ADR 0037). They stay sealed here: SnapshotPrincipals opens one
+	// at the moment a tunnel needs it, so the snapshot holds no plaintext token.
+	bindings map[string]sealedBinding
 	// Invalid counts the stored rows that were left out because they do not pass the rule shape checks; the
 	// admin API reports the same rows as invalid, and the evaluation of explain skips them too.
 	Invalid int
 	// InvalidPrincipals counts principal rows that could not be used.
 	InvalidPrincipals int
+	// InvalidBindings counts binding rows that could not be used (a malformed row).
+	InvalidBindings int
 }
+
+type sealedBinding struct {
+	keyID      string
+	nonce      []byte
+	ciphertext []byte
+}
+
+// bindingRow is one egress.bindings row as the load statement returns it (bytes as hex).
+type bindingRow struct {
+	SessionID  string `json:"session_id"`
+	KeyID      string `json:"key_id"`
+	Nonce      string `json:"nonce"`
+	Ciphertext string `json:"ciphertext"`
+}
+
+// addBindings indexes the binding rows. A row that is malformed is counted and skipped: its session has no binding, which
+// the proxy treats as a deny for the onecli route.
+func (s *Snapshot) addBindings(rows []bindingRow) {
+	s.bindings = make(map[string]sealedBinding, len(rows))
+	for _, row := range rows {
+		nonce, err1 := hex.DecodeString(row.Nonce)
+		ct, err2 := hex.DecodeString(row.Ciphertext)
+		if row.SessionID == "" || err1 != nil || err2 != nil || len(nonce) == 0 || len(ct) == 0 {
+			s.InvalidBindings++
+			continue
+		}
+		s.bindings[strings.ToLower(row.SessionID)] = sealedBinding{keyID: row.KeyID, nonce: nonce, ciphertext: ct}
+	}
+}
+
+// Bindings is how many sessions have a binding in the snapshot.
+func (s *Snapshot) Bindings() int { return len(s.bindings) }
 
 type setRow struct {
 	Name         string `json:"name"`
@@ -74,7 +112,7 @@ func (s *Snapshot) addPrincipals(rows []principalRow) {
 // Principals is how many principals the snapshot holds (not revoked).
 func (s *Snapshot) Principals() int { return len(s.byHash) }
 
-func parseSnapshot(revision int64, setsJSON, rulesJSON, principalsJSON []byte) (*Snapshot, error) {
+func parseSnapshot(revision int64, setsJSON, rulesJSON, principalsJSON, bindingsJSON []byte) (*Snapshot, error) {
 	var sets []setRow
 	if err := json.Unmarshal(setsJSON, &sets); err != nil {
 		return nil, fmt.Errorf("rule sets: %w", err)
@@ -89,8 +127,15 @@ func parseSnapshot(revision int64, setsJSON, rulesJSON, principalsJSON []byte) (
 			return nil, fmt.Errorf("principals: %w", err)
 		}
 	}
+	var bindings []bindingRow
+	if len(bindingsJSON) > 0 {
+		if err := json.Unmarshal(bindingsJSON, &bindings); err != nil {
+			return nil, fmt.Errorf("bindings: %w", err)
+		}
+	}
 	s := &Snapshot{Revision: revision}
 	s.addPrincipals(principals)
+	s.addBindings(bindings)
 	for _, r := range sets {
 		s.RuleSets = append(s.RuleSets, RuleSet{Name: r.Name, AppliesToAll: r.AppliesToAll})
 	}

@@ -274,7 +274,16 @@ egressProxy:
   database:
     existingSecret: "" # required: a Secret in the release namespace that holds the connection URI of that role
     uriKey: uri
-  # Sandboxes send plain sessions' traffic here with a per-session token (ADR 0036). false: a request without a token is
+  # The OneCLI route (ADR 0037): with OneCLI on, the proxy chains `route=onecli` connections to the OneCLI gateway with the
+  # session's OneCLI agent token, which the orchestrator stores in egress.bindings sealed (AES-256-GCM) with this key. The
+  # Secret holds 32 random bytes, base64 encoded, under `key`; it is mounted into the proxy and the orchestrators only
+  # (never a sandbox) and is a backup asset: without it the bindings cannot be opened and repo sessions are refused.
+  #   openssl rand -base64 32 | tr -d '\n' | kubectl create secret generic pi-egress-binding --from-file=key=/dev/stdin
+  # Needed when egressProxy.enabled and onecli.mode is not disabled.
+  binding:
+    existingSecret: ""
+    key: key
+  # Sandboxes send every session's traffic here with a per-session token (ADR 0036, 0037). false: a request without a token is
   # judged as anonymous (only the rule sets that apply to all); true: it is refused. A token that is unknown, revoked or
   # used from another Pod is always refused. Turn it on with the network cutover, when nothing else may reach the proxy.
   requireAuth: false
