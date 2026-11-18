@@ -394,7 +394,7 @@ if [[ $egress_proxy -eq 1 ]]; then
       kn create secret generic pi-egress-binding --from-file=key="$tmp/binding-key" >/dev/null
       echo "pi-egress-binding: created (the key that seals OneCLI tokens for the egress proxy)"
     fi
-    extra_args+=(--set egressProxy.binding.existingSecret=pi-egress-binding)
+    extra_args+=(--set egressProxy.binding.existingSecret=pi-egress-binding --set onecli.hostRules.reconcile=true)
   fi
 fi
 

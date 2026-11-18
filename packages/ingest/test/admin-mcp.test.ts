@@ -122,6 +122,43 @@ describe("admin MCP servers", () => {
     expect(history.history[1]?.old).toBeNull();
   });
 
+  it("derives the egress rules of the catalog in the same transaction (ADR 0040)", async () => {
+    const { base, db } = await start();
+    const rules = () => db.egress.rules.map((r) => [r.rule_set, r.host, r.route, r.created_by]);
+    await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO);
+    expect(rules()).toEqual([["mcp-catalog", "mcp.example.com", "direct", "alice"]]);
+    // One NOTIFY on the egress channel for the write, committed with the catalog row.
+    expect(db.egress.notifications).toHaveLength(1);
+    await call(base, "alice", "PUT", "/admin/mcp-servers/demo", { onecliSecret: "demo-key" });
+    expect(rules()).toEqual([["mcp-catalog", "mcp.example.com", "onecli", "alice"]]);
+    // A no-op PUT writes nothing, rules included.
+    await call(base, "alice", "PUT", "/admin/mcp-servers/demo", { onecliSecret: "demo-key" });
+    expect(db.egress.notifications).toHaveLength(2);
+    await call(base, "alice", "PUT", "/admin/mcp-servers/demo", { enabled: false });
+    expect(rules()).toEqual([]);
+    await call(base, "alice", "PUT", "/admin/mcp-servers/demo", { enabled: true });
+    expect(rules()).toHaveLength(1);
+    const gone = await call(base, "alice", "DELETE", "/admin/mcp-servers/demo?expectedRevision=4");
+    expect(gone.status).toBe(200);
+    expect(rules()).toEqual([]);
+    // The history of the rules names the admin who changed the catalog.
+    expect(db.egress.history.every((h) => h.changed_by === "alice")).toBe(true);
+  });
+
+  it("rolls the catalog write back when the derived rules cannot be written", async () => {
+    const { base, db } = await start();
+    const query = db.query.bind(db);
+    db.query = (sql, params) =>
+      sql.includes("insert into egress.revisions")
+        ? Promise.reject(new Error("egress is unavailable"))
+        : query(sql, params);
+    const res = await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO);
+    expect(res.status).toBe(500);
+    expect(db.mcp.size).toBe(0);
+    expect(db.mcpHistory).toHaveLength(0);
+    expect(db.egress.rules).toEqual([]);
+  });
+
   it("DELETE removes the row for real and puts the delete in the history; a second DELETE is 404", async () => {
     const { base, db } = await start();
     await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO);

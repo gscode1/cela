@@ -1,7 +1,7 @@
 # 0009: The MCP server catalog lives in Postgres, changed through the admin API
 
 Status: accepted, 2026-11-16 (issue #40). Amends [0007](0007-native-remote-mcp.md): the static `PI_MCP_SERVERS` is gone.
-Per-session selection is [0010](0010-session-profiles.md) (#41), credentials are #42.
+Per-session selection is [0010](0010-session-profiles.md) (#41), credentials are #42 ([0040](0040-mcp-egress-flow.md): `onecli_secret` names a OneCLI secret, granted to the session's own agent, and a catalog write also derives egress rules in its transaction).
 
 ## Context
 

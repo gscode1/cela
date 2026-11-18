@@ -24,6 +24,8 @@ import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";
 import { OneCliAdmin } from "./onecli-admin.js";
 import { modelCatalog, providerCredentials } from "./providers.js";
+import { McpAccess } from "./mcp-access.js";
+import { HostRuleReconciler } from "./onecli-host-rules.js";
 import { RepoAccess } from "./repo-access.js";
 import type { SandboxHooks } from "./sandboxes.js";
 import {
@@ -181,6 +183,17 @@ async function main(): Promise<void> {
     namePrefix: config.repos.namePrefix,
     egress,
   });
+  // The OneCLI identity of credentialed MCP calls: one agent per session, grants from its profile (ADR 0040, issue #42).
+  const mcpAccess = new McpAccess({
+    onecli,
+    catalog: () => mcpCatalog.get(),
+    sessionOf: (conversationId) => sessionByConversation(pool, config.shard, conversationId),
+    gateway: config.onecli.gateway,
+    caFile: config.onecli.caFile,
+    noProxy: config.onecli.noProxy,
+    namePrefix: config.repos.namePrefix,
+  });
+  running.mcpAccess = mcpAccess;
   const hooks: SandboxHooks = {
     // The session's size picks its pool; a session from before sizes keeps the unsized one.
     // Its network mode picks the pool of that size (ADR 0038); a session from before sizes and modes keeps `pi-env-pool`.
@@ -272,6 +285,7 @@ async function main(): Promise<void> {
     recycleAtStart,
     {
       catalog: mcpCatalog,
+      mcpIdentity: mcpAccess,
       conversationProfiles: () => liveConversationProfiles(pool, config.shard),
     },
   );
@@ -313,6 +327,7 @@ async function main(): Promise<void> {
     turnBudget: () => settings.turnBudget(),
     tokenBudget: () => settings.tokenBudget(),
     repos,
+    mcpAccess,
     ...(egress === undefined ? {} : { egress }),
     skills,
     timings: host.timings,
@@ -342,7 +357,10 @@ async function main(): Promise<void> {
             secrets: await onecli.listSecrets(),
           }),
     destroyClaim: (claim, label) => host.destroyOrphanSandbox(claim, label),
-    revokeSession: (sessionId) => repos.revokeSession(sessionId),
+    revokeSession: async (sessionId) => {
+      await repos.revokeSession(sessionId);
+      await mcpAccess.revokeSession(sessionId);
+    },
     listEgressPrincipals: egress === undefined ? undefined : () => egress.live(),
     revokeEgress: egress === undefined ? undefined : (sessionId) => egress.revoke(sessionId),
     graceMs: config.sweep.graceMs,
@@ -351,6 +369,33 @@ async function main(): Promise<void> {
   });
   running.sweeper = sweeper;
   sweeper.start(config.sweep.intervalMs);
+
+  // The OneCLI host rules follow the egress rules (ADR 0040): a catalog PUT or a rule write reaches the gateway within a
+  // pass, and the MCP servers retry their discovery as soon as the pass is done. Every shard runs one; a lock lets one pass at
+  // a time write. Temporary here: the OneCLI admin key moves out of the orchestrator with #65, and so does this.
+  if (onecli !== undefined && config.repos.reconcileHostRules) {
+    const hostRules = new HostRuleReconciler({
+      pool,
+      onecli,
+      onChanged: () => host.nudgeMcp(),
+    });
+    running.hostRules = hostRules;
+    void hostRules.start();
+    // A catalog change: the discovery agent of a server that left is removed, and once a pass has run (the derived rules are
+    // in the same transaction as the catalog row) the servers retry their discovery without waiting for their backoff.
+    mcpCatalog.subscribe((servers) => {
+      void mcpAccess.reconcileDiscovery(servers).catch((error: unknown) => {
+        log("mcp-discovery-agents-failed", { message: errorMessage(error) });
+      });
+      void hostRules.request().then(() => host.nudgeMcp());
+    });
+  } else {
+    mcpCatalog.subscribe((servers) => {
+      void mcpAccess.reconcileDiscovery(servers).catch((error: unknown) => {
+        log("mcp-discovery-agents-failed", { message: errorMessage(error) });
+      });
+    });
+  }
 
   // Only the owner consumes the inbox. Rows that arrived while no orchestrator ran are waiting.
   const inbox = new InboxLoop(

@@ -56,6 +56,7 @@ export type {
   McpCatalog,
   McpServerConfig,
   McpServerHistoryEntry,
+  CatalogWriteOptions,
   PutResult,
   StoredMcpServer,
 } from "./mcp-servers.js";
@@ -283,6 +284,15 @@ export {
   sealBinding,
 } from "./egress-bindings.js";
 export type { BindingCounts, SealedBinding } from "./egress-bindings.js";
+export {
+  deriveMcpRules,
+  MCP_RULE_SET,
+  MCP_RULES_AUTHOR,
+  mcpRuleNote,
+  syncMcpRules,
+  syncMcpRulesFromCatalog,
+} from "./egress-mcp-rules.js";
+export type { DerivedMcpRule, DerivedMcpRules } from "./egress-mcp-rules.js";
 export {
   ensureSessionOneCliRules,
   removeSessionRules,

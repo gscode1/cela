@@ -80,6 +80,9 @@ spec:
             {{- end }}
             - { name: PI_ONECLI_API, value: {{ $onecli.apiUrl | quote }} }
             - { name: PI_ONECLI_GATEWAY, value: {{ $onecli.gatewayUrl | quote }} }
+            {{- if and $root.Values.onecli.hostRules.reconcile $onecli.adminKeySecret }}
+            - { name: PI_ONECLI_HOST_RULES, value: reconcile }
+            {{- end }}
             {{- else }}
             # OneCLI is disabled: the variables are required at start but unused with scripted models only.
             - { name: PI_ONECLI_API, value: "http://onecli-disabled.invalid:10256" }

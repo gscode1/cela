@@ -56,7 +56,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | ingest, e2e driver | orchestrator | 8081 | only these two may call it | S orchestrator-allow-ingress |
 | orchestrator | Postgres | 5432 | durable state, advisory lock | S orchestrator-allow-egress |
 | orchestrator | sandbox pods | 8080, 9090 | sandboxd REST and gRPC | S orchestrator-allow-egress |
-| orchestrator | OneCLI | 10255, 10256 | model calls and remote MCP calls through the gateway; agent and secret management | S orchestrator-allow-egress |
+| orchestrator | OneCLI | 10255, 10256 | model calls and remote MCP calls through the gateway (a credentialed MCP server as the session's own OneCLI agent, [ADR 0040](decisions/0040-mcp-egress-flow.md)); agent, secret and host-rule management | S orchestrator-allow-egress |
 | orchestrator, e2e driver | kube-apiserver | 443, 6443 | claims, pods, PVCs; suites | C orchestrator-egress-kube-apiserver (chart), e2e-driver-egress-kube-apiserver (`tests/e2e/deploy/cilium`) |
 | orchestrator | `api.github.com` | 443 (+ DNS lookup of that name) | direct call that mints the repo-scoped GitHub App installation token (the App key never leaves the orchestrator); the only public host it may reach | C orchestrator-egress-github-api |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |

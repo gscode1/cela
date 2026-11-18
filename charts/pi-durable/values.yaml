@@ -66,6 +66,13 @@ onecli:
   # Names of the agents and secrets this install creates in OneCLI. A shared OneCLI needs a distinct prefix per install,
   # because every orchestrator's orphan sweep revokes the agents it does not know (ADR 0013).
   namePrefix: pi-session-
+  # The orchestrator keeps OneCLI's host rules (the gateway's allowlist, docs/onecli-host-rules.md) in step with the egress
+  # rules (docs/decisions/0040-mcp-egress-flow.md): one `pi-egress-allow-<host>` rule per host a route=onecli rule or an MCP
+  # catalog row asks for, so a catalog PUT makes a server reachable within seconds. It never changes a hand-made rule except
+  # that it recreates the terminal `block *` behind its own (the gateway applies rules in creation order). Needs the admin
+  # key (onecli.*.adminKeySecret). Off by default: the operator may manage the host rules by script.
+  hostRules:
+    reconcile: false
   # Names the bundled release and its bootstrap (hack/onecli-bootstrap.sh) produce; its defaults are the same. Change
   # them only together with the bootstrap's ONECLI_* variables.
   bundled:

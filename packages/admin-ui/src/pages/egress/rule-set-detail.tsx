@@ -28,10 +28,25 @@ export function RuleSetDetail() {
             <CardTitle className="flex flex-wrap items-center gap-2">
               {detail.data.name}
               {detail.data.appliesToAll && <Badge variant="warning">Applies to all sessions</Badge>}
+              {detail.data.system === true && (
+                <Badge variant="outline">Derived from the MCP catalog</Badge>
+              )}
             </CardTitle>
             <CardDescription>{detail.data.description}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            {detail.data.system === true && (
+              <Alert data-testid="system-set-note">
+                Derived from the MCP server catalog and read-only. One rule per host of an enabled
+                server, <code>onecli</code> for a server with a credential, <code>direct</code>{" "}
+                otherwise. The orchestrator reaches these hosts for the sessions whose profile names
+                the server; no profile names this set. Change it by editing{" "}
+                <Link className="underline" to="/mcp-servers">
+                  the MCP servers
+                </Link>
+                .
+              </Alert>
+            )}
             <p className="text-sm text-muted-foreground">
               Used by {using.length === 0 ? "no profile" : <ProfileLinks profiles={using} />}
               {detail.data.appliesToAll ? ", and by every session." : "."}
@@ -40,6 +55,7 @@ export function RuleSetDetail() {
               owner={{ ruleSet: detail.data.name }}
               rules={detail.data.rules}
               revision={list.data?.revision}
+              readOnly={detail.data.system === true}
             />
           </CardContent>
         </Card>

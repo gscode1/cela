@@ -24,6 +24,22 @@ export const agentIdentifier = (
   prefix: string = DEFAULT_ONECLI_NAME_PREFIX,
 ): string => `${prefix}${sessionId}`;
 
+/**
+ * The agent that carries a session's credentialed MCP calls (docs/decisions/0040-mcp-egress-flow.md); swept with the session.
+ * OneCLI limits an identifier to 50 characters, and `pi-session-<uuid>` is 47: the suffix is two characters on purpose.
+ */
+/** OneCLI refuses an agent identifier longer than this (seen live: HTTP 400 at 51). */
+export const ONECLI_IDENTIFIER_MAX = 50;
+
+export const mcpAgentIdentifier = (
+  sessionId: string,
+  prefix: string = DEFAULT_ONECLI_NAME_PREFIX,
+): string => `${agentIdentifier(sessionId, prefix)}-m`;
+
+/** The agent that lists the tools of one credentialed MCP server (no session: the catalog's own, `tools/list` only): `<prefix>d-<server>`. */
+export const mcpDiscoveryPrefix = (prefix: string = DEFAULT_ONECLI_NAME_PREFIX): string =>
+  `${prefix}d-`;
+
 export const secretName = (
   sessionId: string,
   suffix: string,
@@ -39,7 +55,7 @@ export function namePatterns(prefix: string): { agent: RegExp; secret: RegExp } 
   // The prefix is validated to [a-z0-9-], none of which is a regex metacharacter outside a class.
   const p = validateNamePrefix(prefix);
   return {
-    agent: new RegExp(`^${p}(${UUID_SHAPE})$`),
+    agent: new RegExp(`^${p}(${UUID_SHAPE})(?:-m)?$`),
     secret: new RegExp(`^${p}(${UUID_SHAPE})-(git|api)$`),
   };
 }

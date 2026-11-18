@@ -411,34 +411,36 @@ export function EgressRuleSetPicker({
           </Link>
         </p>
       )}
-      {(catalog ?? []).map((set) => {
-        const chosen = selected.includes(set.name);
-        return (
-          <div key={set.name} className="flex flex-wrap items-center gap-2 text-sm">
-            <Checkbox
-              id={`egress-set-${set.name}`}
-              checked={chosen}
-              disabled={set.appliesToAll && !chosen}
-              onChange={(event) => {
-                onChange(
-                  event.target.checked
-                    ? [...selected, set.name]
-                    : selected.filter((entry) => entry !== set.name),
-                );
-              }}
-            />
-            <Label htmlFor={`egress-set-${set.name}`}>{set.name}</Label>
-            <span className="text-muted-foreground">
-              {set.ruleCount} {set.ruleCount === 1 ? "rule" : "rules"}
-            </span>
-            {set.appliesToAll && (
-              <Badge variant="warning">
-                {chosen ? "Applies to all sessions" : "Already included: applies to all sessions"}
-              </Badge>
-            )}
-          </div>
-        );
-      })}
+      {(catalog ?? [])
+        .filter((set) => set.system !== true)
+        .map((set) => {
+          const chosen = selected.includes(set.name);
+          return (
+            <div key={set.name} className="flex flex-wrap items-center gap-2 text-sm">
+              <Checkbox
+                id={`egress-set-${set.name}`}
+                checked={chosen}
+                disabled={set.appliesToAll && !chosen}
+                onChange={(event) => {
+                  onChange(
+                    event.target.checked
+                      ? [...selected, set.name]
+                      : selected.filter((entry) => entry !== set.name),
+                  );
+                }}
+              />
+              <Label htmlFor={`egress-set-${set.name}`}>{set.name}</Label>
+              <span className="text-muted-foreground">
+                {set.ruleCount} {set.ruleCount === 1 ? "rule" : "rules"}
+              </span>
+              {set.appliesToAll && (
+                <Badge variant="warning">
+                  {chosen ? "Applies to all sessions" : "Already included: applies to all sessions"}
+                </Badge>
+              )}
+            </div>
+          );
+        })}
       {missing.map((name) => (
         <div
           key={name}

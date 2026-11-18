@@ -14,7 +14,9 @@ import {
   hasBinding,
   principalCounts,
   principalRuleSets,
+  MCP_RULE_SET,
   readEgress,
+  readMcpServers,
   readProxyStatus,
   readJsonObject,
   readProfile,
@@ -47,6 +49,36 @@ function ruleSetJson(set: StoredRuleSet) {
     createdAt: set.createdAt.toISOString(),
     updatedAt: set.updatedAt.toISOString(),
   };
+}
+
+/**
+ * The catalog's servers on `host`: whether each is enabled and credentialed (the derived rule's route), and, when a
+ * profile was given, whether the profile names it. Empty for a host that is no server's.
+ */
+async function mcpHostInfo(pool: pg.Pool, host: string, profileServers: string[] | undefined) {
+  const wanted = normalizeHost(host);
+  const catalog = await readMcpServers(pool);
+  const servers = catalog.servers.flatMap(({ server }) => {
+    let serverHost: string;
+    try {
+      serverHost = new URL(server.url).hostname.toLowerCase();
+    } catch {
+      return [];
+    }
+    if (serverHost !== wanted) return [];
+    return [
+      {
+        name: server.name,
+        enabled: server.enabled,
+        credentialed: server.onecliSecret !== null,
+        route: server.onecliSecret === null ? "direct" : "onecli",
+        ...(profileServers === undefined
+          ? {}
+          : { namedByProfile: profileServers.includes(server.name) }),
+      },
+    ];
+  });
+  return { ruleSet: MCP_RULE_SET, servers };
 }
 
 /** The body, or undefined after answering the 400 for it. */
@@ -355,6 +387,7 @@ export async function handleAdminEgress(
       return;
     }
     let profileRuleSets: string[] = [];
+    let profileMcpServers: string[] | undefined;
     // Where the profile rule sets came from: the named profile's current version, the session's principal (the sets of the
     // version the session was created with, which is what the proxy judges by), or nothing.
     let profileSource: "profile" | "principal" | "none" = "none";
@@ -366,6 +399,7 @@ export async function handleAdminEgress(
         return;
       }
       profileRuleSets = stored.definition.egressRuleSets ?? [];
+      profileMcpServers = stored.definition.mcpServers ?? [];
     } else if (typeof sessionId === "string") {
       const principal = await principalRuleSets(pool, sessionId);
       if (principal !== undefined && !principal.revoked) {
@@ -401,6 +435,9 @@ export async function handleAdminEgress(
       // Whether the session has a OneCLI binding at the proxy (ADR 0037). A route=onecli allow is denied by the proxy
       // without one; null when no session was asked about.
       binding: typeof sessionId === "string" ? await hasBinding(pool, sessionId) : null,
+      // MCP servers of the catalog on this host (ADR 0040): the orchestrator reaches them for the sessions whose profile
+      // names them, through the OneCLI gateway; the sandbox's own connection to the host is judged by the rules above.
+      mcp: await mcpHostInfo(pool, host, profileMcpServers),
     });
     return;
   }

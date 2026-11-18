@@ -94,11 +94,33 @@ needs on this list. It is not done; revisit before real use with untrusted code.
 List rules with `GET /v1/org/policy/rules` and delete `pi-block-all` first (restores relaying of public hosts as in
 v2.20.0 defaults), then the `pi-allow-*` rules if wanted. Deleting only the block rule is enough to undo the restriction.
 
-## MCP servers: a catalog row does not open egress
+## Reconciled rules: MCP servers and route=onecli hosts (ADR 0040)
 
-An MCP server in the catalog (`inbox.mcp_servers`, managed through `/admin/mcp-servers`, ADR 0009) is only a name and a
-URL. Adding a row never allows its host: the orchestrator reaches it through the OneCLI gateway, so the host must also
-be allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's
-egress policy (`hack/onecli-policies/egress.yaml`). Until both allow it, the server fails to connect: the orchestrator
-logs `mcp-discovery-failed` with the retry delay, and calls to its tools settle `tool_unavailable`. The admin API does
-not probe the network, so it reports reachability as `unknown`; the log is the signal. Add the rule first, then the row.
+With `PI_ONECLI_HOST_RULES=reconcile` (chart `onecli.hostRules.reconcile`; on in `hack/kind-up.sh --onecli --egress-proxy`) the
+orchestrator keeps the gateway's host rules in step with the egress rules, so a host needs no run of the script above:
+
+| Wanted host | From |
+|---|---|
+| every host of an `allow` rule with `route=onecli` (a rule set, a repo session's rules, an admin's; not expired) | the egress rules (ADR 0034, 0037) |
+| every host of an enabled MCP server of the catalog, whatever its route | the system set `mcp-catalog`, derived in the transaction of the catalog write (ADR 0040) |
+
+The reconciler creates one rule `pi-egress-allow-<host>` (`*.suffix` is `pi-egress-allow-wild-suffix`) per wanted host and deletes
+the ones nobody wants any more. It runs on every `egress_rules` notification (a catalog PUT is one), on a catalog notification and
+every 30 s, serialised across orchestrators by an advisory lock; after a change every MCP server retries its discovery at once.
+A catalog PUT is reachable in seconds (live numbers in ADR 0040).
+
+**Ownership.** Only rules named `pi-egress-allow-*` are ever created or deleted. Rules made by hand or by
+`hack/onecli-host-rules.sh` (`pi-allow-*`, anything else) are never changed, and a host one of them already covers in front of
+the block gets no rule of ours. **The terminal block is the one exception**: the gateway applies rules in creation order (first
+match wins; `priority` is not settable), so an allow created behind `block *` is ineffective. When the reconciler adds allows it
+recreates the block, same name and body, behind them: the copy is created first and the original deleted second, so the gateway
+is never without a block. It never creates a block where there is none. Do not edit `pi-egress-allow-*` rules by hand: the next
+pass puts them back (or removes them).
+
+**Without the reconciler** (the default for a chart install) an MCP catalog row still does not open egress: the host must be
+allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's egress policy
+(`hack/onecli-policies/egress.yaml`). Until then the server fails to connect: the orchestrator logs `mcp-discovery-failed` with the
+retry delay, and calls to its tools settle `tool_unavailable`.
+
+The reconciler uses the OneCLI admin key the orchestrator holds for repo sessions. Epic #65 moves provisioning out of the
+orchestrator; the reconciler moves with it.

@@ -17,6 +17,11 @@ const EGRESS_LOCK = "egress:rules";
 /** A stored rule set; the wire shape of the admin API besides the dates (ISO strings there). */
 export interface StoredRuleSet extends RuleSetSpec {
   name: string;
+  /**
+   * Derived and written by code, never by hand (ADR 0040): the admin API refuses edits of the set and its rules, and no
+   * profile may name it. `mcp-catalog` is the first.
+   */
+  system: boolean;
   /** The revision of the egress data at this set's last write. */
   revision: number;
   createdAt: Date;
@@ -68,6 +73,8 @@ interface RuleSetRow extends Audit {
   name: string;
   description: string;
   applies_to_all: boolean;
+  /** Absent in rows from before migration 029. */
+  system?: boolean;
 }
 interface RuleRow extends Audit {
   id: number | string;
@@ -85,7 +92,7 @@ interface RuleRow extends Audit {
 const RULE_COLUMNS =
   "id, rule_set, session_id, effect, host, ports, route, allows_private, expires_at, note, revision, created_at, created_by, updated_at, updated_by";
 const SET_COLUMNS =
-  "name, description, applies_to_all, revision, created_at, created_by, updated_at, updated_by";
+  "name, description, applies_to_all, system, revision, created_at, created_by, updated_at, updated_by";
 
 const audit = (row: Audit) => ({
   revision: Number(row.revision),
@@ -102,7 +109,7 @@ function setFromRow(row: RuleSetRow): StoredRuleSet {
     appliesToAll: row.applies_to_all,
   });
   if (typeof spec === "string") throw new Error(`stored rule set ${row.name} is invalid: ${spec}`);
-  return { ...spec, name: row.name, ...audit(row) };
+  return { ...spec, name: row.name, system: row.system === true, ...audit(row) };
 }
 
 /** A stored rule row, validated like input. The epoch as `now`: a rule that has expired is still a valid row. */
@@ -254,63 +261,75 @@ async function inTransaction<T>(
  * Runs one write: the write lock, the `expectedRevision` check (0 matches an empty schema) and `work`, which calls
  * `record` once per change it makes.
  */
+type Recorder = (
+  kind: EgressHistoryEntry["kind"],
+  ref: string,
+  action: EgressHistoryEntry["action"],
+  old: unknown,
+  next: unknown,
+) => Promise<number>;
+
 async function write<T>(
   pool: pg.Pool,
   by: string,
   expected: number | undefined,
-  work: (
-    client: pg.PoolClient,
-    record: (
-      kind: EgressHistoryEntry["kind"],
-      ref: string,
-      action: EgressHistoryEntry["action"],
-      old: unknown,
-      next: unknown,
-    ) => Promise<number>,
-  ) => Promise<T>,
+  work: (client: pg.PoolClient, record: Recorder) => Promise<T>,
   beforeLock?: (client: pg.PoolClient) => Promise<void>,
 ): Promise<T> {
-  return inTransaction(pool, async (client) => {
-    // The catalog lock first, like every write that changes what refers to what (ADR 0027).
-    if (beforeLock !== undefined) await beforeLock(client);
-    await client.query("select pg_advisory_xact_lock(hashtext($1))", [EGRESS_LOCK]);
-    if (expected !== undefined) {
-      const { rows } = await client.query<{ revision: string }>(
-        "select coalesce(max(revision), 0) as revision from egress.revisions",
+  return inTransaction(pool, (client) => writeWithin(client, by, expected, work, beforeLock));
+}
+
+/**
+ * `write` inside a transaction the caller owns: the MCP catalog write derives its rules in its own transaction (ADR 0040),
+ * so the row, its history and the rules it implies commit or roll back together. The lock order is the catalog lock, then
+ * this one, as in every other writer.
+ */
+export async function writeWithin<T>(
+  client: pg.PoolClient,
+  by: string,
+  expected: number | undefined,
+  work: (client: pg.PoolClient, record: Recorder) => Promise<T>,
+  beforeLock?: (client: pg.PoolClient) => Promise<void>,
+): Promise<T> {
+  // The catalog lock first, like every write that changes what refers to what (ADR 0027).
+  if (beforeLock !== undefined) await beforeLock(client);
+  await client.query("select pg_advisory_xact_lock(hashtext($1))", [EGRESS_LOCK]);
+  if (expected !== undefined) {
+    const { rows } = await client.query<{ revision: string }>(
+      "select coalesce(max(revision), 0) as revision from egress.revisions",
+    );
+    const stored = Number(rows[0]?.revision ?? 0);
+    if (expected !== stored) {
+      throw new AdminConflictError(
+        `the egress rules are at revision ${String(stored)}, not the expected ${String(expected)}: reload and retry`,
       );
-      const stored = Number(rows[0]?.revision ?? 0);
-      if (expected !== stored) {
-        throw new AdminConflictError(
-          `the egress rules are at revision ${String(stored)}, not the expected ${String(expected)}: reload and retry`,
-        );
-      }
     }
-    let revision: number | undefined;
-    return work(client, async (kind, ref, action, old, next) => {
-      // One revision per request, however many history rows it writes.
-      if (revision === undefined) {
-        const { rows } = await client.query<{ revision: string }>(
-          "insert into egress.revisions (changed_by) values ($1) returning revision",
-          [by],
-        );
-        revision = Number(rows[0]?.revision);
-        await client.query("select pg_notify($1, $2)", [EGRESS_RULES_CHANNEL, String(revision)]);
-      }
-      await client.query(
-        `insert into egress.rules_history (revision, changed_by, kind, ref, action, old, new)
-         values ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          revision,
-          by,
-          kind,
-          ref,
-          action,
-          old === null ? null : JSON.stringify(old),
-          next === null ? null : JSON.stringify(next),
-        ],
+  }
+  let revision: number | undefined;
+  return work(client, async (kind, ref, action, old, next) => {
+    // One revision per request, however many history rows it writes.
+    if (revision === undefined) {
+      const { rows } = await client.query<{ revision: string }>(
+        "insert into egress.revisions (changed_by) values ($1) returning revision",
+        [by],
       );
-      return revision;
-    });
+      revision = Number(rows[0]?.revision);
+      await client.query("select pg_notify($1, $2)", [EGRESS_RULES_CHANNEL, String(revision)]);
+    }
+    await client.query(
+      `insert into egress.rules_history (revision, changed_by, kind, ref, action, old, new)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        revision,
+        by,
+        kind,
+        ref,
+        action,
+        old === null ? null : JSON.stringify(old),
+        next === null ? null : JSON.stringify(next),
+      ],
+    );
+    return revision;
   });
 }
 
@@ -325,6 +344,22 @@ async function selectSet(client: pg.PoolClient, name: string): Promise<RuleSetRo
     [name],
   );
   return rows[0];
+}
+
+/** The refusal for a hand edit of a derived set (ADR 0040): a 409 that says where the rows come from. */
+function systemSetError(name: string): AdminConflictError {
+  return new AdminConflictError(
+    `rule set ${name} is derived from the MCP server catalog and cannot be changed by hand: edit the catalog (/admin/mcp-servers)`,
+  );
+}
+
+async function isSystemSet(client: pg.PoolClient, name: string | null): Promise<boolean> {
+  if (name === null) return false;
+  const { rows } = await client.query<{ system: boolean }>(
+    "select system from egress.rule_sets where name = $1",
+    [name],
+  );
+  return rows[0]?.system === true;
 }
 
 /**
@@ -373,6 +408,7 @@ export async function updateRuleSet(
   return write(pool, by, expectedRevision, async (client, record) => {
     const found = await selectSet(client, name);
     if (found === undefined) return undefined;
+    if (found.system === true) throw systemSetError(name);
     let current: StoredRuleSet | undefined;
     try {
       current = setFromRow(found);
@@ -420,6 +456,7 @@ export async function deleteRuleSet(
     async (client, record) => {
       const found = await selectSet(client, name);
       if (found === undefined) return false;
+      if (found.system === true) throw systemSetError(name);
       const profiles = await profilesReferring(client, "egress-rule-set", name);
       if (profiles.length > 0) {
         throw new AdminBlockedError(
@@ -468,7 +505,11 @@ export async function createEgressRule(
   const ruleSet = "ruleSet" in owner ? owner.ruleSet : null;
   const sessionId = "sessionId" in owner ? owner.sessionId : null;
   return write(pool, by, expectedRevision, async (client, record) => {
-    if (ruleSet !== null && (await selectSet(client, ruleSet)) === undefined) return undefined;
+    if (ruleSet !== null) {
+      const set = await selectSet(client, ruleSet);
+      if (set === undefined) return undefined;
+      if (set.system === true) throw systemSetError(ruleSet);
+    }
     const { rows: counted } = await client.query<{ count: string }>(
       "select count(*) as count from egress.rules",
     );
@@ -529,6 +570,7 @@ export async function updateEgressRule(
     );
     const row = found[0];
     if (row === undefined) return undefined;
+    if (await isSystemSet(client, row.rule_set)) throw systemSetError(row.rule_set ?? "");
     // A row that no longer validates is replaced by the body alone, which must then be complete.
     let current: StoredEgressRule | undefined;
     try {
@@ -586,6 +628,8 @@ export async function deleteEgressRule(
     );
     const row = rows[0];
     if (row === undefined) return false;
+    // Raised after the delete statement, inside the transaction: the throw rolls the delete back.
+    if (await isSystemSet(client, row.rule_set)) throw systemSetError(row.rule_set ?? "");
     let old: unknown = null;
     try {
       const rule = ruleFromRow(row);

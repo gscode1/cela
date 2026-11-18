@@ -1286,6 +1286,17 @@ describe("egressProxy (ADR 0035)", () => {
       expect(JSON.stringify(sandboxish)).not.toMatch(/egress-binding|pi-egress-binding/);
     });
 
+    it("turns the OneCLI host-rule reconciler on only when asked, and only with the admin key (ADR 0040)", () => {
+      const reconciler = (documents: ReturnType<typeof docs>) =>
+        envOf(orchestrators(documents)[0] ?? {}).PI_ONECLI_HOST_RULES?.value;
+      expect(reconciler(all)).toBeUndefined();
+      expect(reconciler(docs([...onecli, "--set", "onecli.hostRules.reconcile=true"]))).toBe(
+        "reconcile",
+      );
+      // OneCLI disabled: no admin key to reconcile with, so the variable is not set whatever the value says.
+      expect(reconciler(docs(["--set", "onecli.hostRules.reconcile=true"]))).toBeUndefined();
+    });
+
     it("renders no upstream, key or OneCLI policy without OneCLI or without the proxy", () => {
       const noOnecli = docs(on);
       expect(envOf(named(noOnecli, "Deployment", "pi-egress-proxy")).EGRESS_UPSTREAM_ADDR).toBe(

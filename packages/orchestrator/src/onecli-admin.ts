@@ -43,6 +43,22 @@ export interface SecretInput {
   valueFormat: string;
 }
 
+/**
+ * One org rule of the gateway's host list (`/v1/org/policy/rules`, docs/onecli-host-rules.md), reduced to what the host-rule
+ * reconciler needs. The gateway applies the rules in `priority` order (creation order, not settable): the first match
+ * wins, so an allow created after a `block *` never takes effect.
+ */
+export interface OneCliHostRule {
+  id: string;
+  name: string;
+  action: "allow" | "block";
+  priority: number;
+  enabled: boolean;
+  description: string;
+  /** The host patterns of the rule's network targets that carry no path or method; `null` when it has any other kind of target. */
+  hostPatterns: string[] | null;
+}
+
 type Json = Record<string, unknown>;
 
 function asRecord(value: unknown, what: string): Json {
@@ -374,6 +390,66 @@ export class OneCliAdmin {
     await this.#call(
       "DELETE",
       `/v1/agents/${encodeURIComponent(agentId)}/grants/${kind}/${encodeURIComponent(grant.id)}`,
+      undefined,
+      [200, 204, 404],
+    );
+  }
+
+  /** The org host rules, in priority order. A rule in a shape this client does not know is listed with `hostPatterns: null`. */
+  async listHostRules(): Promise<OneCliHostRule[]> {
+    const { body } = await this.#call("GET", "/v1/org/policy/rules");
+    return listOf(body, ["rules", "data"], "the host rule list")
+      .map((entry): OneCliHostRule => {
+        const record = asRecord(entry, "a host rule");
+        const targets = Array.isArray(record.targets) ? (record.targets as unknown[]) : [];
+        const patterns: string[] = [];
+        let simple = targets.length > 0;
+        for (const target of targets) {
+          const t = typeof target === "object" && target !== null ? (target as Json) : {};
+          if (
+            t.kind === "network" &&
+            typeof t.hostPattern === "string" &&
+            (t.pathPattern ?? null) === null &&
+            (t.method ?? null) === null
+          ) {
+            patterns.push(t.hostPattern);
+          } else simple = false;
+        }
+        return {
+          id: idOf(entry, "a host rule"),
+          name: typeof record.name === "string" ? record.name : "",
+          action: record.action === "block" ? "block" : "allow",
+          priority: typeof record.priority === "number" ? record.priority : Number.MAX_SAFE_INTEGER,
+          enabled: record.enabled !== false,
+          description: typeof record.description === "string" ? record.description : "",
+          hostPatterns: simple ? patterns : null,
+        };
+      })
+      .sort((a, b) => a.priority - b.priority);
+  }
+
+  /**
+   * Creates a host rule (one network target). Not retried: a create that failed in an ambiguous way may have been applied,
+   * and the reconciler's next pass lists the rules again and sees it.
+   */
+  async createHostRule(input: {
+    name: string;
+    action: "allow" | "block";
+    hostPattern: string;
+    description?: string;
+  }): Promise<void> {
+    await this.#call("POST", "/v1/org/policy/rules", {
+      name: input.name,
+      action: input.action,
+      ...(input.description === undefined ? {} : { description: input.description }),
+      targets: [{ kind: "network", hostPattern: input.hostPattern }],
+    });
+  }
+
+  async deleteHostRule(id: string): Promise<void> {
+    await this.#call(
+      "DELETE",
+      `/v1/org/policy/rules/${encodeURIComponent(id)}`,
       undefined,
       [200, 204, 404],
     );

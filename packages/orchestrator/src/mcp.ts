@@ -55,14 +55,26 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export type McpTransportFactory = (spec: McpServerSpec) => McpTransport;
+/** `fetch` replaces the factory's own: the identity of a credentialed server's session (or its discovery). */
+export type McpTransportFactory = (spec: McpServerSpec, fetch?: McpFetch) => McpTransport;
+
+/**
+ * Whose grants a credentialed server's requests carry (docs/decisions/0040-mcp-egress-flow.md): a session's own, from its
+ * profile, and for tool discovery the server's discovery agent. Servers without a secret use the factory's fetch.
+ */
+export interface McpIdentity {
+  /** The fetch for `tools/list` of a credentialed server. */
+  discovery(spec: McpServerSpec): Promise<McpFetch>;
+  /** The fetch carrying the grants of the conversation's session; rejects when it has none for this server. */
+  forConversation(conversationId: number, spec: McpServerSpec): Promise<McpFetch>;
+}
 
 /** The production transport: streamable HTTP through `fetch` (the gateway), no server-to-client stream. */
 export function httpTransportFactory(fetch: McpFetch): McpTransportFactory {
-  return (spec) =>
+  return (spec, override) =>
     new StreamableHttpTransport({
       url: spec.url,
-      fetch,
+      fetch: override ?? fetch,
       openGetStream: false,
       maxMessageBytes: MCP_MAX_MESSAGE_BYTES,
     });
@@ -94,6 +106,87 @@ async function within<T>(work: Promise<T>, ms: number, what: string): Promise<T>
 }
 
 /**
+ * One connection to one server: connect on demand (one connect at a time, shared by every caller that needs it), drop on
+ * a failure, close on retirement. A server has one for discovery and for servers without a secret, and one per
+ * conversation for a credentialed server, so no request of one session ever travels on another session's identity.
+ */
+class McpConnection {
+  readonly #name: string;
+  readonly #requestTimeoutMs: number;
+  readonly #timeoutMs: number;
+  readonly #transport: () => Promise<McpTransport>;
+  /** The connect in progress, shared by every caller that needs a connection meanwhile. */
+  #connecting: Promise<McpClient> | undefined;
+  #ready: McpClient | undefined;
+
+  constructor(
+    name: string,
+    requestTimeoutMs: number,
+    discoveryTimeoutMs: number,
+    transport: () => Promise<McpTransport>,
+  ) {
+    this.#name = name;
+    this.#requestTimeoutMs = requestTimeoutMs;
+    this.#timeoutMs = discoveryTimeoutMs;
+    this.#transport = transport;
+  }
+
+  async #connect(): Promise<McpClient> {
+    const client = new McpClient({
+      name: "pi-durable-k8s",
+      version: "0.0.0",
+      requestTimeoutMs: this.#requestTimeoutMs,
+    });
+    // A dropped connection or an expired session makes the next use connect again.
+    client.onClose(() => {
+      if (this.#ready === client) this.#ready = undefined;
+    });
+    await bounded(
+      this.#transport().then((transport) => client.connect(transport)),
+      this.#timeoutMs,
+      `mcp ${this.#name} connect`,
+      () => void client.close().catch(() => undefined),
+    ).catch(async (error: unknown) => {
+      await client.close().catch(() => undefined);
+      throw error;
+    });
+    this.#ready = client;
+    return client;
+  }
+
+  connected(): Promise<McpClient> {
+    if (this.#ready !== undefined && this.#ready.connectionState === "connected") {
+      return Promise.resolve(this.#ready);
+    }
+    // One connect at a time: concurrent callers after a drop share it instead of each opening (and leaking) a client.
+    if (this.#connecting !== undefined) return this.#connecting;
+    const connecting = this.#connect();
+    this.#connecting = connecting;
+    const clear = () => {
+      if (this.#connecting === connecting) this.#connecting = undefined;
+    };
+    connecting.then(clear, clear);
+    return connecting;
+  }
+
+  async drop(client: McpClient): Promise<void> {
+    if (this.#ready === client) this.#ready = undefined;
+    await client.close().catch(() => undefined);
+  }
+
+  async close(): Promise<void> {
+    const pending = await this.#connecting?.catch(() => undefined);
+    const client = this.#ready ?? pending;
+    this.#connecting = undefined;
+    this.#ready = undefined;
+    await client?.close().catch(() => undefined);
+  }
+}
+
+/** Conversations whose credentialed connections one server keeps; the least recently used is closed past it. */
+const MAX_SESSION_CONNECTIONS = 256;
+
+/**
  * One server: one shared `McpClient` (so the server must be stateless across conversations), and one extension
  * `mcp-<name>` of deferred tools. The extension is installed empty at once and replaced when discovery succeeds;
  * until then a call to one of its tools settles as Pi Durable's `tool_unavailable`.
@@ -116,10 +209,17 @@ export class McpServer {
   readonly #timings: McpTimings;
   readonly #registry: Registry;
   readonly #stop = new AbortController();
-  /** The connect in progress, shared by every caller that needs a connection meanwhile. */
-  #connecting: Promise<McpClient> | undefined;
-  #ready: McpClient | undefined;
+  readonly #identity: McpIdentity | undefined;
+  /** Discovery's connection, and the calls' for a server without a secret: the orchestrator-wide gateway token. */
+  readonly #shared: McpConnection;
+  /**
+   * A credentialed server's calls, one connection per conversation, each on its session's own grants. Least recently
+   * used last in insertion order; at most `MAX_SESSION_CONNECTIONS`.
+   */
+  readonly #sessions = new Map<number, McpConnection>();
   #discovery: Promise<void> | undefined;
+  /** Wakes the discovery's wait between two attempts (`nudge`). */
+  #wake: (() => void) | undefined;
 
   constructor(
     spec: McpServerSpec,
@@ -127,7 +227,23 @@ export class McpServer {
     transport: McpTransportFactory,
     timings: McpTimings,
     previousSchemas: ReadonlyMap<string, string> = new Map(),
+    identity?: McpIdentity,
   ) {
+    this.#identity = identity;
+    this.#shared = new McpConnection(
+      spec.name,
+      spec.timeoutMs,
+      timings.discoveryTimeoutMs,
+      async () => {
+        if (spec.onecliSecret === null) return transport(spec);
+        if (identity === undefined) {
+          throw new Error(
+            `MCP server ${spec.name} needs a credential, but no MCP identity is configured`,
+          );
+        }
+        return transport(spec, await identity.discovery(spec));
+      },
+    );
     this.spec = spec;
     this.#spec = spec;
     this.#previousSchemas = previousSchemas;
@@ -164,66 +280,65 @@ export class McpServer {
     await this.close();
   }
 
-  /** Stops discovery and closes the connection, ending calls that are still running (shutdown). */
+  /** Stops discovery and closes the connections, ending calls that are still running (shutdown). */
   async close(): Promise<void> {
     this.#stop.abort();
     await this.#discovery;
-    const pending = await this.#connecting?.catch(() => undefined);
-    const client = this.#ready ?? pending;
-    this.#connecting = undefined;
-    this.#ready = undefined;
-    await client?.close().catch(() => undefined);
+    const sessions = [...this.#sessions.values()];
+    this.#sessions.clear();
+    await Promise.all([this.#shared.close(), ...sessions.map((connection) => connection.close())]);
   }
 
-  async #connect(): Promise<McpClient> {
-    const client = new McpClient({
-      name: "pi-durable-k8s",
-      version: "0.0.0",
-      requestTimeoutMs: this.#spec.timeoutMs,
-    });
-    // A dropped connection or an expired session makes the next use connect again.
-    client.onClose(() => {
-      if (this.#ready === client) this.#ready = undefined;
-    });
-    await bounded(
-      client.connect(this.#transport(this.#spec)),
-      this.#timings.discoveryTimeoutMs,
-      `mcp ${this.#spec.name} connect`,
-      () => void client.close().catch(() => undefined),
-    ).catch(async (error: unknown) => {
-      await client.close().catch(() => undefined);
-      throw error;
-    });
-    this.#ready = client;
-    return client;
+  /** Cuts the wait before the next discovery attempt (a host rule was just opened): the next try is now, not in seconds. */
+  nudge(): void {
+    this.#wake?.();
   }
 
-  #connected(): Promise<McpClient> {
-    if (this.#ready !== undefined && this.#ready.connectionState === "connected") {
-      return Promise.resolve(this.#ready);
+  /** The connection for a call: the shared one, or the conversation's own for a credentialed server. */
+  #connectionFor(conversationId: number): McpConnection {
+    if (this.#spec.onecliSecret === null) return this.#shared;
+    const known = this.#sessions.get(conversationId);
+    if (known !== undefined) {
+      this.#sessions.delete(conversationId);
+      this.#sessions.set(conversationId, known);
+      return known;
     }
-    // One connect at a time: concurrent callers after a drop share it instead of each opening (and leaking) a client.
-    if (this.#connecting !== undefined) return this.#connecting;
-    const connecting = this.#connect();
-    this.#connecting = connecting;
-    const clear = () => {
-      if (this.#connecting === connecting) this.#connecting = undefined;
-    };
-    connecting.then(clear, clear);
-    return connecting;
-  }
-
-  async #drop(client: McpClient): Promise<void> {
-    if (this.#ready === client) this.#ready = undefined;
-    await client.close().catch(() => undefined);
+    const identity = this.#identity;
+    const connection = new McpConnection(
+      this.#spec.name,
+      this.#spec.timeoutMs,
+      this.#timings.discoveryTimeoutMs,
+      async () => {
+        // No identity, no call: a credentialed server is never reached on the orchestrator's own token.
+        if (identity === undefined) {
+          throw new Error(
+            `MCP server ${this.#spec.name} needs a credential, but no MCP identity is configured`,
+          );
+        }
+        return this.#transport(
+          this.#spec,
+          await identity.forConversation(conversationId, this.#spec),
+        );
+      },
+    );
+    this.#sessions.set(conversationId, connection);
+    if (this.#sessions.size > MAX_SESSION_CONNECTIONS) {
+      const oldest = this.#sessions.keys().next().value;
+      if (oldest !== undefined) {
+        const evicted = this.#sessions.get(oldest);
+        this.#sessions.delete(oldest);
+        void evicted?.close();
+      }
+    }
+    return connection;
   }
 
   async #listTools(): Promise<Tool[]> {
-    const client = await this.#connected();
+    const client = await this.#shared.connected();
     try {
       return await client.listTools({ timeoutMs: this.#timings.discoveryTimeoutMs });
     } catch (error) {
-      await this.#drop(client);
+      await this.#shared.drop(client);
       throw error;
     }
   }
@@ -241,9 +356,11 @@ export class McpServer {
       const done = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", done);
+        this.#wake = undefined;
         resolve();
       };
       const timer = setTimeout(done, ms);
+      this.#wake = done;
       signal.addEventListener("abort", done, { once: true });
     });
   }
@@ -288,6 +405,7 @@ export class McpServer {
     name: string,
     args: Record<string, unknown>,
     signal: AbortSignal | undefined,
+    conversationId: number,
   ): Promise<CallToolResult> {
     if (this.#retired) throw new Error(`MCP server ${this.#spec.name} is no longer available`);
     this.#inFlight += 1;
@@ -297,8 +415,9 @@ export class McpServer {
     try {
       for (let attempt = 0; ; attempt += 1) {
         // The connect may be shared with other callers, so only this call's wait for it is cut, not the connect.
+        const connection = this.#connectionFor(conversationId);
         const client = await within(
-          this.#connected(),
+          connection.connected(),
           remaining(),
           `mcp ${this.#spec.name} call (connect)`,
         );
@@ -309,7 +428,7 @@ export class McpServer {
           });
         } catch (error) {
           if (error instanceof McpSessionExpiredError && attempt === 0) {
-            await this.#drop(client);
+            await connection.drop(client);
             continue;
           }
           throw error;
@@ -337,11 +456,12 @@ export class McpServer {
         // Offered only after the model found it with `tool_search`: a server can have dozens of tools.
         deferred: true,
         outputLimits: outputLimits(this.#spec.maxOutputBytes),
-        execute: async (args, _api, context) => {
+        execute: async (args, api, context) => {
           const result = await this.call(
             tool.name,
             isRecord(args) ? args : {},
             context.abortSignal,
+            Number(api.conversationId),
           );
           const { content } = await limitMcpContent(toLlmContent(result));
           // Tool failures are results, not protocol errors: the model sees the text and an error mark.
@@ -368,14 +488,23 @@ export class McpTools {
   #running = false;
   #closed = false;
 
+  readonly #identity: McpIdentity | undefined;
+
   constructor(
     registry: Registry,
     transport: McpTransportFactory,
     timings: McpTimings = DEFAULT_MCP_TIMINGS,
+    identity?: McpIdentity,
   ) {
     this.#registry = registry;
     this.#transport = transport;
     this.#timings = timings;
+    this.#identity = identity;
+  }
+
+  /** A host rule was just opened (or any change that may make a server reachable): every server retries its discovery now. */
+  nudge(): void {
+    for (const server of this.#servers.values()) server.nudge();
   }
 
   get servers(): readonly McpServer[] {
@@ -409,6 +538,7 @@ export class McpTools {
         this.#transport,
         this.#timings,
         current?.schemas,
+        this.#identity,
       );
       this.#servers.set(spec.name, server);
       if (current !== undefined) this.#retire(current);

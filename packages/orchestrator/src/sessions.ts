@@ -30,6 +30,7 @@ import {
   renderProjectContext,
   scanRepoSkills,
 } from "./repo-context.js";
+import type { McpAccess } from "./mcp-access.js";
 import type { RepoAccess } from "./repo-access.js";
 import type { TurnTimings } from "./timing.js";
 import type { EgressPrincipals } from "./egress.js";
@@ -102,6 +103,8 @@ export interface SessionServiceOptions {
   tokenBudget?: () => number | null;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
+  /** The OneCLI identity of the session's credentialed MCP calls, revoked with the session (ADR 0040). */
+  mcpAccess?: Pick<McpAccess, "teardown" | "provision">;
   /** The egress proxy side of plain sessions; undefined when the proxy is off (ADR 0036). */
   egress?: EgressPrincipals;
   /** The orchestrator shard: this service touches only the sessions assigned to it (docs/decisions/0017). */
@@ -312,11 +315,16 @@ export class SessionService {
     if (
       session.status === "failed" ||
       session.status === "deleting" ||
-      session.status === "deleted" ||
-      session.repo === null
+      session.status === "deleted"
     )
       return;
     if (typeof event.payload.text !== "string" || event.payload.text === "") return;
+    // The session's MCP identity, before its first turn: the grants are read back and proven narrow here, not at the first
+    // call. Best effort: a failure is logged and the first call tries again (and is refused if it cannot).
+    await this.#options.mcpAccess?.provision(session).catch((error: unknown) => {
+      log("mcp-identity-failed", { session: session.id, message: errorMessage(error) });
+    });
+    if (session.repo === null) return;
     const conversationId = await this.ensureConversation(session);
     await this.#prepareRepo(session, conversationId);
     await this.#refreshRepoContext(session, conversationId);
@@ -557,6 +565,7 @@ export class SessionService {
     // its proxy token is dead, whatever happens to the claim after. A plain session has no OneCLI objects.
     await writeTombstone(this.#pool, session);
     await this.#options.repos?.teardown(session);
+    await this.#options.mcpAccess?.teardown(session);
     // The egress token is refused by the proxy from the next notification on (well under 10 s), whatever happens to
     // the claim after.
     await this.#options.egress?.revoke(session.id);
