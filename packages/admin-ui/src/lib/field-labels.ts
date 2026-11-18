@@ -24,6 +24,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   sandboxSize: "Sandbox size",
   sandboxSizes: "Sizes a session may ask for",
   networkMode: "Network mode",
+  sandboxFlavour: "Sandbox flavour",
   enabledForNew: "Available to new sessions",
   // MCP servers
   url: "URL",

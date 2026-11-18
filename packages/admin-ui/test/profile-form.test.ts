@@ -75,6 +75,15 @@ describe("profile form round trips", () => {
     expect(definitionFromForm(formFromDefinition(explicit), explicit)).toEqual(explicit);
   });
 
+  it("round-trips the sandbox flavour: default is left out, browser is sent, a stored spelling is kept", () => {
+    const plain: ProfileDefinition = { instructions: "x" };
+    expect(definitionFromForm(formFromDefinition(plain), plain)).toEqual(plain);
+    const browser: ProfileDefinition = { sandboxFlavour: "browser" };
+    expect(definitionFromForm(formFromDefinition(browser), browser)).toEqual(browser);
+    const explicit: ProfileDefinition = { sandboxFlavour: "default" };
+    expect(definitionFromForm(formFromDefinition(explicit), explicit)).toEqual(explicit);
+  });
+
   it("keeps sandbox sizes set through the API when the console saves an edit elsewhere", () => {
     const stored: ProfileDefinition = { instructions: "x", sandboxSize: "l", sandboxSizes: ["xl"] };
     expect(

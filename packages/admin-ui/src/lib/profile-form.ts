@@ -49,6 +49,7 @@ export interface ProfileForm {
   sandboxSize: string;
   sandboxSizes: string[];
   networkMode: "proxied" | "direct";
+  sandboxFlavour: "default" | "browser";
 }
 
 export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
@@ -70,6 +71,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     sandboxSize: definition.sandboxSize ?? "",
     sandboxSizes: definition.sandboxSizes ?? [],
     networkMode: definition.networkMode ?? "proxied",
+    sandboxFlavour: definition.sandboxFlavour ?? "default",
   };
 }
 
@@ -105,6 +107,8 @@ export function definitionFromForm(
     definition.sandboxSizes = form.sandboxSizes;
   if (form.networkMode === "direct" || original.networkMode !== undefined)
     definition.networkMode = form.networkMode;
+  if (form.sandboxFlavour === "browser" || original.sandboxFlavour !== undefined)
+    definition.sandboxFlavour = form.sandboxFlavour;
   return definition;
 }
 
@@ -173,6 +177,9 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
   const mode: string | undefined = definition.networkMode;
   if (mode !== undefined && mode !== "proxied" && mode !== "direct")
     problems.push("networkMode must be one of proxied, direct");
+  const flavour: string | undefined = definition.sandboxFlavour;
+  if (flavour !== undefined && flavour !== "default" && flavour !== "browser")
+    problems.push("sandboxFlavour must be one of default, browser");
   const sizes = definition.sandboxSizes;
   if (
     sizes !== undefined &&
@@ -305,7 +312,8 @@ export function isEmptyForm(form: ProfileForm): boolean {
     !form.repoContext &&
     form.sandboxSize === "" &&
     form.sandboxSizes.length === 0 &&
-    form.networkMode === "proxied"
+    form.networkMode === "proxied" &&
+    form.sandboxFlavour === "default"
   );
 }
 

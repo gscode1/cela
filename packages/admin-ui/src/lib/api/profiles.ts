@@ -30,6 +30,28 @@ export interface ProfileDefinition {
   sandboxSizes?: string[];
   /** `proxied` (the default) or `direct` (open internet, unfiltered and unaudited; ADR 0038). */
   networkMode?: NetworkMode;
+  /** `default` or `browser` (Chromium and browser tools; ADR 0041). */
+  sandboxFlavour?: SandboxFlavour;
+}
+
+export type SandboxFlavour = "default" | "browser";
+
+export interface SandboxFlavourCatalog {
+  flavours: SandboxFlavour[];
+  defaultFlavour: SandboxFlavour;
+  /** The chart's sandbox.flavours.browser.enabled. */
+  browserEnabled: boolean;
+}
+
+export function listSandboxFlavours(
+  token: string,
+  signal?: AbortSignal,
+): Promise<SandboxFlavourCatalog> {
+  return adminFetch<SandboxFlavourCatalog>(
+    token,
+    "/admin/sandbox-flavours",
+    signal ? { signal } : {},
+  );
 }
 
 export type NetworkMode = "proxied" | "direct";

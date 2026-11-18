@@ -37,6 +37,8 @@ export interface FakeAdmin {
   tools: string[];
   /** The chart's security.allowDirectSandboxEgress, as `GET /admin/network-modes` reports it. */
   directAllowed: boolean;
+  /** The chart's sandbox.flavours.browser.enabled, as `GET /admin/sandbox-flavours` reports it. */
+  browserEnabled: boolean;
   /** The `GET /admin/models` answer (default view). */
   models: Record<string, unknown>;
   mcp: { name: string; url: string; enabled: boolean }[];
@@ -86,6 +88,7 @@ export function createFakeAdmin(): FakeAdmin {
     invalid: [],
     tools: ["read", "write", "edit", "bash"],
     directAllowed: false,
+    browserEnabled: false,
     models: {
       models: [
         { provider: "openai", id: "gpt-fast", name: "GPT Fast", reasoning: false },
@@ -232,6 +235,13 @@ export function createFakeAdmin(): FakeAdmin {
         modes: admin.directAllowed ? ["proxied", "direct"] : ["proxied"],
         defaultMode: "proxied",
         directAllowed: admin.directAllowed,
+      });
+    }
+    if (route === "/admin/sandbox-flavours") {
+      return reply(200, {
+        flavours: admin.browserEnabled ? ["default", "browser"] : ["default"],
+        defaultFlavour: "default",
+        browserEnabled: admin.browserEnabled,
       });
     }
     if (route === "/admin/mcp-servers") return reply(200, { servers: admin.mcp, invalid: [] });

@@ -8,6 +8,7 @@ import {
   listMcpServerRefs,
   listProfiles,
   listNetworkModes,
+  listSandboxFlavours,
   listSandboxSizes,
   listSkillInfos,
   listTools,
@@ -17,6 +18,7 @@ import type {
   ProfileDetail,
   ProfileList,
   NetworkModeCatalog,
+  SandboxFlavourCatalog,
   SandboxSizeCatalog,
   SkillInfo,
   ToolCatalog,
@@ -51,6 +53,7 @@ export const keys = {
   tools: ["tools"] as const,
   sandboxSizes: ["sandbox-sizes"] as const,
   networkModes: ["network-modes"] as const,
+  sandboxFlavours: ["sandbox-flavours"] as const,
   pickerMcp: ["profile-editor", "mcp-servers"] as const,
   pickerSkills: ["profile-editor", "skills"] as const,
   /** A write invalidates `egress` as a whole: every egress view moves with the one schema revision. */
@@ -115,6 +118,14 @@ export function useNetworkModesQuery(): UseQueryResult<NetworkModeCatalog> {
   return useQuery({
     queryKey: keys.networkModes,
     queryFn: ({ signal }) => listNetworkModes(token ?? "", signal),
+  });
+}
+
+export function useSandboxFlavoursQuery(): UseQueryResult<SandboxFlavourCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.sandboxFlavours,
+    queryFn: ({ signal }) => listSandboxFlavours(token ?? "", signal),
   });
 }
 

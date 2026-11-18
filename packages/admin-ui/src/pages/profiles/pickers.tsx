@@ -11,6 +11,8 @@ import type {
   McpServerRef,
   NetworkMode,
   NetworkModeCatalog,
+  SandboxFlavour,
+  SandboxFlavourCatalog,
   SandboxSize,
   SandboxSizeCatalog,
   SkillInfo,
@@ -74,6 +76,55 @@ export function NetworkModePicker({
       {!directAllowed && catalog !== undefined && (
         <p className="text-sm text-muted-foreground" data-testid="direct-disabled">
           Direct is off: the chart sets security.allowDirectSandboxEgress to false, so the API
+          refuses it.
+        </p>
+      )}
+    </Fieldset>
+  );
+}
+
+/**
+ * The sandbox image of the profile's sessions (ADR 0041). `browser` is offered only when the chart enables it
+ * (sandbox.flavours.browser.enabled); a profile that already says browser keeps showing it.
+ */
+export function SandboxFlavourPicker({
+  flavour,
+  catalog,
+  onChange,
+}: {
+  flavour: SandboxFlavour;
+  catalog: SandboxFlavourCatalog | undefined;
+  onChange: (flavour: SandboxFlavour) => void;
+}) {
+  const browserEnabled = catalog?.browserEnabled === true;
+  return (
+    <Fieldset
+      legend={fieldLabel("sandboxFlavour")}
+      hint="Which image the sandbox runs. Fixed when a session is created; applies to new sessions only."
+    >
+      <Select
+        id="profile-sandbox-flavour"
+        aria-label={fieldLabel("sandboxFlavour")}
+        value={flavour}
+        onChange={(event) => {
+          onChange(event.target.value === "browser" ? "browser" : "default");
+        }}
+      >
+        <option value="default">Default: shell and files (default)</option>
+        <option value="browser" disabled={!browserEnabled && flavour !== "browser"}>
+          Browser: Chromium with Playwright CLI and agent-browser
+          {browserEnabled ? "" : " (not enabled in this deployment)"}
+        </option>
+      </Select>
+      {flavour === "browser" && (
+        <p className="text-sm text-muted-foreground" data-testid="browser-note">
+          Pair it with the proxied network mode and an egress rule set that allows the sites. Not
+          combinable with repositories, credentialed MCP servers or rule sets with a OneCLI route.
+        </p>
+      )}
+      {!browserEnabled && catalog !== undefined && (
+        <p className="text-sm text-muted-foreground" data-testid="browser-disabled">
+          Browser is off: the chart sets sandbox.flavours.browser.enabled to false, so the API
           refuses it.
         </p>
       )}
