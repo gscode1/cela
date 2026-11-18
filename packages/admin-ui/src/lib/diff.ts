@@ -77,6 +77,7 @@ const SETTINGS_FIELDS = [
   "maxReasoning",
   "defaultProfile",
   "turnBudget",
+  "tokenBudget",
 ] as const;
 
 function showSetting(field: (typeof SETTINGS_FIELDS)[number], values: SettingsValues): string {
@@ -88,6 +89,9 @@ function showSetting(field: (typeof SETTINGS_FIELDS)[number], values: SettingsVa
       return values.reasoning ?? "model default";
     case "maxReasoning":
       return values.maxReasoning ?? "no limit";
+    case "tokenBudget":
+      // History rows written before the field existed lack it: no limit then too.
+      return String(values.tokenBudget ?? "no limit");
     default:
       return String(values[field]);
   }

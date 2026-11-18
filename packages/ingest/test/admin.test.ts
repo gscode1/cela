@@ -13,6 +13,7 @@ const seed: Settings = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 };
 
 /** What the fake shard 0 row says to a probe request; reset by every `start`. */

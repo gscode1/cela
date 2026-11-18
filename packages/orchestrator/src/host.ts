@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Message, Models } from "@earendil-works/pi-ai";
-import { createRegistry, Harness, LiveDoc } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import type {
   Conversation,
   ConversationId,
@@ -448,6 +448,20 @@ export class Host {
   async runTurns(id: number): Promise<number> {
     const live = await this.#harness.snapshot(LiveDoc, id as ConversationId, context);
     return live?.run?.turns ?? 0;
+  }
+
+  /**
+   * Tokens the conversation used so far, as Pi Durable records them in `pi.usage`: every model (failed and aborted
+   * attempts and compaction included) and every tool that reports usage. Subagents count their own conversation.
+   */
+  async tokensUsed(id: number): Promise<number> {
+    const usage = await this.#harness.snapshot(UsageDoc, id as ConversationId, context);
+    if (usage === undefined) return 0;
+    let total = 0;
+    for (const bucket of [usage.models, usage.tools]) {
+      for (const entry of Object.values(bucket)) total += entry.totalTokens;
+    }
+    return total;
   }
 
   /** Caps the tool rounds of any run of this conversation, so one run cannot overshoot the session's turn budget. */

@@ -206,6 +206,7 @@ models:
     - scripted/scripted-1
     - scripted/scripted-2
   turnBudget: 100
+  tokenBudget: null # tokens one session may use in total (ADR 0028); null: no limit
 
 github:
   app:

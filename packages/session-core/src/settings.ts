@@ -37,6 +37,11 @@ export interface Settings {
   defaultProfile: string;
   /** Model turns one session may use in total (a profile may replace it for its sessions). */
   turnBudget: number;
+  /**
+   * Tokens one session may use in total, as Pi Durable records them in `pi.usage` (input, output and cache, every
+   * model, failed attempts and compaction included); null for no limit (docs/decisions/0028-token-budget.md).
+   */
+  tokenBudget: number | null;
 }
 
 export interface StoredSettings {
@@ -62,6 +67,7 @@ const KEYS = [
   "maxReasoning",
   "defaultProfile",
   "turnBudget",
+  "tokenBudget",
 ] as const;
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
@@ -69,14 +75,20 @@ const MAX_ENTRY = 200;
 const MAX_INPUT_ALLOWLIST = 1_000;
 const MAX_TURN_BUDGET = 1_000_000;
 const DEFAULT_TURN_BUDGET = 100;
+const MAX_TOKEN_BUDGET = 1_000_000_000_000;
 
-/** The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`): the seed, never read again after. */
+/**
+ * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`, `PI_SESSION_TOKEN_BUDGET`): the seed,
+ * never read again after.
+ */
 export function settingsFromEnv(env: Readonly<Record<string, string | undefined>>): Settings {
   const policy = loadModelPolicy(env);
   const turnBudget = Number(env.PI_SESSION_TURN_BUDGET ?? String(DEFAULT_TURN_BUDGET));
   if (!Number.isInteger(turnBudget) || turnBudget < 1) {
     throw new Error("PI_SESSION_TURN_BUDGET must be an integer of 1 or more");
   }
+  const tokenText = env.PI_SESSION_TOKEN_BUDGET;
+  const tokenBudget = tokenText === undefined || tokenText === "" ? null : Number(tokenText);
   // The same rules as stored settings, so an env that would never be readable back fails at start, before anything
   // is written.
   const settings = validateSettings({
@@ -86,6 +98,7 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
     maxReasoning: null,
     defaultProfile: DEFAULT_PROFILE_NAME,
     turnBudget,
+    tokenBudget,
   });
   if (typeof settings === "string")
     throw new Error(`invalid model settings in the environment: ${settings}`);
@@ -117,11 +130,12 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   for (const key of Object.keys(body)) {
     if (!(KEYS as readonly string[]).includes(key)) return `unknown setting "${key.slice(0, 50)}"`;
   }
-  // A missing cap is no cap and a missing default profile is `coding`: older clients and rows predate the fields.
+  // A missing cap or token budget is none and a missing default profile is `coding`: older clients and rows predate
+  // the fields.
   const pick = (key: (typeof KEYS)[number]): unknown => {
     const value = key in body ? body[key] : current?.[key];
     if (value !== undefined) return value;
-    if (key === "maxReasoning") return null;
+    if (key === "maxReasoning" || key === "tokenBudget") return null;
     return key === "defaultProfile" ? DEFAULT_PROFILE_NAME : undefined;
   };
   const pickLevel = (key: "reasoning" | "maxReasoning"): ThinkingLevel | null | "invalid" => {
@@ -165,6 +179,16 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   ) {
     return `turnBudget must be an integer from 1 to ${String(MAX_TURN_BUDGET)}`;
   }
+  const tokenBudget = pick("tokenBudget");
+  if (
+    tokenBudget !== null &&
+    (typeof tokenBudget !== "number" ||
+      !Number.isInteger(tokenBudget) ||
+      tokenBudget < 1 ||
+      tokenBudget > MAX_TOKEN_BUDGET)
+  ) {
+    return `tokenBudget must be null or an integer from 1 to ${String(MAX_TOKEN_BUDGET)}`;
+  }
 
   const keys: string[] = [];
   for (const entry of [defaultText, ...listText]) {
@@ -186,6 +210,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
     maxReasoning,
     defaultProfile,
     turnBudget,
+    tokenBudget,
   };
 }
 
@@ -200,6 +225,8 @@ interface SettingsRow {
   max_reasoning: string | null;
   default_profile: string | null;
   turn_budget: number;
+  /** bigint, so node-postgres returns a string. */
+  token_budget: string | number | null;
   revision: number;
   updated_at: Date;
   updated_by: string;
@@ -214,13 +241,14 @@ function fromRow(row: SettingsRow): StoredSettings {
     maxReasoning: row.max_reasoning,
     defaultProfile: row.default_profile ?? undefined,
     turnBudget: row.turn_budget,
+    tokenBudget: row.token_budget === null ? null : Number(row.token_budget),
   });
   if (typeof settings === "string") throw new Error(`stored settings are invalid: ${settings}`);
   return { settings, revision: row.revision, updatedAt: row.updated_at, updatedBy: row.updated_by };
 }
 
 const COLUMNS =
-  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, revision, updated_at, updated_by";
+  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, revision, updated_at, updated_by";
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -271,8 +299,8 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
   if (typeof seed === "string") throw new Error(`invalid seed settings: ${seed}`);
   return inTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_by)
-       values ($1, $2, $3, $4, $5, $6, 'seed')
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, 'seed')
        on conflict (id) do nothing
        returning default_model`,
       [
@@ -282,6 +310,7 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
         seed.maxReasoning,
         seed.defaultProfile,
         seed.turnBudget,
+        seed.tokenBudget,
       ],
     );
     if (rows.length === 0) return false;
@@ -338,12 +367,13 @@ export async function updateSettings(
     }
     if (current !== undefined && settingsEqual(current.settings, next)) return current;
     const { rows: written } = await client.query<SettingsRow>(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, updated_by)
-       values ($1, $2, $3, $4, $5, $6, $7)
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
        on conflict (id) do update set
          default_model = excluded.default_model, allowlist = excluded.allowlist,
          default_reasoning = excluded.default_reasoning, max_reasoning = excluded.max_reasoning,
          default_profile = excluded.default_profile, turn_budget = excluded.turn_budget,
+         token_budget = excluded.token_budget,
          revision = inbox.settings.revision + 1,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
@@ -354,6 +384,7 @@ export async function updateSettings(
         next.maxReasoning,
         next.defaultProfile,
         next.turnBudget,
+        next.tokenBudget,
         by,
       ],
     );

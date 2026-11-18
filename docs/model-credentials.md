@@ -223,7 +223,11 @@ model.
   submissions it handed over until they settle, and re-adds the last 24 hours of submitted events at start, so a run
   a previous process started is still seen.
 - **Turn budget.** The budget is checked before each input: the session profile's `turnBudget` if it has one, else the live `turnBudget` setting in Postgres (`PI_SESSION_TURN_BUDGET` only seeds that setting). A session that used all its turns becomes
-  `failed` with "turn budget exhausted". It is the first spend limit; a token budget and a concurrency cap come later.
+  `failed` with "turn budget exhausted".
+- **Token budget.** The `tokenBudget` setting (null: no limit) is checked before each input against the tokens the
+  conversation's `pi.usage` records, every model and attempt included. A session at or over it becomes `failed` with
+  "token budget exhausted". It is checked between inputs, so one run can go past it
+  ([ADR 0028](decisions/0028-token-budget.md)). A concurrency cap comes later.
 - **Revoking access.** Deleting the grant, the agent, or regenerating its token makes the next model call fail with
   401/403/407 and fails the sessions that hit it. A simulated 401 is covered by `tests/e2e/run-phase4b.sh`; the live
   revocation path through the gateway was tested by hand (see the Codex section); it is not automated, because it

@@ -210,6 +210,7 @@ async function main(): Promise<void> {
     testFaults: config.testFaults,
     defaultModel: config.models.default,
     turnBudget: () => settings.turnBudget(),
+    tokenBudget: () => settings.tokenBudget(),
     repos,
     skills,
     timings: host.timings,

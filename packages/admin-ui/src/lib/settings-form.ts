@@ -5,6 +5,7 @@ import type { ReasoningLevel, SettingsValues } from "@/lib/api/settings";
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
 const MAX_TURN_BUDGET = 1_000_000;
+const MAX_TOKEN_BUDGET = 1_000_000_000_000;
 
 /** What the editor holds while an operator types: the list and the number are text until they are checked. */
 export interface SettingsForm {
@@ -15,6 +16,8 @@ export interface SettingsForm {
   maxReasoning: ReasoningLevel | "";
   defaultProfile: string;
   turnBudgetText: string;
+  /** Empty for "no limit", which is sent as `null`. */
+  tokenBudgetText: string;
 }
 
 export function formFromValues(values: SettingsValues): SettingsForm {
@@ -25,6 +28,7 @@ export function formFromValues(values: SettingsValues): SettingsForm {
     maxReasoning: values.maxReasoning ?? "",
     defaultProfile: values.defaultProfile,
     turnBudgetText: String(values.turnBudget),
+    tokenBudgetText: values.tokenBudget === null ? "" : String(values.tokenBudget),
   };
 }
 
@@ -38,6 +42,7 @@ export function valuesFromForm(form: SettingsForm): SettingsValues {
     maxReasoning: form.maxReasoning === "" ? null : form.maxReasoning,
     defaultProfile: form.defaultProfile,
     turnBudget: Number(form.turnBudgetText.trim() === "" ? Number.NaN : form.turnBudgetText),
+    tokenBudget: form.tokenBudgetText.trim() === "" ? null : Number(form.tokenBudgetText.trim()),
   };
 }
 
@@ -75,5 +80,12 @@ export function settingsProblems(values: SettingsValues): string[] {
     values.turnBudget > MAX_TURN_BUDGET
   )
     problems.push(`turnBudget must be an integer from 1 to ${String(MAX_TURN_BUDGET)}`);
+  if (
+    values.tokenBudget !== null &&
+    (!Number.isInteger(values.tokenBudget) ||
+      values.tokenBudget < 1 ||
+      values.tokenBudget > MAX_TOKEN_BUDGET)
+  )
+    problems.push(`tokenBudget must be null or an integer from 1 to ${String(MAX_TOKEN_BUDGET)}`);
   return problems;
 }

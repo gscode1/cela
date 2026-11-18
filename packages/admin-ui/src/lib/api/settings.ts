@@ -21,6 +21,8 @@ export interface SettingsValues {
   maxReasoning: ReasoningLevel | null;
   defaultProfile: string;
   turnBudget: number;
+  /** Null: no limit. */
+  tokenBudget: number | null;
 }
 
 /** One row of `GET /admin/settings/history`; `old` is null for the seed. */
@@ -40,6 +42,7 @@ export function valuesOf(settings: AdminSettings): SettingsValues {
     maxReasoning: asLevel(settings.maxReasoning),
     defaultProfile: settings.defaultProfile ?? "",
     turnBudget: settings.turnBudget,
+    tokenBudget: settings.tokenBudget ?? null,
   };
 }
 

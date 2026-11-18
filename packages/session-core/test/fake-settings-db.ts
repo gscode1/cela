@@ -8,6 +8,7 @@ interface Row {
   max_reasoning: string | null;
   default_profile: string | null;
   turn_budget: number;
+  token_budget: string | null;
   revision: number;
   updated_at: Date;
   updated_by: string;
@@ -185,6 +186,7 @@ export class FakeSettingsDb {
       max_reasoning: null,
       default_profile: null,
       turn_budget: 100,
+      token_budget: null,
       revision: 1,
       updated_at: new Date(0),
       updated_by: "seed",
@@ -270,13 +272,14 @@ export class FakeSettingsDb {
       return done(this.row === undefined ? [] : [{ ...this.row }]);
     }
     if (text.startsWith("insert into inbox.settings (")) {
-      const [model, list, reasoning, maxReasoning, defaultProfile, budget, by] = params as [
+      const [model, list, reasoning, maxReasoning, defaultProfile, budget, tokens, by] = params as [
         string,
         string,
         string | null,
         string | null,
         string | null,
         number,
+        number | null,
         string | undefined,
       ];
       const next: Row = {
@@ -286,6 +289,8 @@ export class FakeSettingsDb {
         max_reasoning: maxReasoning,
         default_profile: defaultProfile,
         turn_budget: budget,
+        // node-postgres returns a bigint as a string.
+        token_budget: tokens === null ? null : String(tokens),
         revision: text.includes("do nothing") ? 1 : (this.row?.revision ?? 0) + 1,
         updated_at: new Date(),
         updated_by: by ?? "seed",

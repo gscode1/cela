@@ -15,7 +15,7 @@ import type {
   ProfileDefinition,
   SessionRow,
 } from "@pi-durable-k8s/session-core";
-import { terminalFailure } from "./failure.js";
+import { terminalFailure, TOKEN_BUDGET_EXHAUSTED } from "./failure.js";
 import type { RunOutcome } from "./failure.js";
 import { GithubDeniedError } from "./github-app.js";
 import type { Host } from "./host.js";
@@ -90,6 +90,8 @@ export interface SessionServiceOptions {
    * it for that profile's sessions. A session that reaches it is `failed`.
    */
   turnBudget: () => number;
+  /** Tokens one session may use in total; null or absent: no limit (docs/decisions/0028-token-budget.md). */
+  tokenBudget?: () => number | null;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
   /** The orchestrator shard: this service touches only the sessions assigned to it (docs/decisions/0017). */
@@ -425,6 +427,12 @@ export class SessionService {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");
       throw new PermanentError("turn budget exhausted");
+    }
+    // Checked at admission only: one run may overshoot it, by at most what that run spends (ADR 0028).
+    const tokenBudget = this.#options.tokenBudget?.() ?? null;
+    if (tokenBudget !== null && (await this.#host.tokensUsed(conversationId)) >= tokenBudget) {
+      await this.#failSession(session.id, conversationId, TOKEN_BUDGET_EXHAUSTED);
+      throw new PermanentError("token budget exhausted");
     }
     await this.#host.limitTurns(conversationId, budget - Math.max(0, used - running));
   }

@@ -14,6 +14,7 @@ const seed: Settings = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 };
 
 let server: Server | undefined;

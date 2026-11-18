@@ -24,6 +24,7 @@ await seedSettings(db.asPool(), {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 });
 // The model catalog the orchestrator would publish: "openai" has a credential, "anthropic" has none, scripted is the
 // test provider. `/__local/models?mode=` switches what the credentials hint says, for the specs of the model pickers.

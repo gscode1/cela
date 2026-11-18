@@ -22,6 +22,7 @@ export interface FakeSettings {
   maxReasoning: string | null;
   defaultProfile: string;
   turnBudget: number;
+  tokenBudget: number | null;
   revision: number;
   updatedAt: string;
   updatedBy: string;
@@ -63,6 +64,7 @@ export function createFakeAdmin(): FakeAdmin {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 100,
+      tokenBudget: null,
       revision: 1,
       updatedAt: NOW,
       updatedBy: "seed",

@@ -6,6 +6,8 @@ export interface AdminSettings {
   maxReasoning: string | null;
   defaultProfile: string | null;
   turnBudget: number;
+  /** Null: no token limit. Absent from an API that predates it. */
+  tokenBudget?: number | null;
   /** Goes back as `expectedRevision` on the next write (docs/decisions/0023-admin-revisions.md). */
   revision: number;
   updatedAt: string;

@@ -14,6 +14,7 @@ import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { publishAndCheckProfiles } from "../src/capabilities.ts";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
+import { TOKEN_BUDGET_EXHAUSTED } from "../src/failure.ts";
 import { definitionOf, PermanentError, SessionService } from "../src/sessions.ts";
 
 const config = loadConfig({
@@ -145,7 +146,7 @@ describe("definitionOf", () => {
 });
 
 describe("SessionService with profiles", () => {
-  function service(host: Host, turnBudget = 100) {
+  function service(host: Host, turnBudget = 100, tokenBudget: number | null = null) {
     const queries: { sql: string; params: unknown[] }[] = [];
     const pool = {
       query: (sql: string, params: unknown[] = []) => {
@@ -160,6 +161,7 @@ describe("SessionService with profiles", () => {
         testFaults: false,
         defaultModel: config.models.default,
         turnBudget: () => turnBudget,
+        tokenBudget: () => tokenBudget,
       }),
     };
   }
@@ -243,6 +245,37 @@ describe("SessionService with profiles", () => {
     await svc.apply(message("three", "3"), session(null, conversationId));
     expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
     svc.stop();
+  });
+
+  it("fails a session whose conversation used its token budget, counted from pi.usage (#178)", async () => {
+    const host = await openHost();
+    const conversationId = await host.createConversation(MODEL);
+    expect(await host.tokensUsed(conversationId)).toBe(0);
+    const { service: unlimited } = service(host);
+    await unlimited.apply(message("one", "1"), session(null, conversationId));
+    let state = await host.submissionState(conversationId, "1");
+    for (let i = 0; i < 200 && state?.status !== "done"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      state = await host.submissionState(conversationId, "1");
+    }
+    const used = await host.tokensUsed(conversationId);
+    expect(used).toBeGreaterThan(0);
+    unlimited.stop();
+
+    // One token of room left: the next input is still admitted.
+    const { service: roomy, queries: roomyQueries } = service(host, 100, used + 1);
+    await roomy.apply(message("two", "2"), session(null, conversationId));
+    expect(roomyQueries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
+    roomy.stop();
+
+    const { service: tight, queries } = service(host, 100, used);
+    await expect(tight.apply(message("three", "3"), session(null, conversationId))).rejects.toThrow(
+      /token budget exhausted/,
+    );
+    const failed = queries.find((q) => q.sql.includes("status = 'failed'"));
+    expect(failed?.params).toContain(TOKEN_BUDGET_EXHAUSTED);
+    expect(await host.submissionState(conversationId, "3")).toBeUndefined();
+    tight.stop();
   });
 
   it("a steer sent mid-run does not count the running run's turns twice (#177)", async () => {
