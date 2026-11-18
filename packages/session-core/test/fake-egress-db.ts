@@ -59,6 +59,17 @@ export class FakeEgressDb {
   readonly notifications: string[] = [];
   /** Profiles by name: the `egressRuleSets` of their current version. */
   profiles = new Map<string, string[]>();
+  /** What the proxy replicas wrote to egress.proxy_status; `silent_seconds` is what the database clock would say. */
+  proxyStatus: {
+    replica: string;
+    revision: number | null;
+    state: string;
+    last_read_at: Date | null;
+    started_at: Date;
+    version: string;
+    updated_at: Date;
+    silent_seconds: number;
+  }[] = [];
   #nextRule = 1;
   #pending: string[] = [];
   #snapshot:
@@ -147,6 +158,9 @@ export class FakeEgressDb {
       this.#snapshot = undefined;
       this.#pending = [];
       return done();
+    }
+    if (text.includes("from egress.proxy_status")) {
+      return done([...this.proxyStatus].sort((a, b) => a.replica.localeCompare(b.replica)));
     }
     if (text.startsWith("select pg_advisory_xact_lock")) return done();
     if (text.startsWith("select pg_notify")) {

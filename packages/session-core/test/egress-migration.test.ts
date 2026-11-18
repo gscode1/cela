@@ -67,3 +67,32 @@ describe("migration 024_egress.sql", () => {
     );
   });
 });
+
+const SQL_025 = readFile(new URL("../migrations/025_egress_proxy.sql", import.meta.url), "utf8");
+
+/** The proxy's database access (ADR 0035): read the rules, write only its own status. */
+describe("migration 025_egress_proxy.sql", () => {
+  it("gives the proxy role no write access to rules, sets, revisions or history", async () => {
+    const sql = (await SQL_025).replace(/--.*$/gm, "");
+    const grants = [...sql.matchAll(/grant ([^']+?) (?:on|to)/gi)].map((m) => m[0]);
+    const writes = [
+      ...sql.matchAll(
+        /grant\s+(?:[^']*?\b(?:insert|update|delete|all|truncate)\b[^']*?)\s+on\s+([\w., ]+?)\s+to/gi,
+      ),
+    ];
+    expect(grants.length).toBeGreaterThan(0);
+    expect(writes.map((m) => m[1])).toEqual(["egress.proxy_status"]);
+    expect(sql).not.toMatch(/\binbox\./);
+    expect(sql).not.toMatch(/create role|alter role/i);
+  });
+
+  it("is idempotent and keeps its table in the egress schema", async () => {
+    const sql = (await SQL_025).replace(/--.*$/gm, "");
+    expect([...sql.matchAll(/create table if not exists ([\w.]+)/g)].map((m) => m[1])).toEqual([
+      "egress.proxy_status",
+    ]);
+    expect(sql).not.toMatch(/create table (?!if not exists)/);
+    expect(sql).not.toMatch(/\bdrop\b/);
+    expect(sql).toMatch(/create or replace function egress\.grant_proxy_reader/);
+  });
+});

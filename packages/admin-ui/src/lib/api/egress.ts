@@ -202,7 +202,15 @@ export interface EgressStatus {
   ruleSets: number;
   rules: number;
   invalid: number;
-  proxy: { replicas: { name?: string; revision?: number }[]; note?: string };
+  proxy: {
+    replicas: {
+      name?: string;
+      revision?: number | null;
+      /** `starting`, `serving`, `stale` (denying everything) or `silent` (stopped reporting). */
+      state?: string;
+    }[];
+    note?: string;
+  };
 }
 
 export function getEgressStatus(token: string, signal?: AbortSignal): Promise<EgressStatus> {

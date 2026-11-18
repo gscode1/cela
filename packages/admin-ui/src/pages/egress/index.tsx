@@ -32,7 +32,11 @@ function StatusLine() {
           : proxy.replicas
               .map(
                 (replica) =>
-                  `${replica.name ?? "proxy"} at revision ${String(replica.revision ?? "?")}`,
+                  `${replica.name ?? "proxy"} at revision ${String(replica.revision ?? "?")}${
+                    replica.state === undefined || replica.state === "serving"
+                      ? ""
+                      : ` (${replica.state})`
+                  }`,
               )
               .join(", ")}
       </p>

@@ -11,6 +11,7 @@ import {
   parseExpectedRevision,
   PROFILE_NAME,
   readEgress,
+  readProxyStatus,
   readJsonObject,
   readProfile,
   ruleSetNameError,
@@ -380,13 +381,25 @@ export async function handleAdminEgress(
       return;
     }
     const data = await readEgress(pool);
+    const replicas = await readProxyStatus(pool);
     say(200, {
       revision: data.revision,
       ruleSets: data.ruleSets.length,
       rules: data.rules.length,
       invalid: data.invalid.length,
-      // Placeholder until the proxy (slice 3) reports the revision each replica last read.
-      proxy: { replicas: [], note: "no egress proxy reports yet" },
+      // Each proxy replica's last report (ADR 0035): a change has arrived when every serving replica shows its revision.
+      proxy: {
+        replicas: replicas.map((replica) => ({
+          name: replica.name,
+          revision: replica.revision,
+          state: replica.state,
+          lastReadAt: replica.lastReadAt?.toISOString() ?? null,
+          startedAt: replica.startedAt.toISOString(),
+          updatedAt: replica.updatedAt.toISOString(),
+          version: replica.version,
+        })),
+        ...(replicas.length === 0 ? { note: "no egress proxy reports yet" } : {}),
+      },
     });
     return;
   }
