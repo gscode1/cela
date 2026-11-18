@@ -128,6 +128,12 @@ ingest:
     hostnames: [pi.example.lan]
 ```
 
+`timeouts.stream` (default `0s`, no total limit) applies to `GET /sessions/{id}/stream`, which gets its own rule when
+`paths` reach `/sessions/`: a session may run for days, and a gateway default (Envoy Gateway: 15 s) would cut the stream.
+Dead connections go by the gateway's idle timeout (ingest sends a keepalive every 15 s); a client that loses the stream
+resumes with `Last-Event-ID`. `timeouts.request` (default: the gateway's) applies to every other path. With an Ingress,
+raise the controller's read timeout for the stream with its annotations.
+
 `paths: ["/"]` (the default) serves the session API, `/admin` and the console; `["/console", "/admin"]` serves only the
 operator screens. Ingest does not rate-limit failed sign-ins: keep the route on a trusted network, or rate-limit and
 authenticate on the gateway.

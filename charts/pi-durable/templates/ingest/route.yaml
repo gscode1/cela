@@ -24,10 +24,27 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
+    {{- $streams := false }}
+    {{- range .paths }}{{ if hasPrefix . "/sessions/" }}{{ $streams = true }}{{ end }}{{ end }}
+    {{- if $streams }}
+    # The session stream (SSE) lives as long as the client watches; a task may run for days. No total limit: dead
+    # connections are dropped by the gateway's idle timeout (ingest sends a keepalive every 15 s), and a client
+    # resumes with Last-Event-ID (ADR 0026).
+    - matches:
+        - path: { type: RegularExpression, value: "/sessions/[^/]+/stream" }
+      {{- with .timeouts.stream }}
+      timeouts: { request: {{ . | quote }} }
+      {{- end }}
+      backendRefs:
+        - { kind: Service, name: pi-ingest, port: 8080 }
+    {{- end }}
     - matches:
         {{- range .paths }}
         - path: { type: PathPrefix, value: {{ . | quote }} }
         {{- end }}
+      {{- with .timeouts.request }}
+      timeouts: { request: {{ . | quote }} }
+      {{- end }}
       backendRefs:
         - { kind: Service, name: pi-ingest, port: 8080 }
 ---

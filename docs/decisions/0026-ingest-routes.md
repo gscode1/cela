@@ -18,6 +18,14 @@ cluster. A hand-made route is not upgraded or removed with the release, and it i
   does not render a Gateway, TLS certificates or controller-specific policies: those belong to the cluster.
 - **`paths` are prefixes, default `["/"]`.** That serves the session API, `/admin` and the console. `["/console", "/admin"]`
   serves only the operator screens, for a route that operators alone can reach.
+- **The session stream has no total timeout (issue #172).** `GET /sessions/{id}/stream` is server-sent events for as
+  long as a client watches, and a session may run for days. A gateway default request timeout (Envoy Gateway: 15 s) cut
+  it, so the HTTPRoute renders a `RegularExpression` rule for the stream path with `timeouts.request` from
+  `ingest.httpRoute.timeouts.stream` (default `0s`, no limit) before the prefix rule, whose timeout is
+  `timeouts.request` (default: the gateway's). Envoy Gateway orders a regular-expression match before a prefix match;
+  checked on c2. The keepalive every 15 s keeps the gateway's idle timeout from closing a live stream, and a client
+  that loses the stream resumes with `Last-Event-ID`. The Ingress gets no timeout fields: controllers set them by
+  annotation.
 - **No route without an admitted client.** The chart refuses to render while a route is on and
   `networkPolicy.ingest.clients` is empty. The chart cannot know the gateway's pod labels, so the operator names them;
   `values.yaml` shows the Envoy Gateway selector.

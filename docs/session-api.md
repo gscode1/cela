@@ -157,6 +157,11 @@ Guarantees:
 
 **Entries resume from a cursor; the response in progress is replayed from its current state.**
 
+A stream lasts only as long as one connection, never as long as the session: proxies, restarts and networks end it.
+Clients reconnect with `Last-Event-ID` and lose nothing. Behind a gateway, give the stream path no total request
+timeout (the chart's `ingest.httpRoute` does, see [ADR 0026](decisions/0026-ingest-routes.md)); the keepalive every
+15 s keeps idle timeouts from closing a live stream.
+
 - **The durable cursor is the Pi Durable entry id**: a monotonically increasing integer assigned by the storage and
   persisted in Postgres (`durable` schema) with the entry itself. It survives client drops, orchestrator restarts
   and Pod replacement, because it is the transcript's own key, not an in-memory offset. The SSE `id` of an `entry`
