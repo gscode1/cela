@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +23,21 @@ const upstreamHeader = "X-Upstream-Https-Proxy"
 
 // Options configures Build.
 type Options struct {
+	// Authorizer judges every connection (Rules in production).
+	Authorizer Authorizer
+	// Principals maps egress tokens to sessions. Nil serves every request anonymously (slice 3: no per-session tokens
+	// yet); a request's Proxy-Authorization is then ignored.
 	Principals Principals
-	Policy     Policy
 	// UpstreamAddr is the one fixed upstream proxy (OneCLI), host:port. It is
 	// the only private address the proxy may dial, and only for route=onecli.
-	UpstreamAddr   string
+	// Empty (slice 3): no onecli route; a rule that selects it is a deny.
+	UpstreamAddr string
+	// OpenPrivateRanges lets private, ULA and CGNAT addresses through Smokescreen's own address check, because the
+	// Authorizer judges them (private rules, the platform block list). Loopback, link-local, multicast and reserved
+	// addresses stay refused by Smokescreen as a second layer. Leave it false when the Authorizer ignores addresses.
+	OpenPrivateRanges bool
+	// ResolveTimeout bounds the lookup of the destination's addresses (default 5 s).
+	ResolveTimeout time.Duration
 	MaxTunnelAge   time.Duration
 	ConnectTimeout time.Duration
 	IdleTimeout    time.Duration
@@ -47,16 +58,25 @@ type Proxy struct {
 	upstreamURL string
 	inner       http.Handler
 	baseDial    func(ctx context.Context, network, addr string) (net.Conn, error)
+	resolver    smokescreen.Resolver
+	network     string
 }
 
 // Build wires Smokescreen's proxy with our hooks. It does not listen.
 func Build(o Options) (*Proxy, error) {
-	if o.Principals == nil || o.Policy == nil {
-		return nil, errors.New("principals and policy are required")
+	if o.Authorizer == nil {
+		return nil, errors.New("an authorizer is required")
 	}
-	host, port, err := net.SplitHostPort(o.UpstreamAddr)
-	if err != nil || host == "" || port == "" {
-		return nil, fmt.Errorf("upstream address must be host:port: %q", o.UpstreamAddr)
+	var host, upstreamURL string
+	if o.UpstreamAddr != "" {
+		h, port, err := net.SplitHostPort(o.UpstreamAddr)
+		if err != nil || h == "" || port == "" {
+			return nil, fmt.Errorf("upstream address must be host:port: %q", o.UpstreamAddr)
+		}
+		host, upstreamURL = h, "http://"+o.UpstreamAddr
+	}
+	if o.ResolveTimeout == 0 {
+		o.ResolveTimeout = 5 * time.Second
 	}
 	if o.ConnectTimeout == 0 {
 		o.ConnectTimeout = 10 * time.Second
@@ -67,7 +87,7 @@ func Build(o Options) (*Proxy, error) {
 	p := &Proxy{
 		Registry:    NewRegistry(o.MaxTunnelAge),
 		opts:        o,
-		upstreamURL: "http://" + o.UpstreamAddr,
+		upstreamURL: upstreamURL,
 	}
 	// From authorization (stamped in serve) to Track a request spends at most
 	// the connect timeout (which also bounds Smokescreen's resolve-and-dial)
@@ -83,12 +103,21 @@ func Build(o Options) (*Proxy, error) {
 	}
 	cfg.ConnectTimeout = o.ConnectTimeout
 	cfg.IdleTimeout = o.IdleTimeout
+	if o.OpenPrivateRanges {
+		for _, pre := range privateRanges {
+			_, n, err := net.ParseCIDR(pre.String())
+			if err == nil {
+				cfg.AllowRanges = append(cfg.AllowRanges, smokescreen.RuleRange{Net: *n})
+			}
+		}
+	}
 	cfg.EgressACL = &decider{p: p, upstreamHost: strings.ToLower(host)}
 	cfg.RoleFromRequest = p.roleFromRequest
 	cfg.UpstreamProxySelector = p.selectUpstream
 	cfg.UpstreamProxyConnectReqHandler = p.authUpstream
 	cfg.RejectResponseHandlerWithCtx = func(_ *smokescreen.SmokescreenContext, r *http.Response) {
-		if r.StatusCode == http.StatusProxyAuthRequired {
+		// Smokescreen answers every deny with 407. Only a proxy that asks for a token invites credentials.
+		if r.StatusCode == http.StatusProxyAuthRequired && o.Principals != nil {
 			r.Header.Set("Proxy-Authenticate", `Basic realm="egress"`)
 		}
 	}
@@ -98,6 +127,7 @@ func Build(o Options) (*Proxy, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	p.resolver, p.network = cfg.Resolver, cfg.Network
 	// StartWithConfig sets these up; we run our own http.Server, so do it here.
 	cfg.ConnTracker = conntrack.NewTracker(cfg.IdleTimeout, cfg.MetricsClient, cfg.ShuttingDown, nil)
 	cfg.ShuttingDown.Store(false)
@@ -124,8 +154,9 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	// A client must never choose the next hop. Del removes every value.
 	r.Header.Del(upstreamHeader)
 	// Stamped before the ACL decision, never in dial, so a close that lands
-	// between the two still revokes this request.
-	r = r.WithContext(context.WithValue(r.Context(), authorizedAtKey{}, p.Registry.now()))
+	// between the two still revokes this request. The state also carries the
+	// addresses the decision checked to dial.
+	r = r.WithContext(context.WithValue(r.Context(), stateKey{}, &reqState{authorizedAt: p.Registry.now()}))
 	p.inner.ServeHTTP(w, r)
 }
 
@@ -134,6 +165,10 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) roleFromRequest(r *http.Request) (string, error) {
 	h := r.Header.Get("Proxy-Authorization")
 	r.Header.Del("Proxy-Authorization")
+	if p.opts.Principals == nil {
+		// Slice 3: no per-session tokens. Everyone is anonymous; the header, if any, is dropped above.
+		return AnonymousRole, nil
+	}
 	if h == "" {
 		return "", smokescreen.MissingRoleError("no Proxy-Authorization")
 	}
@@ -149,6 +184,15 @@ func (p *Proxy) roleFromRequest(r *http.Request) (string, error) {
 	return pr.Session, nil
 }
 
+// principalOf is the principal behind a role: anonymous without Principals, otherwise the session's.
+func (p *Proxy) principalOf(role string) Principal {
+	if p.opts.Principals == nil || role == AnonymousRole {
+		return Principal{}
+	}
+	pr, _ := p.opts.Principals.BySession(role)
+	return pr
+}
+
 // selectUpstream chains route=onecli tunnels to the fixed upstream. An
 // explicit direct route returns "". A host with no route cannot get here (the
 // ACL denied it), but if the policy changed in between we return an address
@@ -158,11 +202,11 @@ func (p *Proxy) selectUpstream(_ *smokescreen.SmokescreenContext, d *smokescreen
 	if !ok {
 		return "http://deny.invalid:1"
 	}
-	route, ok := p.opts.Policy.Route(d.Role, host, port)
+	v := p.opts.Authorizer.Authorize(p.principalOf(d.Role), normalizeHost(host), port, nil)
 	switch {
-	case ok && route == RouteDirect:
+	case v.Allow && v.Route == RouteDirect:
 		return ""
-	case ok && route == RouteOneCLI:
+	case v.Allow && v.Route == RouteOneCLI && p.upstreamURL != "":
 		return p.upstreamURL
 	default:
 		return "http://deny.invalid:1"
@@ -177,8 +221,11 @@ func (p *Proxy) authUpstream(ctx *goproxy.ProxyCtx, req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if d.SelectedUpstreamProxy != p.upstreamURL || d.Role == "" {
+	if p.upstreamURL == "" || d.SelectedUpstreamProxy != p.upstreamURL || d.Role == "" {
 		return errors.New("tunnel is not routed to the upstream")
+	}
+	if p.opts.Principals == nil {
+		return errors.New("no upstream token for session")
 	}
 	tok, ok := p.opts.Principals.OneCLIToken(d.Role)
 	if !ok {
@@ -218,28 +265,50 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 		if addr != d.OutboundHost {
 			return nil, errors.New("direct route may only dial the requested destination")
 		}
+		// Dial the address the decision checked, not whatever the name resolves to now: Smokescreen's dialContext
+		// reuses ResolvedAddr when the address is the decision's own destination, so there is no second lookup an
+		// attacker's DNS could answer differently (rebinding).
+		if st := stateOf(pctx); st != nil && len(st.addrs) > 0 {
+			_, port, ok := splitHostPort(addr)
+			if !ok {
+				return nil, errors.New("destination needs host:port")
+			}
+			d.ResolvedAddr = &net.TCPAddr{IP: net.IP(st.addrs[0].AsSlice()), Port: port}
+		}
 		ctx := context.WithValue(context.Background(), goproxy.ProxyContextKey, pctx)
 		c, err = p.baseDial(ctx, network, addr)
 	}
 	if err != nil {
 		return nil, err
 	}
-	at, ok := authorizedAtOf(pctx)
-	if !ok {
+	st := stateOf(pctx)
+	if st == nil {
 		_ = c.Close()
 		return nil, errors.New("tunnel has no authorization time")
 	}
-	return p.Registry.Track(d.Role, at, c), nil
+	return p.Registry.Track(d.Role, st.authorizedAt, c), nil
 }
 
-type authorizedAtKey struct{}
+// reqState is what one CONNECT carries from the front handler through the ACL decision to the dial. The ACL
+// decision (decider.Decide) is the only writer of addrs and it runs before the dial, on the same goroutine chain.
+type reqState struct {
+	authorizedAt time.Time
+	// addrs are the destination's addresses as the decision checked them; the direct route dials the first.
+	addrs []netip.Addr
+}
 
-func authorizedAtOf(pctx *goproxy.ProxyCtx) (time.Time, bool) {
-	if pctx.Req == nil {
-		return time.Time{}, false
+type stateKey struct{}
+
+func stateOf(pctx *goproxy.ProxyCtx) *reqState {
+	if pctx == nil || pctx.Req == nil {
+		return nil
 	}
-	at, ok := pctx.Req.Context().Value(authorizedAtKey{}).(time.Time)
-	return at, ok
+	return requestState(pctx.Req)
+}
+
+func requestState(r *http.Request) *reqState {
+	st, _ := r.Context().Value(stateKey{}).(*reqState)
+	return st
 }
 
 func decisionOf(pctx *goproxy.ProxyCtx) (*smokescreen.ACLDecision, error) {
@@ -280,20 +349,55 @@ func (d *decider) Decide(a acl.DecideArgs) (acl.Decision, error) {
 	if !ok {
 		return deny("destination needs host:port")
 	}
-	host := strings.TrimSuffix(strings.ToLower(a.Host), ".")
-	if host == d.upstreamHost {
+	host := normalizeHost(a.Host)
+	if d.upstreamHost != "" && host == d.upstreamHost {
 		return deny("destination is not allowed")
 	}
-	route, ok := d.p.opts.Policy.Route(a.Service, host, port)
-	if !ok {
-		return deny("host not allowed for this session")
+	st := requestState(a.Req)
+	if st == nil {
+		return deny("request has no state")
 	}
-	if route == RouteOneCLI {
-		if _, ok := d.p.opts.Principals.OneCLIToken(a.Service); !ok {
+	pr := d.p.principalOf(a.Service)
+	az := d.p.opts.Authorizer
+
+	// By name first: a host that no rule names is denied without a lookup, so the proxy is no DNS oracle.
+	v := az.Authorize(pr, host, port, nil)
+	if !v.Allow {
+		return deny(v.Reason)
+	}
+	// Then by address: resolve here, judge every address, and keep them for the dial.
+	rctx, cancel := context.WithTimeout(a.Req.Context(), d.p.opts.ResolveTimeout)
+	defer cancel()
+	ips, err := d.p.resolver.LookupIP(rctx, d.p.network, host)
+	if err != nil || len(ips) == 0 {
+		return deny("host does not resolve")
+	}
+	addrs := make([]netip.Addr, 0, len(ips))
+	for _, ip := range ips {
+		x, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			return deny("host resolved to an unusable address")
+		}
+		addrs = append(addrs, x.Unmap())
+	}
+	v = az.Authorize(pr, host, port, addrStrings(addrs))
+	if !v.Allow {
+		return deny(v.Reason)
+	}
+	if v.Route == RouteOneCLI {
+		switch {
+		case d.upstreamHost == "":
+			return deny("the onecli route arrives in slice 5; this proxy has no onecli upstream")
+		case d.p.opts.Principals == nil:
 			return deny("session has no upstream binding")
+		default:
+			if _, ok := d.p.opts.Principals.OneCLIToken(a.Service); !ok {
+				return deny("session has no upstream binding")
+			}
 		}
 	}
-	return acl.Decision{Result: acl.Allow, Reason: "allowed, route " + string(route)}, nil
+	st.addrs = addrs
+	return acl.Decision{Result: acl.Allow, Reason: "allowed, route " + string(v.Route)}, nil
 }
 
 // handshakeConn applies a deadline to the CONNECT exchange with the upstream

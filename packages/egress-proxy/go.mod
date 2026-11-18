@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.3
 
 require (
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/stripe/goproxy v0.0.0-20260922184237-948457f542a3
 	github.com/stripe/smokescreen/v2 v2.0.0-20261112132816-8ba9b4e488a8
 )
@@ -14,6 +15,9 @@ require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pires/go-proxyproto v0.12.0 // indirect
