@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router";
 import { useAuth } from "@/auth";
+import { EgressPage } from "@/pages/egress";
 import { GlobalSettings } from "@/pages/settings";
 import { McpServersPage } from "@/pages/mcp";
 import { Placeholder } from "@/pages/placeholder";
@@ -10,7 +11,7 @@ import { ShardStatusPage } from "@/pages/status";
 import { SECTIONS, Shell } from "@/shell";
 
 /** Sections that have their own screen; the others still show the placeholder. */
-const BUILT = new Set(["settings", "profiles", "mcp-servers", "skills", "status"]);
+const BUILT = new Set(["settings", "profiles", "mcp-servers", "skills", "egress", "status"]);
 
 /**
  * Routes live under the router's `/console` basename. Signed out, every route shows the sign-in screen and keeps the
@@ -27,6 +28,7 @@ export function App() {
         <Route path="profiles/*" element={<Profiles />} />
         <Route path="mcp-servers/*" element={<McpServersPage />} />
         <Route path="skills/*" element={<SkillsRoutes />} />
+        <Route path="egress/*" element={<EgressPage />} />
         <Route path="status/*" element={<ShardStatusPage />} />
         {SECTIONS.filter((section) => !BUILT.has(section.path)).map((section) => (
           <Route

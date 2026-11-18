@@ -8,8 +8,9 @@ spike), [0008](0008-settings-in-postgres.md), [0010](0010-session-profiles.md), 
 
 Epic #50 puts all sandbox egress behind our own proxy and manages what it allows as data: adding a host is one admin API
 call, not a GitOps change. This slice is the data and the admin API only. The proxy (slice 3) will read the same rows
-and call the same evaluator, so the rules cannot mean one thing in the API and another in the proxy. The admin UI is a
-follow-up (slice 2b); nothing enforces rules until slice 3.
+and call the same evaluator, so the rules cannot mean one thing in the API and another in the proxy. The admin console
+page for rule sets (slice 2b, issue #246) follows in the admin UI ([plan](../admin-ui-plan.md)); nothing enforces rules until
+slice 3.
 
 ## Decision
 
@@ -180,7 +181,7 @@ policy, and a network policy alone does not make the proxy connect.
 
 - Rules take effect nowhere until the proxy exists (slice 3); the NOTIFY has no listener yet.
 - A profile's `egressRuleSets` is part of its definition, so a change is a new profile version, like any other field.
-  The admin console does not edit it yet (slice 2b); the API does.
+  The admin console edits it in the profile editor (slice 2b), next to the Egress page for rule sets and their rules.
 - One global revision means two admins editing unrelated rules can see a `409`. A reload resolves it.
 - The evaluator is O(rules) per request. At 2000 rules the proxy can run it per connection; slice 3 may index it.
 - Sessions pin a profile snapshot, so the proxy needs the profile's rule set names per session (slice 4 principals).
