@@ -10,6 +10,9 @@ export interface SweeperDeps {
   /** Undefined when OneCLI is not configured: the sweep then leaves agents alone. */
   listOneCli: (() => Promise<{ agents: SweepAgent[]; secrets: SweepSecret[] }>) | undefined;
   /** The session deletion's teardown: stops the bridge, deletes the claim, then the PVC. Also removes a lone PVC. */
+  /** Undefined when the egress proxy is off: no principal is judged. */
+  listEgressPrincipals?: (() => Promise<string[]>) | undefined;
+  revokeEgress?: ((sessionId: string) => Promise<void>) | undefined;
   destroyClaim: (claimName: string, sessionLabel: string) => Promise<void>;
   revokeSession: (sessionId: string) => Promise<void>;
   /** The shard this orchestrator is; see `SweepInput.shard`. */
@@ -60,13 +63,17 @@ export class OrphanSweeper {
       // look unknown and have its fresh OneCLI agent revoked (secrets have no grace age).
       // Kubernetes and OneCLI are listed independently: an outage of one must not stop cleanup in the other. Claims and
       // PVCs stand or fall together, because a PVC is orphaned only if no claim of that name exists.
-      const [kube, oneCli] = await Promise.all([
+      const [kube, oneCli, principals] = await Promise.all([
         Promise.all([d.listClaims(), d.listPvcs()]).catch((error: unknown) => {
           log("sweep-list-failed", { source: "kubernetes", message: errorMessage(error) });
           return undefined;
         }),
         (d.listOneCli?.() ?? Promise.resolve(undefined)).catch((error: unknown) => {
           log("sweep-list-failed", { source: "onecli", message: errorMessage(error) });
+          return undefined;
+        }),
+        (d.listEgressPrincipals?.() ?? Promise.resolve(undefined)).catch((error: unknown) => {
+          log("sweep-list-failed", { source: "egress", message: errorMessage(error) });
           return undefined;
         }),
       ]);
@@ -80,6 +87,7 @@ export class OrphanSweeper {
         // A failed or unconfigured OneCLI listing leaves agents alone.
         agents: oneCli?.agents,
         secrets: oneCli?.secrets ?? [],
+        egressPrincipals: principals,
         namePrefix: d.namePrefix,
         now: d.now?.() ?? Date.now(),
         graceMs: d.graceMs,
@@ -110,6 +118,8 @@ export class OrphanSweeper {
       case "delete-pvc":
         // The claim does not exist, so there is no label to check; deleteClaimAndPvc refuses if one appears meanwhile.
         return this.#deps.destroyClaim(action.claim, "orphan-pvc-sweep");
+      case "revoke-egress":
+        return this.#deps.revokeEgress?.(action.sessionId);
       case "revoke-agent":
         return this.#deps.revokeSession(action.sessionId);
     }

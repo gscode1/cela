@@ -4,7 +4,7 @@
 // pod's own PI_API_TOKENS and is never printed. Output is plain lines the shell script greps.
 //
 //   status <owner> <final>            GET /admin/status; waits (exit 3) until the isolation probe has run unless <final> is 1
-//   create <owner>                    POST /sessions, prints `session <id>`
+//   create <owner> [profile]          POST /sessions (with the named profile, else the default), prints `session <id>`
 //   ask <owner> <id> <text> <until> <seconds>
 //                                     POST a message, stream until an assistant entry contains <until>; prints `TOOL <text>`
 //                                     for every tool result and `ANSWER <text>`; exit 3 on timeout
@@ -69,7 +69,8 @@ async function status() {
 }
 
 async function create() {
-  const res = await call("POST", "/sessions", {});
+  const profile = args[0];
+  const res = await call("POST", "/sessions", profile === undefined ? {} : { profile });
   if (res.status !== 201) fail("POST /sessions", res);
   console.log(`session ${res.json.sessionId}`);
 }

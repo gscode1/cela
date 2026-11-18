@@ -154,3 +154,27 @@ describe("required install configuration", () => {
     ).toContain("database");
   }, 5_000);
 });
+
+describe("config: egress proxy", () => {
+  it("is off unless PI_EGRESS_PROXY_URL is set", () => {
+    expect(loadConfig(env).egressProxyUrl).toBeUndefined();
+    expect(loadConfig({ ...env, PI_EGRESS_PROXY_URL: " " }).egressProxyUrl).toBeUndefined();
+  });
+
+  it("takes http://host:port without credentials or a path", () => {
+    expect(
+      loadConfig({ ...env, PI_EGRESS_PROXY_URL: "http://pi-egress-proxy.ns.svc:3128" })
+        .egressProxyUrl,
+    ).toBe("http://pi-egress-proxy.ns.svc:3128");
+    for (const bad of [
+      "pi-egress-proxy:3128",
+      "https://p:3128",
+      "http://u:p@p:3128",
+      "http://p:3128/x",
+    ]) {
+      expect(() => loadConfig({ ...env, PI_EGRESS_PROXY_URL: bad }), bad).toThrow(
+        /PI_EGRESS_PROXY_URL/,
+      );
+    }
+  });
+});

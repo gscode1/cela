@@ -321,3 +321,36 @@ describe("planSweep: shards", () => {
     expect(ids(2)).toEqual([]);
   });
 });
+
+describe("planSweep: egress principals", () => {
+  const PRINCIPALS = [LIVE, GONE, UNKNOWN, "44444444-4444-4444-8444-444444444444"];
+
+  it("revokes the principal of a deleted or unknown session, not of a live, deleting or failed one", () => {
+    const actions = plan({ egressPrincipals: PRINCIPALS });
+    expect(actions).toEqual([
+      { kind: "revoke-egress", sessionId: GONE, reason: "session-deleted" },
+      { kind: "revoke-egress", sessionId: UNKNOWN, reason: "session-unknown" },
+    ]);
+  });
+
+  it("judges an unknown session on shard 0 only, and another shard's sessions never", () => {
+    const other: SessionRef = { id: UNKNOWN, status: "deleted", shard: 1, conversationId: 5 };
+    expect(plan({ shard: 1, egressPrincipals: [UNKNOWN, GONE] })).toEqual([]);
+    expect(plan({ shard: 0, sessions: [...sessions, other], egressPrincipals: [UNKNOWN] })).toEqual(
+      [],
+    );
+  });
+
+  it("judges nothing when the proxy is off or the listing failed", () => {
+    expect(plan({ egressPrincipals: undefined })).toEqual([]);
+  });
+
+  it("puts the revocations first, so the action limit cannot cut them behind claim deletions", () => {
+    const actions = plan({
+      maxActions: 1,
+      claims: [{ name: "pi-conv-20", sessionLabel: GONE, createdAt: ago(60) }],
+      egressPrincipals: [GONE],
+    });
+    expect(actions.map((a) => a.kind)).toEqual(["revoke-egress"]);
+  });
+});

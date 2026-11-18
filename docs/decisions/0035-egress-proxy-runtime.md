@@ -99,6 +99,12 @@ a `cidr` or `namespaceSelector` (with an optional `podSelector`) and explicit `p
 destination only inside that list. Plain NetworkPolicy suffices on both providers, so there is no Cilium variant; Cilium does
 not match cluster addresses with a cidr, so use selectors there.
 
+## Addendum (slice 4, [0036](0036-egress-principals.md))
+
+`Principals` is now `SnapshotPrincipals`: the live rows of `egress.principals` in the same snapshot as the rules. A token
+is accepted only from its sandbox's Pod address; unknown or revoked is 407; no header is anonymous unless
+`egressProxy.requireAuth`. `grant_proxy_reader` also grants the principal columns without the salt.
+
 ## Consequences
 
 - A stale proxy denies new connections but does not cut open tunnels.

@@ -190,6 +190,8 @@ export interface ExplainResult {
   port: number;
   revision: number;
   profileRuleSets: string[];
+  /** Where `profileRuleSets` came from: the named profile, the session's own principal (as created), or none. */
+  profileSource?: "profile" | "principal" | "none";
   addressesChecked: boolean;
 }
 
@@ -202,6 +204,8 @@ export interface EgressStatus {
   ruleSets: number;
   rules: number;
   invalid: number;
+  /** Sessions with an egress token: live, live with a known Pod address, revoked. */
+  principals?: { active: number; withPodIp: number; revoked: number };
   proxy: {
     replicas: {
       name?: string;

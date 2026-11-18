@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 )
@@ -32,6 +33,8 @@ type StaticPrincipal struct {
 	Session     string `json:"session"`
 	EgressToken string `json:"egressToken"`
 	OneCLIToken string `json:"onecliToken,omitempty"`
+	// PodIP is the address the token is bound to; the tests connect from loopback, which is the default.
+	PodIP string `json:"podIP,omitempty"`
 }
 
 // Static implements Principals and Authorizer from a StaticConfig.
@@ -61,7 +64,11 @@ func NewStatic(c StaticConfig) (*Static, error) {
 		if _, dup := s.bySess[p.Session]; dup {
 			return nil, fmt.Errorf("duplicate session %q", p.Session)
 		}
-		pr := Principal{Session: p.Session, OneCLIToken: p.OneCLIToken}
+		ip := p.PodIP
+		if ip == "" {
+			ip = "127.0.0.1"
+		}
+		pr := Principal{Session: p.Session, OneCLIToken: p.OneCLIToken, PodIP: netip.MustParseAddr(ip)}
 		s.byHash[h] = pr
 		s.bySess[p.Session] = pr
 	}

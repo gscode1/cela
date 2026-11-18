@@ -713,6 +713,7 @@
         "replicas",
         "resources",
         "database",
+        "requireAuth",
         "rules",
         "platform",
         "clients",
@@ -743,6 +744,9 @@
               "minLength": 1
             }
           }
+        },
+        "requireAuth": {
+          "type": "boolean"
         },
         "rules": {
           "type": "object",

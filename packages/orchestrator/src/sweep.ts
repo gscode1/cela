@@ -57,6 +57,12 @@ export interface SweepInput {
   pvcs: readonly SweepPvc[];
   /** Undefined when OneCLI is not configured: no agent is judged. */
   agents: readonly SweepAgent[] | undefined;
+  /**
+   * Session ids of the egress principals that are not revoked (ADR 0036). Undefined when the proxy is off or the
+   * listing failed: none is judged. Judged like an agent: a session of this shard when it is deleted, an unknown one on
+   * shard 0 only.
+   */
+  egressPrincipals?: readonly string[] | undefined;
   secrets: readonly SweepSecret[];
   /** This orchestrator's OneCLI name prefix; see `onecli-names.ts`. Default `pi-session-`. */
   namePrefix?: string | undefined;
@@ -74,6 +80,8 @@ export type SweepAction =
   | { kind: "delete-claim"; claim: string; sessionLabel: string; reason: SweepReason }
   /** A workspace PVC whose claim is gone and whose session is deleted or unknown. */
   | { kind: "delete-pvc"; claim: string; reason: SweepReason }
+  /** Revokes the egress principal of a deleted or unknown session: its token is refused from then on. */
+  | { kind: "revoke-egress"; sessionId: string; reason: SweepReason }
   /** Revokes a session's OneCLI agent and per-session secrets. Ids are not secret; tokens are never carried. */
   | {
       kind: "revoke-agent";
@@ -110,7 +118,12 @@ export function planSweep(input: SweepInput): SweepAction[] {
     return session.shard === input.shard ? orphanReason(session) : undefined;
   };
 
+  // First: what stops a token from working matters more than what frees a disk, and the action limit may cut the list.
   const actions: SweepAction[] = [];
+  for (const sessionId of input.egressPrincipals ?? []) {
+    const reason = agentReason(bySession.get(sessionId));
+    if (reason !== undefined) actions.push({ kind: "revoke-egress", sessionId, reason });
+  }
 
   for (const claim of input.claims) {
     if (!CLAIM_NAME.test(claim.name)) continue;

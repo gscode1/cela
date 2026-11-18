@@ -1175,6 +1175,46 @@ describe("egressProxy (ADR 0035)", () => {
     expect(env.EGRESS_PLATFORM_HOSTS?.value).toContain("kubernetes.default.svc");
   });
 
+  it("tells the orchestrators where the proxy is only when it is enabled, and leaves anonymous requests allowed", () => {
+    const orchestrator = (list: Obj[]) =>
+      envOf(
+        list.find(
+          (d) => d.kind === "Deployment" && d.metadata.name.startsWith("pi-orchestrator"),
+        ) ?? {},
+      );
+    expect(orchestrator(docs()).PI_EGRESS_PROXY_URL).toBeUndefined();
+    const all = docs(on);
+    expect(orchestrator(all).PI_EGRESS_PROXY_URL?.value).toBe("http://pi-egress-proxy.ns.svc:3128");
+    expect(envOf(named(all, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
+      "false",
+    );
+    const strict = docs([...on, "--set", "egressProxy.requireAuth=true"]);
+    expect(envOf(named(strict, "Deployment", "pi-egress-proxy")).EGRESS_REQUIRE_AUTH?.value).toBe(
+      "true",
+    );
+  });
+
+  it("adds only the sandbox's egress to the proxy port; the other sandbox policies are unchanged (cutover is slice 6)", () => {
+    const sandboxPolicies = (list: Obj[]) =>
+      ofKind(list, "NetworkPolicy").filter(
+        (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
+      );
+    const added = "sandbox-allow-egress-proxy-egress";
+    const withProxy = sandboxPolicies(docs(on));
+    expect(JSON.stringify(withProxy.filter((p) => p.metadata.name !== added))).toBe(
+      JSON.stringify(sandboxPolicies(docs())),
+    );
+    expect(sandboxPolicies(docs()).some((p) => p.metadata.name === added)).toBe(false);
+    const policy = named(withProxy, "NetworkPolicy", added).spec;
+    expect(policy.policyTypes).toEqual(["Egress"]);
+    expect(policy.egress).toEqual([
+      {
+        to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-egress-proxy" } } }],
+        ports: [{ protocol: "TCP", port: 3128 }],
+      },
+    ]);
+  });
+
   it("opens the internet minus private ranges, the database and only the listed private destinations", () => {
     const list = proxyPolicies(
       docs([

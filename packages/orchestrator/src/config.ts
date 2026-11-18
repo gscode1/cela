@@ -86,6 +86,11 @@ export interface OrchestratorConfig {
     codexAccountId: string;
   };
   /**
+   * The egress proxy (`PI_EGRESS_PROXY_URL`, set by the chart with `egressProxy.enabled`; ADR 0036): where a plain
+   * session's tool commands send their traffic. Undefined: no principals, no proxy environment.
+   */
+  egressProxyUrl: string | undefined;
+  /**
    * Optional repository workspaces (Phase 4c). Both secrets reach the orchestrator only: the OneCLI admin API key
    * from Secret `pi-onecli-admin` (env), the GitHub App key from Secret `pi-github-app` (mounted files).
    */
@@ -237,6 +242,7 @@ export function loadConfig(
       token: token ? new Redacted(token) : undefined,
       codexAccountId: env.PI_CODEX_ACCOUNT_ID ?? PLACEHOLDER_API_KEY,
     },
+    egressProxyUrl: egressProxyUrl(env.PI_EGRESS_PROXY_URL),
     repos: {
       onecliApi,
       onecliApiKey: env.ONECLI_API_KEY ? new Redacted(env.ONECLI_API_KEY) : undefined,
@@ -250,4 +256,21 @@ export function loadConfig(
       namePrefix: validateNamePrefix(env.PI_ONECLI_NAME_PREFIX ?? DEFAULT_ONECLI_NAME_PREFIX),
     },
   };
+}
+
+/** `http://host:port` of the proxy Service, without credentials (the token is added per session); unset: undefined. */
+function egressProxyUrl(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (text === undefined || text === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("PI_EGRESS_PROXY_URL is not a URL");
+  }
+  if (url.protocol !== "http:" || url.hostname === "" || url.username !== "" || url.password !== "")
+    throw new Error("PI_EGRESS_PROXY_URL must be http://host:port with no credentials");
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "")
+    throw new Error("PI_EGRESS_PROXY_URL must be http://host:port with no path");
+  return `http://${url.host}`;
 }

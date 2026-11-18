@@ -63,6 +63,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
 | sandbox | OneCLI gateway | 10255 | credentialed traffic (repo sessions): credentials injected | S sandbox-allow-onecli-egress |
 | sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
+| sandbox | egress proxy | 3128 | plain sessions' tool traffic with a per-session token (ADR 0036); **not rendered by the chart** until the network cutover, see below | applied by hand |
 | orchestrator, ingest, sandboxes in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | orchestrator, ingest, sandboxes, e2e driver | CoreDNS | 53 | same, for every pod | same |
 | `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |
@@ -76,6 +77,29 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | kubelet, `kubectl port-forward` | any pod | any | host traffic; Cilium admits the local node by default, so probes keep working | (default) |
 
 Rows marked "(ingress side)" repeat a flow from the receiving end and add no rules. The bundled Postgres has no egress rule of its own; in the same namespace `default-deny-all` also covers it.
+
+## Sandboxes and the egress proxy (until the network cutover)
+
+With `egressProxy.enabled` the orchestrators give plain sessions' tool commands the proxy variables and a per-session token
+([ADR 0036](decisions/0036-egress-principals.md)). The chart then renders one additive sandbox policy, which admits the
+proxy port and changes nothing else (the sandbox network modes are slice 6 of epic #50): a sandbox still has direct
+internet, and proxy-aware tools now go through the proxy:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: sandbox-allow-egress-proxy-egress }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: pi-sandbox } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: pi-egress-proxy } } }]
+      ports: [{ protocol: TCP, port: 3128 }]
+```
+
+The proxy accepts a session's token only from that sandbox's Pod address, so a token read inside one sandbox is useless in
+another. Repo sessions keep using the OneCLI gateway until slice 5. `hack/egress-session-smoke.sh` checks all of this on a
+throwaway kind cluster.
 
 ## Assumptions to check before applying
 

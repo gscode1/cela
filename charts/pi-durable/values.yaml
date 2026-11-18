@@ -274,6 +274,10 @@ egressProxy:
   database:
     existingSecret: "" # required: a Secret in the release namespace that holds the connection URI of that role
     uriKey: uri
+  # Sandboxes send plain sessions' traffic here with a per-session token (ADR 0036). false: a request without a token is
+  # judged as anonymous (only the rule sets that apply to all); true: it is refused. A token that is unknown, revoked or
+  # used from another Pod is always refused. Turn it on with the network cutover, when nothing else may reach the proxy.
+  requireAuth: false
   rules:
     pollInterval: 5s # a read without a notification; a rule change usually arrives at once (LISTEN)
     # After this long without a successful read the proxy denies every connection (it never allows on old rules).

@@ -126,4 +126,25 @@ spec:
         - { protocol: TCP, port: {{ . }} }
         {{- end }}
 {{- end }}
+---
+# Egress: sandboxes may reach the proxy port (ADR 0036). Additive only: every other sandbox rule (sandbox.yaml) is unchanged,
+# so this opens no destination; it lets proxy-aware tools use the proxy before the network cutover (slice 6 of #50).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-egress-proxy-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
 {{- end }}

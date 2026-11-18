@@ -7,6 +7,7 @@ import {
   createPool,
   errorMessage,
   listSessionRefs,
+  livePrincipalSessions,
   publishModelProviders,
   repoAllowed,
   sessionByConversation,
@@ -16,6 +17,7 @@ import {
   settingsFromEnv,
   tokenAuthenticator,
 } from "@pi-durable-k8s/session-core";
+import { ENV } from "@pi-durable-k8s/sandbox-env";
 import { bridgeCapFields } from "./bridge-cap.js";
 import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";
@@ -36,7 +38,9 @@ import { checkRuntime } from "./runtime.js";
 import { clusterProbeIo } from "./netprobe-cluster.js";
 import { deleteProbePods } from "./netprobe-kube.js";
 import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
-import { observedRuntime, listClaims, listPvcs } from "./kube.js";
+import { observedPod, listClaims, listPvcs } from "./kube.js";
+import { claimNameFor, conversationOfName } from "./lifecycle.js";
+import { EgressPrincipals, usesEgressProxy } from "./egress.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -153,6 +157,20 @@ async function main(): Promise<void> {
     namePrefix: config.repos.namePrefix,
   });
   const skills = new SkillLibrary(pool, config.shard);
+  // The egress proxy (ADR 0036): principals and the proxy environment of plain sessions. Off without PI_EGRESS_PROXY_URL.
+  const egress =
+    config.egressProxyUrl === undefined
+      ? undefined
+      : new EgressPrincipals({
+          pool,
+          proxyUrl: config.egressProxyUrl,
+          master: () => {
+            const master = process.env[ENV.masterKey];
+            if (master === undefined || master === "")
+              throw new Error(`${ENV.masterKey} is not set`);
+            return master;
+          },
+        });
   const hooks: SandboxHooks = {
     // The session's size picks its pool; a session from before sizes keeps the unsized one.
     warmPoolOf: async (conversationId) => {
@@ -161,21 +179,49 @@ async function main(): Promise<void> {
     },
     // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {
+      let pod: Awaited<ReturnType<typeof observedPod>> | undefined;
       try {
-        await observeShardRuntime(
-          pool,
-          config.shard,
-          await observedRuntime(config.namespace, claimName),
-        );
+        pod = await observedPod(config.namespace, claimName);
+        await observeShardRuntime(pool, config.shard, pod.runtime);
       } catch (error) {
         log("runtime-observe-failed", { claim: claimName, error: errorMessage(error) });
       }
+      if (egress === undefined) return;
+      // Records the Pod's address before the first command. A failure only means the proxy refuses this session's token
+      // until the next attach or check: it never fails the attach.
+      try {
+        const conversationId = conversationOfName(config.shard, claimName);
+        const session =
+          conversationId === undefined
+            ? undefined
+            : await sessionByConversation(pool, config.shard, conversationId);
+        if (session !== undefined) await egress.attached(session, pod?.podIp);
+      } catch (error) {
+        log("egress-principal-failed", { claim: claimName, error: errorMessage(error) });
+      }
     },
+    // A repo session keeps the OneCLI environment until slice 5; every other session gets the proxy's.
     shellEnv: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);
-      return session === undefined ? undefined : repos.shellEnv(session, conversationId);
+      if (session === undefined) return undefined;
+      if (egress !== undefined && usesEgressProxy(session)) return egress.shellEnv(session);
+      return repos.shellEnv(session, conversationId);
     },
-    beforeUse: (conversationId) => repos.beforeUse(conversationId),
+    beforeUse: async (conversationId) => {
+      await repos.beforeUse(conversationId);
+      if (egress === undefined) return;
+      try {
+        const session = await sessionByConversation(pool, config.shard, conversationId);
+        if (session === undefined) return;
+        const claim = claimNameFor(config.shard, conversationId);
+        await egress.beforeUse(
+          session,
+          async () => (await observedPod(config.namespace, claim)).podIp,
+        );
+      } catch (error) {
+        log("egress-pod-ip-failed", { conversation: conversationId, error: errorMessage(error) });
+      }
+    },
     envStale: (conversationId) => repos.envStale(conversationId),
     execInFlight: (conversationId, inFlight) =>
       setExecInFlight(pool, config.shard, conversationId, inFlight),
@@ -243,6 +289,7 @@ async function main(): Promise<void> {
     turnBudget: () => settings.turnBudget(),
     tokenBudget: () => settings.tokenBudget(),
     repos,
+    ...(egress === undefined ? {} : { egress }),
     skills,
     timings: host.timings,
   });
@@ -272,6 +319,8 @@ async function main(): Promise<void> {
           }),
     destroyClaim: (claim, label) => host.destroyOrphanSandbox(claim, label),
     revokeSession: (sessionId) => repos.revokeSession(sessionId),
+    listEgressPrincipals: egress === undefined ? undefined : () => livePrincipalSessions(pool),
+    revokeEgress: egress === undefined ? undefined : (sessionId) => egress.revoke(sessionId),
     graceMs: config.sweep.graceMs,
     maxActions: config.sweep.maxActions,
     namePrefix: config.repos.namePrefix,
