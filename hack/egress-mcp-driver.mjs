@@ -1,4 +1,4 @@
-/* global process, console, fetch, URL, AbortSignal */
+/* global process, console, fetch, Buffer, AbortSignal */
 // Driver of hack/egress-mcp-smoke.sh (epic #50, slice 8, docs/decisions/0040-mcp-egress-flow.md). It runs INSIDE the
 // orchestrator pod (`kubectl exec -i deploy/pi-orchestrator -- node --input-type=module -e "$(cat this file)" <command> ...`),
 // so the OneCLI admin key and the orchestrator's agent token stay in the cluster; it uses the orchestrator's compiled
