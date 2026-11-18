@@ -49,3 +49,12 @@ tool that ignores its abort signal would hold that transaction, a pool client an
 hit the same wait. Every abort from the session service now waits at most 30 s (`abortWaitMs`); the abort mark and the
 withdrawal of queued inputs are committed before the wait either way. A `delete` whose wait times out goes on to delete
 the sandbox, which ends the stuck tool. A `cancel` or a failed session's abort fails the row, which the inbox retries.
+
+## Addendum: every retryable row backs off (issue #204)
+
+The backoff above now applies to every row that fails with a transient error, not only `delete`. A `message` or `steer`
+retried on the 1 s poll ended `failed` after five tries, inside the same short OneCLI, GitHub or Kubernetes outage this
+ADR describes, and the user's input was lost. A failing row of any kind puts its session into the in-memory backoff (1 s
+doubling to 60 s, `retryDelayMs`); a failed prepare counts the same. Rows other than `delete` still end `failed` after a
+cap, raised from 5 to 8 attempts so the retries span about two minutes (1+2+4+8+16+32+60 s). A `delete` still has no
+cap.
