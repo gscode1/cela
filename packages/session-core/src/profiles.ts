@@ -761,6 +761,22 @@ export async function publishCapabilities(
   );
 }
 
+/**
+ * Replaces only the per-provider credential hint (ADR 0025), so a secret added to OneCLI shows without a restart. A plain
+ * update: before the start publish there is no row, and a hint without its catalog is no use. Returns whether it changed.
+ */
+export async function publishModelProviders(
+  pool: pg.Pool,
+  modelProviders: readonly ModelProviderStatus[],
+): Promise<boolean> {
+  const result = await pool.query(
+    `update inbox.orchestrator_capabilities set model_providers = $1::jsonb, updated_at = clock_timestamp()
+      where model_providers is distinct from $1::jsonb`,
+    [JSON.stringify(modelProviders)],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 /** What the orchestrator published; undefined if it never started against this database. */
 export async function readCapabilities(db: Db): Promise<Capabilities | undefined> {
   const { rows } = await db.query<{

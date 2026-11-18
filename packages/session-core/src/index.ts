@@ -71,6 +71,7 @@ export {
   PROFILE_NAME,
   catalogKeys,
   publishCapabilities,
+  publishModelProviders,
   putProfile,
   deleteProfile,
   readCapabilities,

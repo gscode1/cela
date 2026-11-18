@@ -6,6 +6,7 @@ import {
   getSession,
   listProfileVersions,
   publishCapabilities,
+  publishModelProviders,
   putProfile,
   readCapabilities,
   readProfile,
@@ -460,6 +461,30 @@ describe("capabilities", () => {
     const old = await readCapabilities(pool);
     expect(old?.models).toBeUndefined();
     expect(old?.modelProviders).toBeUndefined();
+  });
+
+  it("replaces only the credential hints, reports a change, and writes nothing before a start publish", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    const missing = [{ provider: "openai-codex", credential: "missing" as const }];
+    const configured = [{ provider: "openai-codex", credential: "configured" as const }];
+    expect(await publishModelProviders(pool, configured)).toBe(false);
+    expect(db.capabilities).toBeUndefined();
+    const models = [{ provider: "openai-codex", id: "gpt-x", reasoning: true }];
+    await publishCapabilities(
+      pool,
+      { tools: ["read"], extensions: [], models, modelProviders: missing },
+      "o1",
+    );
+    expect(await publishModelProviders(pool, configured)).toBe(true);
+    expect(await publishModelProviders(pool, configured)).toBe(false);
+    expect(await readCapabilities(pool)).toEqual({
+      tools: ["read"],
+      extensions: [],
+      models,
+      modelProviders: configured,
+    });
+    expect(db.capabilities?.instance).toBe("o1");
   });
 
   it("checks a profile's defaultModel against the catalog only when one is given", () => {

@@ -7,6 +7,7 @@ import {
   createPool,
   errorMessage,
   listSessionRefs,
+  publishModelProviders,
   repoAllowed,
   sessionByConversation,
   setExecInFlight,
@@ -22,7 +23,11 @@ import { OneCliAdmin } from "./onecli-admin.js";
 import { modelCatalog, providerCredentials } from "./providers.js";
 import { RepoAccess } from "./repo-access.js";
 import type { SandboxHooks } from "./sandboxes.js";
-import { liveConversationProfiles, publishAndCheckProfiles } from "./capabilities.js";
+import {
+  liveConversationProfiles,
+  ModelCredentialsLoop,
+  publishAndCheckProfiles,
+} from "./capabilities.js";
 import { Host } from "./host.js";
 import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
@@ -39,6 +44,9 @@ import { createShutdown } from "./shutdown.js";
 import type { Running } from "./shutdown.js";
 import { openStorageWhenFree } from "./storage.js";
 import { OrphanSweeper } from "./sweeper.js";
+
+/** How often shard 0 re-reads OneCLI's secrets for the credential hint: one cheap listing (the sweep makes the same). */
+const MODEL_CREDENTIALS_INTERVAL_MS = 30_000;
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -203,7 +211,7 @@ async function main(): Promise<void> {
   running.host = host;
   if (shuttingDown()) return;
   // Before the first input: ingest validates profile writes against what is installed here.
-  // Also the model catalog and, from OneCLI's secrets, a credential hint per provider; refreshed at start only.
+  // Also the model catalog and, from OneCLI's secrets, a credential hint per provider (shard 0 refreshes the hint below).
   await publishAndCheckProfiles(
     pool,
     {
@@ -217,6 +225,17 @@ async function main(): Promise<void> {
     },
     config.instance,
   );
+  // A secret added to OneCLI shows in the console within a check, no restart (ADR 0025). One shard writes the shared row.
+  if (onecli !== undefined && config.shard === PROBE_SHARD) {
+    const credentials = new ModelCredentialsLoop({
+      models: host.models,
+      config,
+      listSecrets: () => onecli.listSecrets(),
+      publish: (providers) => publishModelProviders(pool, providers),
+    });
+    running.modelCredentials = credentials;
+    credentials.start(MODEL_CREDENTIALS_INTERVAL_MS);
+  }
   const service = new SessionService(pool, host, {
     shard: config.shard,
     testFaults: config.testFaults,
