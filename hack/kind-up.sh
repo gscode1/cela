@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--timeout 10m]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--timeout 10m] [--verbose]
+#
+# Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
+# only when a step fails (its last lines and the log's path). --verbose, or CI set in the environment, streams all of it.
 #
 #   1. checks docker, kind (>= 0.24: kindnet enforces NetworkPolicy from there), helm, kubectl and openssl
 #   2. creates the kind cluster (hack/kind-config.yaml: pinned node image, kindnet, and port mappings that publish the
@@ -19,8 +22,10 @@
 #   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
 #      network policies, OneCLI disabled (or, with --onecli, bundled: install.sh runs hack/onecli.sh first), the scripted
 #      model only
-#   7. prints the isolation probe (hack/kind-smoke.sh --status), where the API token is and the localhost URLs (or how to
-#      port-forward, with --no-expose)
+#   7. reads the isolation probe (hack/kind-smoke.sh --status), checks that the admin console (charts' console.enabled,
+#      on in values-kind.yaml), the session API and, with --onecli, the OneCLI dashboard answer, and ends with a summary:
+#      the URLs and whether each is ready, how to sign in (commands that read the Secrets; no secret is printed), the
+#      warnings and the next steps. An endpoint that does not answer fails the run after the summary
 #
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
 # which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
@@ -42,10 +47,12 @@ onecli=0
 expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
 min_kind=0.24.0
+verbose=0
+[[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--timeout 10m]" >&2
-  echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--timeout 10m] [--verbose]" >&2
+  echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
 die() {
@@ -53,10 +60,10 @@ die() {
   exit 1
 }
 t0=$SECONDS
-log() { printf '\n## %s (%ss)\n' "$*" "$((SECONDS - t0))"; }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+  -v | --verbose) verbose=1; shift ;;
   --name) [[ $# -ge 2 ]] || usage; name=$2; shift 2 ;;
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
@@ -70,8 +77,66 @@ done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
 
+# ------------------------------------------------------------------ output
+# Quiet mode moves stdout and stderr to the log for the length of a step (the terminal is kept on fds 3 and 4), so a
+# command's output never needs its own redirect and `set -e` still stops at the first failure; the EXIT trap then shows
+# the failed step's last lines.
+tty=0
+[[ ! -t 1 ]] || tty=1
+if [[ $tty -eq 1 && -z ${NO_COLOR:-} ]]; then
+  bold=$'\e[1m' dim=$'\e[2m' red=$'\e[31m' green=$'\e[32m' yellow=$'\e[33m' off=$'\e[0m'
+else
+  bold="" dim="" red="" green="" yellow="" off=""
+fi
+log_file=""
+if [[ $verbose -eq 0 ]]; then
+  tmp_root=${TMPDIR:-/tmp}
+  log_file=$(mktemp "${tmp_root%/}/kind-up-$name.XXXXXX")
+fi
+step_title=""
+step_t0=0
+step_line=0
+step_end() {
+  [[ -n $step_title ]] || return 0
+  if [[ $verbose -eq 0 ]]; then
+    exec 1>&3 2>&4 3>&- 4>&-
+    [[ $tty -eq 0 ]] || printf '\r\e[K'
+    printf '  %s✓%s %s %s(%ss)%s\n' "$green" "$off" "$step_title" "$dim" "$((SECONDS - step_t0))" "$off"
+  fi
+  step_title=""
+}
+step() { # title: what follows, up to the next step or step_end, is one step
+  step_end
+  step_title=$1
+  step_t0=$SECONDS
+  if [[ $verbose -eq 1 ]]; then
+    printf '\n## %s (%ss)\n' "$1" "$((SECONDS - t0))"
+    return 0
+  fi
+  printf '\n## %s\n' "$1" >>"$log_file"
+  step_line=$(wc -l <"$log_file")
+  [[ $tty -eq 0 ]] || printf '  %s… %s%s' "$dim" "$1" "$off"
+  exec 3>&1 4>&2 >>"$log_file" 2>&1
+}
+tmp=""
+on_exit() {
+  local rc=$?
+  [[ -z $tmp ]] || rm -rf "$tmp"
+  [[ $rc -ne 0 && -n $step_title && $verbose -eq 0 ]] || return 0
+  exec 1>&3 2>&4
+  [[ $tty -eq 0 ]] || printf '\r\e[K'
+  {
+    printf '  %s✗ %s failed%s (%ss). Its last lines:\n\n' "$red" "$step_title" "$off" "$((SECONDS - step_t0))"
+    tail -n "+$((step_line + 1))" "$log_file" | tail -n 40 | sed 's/^/    /'
+    printf '\n  Full log: %s\n' "$log_file"
+  } >&2
+}
+trap on_exit EXIT
+[[ -z $log_file ]] || printf '%spi-durable on kind: cluster %s, namespace %s%s  %s(log: %s)%s\n\n' \
+  "$bold" "$name" "$namespace" "$off" "$dim" "$log_file" "$off"
+
 # ------------------------------------------------------------------ 1. tools
-log "check the tools"
+step "check the tools and the images"
 for tool in docker kind helm kubectl openssl curl; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
@@ -138,7 +203,7 @@ if [[ $build -eq 0 ]]; then
 fi
 
 # ------------------------------------------------------------------ 2. the cluster
-log "kind cluster $name"
+step "kind cluster $name"
 if kind get clusters 2>/dev/null | grep -qx -- "$name"; then
   echo "cluster $name exists, reused"
   if [[ $expose -eq 1 ]]; then
@@ -174,7 +239,7 @@ k get nodes >/dev/null || die "cannot reach the cluster through context $ctx"
 
 # ------------------------------------------------------------------ 3. images
 if [[ $build -eq 1 ]]; then
-  log "build the images (native architecture) and load them into the node"
+  step "build the images (native architecture) and load them into the node"
   case $(uname -m) in aarch64 | arm64) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
   for image in orchestrator ingest sandbox; do
     IMAGE_REPO=$repo "$root/images/build.sh" "$image" --platform "$platform" >/dev/null
@@ -193,7 +258,7 @@ if [[ $build -eq 1 ]]; then
 fi
 
 # ------------------------------------------------------------------ 4. agent-sandbox
-log "agent-sandbox"
+step "agent-sandbox"
 if [[ -n $(k get crd sandboxes.agents.x-k8s.io --ignore-not-found -o name) ]]; then
   KUBE_CONTEXT=$ctx "$root/hack/agent-sandbox.sh" external
 else
@@ -201,10 +266,9 @@ else
 fi
 
 # ------------------------------------------------------------------ 5. namespace, secrets, postgres
-log "namespace $namespace and the bundled Postgres"
+step "namespace $namespace and the bundled Postgres"
 umask 077
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 if [[ -z $(k get namespace "$namespace" --ignore-not-found -o name) ]]; then
   # The Pod Security version is the one hack/install.sh pins; read from there so there is one place to change it.
   ps_version=$(sed -n 's/.*pod-security.kubernetes.io\/enforce-version: //p' "$root/hack/install.sh" | head -1)
@@ -238,75 +302,135 @@ DATABASE_URL="postgres://pi:$pi_password@pi-postgres.$namespace.svc:5432/pi"
 export DATABASE_URL
 
 # ------------------------------------------------------------------ 6. pi-durable
-log "install pi-durable (hack/install.sh)"
+step "install pi-durable$([[ $onecli -eq 0 ]] || echo ' and OneCLI') (hack/install.sh)"
 KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/pi-durable/values-kind.yaml" \
   ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} --timeout "$timeout"
 unset DATABASE_URL pi_password
 
-# ------------------------------------------------------------------ 7. report
-log "isolation probe"
-"$root/hack/kind-smoke.sh" --name "$name" --namespace "$namespace" --status
+# ------------------------------------------------------------------ 7. isolation probe
+step "isolation probe (GET /admin/status)"
+probe=$("$root/hack/kind-smoke.sh" --name "$name" --namespace "$namespace" --status 2>&1) || {
+  printf '%s\n' "$probe"
+  die "the isolation probe check failed (hack/kind-smoke.sh --status)"
+}
+printf '%s\n' "$probe"
+probe_state=$(sed -n 's/^isolation-probe state=\([^ ]*\).*/\1/p' <<<"$probe" | head -1)
+probe_reached=$(awk '$1 == "probe-target" && $5 == "reachable" { print $2 }' <<<"$probe" | paste -sd, - | sed 's/,/, /g')
 
-total=$((SECONDS - t0))
-cat <<TXT
-
-## pi-durable is running on kind cluster $name (context $ctx), $((total / 60))m$((total % 60))s
-
-The API token (owner admin) is in the Secret api-auth, key tokens, as lines of owner:token. It was not printed:
-
-  kubectl --context $ctx -n $namespace get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p'
-
-TXT
+# ------------------------------------------------------------------ 8. endpoints
+# Ready means it answers: from this machine through the published ports (the path the user takes), or with --no-expose
+# from inside the ingest pod. A failure is reported in the summary, then fails the run.
+step "check the admin console, the session API$([[ $onecli -eq 0 ]] || echo ' and OneCLI')"
+http_ok() { # url -> 0 once it answers 2xx or 3xx (about two minutes)
+  local code
+  for _ in $(seq 1 40); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$1" || true)
+    echo "$1 -> $code"
+    [[ $code != [23]?? ]] || return 0
+    sleep 3
+  done
+  return 1
+}
+ingest_ok() { # path -> 0 once ingest answers it 2xx inside its own pod
+  local probe_js='fetch("http://127.0.0.1:" + (process.env.PI_INGEST_PORT ?? "8080") + process.argv[1]).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
+  for _ in $(seq 1 40); do
+    kn exec deploy/pi-ingest -c ingest -- node -e "$probe_js" "$1" && return 0
+    sleep 3
+  done
+  return 1
+}
+api_state=ready console_state=ready onecli_state=ready
 if [[ $expose -eq 1 ]]; then
-  cat <<TXT
-The session API is on http://localhost:8080 (published on 127.0.0.1 only; no port-forward needed).
-TXT
+  http_ok http://127.0.0.1:8080/healthz || api_state="not answering"
+  http_ok http://127.0.0.1:8080/console/ || console_state="not answering"
+  [[ $onecli -eq 0 ]] || http_ok http://127.0.0.1:10254/auth/login || onecli_state="not answering"
 else
-  cat <<TXT
-Reach the session API on localhost:8080:
-
-  kubectl --context $ctx -n $namespace port-forward svc/pi-ingest 8080:8080
-TXT
+  ingest_ok /healthz || api_state="not answering"
+  ingest_ok /console/ || console_state="not answering"
+  # OneCLI's rollout was waited for by hack/onecli.sh; without the published port there is nothing to call from here.
 fi
-cat <<TXT
+step_end
 
-Smoke test:   hack/kind-smoke.sh --name $name --namespace $namespace
-Remove it:    hack/kind-down.sh --name $name
-
-This is a trial: sandboxes run under runc, not gVisor. The scripted model is the default (the message text is the
-script, see docs/session-api.md).
-TXT
-if [[ $onecli -eq 0 ]]; then
-  echo "A real model needs OneCLI: rerun with --onecli (docs/model-credentials.md)."
-fi
-if [[ $onecli -eq 1 ]]; then
-  cat <<TXT
-
-Bundled OneCLI runs in $namespace; only the orchestrator reaches its API from inside the cluster.
-Prove that the orchestrator routes through the gateway:  hack/kind-smoke.sh --name $name --namespace $namespace --onecli
-TXT
-  if [[ $expose -eq 1 ]]; then
-    cat <<TXT
-The dashboard is on http://localhost:10254 and its API on http://localhost:10256 (127.0.0.1 only). Sign in (the login is
-in the Secret pi-onecli-admin and is not printed):
-
-  open http://localhost:10254/auth/login
-  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
-  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # or xclip
-TXT
+# ------------------------------------------------------------------ summary
+total=$((SECONDS - t0))
+failed=0
+row() { # label url state
+  if [[ $3 == ready ]]; then
+    printf '  %s✓%s %-15s %s\n' "$green" "$off" "$1" "$2"
   else
-    cat <<TXT
-Sign in to the dashboard (two port-forwards; the login is in the Secret pi-onecli-admin and is not printed):
-
-  kubectl --context $ctx -n $namespace port-forward svc/onecli-web 10254:10254 &
-  kubectl --context $ctx -n $namespace port-forward svc/onecli-api 10256:10256 &
-  open http://localhost:10254/auth/login
-  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
-  kubectl --context $ctx -n $namespace get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # or xclip
-TXT
+    printf '  %s✗%s %-15s %s  %s%s%s\n' "$red" "$off" "$1" "$2" "$red" "$3" "$off"
+    failed=1
   fi
-  cat <<TXT
-
-Then connect a provider there (docs/model-credentials.md) and set models in your values to use it.
-TXT
+}
+heading() { printf '\n%s%s%s\n' "$bold" "$*" "$off"; }
+# Secrets are read by the commands below, never by this script's output. The clipboard keeps them off the screen too.
+clip=""
+if command -v pbcopy >/dev/null 2>&1; then
+  clip=" | pbcopy"
+elif command -v wl-copy >/dev/null 2>&1; then
+  clip=" | wl-copy"
+elif command -v xclip >/dev/null 2>&1; then
+  clip=" | xclip -selection clipboard"
 fi
+kubectl_ns="kubectl --context $ctx -n $namespace"
+token_cmd="$kubectl_ns get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p' | tr -d '\\n'$clip"
+onecli_email_cmd="$kubectl_ns get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo"
+onecli_password_cmd="$kubectl_ns get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d$clip"
+if [[ -n $clip ]]; then to_clipboard="copies it to the clipboard"; else to_clipboard="prints it"; fi
+
+if [[ $expose -eq 1 ]]; then
+  where="published on 127.0.0.1 only"
+else
+  where="through kubectl port-forward, see below"
+fi
+printf '\n%spi-durable is up%s on kind cluster %s (context %s, namespace %s) in %sm%ss, %s\n\n' \
+  "$bold" "$off" "$name" "$ctx" "$namespace" "$((total / 60))" "$((total % 60))" "$where"
+row "Admin console" "http://localhost:8080/console/" "$console_state"
+row "Session API" "http://localhost:8080" "$api_state"
+if [[ $onecli -eq 1 ]]; then
+  if [[ $expose -eq 1 ]]; then
+    row "OneCLI" "http://localhost:10254/auth/login" "$onecli_state"
+  else
+    row "OneCLI" "http://localhost:10254/auth/login" ready
+  fi
+fi
+
+if [[ $expose -eq 0 ]]; then
+  heading "Port-forward first (one terminal each)"
+  echo "  $kubectl_ns port-forward svc/pi-ingest 8080:8080"
+  if [[ $onecli -eq 1 ]]; then
+    echo "  $kubectl_ns port-forward svc/onecli-web 10254:10254"
+    echo "  $kubectl_ns port-forward svc/onecli-api 10256:10256"
+  fi
+fi
+
+heading "Sign in to the admin console"
+echo "  Open http://localhost:8080/console/ and paste the admin API token (owner admin). This $to_clipboard:"
+echo "    $token_cmd"
+if [[ $onecli -eq 1 ]]; then
+  heading "Sign in to OneCLI"
+  echo "  Open http://localhost:10254/auth/login. The email, then the password (this $to_clipboard):"
+  echo "    $onecli_email_cmd"
+  echo "    $onecli_password_cmd"
+  echo "  Then connect a model provider there (docs/model-credentials.md) and set models in your values to use it."
+fi
+
+heading "Heads-up"
+printf '  %s!%s sandboxes run under runc, not gVisor: a trial for the scripted model, never for untrusted code\n' "$yellow" "$off"
+if [[ $probe_state != enforced ]]; then
+  if [[ $probe_reached == kube-api ]]; then
+    printf '  %s!%s network policy %s: a sandbox reached only the Kubernetes API, which kindnet does not filter (expected on kind)\n' \
+      "$yellow" "$off" "${probe_state:-unknown}"
+  else
+    printf '  %s!%s network policy %s%s\n' "$yellow" "$off" "${probe_state:-unknown}" "${probe_reached:+ (a sandbox reached: $probe_reached)}"
+  fi
+fi
+[[ $onecli -eq 1 ]] || printf '  %s!%s only the scripted model works: a real model needs OneCLI, rerun with --onecli\n' "$yellow" "$off"
+
+heading "Next"
+echo "  Smoke test    hack/kind-smoke.sh --name $name --namespace $namespace$([[ $onecli -eq 0 ]] || echo ' --onecli')"
+echo "  Try a session docs/session-api.md (the scripted model: the message text is the script)"
+echo "  Remove        hack/kind-down.sh --name $name"
+[[ -z $log_file ]] || echo "  Full log      $log_file"
+echo
+[[ $failed -eq 0 ]] || die "an endpoint does not answer (marked above); the install itself finished. The log has each try."

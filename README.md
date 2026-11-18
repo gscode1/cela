@@ -101,10 +101,13 @@ Secret ([how, and what works that way](docs/model-credentials.md#bundled-onecli-
 sign-up, so never put its API or dashboard behind an Ingress without blocking `/auth/signup` and `/auth/sign-up*`
 ([ADR 0022](docs/decisions/0022-bundled-onecli.md)).
 
-It takes about five minutes (the first run pulls the node image and the application images). It prints where the API token
-is (it never prints the token), shows the isolation probe from `GET /admin/status`, and tells you where to reach things: the
-session API on `http://localhost:8080` and, with `--onecli`, the dashboard on `http://localhost:10254` (and its API on
-`:10256`), with no `kubectl port-forward`. These ports are published on 127.0.0.1 only, are admitted by the network
+It takes about five minutes (the first run pulls the node image and the application images). It prints one line per step
+and keeps what kind, helm and kubectl print in a log file, shown only when a step fails (`--verbose`, or `CI` set, streams
+it). It then checks that each endpoint answers and ends with a summary: the admin console on
+`http://localhost:8080/console/`, the session API on `http://localhost:8080` and, with `--onecli`, the OneCLI dashboard on
+`http://localhost:10254` (its API on `:10256`), each marked ready or not, with no `kubectl port-forward`; the commands that
+copy the admin API token (the console's sign-in) and the OneCLI login to the clipboard (it never prints a secret); the
+isolation probe from `GET /admin/status` and the runc warning; and the next steps. These ports are published on 127.0.0.1 only, are admitted by the network
 policies from one address (the Docker gateway of the kind network, a /32) and not from sandboxes
 ([network policy](docs/network-policy.md#kind-localhost-ports-kind-only)). They exist only when the cluster is created:
 `hack/kind-up.sh --no-expose` skips them (use `kubectl port-forward`), and an existing cluster without them is refused, so

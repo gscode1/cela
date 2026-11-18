@@ -31,5 +31,10 @@ orchestrator:
 ingest:
   replicas: 1
 
+# The admin console on /console/ of the session API (http://localhost:8080/console/ with the published port); sign in
+# with the admin API token. kind-up.sh checks that it answers.
+console:
+  enabled: true
+
 # The NodePort for the session API (ingest.expose) is turned on by hack/kind-up.sh, with the source address it reads from
 # Docker (unless --no-expose); the port matches hack/kind-config.yaml.

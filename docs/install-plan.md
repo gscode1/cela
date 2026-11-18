@@ -177,8 +177,10 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
 5. Verify: read `/admin/status` and print the runtime and network-policy warnings; then smoke (create a session, run
    one tool call that writes a workspace marker, stream the result, replace the Pod, check the marker, delete the
    session, check claim and PVC cleanup). It fails on `not-enforced` only with `NETPOL_ENFORCED=1`, which CI sets.
-6. Print how to port-forward, where the token Secret is (it does not print the token), and how to add a real model in
-   OneCLI.
+6. Check that the admin console (`console.enabled` in `values-kind.yaml`), the session API and, with `--onecli`, the
+   OneCLI dashboard answer, then print a summary: their URLs and state, how to sign in (commands that read the token
+   and login Secrets; nothing secret is printed), the warnings, how to port-forward with `--no-expose`, and how to add a
+   real model in OneCLI. Step output goes to a log file and is shown only for a failed step (`--verbose` streams it).
 
 ## 8. CI
 
