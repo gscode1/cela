@@ -19,6 +19,20 @@ import type {
   SkillInfo,
   ToolCatalog,
 } from "@/lib/api/profiles";
+import {
+  getEgressStatus,
+  getRuleSet,
+  listEgressHistory,
+  listRuleSets,
+  listSessionRules,
+} from "@/lib/api/egress";
+import type {
+  EgressHistoryEntry,
+  EgressRule,
+  EgressStatus,
+  RuleSetDetail,
+  RuleSetList,
+} from "@/lib/api/egress";
 import { getSettingsHistory } from "@/lib/api/settings";
 import type { SettingsHistoryEntry } from "@/lib/api/settings";
 
@@ -36,6 +50,13 @@ export const keys = {
   sandboxSizes: ["sandbox-sizes"] as const,
   pickerMcp: ["profile-editor", "mcp-servers"] as const,
   pickerSkills: ["profile-editor", "skills"] as const,
+  /** A write invalidates `egress` as a whole: every egress view moves with the one schema revision. */
+  egress: ["egress"] as const,
+  egressRuleSets: ["egress", "rule-sets"] as const,
+  egressRuleSet: (name: string) => ["egress", "rule-set", name] as const,
+  egressSession: (id: string) => ["egress", "session", id] as const,
+  egressStatus: ["egress", "status"] as const,
+  egressHistory: ["egress", "history"] as const,
 };
 
 export function useSettingsQuery(): UseQueryResult<AdminSettings> {
@@ -99,5 +120,48 @@ export function useSkillPickerQuery(): UseQueryResult<SkillInfo[]> {
   return useQuery({
     queryKey: keys.pickerSkills,
     queryFn: ({ signal }) => listSkillInfos(token ?? "", signal),
+  });
+}
+
+export function useRuleSetsQuery(): UseQueryResult<RuleSetList> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.egressRuleSets,
+    queryFn: ({ signal }) => listRuleSets(token ?? "", signal),
+  });
+}
+
+export function useRuleSetQuery(name: string): UseQueryResult<RuleSetDetail> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.egressRuleSet(name),
+    queryFn: ({ signal }) => getRuleSet(token ?? "", name, signal),
+  });
+}
+
+export function useSessionRulesQuery(
+  sessionId: string | undefined,
+): UseQueryResult<{ revision: number; rules: EgressRule[] }> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.egressSession(sessionId ?? ""),
+    queryFn: ({ signal }) => listSessionRules(token ?? "", sessionId ?? "", signal),
+    enabled: sessionId !== undefined,
+  });
+}
+
+export function useEgressStatusQuery(): UseQueryResult<EgressStatus> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.egressStatus,
+    queryFn: ({ signal }) => getEgressStatus(token ?? "", signal),
+  });
+}
+
+export function useEgressHistoryQuery(): UseQueryResult<EgressHistoryEntry[]> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.egressHistory,
+    queryFn: ({ signal }) => listEgressHistory(token ?? "", signal),
   });
 }
