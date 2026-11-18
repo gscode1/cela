@@ -145,6 +145,23 @@ describe("McpAccess: a session's MCP identity", () => {
     await expect(access.forConversation(1, DOCS)).rejects.toThrow(/not a credentialed server/);
   });
 
+  it("refuses an agent name OneCLI would reject (it limits an identifier to 50 characters) instead of failing with a 400", async () => {
+    const sessions = [session(A, 1, ["docs"])];
+    const { fake } = setUp(sessions);
+    const long = new McpAccess({
+      onecli: new OneCliAdmin("http://onecli:10256", new Redacted("oc_admin"), fake.fetch),
+      catalog: () => [DOCS],
+      sessionOf: () => Promise.resolve(sessions[0]),
+      gateway: "http://g",
+      caFile: "/x",
+      noProxy: [],
+      namePrefix: "pi-session-extra-",
+    });
+    await expect(long.forConversation(1, DOCS)).rejects.toThrow(/longer than 50 characters/);
+    expect(mcpAgentIdentifier(A).length).toBeLessThanOrEqual(50);
+    expect(fake.agents.size).toBe(0);
+  });
+
   it("refuses a secret that does not exist or is for another host, and fails closed without the admin key", async () => {
     const sessions = [session(A, 1, ["docs"])];
     const { fake, access, current } = setUp(sessions);
@@ -252,9 +269,7 @@ describe("McpAccess: a session's MCP identity", () => {
   it("uses a discovery agent per credentialed server and removes it when the server leaves the catalog", async () => {
     const { fake, access } = setUp([]);
     const d = await access.discovery(DOCS);
-    const agent = [...fake.agents.values()].find((a) =>
-      a.identifier.includes("mcp-discovery-docs"),
-    );
+    const agent = [...fake.agents.values()].find((a) => a.identifier === "pi-session-d-docs");
     expect(await tokenOf(d)).toBe(agent?.accessToken);
     expect([...(fake.grants.get(agent?.id ?? "")?.secrets ?? [])]).toEqual(["sec-docs"]);
     await access.reconcileDiscovery([DOCS]);

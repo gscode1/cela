@@ -159,17 +159,17 @@ describe("planSweep: OneCLI agents", () => {
     ]);
   });
 
-  it("also finds the per-session MCP agent (<prefix><uuid>-mcp) of a deleted session, and never a discovery agent or a live session's", () => {
+  it("also finds the per-session MCP agent (<prefix><uuid>-m) of a deleted session, and never a discovery agent or a live session's", () => {
     const mcp = (uuid: string) => ({
       id: `m-${uuid.slice(0, 4)}`,
-      identifier: `pi-session-${uuid}-mcp`,
+      identifier: `pi-session-${uuid}-m`,
     });
     const actions = plan({
       agents: [
         mcp(LIVE),
         mcp(GONE),
-        { id: "d-1", identifier: "pi-session-mcp-discovery-docs" },
-        { id: "o-1", identifier: `other-prefix-${GONE}-mcp` },
+        { id: "d-1", identifier: "pi-session-d-docs" },
+        { id: "o-1", identifier: `other-prefix-${GONE}-m` },
       ],
       secrets: [],
     });

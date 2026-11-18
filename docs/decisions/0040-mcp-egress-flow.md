@@ -65,7 +65,7 @@ seeds the set `mcp-catalog`.
   the server is given its extension (0010), and a credentialed server's calls carry only that session's grants. The set says
   which hosts the orchestrator reaches and with what route, for the reconciler and for `explain`.
 - **Admin.** `POST /admin/egress/explain` adds `mcp: { ruleSet, servers: [{ name, enabled, credentialed, route,
-  namedByProfile? }] }`, the catalog's servers on that host. The console's Egress page shows the set read-only with a "Derived
+namedByProfile? }] }`, the catalog's servers on that host. The console's Egress page shows the set read-only with a "Derived
   from the MCP catalog" badge and a link to the MCP servers page; the profile editor does not offer it; the MCP page links
   back.
 
@@ -104,12 +104,15 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
 
 `McpAccess` (orchestrator) gives a session's credentialed MCP calls the session's own OneCLI agent:
 
-- **Agent.** `<prefix><session id>-mcp`. Its only grants are the secrets (referenced by name in the catalog's `onecliSecret`;
+- **Agent.** `<prefix><session id>-m`. Its only grants are the secrets (referenced by name in the catalog's `onecliSecret`;
   the operator creates the secret in OneCLI, the catalog never holds a value) of the **credentialed servers that the session's
   profile snapshot names** (`mcpServers`), intersected with the enabled catalog. The grants are narrowed to exactly that set and
   read back before the agent is used (`narrowAgent`, shared with `RepoAccess`, which fails closed on an answer it cannot read).
   A secret that does not exist, or whose host pattern is not the server's host, is refused. A profile that does not name the
   server gets no agent, no grant and no way to ask for one: `forConversation` checks the snapshot, not the catalog alone.
+- **Names.** OneCLI refuses an agent identifier longer than 50 characters (seen live: `400` at 51). `pi-session-<uuid>` is 47, so
+  the suffix is two characters (`-m`), the discovery agent is `<prefix>d-<server>`, and an agent whose name would exceed 50 is
+  refused with a message naming `PI_ONECLI_NAME_PREFIX` (at most 12 characters for MCP agents; the repo agent allows 14).
 - **A separate agent from the repo agent.** `pi-session-<id>` holds the GitHub secrets and its token is sealed for the proxy
   (0037). Folding the MCP secrets into it would let the sandbox's proxy chain act with them wherever an admin allowed the host.
   A second agent costs one more OneCLI object and keeps the sandbox's route from ever carrying an MCP credential. (#42 suggests
@@ -122,11 +125,11 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
   called on the orchestrator's token: it fails closed.
 - **Provisioning.** Before a session's first input (`SessionService.prepare`), best effort: a failure is logged and the first
   call tries again. A call re-provisions when the catalog's credentialed set for the profile changed.
-- **Discovery** has no session. A credentialed server's `tools/list` uses a **discovery agent** `<prefix>mcp-discovery-<server>`
+- **Discovery** has no session. A credentialed server's `tools/list` uses a **discovery agent** `<prefix>d-<server>`
   granted that one secret and used for nothing else (calls never use it). After a catalog change an agent of a server that is gone,
   disabled or no longer credentialed is deleted.
 - **Revocation.** `SessionService.#delete` revokes the session's MCP agent (its token fails at once, its dispatcher is closed)
-  right after the repo agent. The orphan sweep's agent pattern now also matches `<prefix><uuid>-mcp`, and `revokeSession`
+  right after the repo agent. The orphan sweep's agent pattern now also matches `<prefix><uuid>-m`, and `revokeSession`
   removes it by name for a session with no row. A session whose profile names no MCP server makes no OneCLI call.
 - **What stays.** The gateway enforces hosts, not MCP tools (0007): prefer upstream tokens that are read-only and narrowly
   scoped. The orchestrator process still holds an agent token for model calls; MCP secrets are no longer reachable with it.

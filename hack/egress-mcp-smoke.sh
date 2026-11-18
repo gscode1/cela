@@ -232,8 +232,8 @@ done
 ok "the gateway let httpbingo.org through $(($(now_ms) - t1)) ms after the first PUT"
 set_json=$(api_ok GET /admin/egress/rule-sets/mcp-catalog)
 check "one derived rule for the host, route onecli, naming both servers" "$(jq -c '.rules | map(select(.host=="httpbingo.org")) | map({route, note})' <<<"$set_json")" '"route":"onecli","note":"MCP server smoke-echo-a, smoke-echo-b"'
-check "a discovery agent of each credentialed server holds exactly its own secret (a)" "$(driver grants pi-session-mcp-discovery-smoke-echo-a)" "^smoke-key-a$"
-check "(b)" "$(driver grants pi-session-mcp-discovery-smoke-echo-b)" "^smoke-key-b$"
+check "a discovery agent of each credentialed server holds exactly its own secret (a)" "$(driver grants pi-session-d-smoke-echo-a)" "^smoke-key-a$"
+check "(b)" "$(driver grants pi-session-d-smoke-echo-b)" "^smoke-key-b$"
 api_ok PUT /admin/profiles/smoke-a '{"definition":{"mcpServers":["smoke-echo-a"]},"enabledForNew":true}' >/dev/null
 api_ok PUT /admin/profiles/smoke-b '{"definition":{"mcpServers":["smoke-echo-b"]},"enabledForNew":true}' >/dev/null
 sa=$(new_session smoke-a)
@@ -244,8 +244,8 @@ sessions+=("$sb")
 # servers, so no tool is ever listed or called: this is the identity, not the protocol).
 send_script "$sa" hello-a '[{"tool":"tool_search","args":{"query":"anything"}}]' >/dev/null
 send_script "$sb" hello-b '[{"tool":"tool_search","args":{"query":"anything"}}]' >/dev/null
-ida=pi-session-$sa-mcp
-idb=pi-session-$sb-mcp
+ida=pi-session-$sa-m
+idb=pi-session-$sb-m
 check "session A's agent holds exactly smoke-key-a" "$(driver grants "$ida")" "^smoke-key-a$"
 check "session B's agent holds exactly smoke-key-b" "$(driver grants "$idb")" "^smoke-key-b$"
 check "a session whose profile names no credentialed server has no agent" "$(driver agents "pi-session-$s_with")" "^$"

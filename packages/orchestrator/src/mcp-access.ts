@@ -7,6 +7,7 @@ import type { OneCliAdmin } from "./onecli-admin.js";
 import { narrowAgent } from "./onecli-grants.js";
 import {
   DEFAULT_ONECLI_NAME_PREFIX,
+  ONECLI_IDENTIFIER_MAX,
   mcpAgentIdentifier,
   mcpDiscoveryPrefix,
   validateNamePrefix,
@@ -18,14 +19,14 @@ import { hostPatternMatches } from "./providers.js";
 /**
  * The OneCLI identity of the orchestrator's credentialed MCP calls (docs/decisions/0040-mcp-egress-flow.md, issue #42).
  * A session's calls to a catalog server that names a OneCLI secret go through the gateway as that session's own agent,
- * `<prefix><session id>-mcp`, whose only grants are the secrets of the credentialed servers its profile names
+ * `<prefix><session id>-m`, whose only grants are the secrets of the credentialed servers its profile names
  * (`mcpServers`, read from the session's profile snapshot, never from the catalog alone). Another session's calls carry
  * another agent's token, so one session cannot use the credential another was granted, and a profile that does not name a
  * server gets no grant and no way to ask for one. Credentials stay in OneCLI: the secret is an operator's, referenced by
  * name (`onecliSecret`), and this class only grants it.
  *
  * Tool discovery has no session. A credentialed server's `tools/list` goes through a discovery agent of its own,
- * `<prefix>mcp-discovery-<server>`, granted that one secret and used for nothing else (the calls never use it).
+ * `<prefix>d-<server>`, granted that one secret and used for nothing else (the calls never use it).
  *
  * Servers without a secret keep the orchestrator-wide gateway token: nothing there is session-specific.
  */
@@ -135,6 +136,11 @@ export class McpAccess {
     if (onecli === undefined) {
       throw new McpNotGrantedError(
         "credentialed MCP servers need the OneCLI admin key: ONECLI_API_KEY is not set",
+      );
+    }
+    if (identifier.length > ONECLI_IDENTIFIER_MAX) {
+      throw new McpNotGrantedError(
+        `the OneCLI agent name ${identifier} is longer than ${String(ONECLI_IDENTIFIER_MAX)} characters: PI_ONECLI_NAME_PREFIX is too long for MCP agents (at most 12 characters)`,
       );
     }
     const secretIds = await this.#secretIds(onecli, servers);
