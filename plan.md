@@ -2,6 +2,7 @@
 
 Status: proof of concept; phases 1 to 4c done. Results below are historical observations in one example test environment.
 Scope: proof of concept. Production hardening is out of scope and listed at the end.
+What comes next: [docs/roadmap.md](docs/roadmap.md) (draft, not accepted; this file stays the reference until it is).
 
 ## 1. Goal
 

@@ -77,6 +77,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [Installation plan: Helm, bundled dependencies, kind](docs/install-plan.md)
 - [Architecture decision records](docs/decisions/)
 - [Plan, decisions and phase results](plan.md)
+- [Roadmap: what comes after the proof of concept](docs/roadmap.md) (draft)
 
 ## Quick start on kind
 
