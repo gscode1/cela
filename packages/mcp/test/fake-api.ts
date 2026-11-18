@@ -202,6 +202,11 @@ export class FakeApi {
     return this.#internal(sessionId).connectionCount;
   }
 
+  /** Stream connections that are open right now (to check that nothing leaks). */
+  openStreams(sessionId: string): number {
+    return this.#internal(sessionId).connections.size;
+  }
+
   /** Resolves once at least `count` stream connections have been opened for the session. */
   waitForStream(sessionId: string, count = 1): Promise<void> {
     const s = this.#internal(sessionId);
