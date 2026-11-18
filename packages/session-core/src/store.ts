@@ -11,6 +11,22 @@ export type SessionStatus = "active" | "deleting" | "deleted" | "failed";
 export type EventKind = "message" | "steer" | "cancel" | "delete";
 export type EventStatus = "pending" | "submitted" | "failed";
 
+/**
+ * A session's spend so far: the totals of its conversation's `pi.usage` (every model, attempt and tool that reports
+ * usage), copied by the orchestrator when a run settles (#185). `cost` is in USD, pi-ai's best total: the billed cost
+ * where the provider reports it, else its catalog estimate, and 0 for a model it has no price for.
+ */
+export interface SessionUsage {
+  totalTokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  /** When the orchestrator last copied it (database clock). */
+  updatedAt: string;
+}
+
 export interface SessionRow {
   id: string;
   owner: string;
@@ -37,6 +53,8 @@ export interface SessionRow {
    * version 1: today's behaviour).
    */
   profile: { name: string; version: number; snapshot: unknown } | null;
+  /** Null until the first run of the session settles. */
+  usage: SessionUsage | null;
   createdAt: Date;
   lastActivityAt: Date;
 }
@@ -75,6 +93,8 @@ interface SessionDbRow {
   profile_name: string | null;
   profile_version: number | null;
   profile_snapshot: unknown;
+  /** Absent in rows read before migration 021 was applied, and in test fakes. */
+  usage?: SessionUsage | null;
   created_at: Date;
   last_activity_at: Date;
 }
@@ -126,6 +146,7 @@ const toSession = (row: SessionDbRow): SessionRow => ({
           version: row.profile_version,
           snapshot: row.profile_snapshot ?? null,
         },
+  usage: row.usage ?? null,
   createdAt: row.created_at,
   lastActivityAt: row.last_activity_at,
 });
@@ -226,6 +247,24 @@ export async function failSession(
     `update inbox.sessions set status = 'failed', failure = $2, last_activity_at = clock_timestamp()
       where id = $1 and status = 'active'`,
     [sessionId, failure.slice(0, 500)],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Copies a session's usage totals. Totals only grow, so a write that would lower `totalTokens` (an older read that lost
+ * a race with a newer one) changes nothing. Any status: a failed session's spend is still worth showing.
+ */
+export async function recordSessionUsage(
+  db: Pick<pg.Pool, "query">,
+  sessionId: string,
+  usage: Omit<SessionUsage, "updatedAt">,
+): Promise<boolean> {
+  const result = await db.query(
+    `update inbox.sessions
+        set usage = $2::jsonb || jsonb_build_object('updatedAt', to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      where id = $1 and (usage is null or (usage->>'totalTokens')::bigint <= $3)`,
+    [sessionId, JSON.stringify(usage), usage.totalTokens],
   );
   return (result.rowCount ?? 0) > 0;
 }

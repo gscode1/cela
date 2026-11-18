@@ -268,6 +268,26 @@ describe("profiles with skills and sessions", () => {
     expect(gotPlain.skills).toBeUndefined();
   });
 
+  it("GET /sessions/{id} shows the usage the orchestrator recorded, and no usage before the first run settled (#185)", async () => {
+    const { base, db } = await start();
+    const created = await json(await call(base, "bob", "POST", "/sessions", {}));
+    const id = String(created.sessionId);
+    expect((await json(await call(base, "bob", "GET", `/sessions/${id}`))).usage).toBeUndefined();
+    const usage = {
+      totalTokens: 1_234,
+      input: 1_000,
+      output: 234,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0.0042,
+      updatedAt: "2026-11-18T09:00:00.000Z",
+    };
+    const row = db.sessions.get(id);
+    if (row === undefined) throw new Error("no session row");
+    Object.assign(row, { usage });
+    expect((await json(await call(base, "bob", "GET", `/sessions/${id}`))).usage).toEqual(usage);
+  });
+
   it("GET /sessions/{id} shows repoSkills only when the snapshot turned it on and the session has a repo", async () => {
     const { base } = await start();
     const put = await call(base, "alice", "PUT", "/admin/profiles/repo-docs", {

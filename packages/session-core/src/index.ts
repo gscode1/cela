@@ -142,6 +142,7 @@ export {
   getSession,
   listSessionRefs,
   markWorkspaceReady,
+  recordSessionUsage,
   beginDelete,
   requestDelete,
   requeueFailedDelete,
@@ -162,6 +163,7 @@ export type {
   SessionRow,
   SessionStatus,
   SessionSummary,
+  SessionUsage,
 } from "./store.js";
 export {
   PROBE_SHARD,

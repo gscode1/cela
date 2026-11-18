@@ -100,6 +100,7 @@ const session = (definition: ProfileDefinition): SessionRow => ({
   onecli: null,
   workspaceReadyAt: new Date(),
   profile: { name: "coding", version: 2, snapshot: definition },
+  usage: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

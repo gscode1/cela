@@ -312,6 +312,7 @@ const sessionRow = (overrides: Partial<SessionRow> = {}): SessionRow => ({
   onecli: null,
   workspaceReadyAt: null,
   profile: null,
+  usage: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
   ...overrides,

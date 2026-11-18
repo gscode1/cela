@@ -88,6 +88,7 @@ describe("SessionService when an abort does not go idle in time", () => {
     onecli: null,
     workspaceReadyAt: null,
     profile: null,
+    usage: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });
