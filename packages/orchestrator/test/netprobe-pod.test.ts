@@ -23,6 +23,10 @@ describe("isolation probe Pod", () => {
     expect(pod.spec?.runtimeClassName).toBe("gvisor");
   }, 1000);
 
+  it("wears the proxied mode label: the strictest position, so one probe covers both modes", () => {
+    expect(pod.metadata?.labels?.["pi-durable.dev/network-mode"]).toBe("proxied");
+  }, 1000);
+
   it("meets the restricted Pod Security level and holds nothing but its plan", () => {
     const spec = pod.spec;
     const container = spec?.containers[0];

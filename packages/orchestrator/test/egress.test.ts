@@ -76,6 +76,16 @@ describe("buildEgressEnv", () => {
 });
 
 describe("EgressPrincipals", () => {
+  it("gives a direct session no principal, no token and no proxy environment (ADR 0038)", async () => {
+    const { egress, db } = setup();
+    const direct = session(A, { networkMode: "direct", profile: null });
+    expect(await egress.shellEnv(direct)).toBeUndefined();
+    await egress.attached(direct, "10.1.2.3");
+    expect(db.principals).toHaveLength(0);
+    // The same session as proxied does get one.
+    expect(await egress.shellEnv(session(A, { networkMode: "proxied" }))).toBeDefined();
+  });
+
   it("serves repo sessions too: a principal and the proxy environment, no OneCLI variable", async () => {
     const { egress, db } = setup();
     const repo = repoSession(A);

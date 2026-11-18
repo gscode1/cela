@@ -16,8 +16,10 @@ import type { ProbePlan } from "./netprobe-pod.js";
 export interface ProbeIo {
   /** An address:port the probe should try from a sandbox's network position, resolved to IPs. */
   targets(): Promise<{ name: string; host: string; port: number }[]>;
-  /** The allowed TCP control: the OneCLI gateway, else a public address. */
+  /** The allowed TCP control: the egress proxy; without it the OneCLI gateway, else a public address. */
   control: { host: string; port: number };
+  /** The sandbox has the proxy only and no DNS (the network cutover, ADR 0038): no DNS control, an address for the control. */
+  proxyOnly?: boolean;
   /** TCP connect from the orchestrator, which is allowed to reach every denied target but the one it is. */
   reachableHere(host: string, port: number): Promise<boolean>;
   /** Starts the probe Pod with the plan, waits, returns its report, deletes the Pod. */
@@ -35,9 +37,13 @@ export async function runNetworkProbe(io: ProbeIo): Promise<ProbeResult> {
       upFromOrchestrator: await io.reachableHere(t.host, t.port),
     })),
   );
+  const control =
+    io.proxyOnly === true
+      ? { ...io.control, host: (await resolveHost(io.control.host)) ?? io.control.host }
+      : io.control;
   const { report, failure } = await io.runPod({
-    dnsName: DNS_CONTROL_NAME,
-    control: io.control,
+    ...(io.proxyOnly === true ? {} : { dnsName: DNS_CONTROL_NAME }),
+    control,
     targets: found,
   });
   return decide(targets, report, failure);

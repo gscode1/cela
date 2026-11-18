@@ -108,6 +108,7 @@ describe("SessionService creates the conversation with the catalog", () => {
     profile: { name: "docs", version: 1, snapshot },
     usage: null,
     sandboxSize: null,
+    networkMode: "proxied",
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

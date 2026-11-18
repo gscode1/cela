@@ -37,6 +37,28 @@ describe("runNetworkProbe", () => {
     expect(result.state).toBe("enforced");
   }, 1000);
 
+  it("proxied: no DNS control, and the control address is resolved here because the Pod has no DNS", async () => {
+    const runPod = vi.fn(() =>
+      Promise.resolve({
+        report: {
+          dns: null,
+          control: "connected" as const,
+          targets: { postgres: "timeout" as const },
+        },
+        failure: "",
+      }),
+    );
+    const result = await runNetworkProbe(
+      io({ proxyOnly: true, control: { host: "127.0.0.1", port: 3128 }, runPod }),
+    );
+    expect(runPod).toHaveBeenCalledWith({
+      control: { host: "127.0.0.1", port: 3128 },
+      targets: [{ name: "postgres", host: "10.0.0.5", port: 5432 }],
+    });
+    expect(result.state).toBe("enforced");
+    expect(result.controls).toEqual({ dns: null, allowedTcp: true });
+  }, 1000);
+
   it("is inconclusive when the denied target is down for the orchestrator too", async () => {
     expect((await runNetworkProbe(io({ reachableHere: () => Promise.resolve(false) }))).state).toBe(
       "inconclusive",

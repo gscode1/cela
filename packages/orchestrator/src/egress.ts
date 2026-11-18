@@ -90,6 +90,8 @@ export class EgressPrincipals {
   }
 
   async #token(session: SessionRow): Promise<Redacted | undefined> {
+    // A direct session has no proxy path: no principal, no token, no proxy environment (ADR 0038).
+    if (session.networkMode === "direct") return undefined;
     const stored = session.profile;
     // A snapshot that does not validate gives no rule sets (only those that apply to all): fail closed, not open.
     const definition = stored === null ? {} : validateProfileDefinition(stored.snapshot);

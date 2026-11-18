@@ -102,6 +102,7 @@ const session = (definition: ProfileDefinition): SessionRow => ({
   profile: { name: "coding", version: 2, snapshot: definition },
   usage: null,
   sandboxSize: null,
+  networkMode: "proxied",
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

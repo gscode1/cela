@@ -11,9 +11,9 @@ export interface DeniedTarget {
 
 /** What the probe Pod printed. */
 export interface PodReport {
-  /** A DNS lookup (allowed) worked. */
-  dns: boolean;
-  /** A TCP connection to the allowed control (OneCLI gateway, else a public address) worked. */
+  /** A DNS lookup (allowed) worked; null when none was tried (a proxied sandbox has no DNS, ADR 0038). */
+  dns: boolean | null;
+  /** A TCP connection to the allowed control (the egress proxy; without it the OneCLI gateway, else a public address) worked. */
   control: Outcome;
   targets: Record<string, Outcome>;
 }
@@ -24,7 +24,7 @@ export type ProbeState = "enforced" | "not-enforced" | "inconclusive";
 export interface ProbeResult {
   state: ProbeState;
   reason: string;
-  controls: { dns: boolean; allowedTcp: boolean } | null;
+  controls: { dns: boolean | null; allowedTcp: boolean } | null;
   targets: TargetRow[];
 }
 
@@ -78,9 +78,9 @@ export function decide(
     targets: rows,
   });
   if (controls === null) return inconclusive(failure);
-  if (!controls.dns || !controls.allowedTcp) {
+  if (controls.dns === false || !controls.allowedTcp) {
     return inconclusive(
-      `the allowed control failed (${[!controls.dns && "dns", !controls.allowedTcp && "tcp"].filter(Boolean).join(", ")}): blocked is not distinguishable from broken`,
+      `the allowed control failed (${[controls.dns === false && "dns", !controls.allowedTcp && "tcp"].filter(Boolean).join(", ")}): blocked is not distinguishable from broken`,
     );
   }
   if (!rows.some((row) => row.verdict === "blocked")) {
