@@ -6,7 +6,18 @@ import { PermanentError } from "./sessions.js";
 
 const POLL_MS = 1_000;
 const BATCH = 20;
-const MAX_PARALLEL_SESSIONS = 8;
+export const MAX_PARALLEL_SESSIONS = 8;
+/** Clients held for good in LISTEN on the inbox pool: this loop (`inbox_events`), SettingsCache and McpCatalogCache. */
+export const INBOX_POOL_LISTENERS = 3;
+/** Connections outside the drains: SSE streams, run watchers, exec-in-flight records, the HTTP routes, the sweep. */
+const INBOX_POOL_HEADROOM = 5;
+/**
+ * The orchestrator's inbox pool (docs/decisions/0005). Each parallel drain holds its claim client and, inside the
+ * claim, runs its nested queries (`#delete`'s tombstone and status writes, `#failSession`, `ensureConversation`) on a
+ * second one, one at a time. With fewer, the claims take every free connection and their nested queries time out.
+ */
+export const INBOX_POOL_SIZE =
+  INBOX_POOL_LISTENERS + 2 * MAX_PARALLEL_SESSIONS + INBOX_POOL_HEADROOM;
 const MAX_ATTEMPTS = 5;
 const DELETE_RETRY_BASE_MS = 1_000;
 const DELETE_RETRY_MAX_MS = 60_000;

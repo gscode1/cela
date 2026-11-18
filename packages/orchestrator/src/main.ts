@@ -25,7 +25,7 @@ import { liveConversationProfiles, publishAndCheckProfiles } from "./capabilitie
 import { Host } from "./host.js";
 import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
-import { InboxLoop } from "./inbox.js";
+import { INBOX_POOL_SIZE, InboxLoop } from "./inbox.js";
 import { checkRuntime } from "./runtime.js";
 import { clusterProbeIo } from "./netprobe-cluster.js";
 import { deleteProbePods } from "./netprobe-kube.js";
@@ -47,7 +47,12 @@ async function main(): Promise<void> {
   const lifecycle: Lifecycle = { state: "waiting-for-lock", instance: config.instance };
   // A second, independent connection pool for the inbox and the owner check: the Pi Durable adapter pins its
   // own connection and holds the ownership lock on it, and neither may share it.
-  const pool = createPool(config.databaseUrl, `${config.instance}-inbox`, 10, config.databaseTls);
+  const pool = createPool(
+    config.databaseUrl,
+    `${config.instance}-inbox`,
+    INBOX_POOL_SIZE,
+    config.databaseTls,
+  );
   const server = createOrchestratorServer({
     lifecycle,
     authenticate: tokenAuthenticator(config.apiTokens),
