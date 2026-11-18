@@ -186,7 +186,7 @@ describe("settings editor", () => {
     await userEvent.selectOptions(provider, "openai");
     expect(screen.getByLabelText("Default model")).toHaveValue("GPT Fast");
     await userEvent.type(screen.getByLabelText("Add a model"), "think");
-    await userEvent.click(screen.getByRole("option", { name: /GPT Think/ }));
+    await userEvent.click(screen.getByRole("option", { name: "openai/gpt-think" }));
     expect(within(screen.getByTestId("allowed-models")).getByText("GPT Think")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await screen.findByTestId("saved");
@@ -209,6 +209,43 @@ describe("settings editor", () => {
       ),
     ).toHaveLength(1);
     expect(screen.queryByText("GPT Fast")).not.toBeInTheDocument();
+  });
+
+  it("lists search matches as provider/id only, and still matches the model name", async () => {
+    const admin = createFakeAdmin();
+    await open(admin);
+    await userEvent.selectOptions(screen.getByLabelText("Provider to add from"), "openai");
+    await userEvent.type(screen.getByLabelText("Add a model"), "GPT Think");
+    const options = within(screen.getByRole("listbox")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["openai/gpt-think"]);
+  });
+
+  it("hides the scripted test models once a real model is allowed, and keeps them saved", async () => {
+    const admin = createFakeAdmin();
+    admin.settings = {
+      ...admin.settings,
+      defaultModel: "openai/gpt-fast",
+      allowlist: ["openai/gpt-fast", "scripted/scripted-1", "scripted/scripted-2"],
+    };
+    await open(admin);
+    const list = screen.getByTestId("allowed-models");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(list).not.toHaveTextContent("scripted");
+    expect(
+      screen.queryByText(/Test model — replays the message as a script/),
+    ).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Add a model"), "think");
+    await userEvent.click(screen.getByRole("option", { name: "openai/gpt-think" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByTestId("saved");
+    expect(admin.writes[0]?.body).toMatchObject({
+      allowlist: [
+        "openai/gpt-fast",
+        "scripted/scripted-1",
+        "scripted/scripted-2",
+        "openai/gpt-think",
+      ],
+    });
   });
 
   it("keeps a 400-model provider short and finds a model by typing", async () => {

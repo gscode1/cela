@@ -44,6 +44,16 @@ export const idOf = (key: string): string => key.slice(key.indexOf("/") + 1);
 /** The test provider of CI and the quickstart: never offered, but shown when it is the current value. */
 export const isScripted = (key: string): boolean => providerOf(key) === "scripted";
 
+/**
+ * The allowlist as the console shows it. Once a real model is allowed the scripted test models drop out, except `keep`
+ * (the current value); they stay in the saved allowlist. With scripted models only (kind, the quickstart) all show.
+ */
+export function shownAllowlist(keys: readonly string[], keep = ""): string[] {
+  return keys.some((key) => !isScripted(key))
+    ? keys.filter((key) => !isScripted(key) || key === keep)
+    : [...keys];
+}
+
 export function findModel(models: readonly CatalogModel[], key: string): CatalogModel | undefined {
   return models.find((model) => keyOf(model) === key);
 }
@@ -98,7 +108,6 @@ export interface PickOption {
   label: string;
   /** Extra words the search matches (the id, the provider). */
   search?: string;
-  reasoning?: boolean;
 }
 
 /** At most this many matches are listed at a time; the rest is a count, so a 400-model provider stays short. */

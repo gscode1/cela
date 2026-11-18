@@ -105,13 +105,8 @@ export function Combobox({
                 pick(option.key);
               }}
             >
-              {option.label}
-              {option.reasoning === true && (
-                <span className="ml-2 text-xs text-muted-foreground">reasoning</span>
-              )}
-              {option.label !== option.key && (
-                <span className="ml-2 text-xs break-all text-muted-foreground">{option.key}</span>
-              )}
+              {/* A row is the model's key alone, short at any provider size; the search still matches the name. */}
+              <span className="break-all">{option.key === "" ? option.label : option.key}</span>
             </li>
           ))}
           {shown.length === 0 && <li className="px-2 py-1.5 text-muted-foreground">No match</li>}

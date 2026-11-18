@@ -93,6 +93,9 @@ Slice 2 as built:
 - Enable and disable (no new version) update the open draft's revision when the draft is of the same version, so they do not
   make it stale.
 - The model and reasoning pickers offer the allowlist and the levels; a stored model outside the allowlist is shown flagged.
+- A model search lists each match as its `provider/id` alone; the search also matches the model's name. The scripted
+  test models drop out of the allowlist and the pickers once a real model is allowed (they stay saved, and a current
+  value still shows); with scripted models only (kind, the quickstart, e2e) they are listed.
 
 ### Concurrent edits
 

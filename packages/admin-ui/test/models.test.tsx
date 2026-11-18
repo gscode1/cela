@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Combobox } from "@/components/combobox";
 import { withModel, withoutModel } from "@/components/model-picker";
-import { filterOptions, MATCH_LIMIT } from "@/lib/models";
+import { filterOptions, MATCH_LIMIT, shownAllowlist } from "@/lib/models";
 import type { PickOption } from "@/lib/models";
 
 const many: PickOption[] = Array.from({ length: 300 }, (_, index) => ({
@@ -32,6 +32,18 @@ describe("allowlist edits", () => {
     expect(withModel(["a/1"], "a/1", "a/0")).toEqual(["a/1"]);
     expect(withModel(["a/1"], "a/0", "a/0")).toEqual(["a/1"]);
     expect(withoutModel(["a/1", "a/2"], "a/1")).toEqual(["a/2"]);
+  });
+});
+
+describe("shownAllowlist", () => {
+  it("lists scripted models only while no real model is allowed, and always keeps the current one", () => {
+    const scripted = ["scripted/scripted-1", "scripted/scripted-2"];
+    expect(shownAllowlist(scripted)).toEqual(scripted);
+    expect(shownAllowlist(["openai/gpt-fast", ...scripted])).toEqual(["openai/gpt-fast"]);
+    expect(shownAllowlist(["openai/gpt-fast", ...scripted], "scripted/scripted-2")).toEqual([
+      "openai/gpt-fast",
+      "scripted/scripted-2",
+    ]);
   });
 });
 
