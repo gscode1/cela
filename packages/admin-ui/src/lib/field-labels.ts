@@ -23,6 +23,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   repoContext: "Repository instructions (AGENTS.md)",
   sandboxSize: "Sandbox size",
   sandboxSizes: "Sizes a session may ask for",
+  networkMode: "Network mode",
   enabledForNew: "Available to new sessions",
   // MCP servers
   url: "URL",

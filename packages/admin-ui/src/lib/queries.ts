@@ -7,6 +7,7 @@ import {
   getProfile,
   listMcpServerRefs,
   listProfiles,
+  listNetworkModes,
   listSandboxSizes,
   listSkillInfos,
   listTools,
@@ -15,6 +16,7 @@ import type {
   McpServerRef,
   ProfileDetail,
   ProfileList,
+  NetworkModeCatalog,
   SandboxSizeCatalog,
   SkillInfo,
   ToolCatalog,
@@ -48,6 +50,7 @@ export const keys = {
   profile: (name: string) => ["profiles", name] as const,
   tools: ["tools"] as const,
   sandboxSizes: ["sandbox-sizes"] as const,
+  networkModes: ["network-modes"] as const,
   pickerMcp: ["profile-editor", "mcp-servers"] as const,
   pickerSkills: ["profile-editor", "skills"] as const,
   /** A write invalidates `egress` as a whole: every egress view moves with the one schema revision. */
@@ -107,6 +110,14 @@ export function useSandboxSizesQuery(): UseQueryResult<SandboxSizeCatalog> {
   });
 }
 
+export function useNetworkModesQuery(): UseQueryResult<NetworkModeCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.networkModes,
+    queryFn: ({ signal }) => listNetworkModes(token ?? "", signal),
+  });
+}
+
 export function useMcpPickerQuery(): UseQueryResult<McpServerRef[]> {
   const { token } = useAuth();
   return useQuery({
@@ -139,9 +150,11 @@ export function useRuleSetQuery(name: string): UseQueryResult<RuleSetDetail> {
   });
 }
 
-export function useSessionRulesQuery(
-  sessionId: string | undefined,
-): UseQueryResult<{ revision: number; rules: EgressRule[] }> {
+export function useSessionRulesQuery(sessionId: string | undefined): UseQueryResult<{
+  revision: number;
+  rules: EgressRule[];
+  networkMode: "proxied" | "direct" | null;
+}> {
   const { token } = useAuth();
   return useQuery({
     queryKey: keys.egressSession(sessionId ?? ""),

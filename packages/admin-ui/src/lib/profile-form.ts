@@ -48,6 +48,7 @@ export interface ProfileForm {
   /** Empty for the deployment default. */
   sandboxSize: string;
   sandboxSizes: string[];
+  networkMode: "proxied" | "direct";
 }
 
 export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
@@ -68,6 +69,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     repoContext: definition.repoContext ?? false,
     sandboxSize: definition.sandboxSize ?? "",
     sandboxSizes: definition.sandboxSizes ?? [],
+    networkMode: definition.networkMode ?? "proxied",
   };
 }
 
@@ -101,6 +103,8 @@ export function definitionFromForm(
   if (form.sandboxSize !== "") definition.sandboxSize = form.sandboxSize;
   if (form.sandboxSizes.length > 0 || original.sandboxSizes !== undefined)
     definition.sandboxSizes = form.sandboxSizes;
+  if (form.networkMode === "direct" || original.networkMode !== undefined)
+    definition.networkMode = form.networkMode;
   return definition;
 }
 
@@ -165,6 +169,10 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
     problems.push("egressRuleSets must be an array of rule set names");
   if (definition.sandboxSize !== undefined && !SANDBOX_SIZE_NAME.test(definition.sandboxSize))
     problems.push("sandboxSize must be a size name");
+  // A hand-edited draft can hold anything, whatever the type says.
+  const mode: string | undefined = definition.networkMode;
+  if (mode !== undefined && mode !== "proxied" && mode !== "direct")
+    problems.push("networkMode must be one of proxied, direct");
   const sizes = definition.sandboxSizes;
   if (
     sizes !== undefined &&
@@ -296,7 +304,8 @@ export function isEmptyForm(form: ProfileForm): boolean {
     !form.repoSkills &&
     !form.repoContext &&
     form.sandboxSize === "" &&
-    form.sandboxSizes.length === 0
+    form.sandboxSizes.length === 0 &&
+    form.networkMode === "proxied"
   );
 }
 

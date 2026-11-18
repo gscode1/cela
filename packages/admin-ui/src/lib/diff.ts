@@ -34,6 +34,8 @@ function showProfile(
     case "sandboxSizes":
       // Order carries no meaning, so a reordering is not a change.
       return list([...(definition.sandboxSizes ?? [])].sort(), "only the default");
+    case "networkMode":
+      return definition.networkMode ?? "proxied (default)";
     case "skills":
       return list(
         (definition.skills ?? []).map((pin) => `${pin.name}@v${String(pin.version)}`),
@@ -67,6 +69,7 @@ const DEFINITION_FIELDS = [
   "repoContext",
   "sandboxSize",
   "sandboxSizes",
+  "networkMode",
 ] as const;
 
 /** The fields that differ between two stored definitions, in the order of the editor. A change of spelling alone is none. */

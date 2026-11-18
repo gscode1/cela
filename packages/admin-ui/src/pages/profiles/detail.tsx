@@ -16,6 +16,7 @@ import { applyIntent, describeIntent, hasIntent, intentFromSearch } from "@/lib/
 import { formFromDefinition } from "@/lib/profile-form";
 import { keys, useProfileQuery, useProfilesQuery } from "@/lib/queries";
 import { useDraft } from "@/lib/use-draft";
+import { UnfilteredBadge } from "@/pages/profiles/pickers";
 import { ProfileEditor } from "@/pages/profiles/editor";
 import type { ProfileDraft } from "@/pages/profiles/editor";
 import { ProfileVersions } from "@/pages/profiles/versions";
@@ -161,6 +162,7 @@ function ProfileScreenFor({ name }: { name: string }) {
               {name}
               {isDefault && <Badge variant="outline">default</Badge>}
               {!stored.enabledForNew && <Badge variant="destructive">disabled</Badge>}
+              {stored.definition.networkMode === "direct" && <UnfilteredBadge />}
             </CardTitle>
             <CardDescription>
               <LastChanged by={stored.updatedBy} at={stored.updatedAt} />

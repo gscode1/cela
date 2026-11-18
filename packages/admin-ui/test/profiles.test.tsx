@@ -463,3 +463,42 @@ describe("create", () => {
     });
   });
 });
+
+describe("network mode", () => {
+  it("disables direct with the reason while the chart gate is off", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Network mode");
+    expect(within(select).getByRole("option", { name: /^Direct/ })).toBeDisabled();
+    expect(await screen.findByTestId("direct-disabled")).toHaveTextContent(
+      "security.allowDirectSandboxEgress",
+    );
+  });
+
+  it("offers direct when allowed, and warns that it is unfiltered and unaudited", async () => {
+    const admin = createFakeAdmin();
+    admin.directAllowed = true;
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Network mode");
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: /^Direct/ })).toBeEnabled();
+    });
+    await userEvent.selectOptions(select, "direct");
+    expect(await screen.findByTestId("direct-warning")).toHaveTextContent("unfiltered, unaudited");
+  });
+
+  it("marks a direct profile in the list", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "open", { networkMode: "direct" });
+    addProfile(admin, "review", { instructions: "x" });
+    renderApp("/profiles");
+    await signIn("alice-token");
+    const row = (await screen.findByRole("link", { name: "open" })).closest("tr");
+    expect(row).toHaveTextContent("unfiltered, unaudited");
+    expect(screen.getByRole("link", { name: "review" }).closest("tr")).not.toHaveTextContent(
+      "unfiltered",
+    );
+  });
+});

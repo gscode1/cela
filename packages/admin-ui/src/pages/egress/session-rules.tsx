@@ -6,12 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SESSION_ID } from "@/lib/api/egress";
 import { useSessionRulesQuery } from "@/lib/queries";
+import { UnfilteredBadge } from "@/pages/profiles/pickers";
 import { RuleManager } from "@/pages/egress/rule-manager";
 
 function SessionRules({ sessionId }: { sessionId: string }) {
   const rules = useSessionRulesQuery(sessionId);
   return (
     <div className="flex flex-col gap-3">
+      {rules.data?.networkMode === "direct" && (
+        <Alert role="status" data-testid="session-direct">
+          <UnfilteredBadge /> This session is in network mode direct: its sandbox does not use the
+          egress proxy, so no rule applies to it and nothing is audited.
+        </Alert>
+      )}
       {rules.isError && <Alert variant="destructive">{rules.error.message}</Alert>}
       {rules.isSuccess && (
         <RuleManager

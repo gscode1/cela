@@ -28,6 +28,21 @@ export interface ProfileDefinition {
   repoContext?: boolean;
   sandboxSize?: string;
   sandboxSizes?: string[];
+  /** `proxied` (the default) or `direct` (open internet, unfiltered and unaudited; ADR 0038). */
+  networkMode?: NetworkMode;
+}
+
+export type NetworkMode = "proxied" | "direct";
+
+export interface NetworkModeCatalog {
+  modes: NetworkMode[];
+  defaultMode: NetworkMode;
+  /** The chart's security.allowDirectSandboxEgress. */
+  directAllowed: boolean;
+}
+
+export function listNetworkModes(token: string, signal?: AbortSignal): Promise<NetworkModeCatalog> {
+  return adminFetch<NetworkModeCatalog>(token, "/admin/network-modes", signal ? { signal } : {});
 }
 
 export interface StoredProfile {

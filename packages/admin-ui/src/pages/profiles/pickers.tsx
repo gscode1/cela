@@ -9,6 +9,8 @@ import { Select } from "@/components/ui/select";
 import type { RuleSetSummary } from "@/lib/api/egress";
 import type {
   McpServerRef,
+  NetworkMode,
+  NetworkModeCatalog,
   SandboxSize,
   SandboxSizeCatalog,
   SkillInfo,
@@ -17,6 +19,67 @@ import type {
 import { fieldLabel } from "@/lib/field-labels";
 import { hostOf } from "@/lib/profile-form";
 import { toolDescription } from "@/lib/tool-descriptions";
+
+/** Marks what has no egress rule and no audit (ADR 0038): a profile or session with `networkMode: direct`. */
+export function UnfilteredBadge() {
+  return (
+    <Badge variant="warning" title="No egress rule applies and nothing is audited">
+      unfiltered, unaudited
+    </Badge>
+  );
+}
+
+/**
+ * How the profile's sandboxes reach the network. `direct` is offered only when the chart allows it
+ * (security.allowDirectSandboxEgress); otherwise it is disabled with the reason, and a profile that already says
+ * direct keeps showing it, so the operator sees what to change.
+ */
+export function NetworkModePicker({
+  mode,
+  catalog,
+  onChange,
+}: {
+  mode: NetworkMode;
+  catalog: NetworkModeCatalog | undefined;
+  onChange: (mode: NetworkMode) => void;
+}) {
+  const directAllowed = catalog?.directAllowed === true;
+  return (
+    <Fieldset
+      legend={fieldLabel("networkMode")}
+      hint="How this profile's sandboxes reach the network. Fixed when a session is created; applies to new sessions only."
+    >
+      <Select
+        id="profile-network-mode"
+        aria-label={fieldLabel("networkMode")}
+        value={mode}
+        onChange={(event) => {
+          onChange(event.target.value === "direct" ? "direct" : "proxied");
+        }}
+      >
+        <option value="proxied">
+          Proxied: only through the egress proxy, under the rules (default)
+        </option>
+        <option value="direct" disabled={!directAllowed && mode !== "direct"}>
+          Direct: open internet, unfiltered and unaudited
+          {directAllowed ? "" : " (not allowed in this deployment)"}
+        </option>
+      </Select>
+      {mode === "direct" && (
+        <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="direct-warning">
+          <UnfilteredBadge /> No egress rule applies and nothing is audited. Not combinable with
+          repositories, credentialed MCP servers or rule sets with a OneCLI route.
+        </p>
+      )}
+      {!directAllowed && catalog !== undefined && (
+        <p className="text-sm text-muted-foreground" data-testid="direct-disabled">
+          Direct is off: the chart sets security.allowDirectSandboxEgress to false, so the API
+          refuses it.
+        </p>
+      )}
+    </Fieldset>
+  );
+}
 
 export function Fieldset({
   legend,
