@@ -108,6 +108,8 @@ export class Sandboxes {
   readonly #lastUsed = new Map<number, number>();
   /** Conversations whose last command was interrupted, to be recycled once no call is in flight. */
   readonly #interrupted = new Set<number>();
+  /** The exec-in-flight clear a settle fired and has not finished: the next set waits for it, so the two stay ordered. */
+  readonly #clearing = new Map<number, Promise<void>>();
   /** A recycle or suspend under way. Calls wait for it before opening the env, so none reaches a dying Pod. */
   readonly #replacing = new Map<number, Promise<void>>();
   /**
@@ -308,6 +310,8 @@ export class Sandboxes {
             // Only commands can leave processes behind. Record that one may be running before it starts, so a
             // crash in the middle is still known after the restart.
             if (property === "exec" && !usage.recorded) {
+              // A clear from the burst before must land first: on another connection it could overwrite this set.
+              await this.#clearing.get(conversationId);
               await this.#hooks.execInFlight?.(conversationId, true);
               usage.recorded = true;
             }
@@ -363,14 +367,21 @@ export class Sandboxes {
       });
     } else if (usage.recorded) {
       usage.recorded = false;
-      void this.#hooks.execInFlight?.(conversationId, false).catch((error: unknown) => {
-        usage.recorded = true; // still recorded: the next settle clears it
-        log("exec-record-failed", {
-          ...this.timings.fields(conversationId),
-          claim: claimNameFor(this.#config.shard, conversationId),
-          message: errorMessage(error),
+      // Not awaited (settle runs in a call's finally), but the next set waits for it (ADR 0003).
+      const clearing = (this.#hooks.execInFlight?.(conversationId, false) ?? Promise.resolve())
+        .catch((error: unknown) => {
+          usage.recorded = true; // still recorded: the next settle clears it
+          log("exec-record-failed", {
+            ...this.timings.fields(conversationId),
+            claim: claimNameFor(this.#config.shard, conversationId),
+            message: errorMessage(error),
+          });
+        })
+        .finally(() => {
+          if (this.#clearing.get(conversationId) === clearing)
+            this.#clearing.delete(conversationId);
         });
-      });
+      this.#clearing.set(conversationId, clearing);
     }
   }
 
