@@ -32,6 +32,7 @@ describe("profile form round trips", () => {
         defaultModel: "scripted/scripted-2",
         reasoning: "xhigh",
         turnBudget: 12,
+        tokenBudget: 2_000_000,
         mcpServers: ["docs"],
         skills: [{ name: "lint", version: 2, digest: "a".repeat(64) }],
         repoSkills: true,
@@ -49,16 +50,33 @@ describe("profile form round trips", () => {
     });
   }
 
+  it("keeps a token budget set through the API when the console saves an edit elsewhere", () => {
+    const stored: ProfileDefinition = { instructions: "x", tokenBudget: 500_000 };
+    const form = formFromDefinition(stored);
+    expect(definitionFromForm({ ...form, instructions: "y" }, stored)).toEqual({
+      instructions: "y",
+      tokenBudget: 500_000,
+    });
+  });
+
   it("omits a cleared override instead of sending it empty", () => {
     const form = formFromDefinition({
       defaultModel: "a/b",
       reasoning: "low",
       turnBudget: 5,
+      tokenBudget: 9,
       instructions: "x",
     });
     const cleared = definitionFromForm(
-      { ...form, defaultModel: "", reasoning: "", turnBudget: " ", instructions: "  " },
-      { defaultModel: "a/b", reasoning: "low", turnBudget: 5, instructions: "x" },
+      {
+        ...form,
+        defaultModel: "",
+        reasoning: "",
+        turnBudget: " ",
+        tokenBudget: "",
+        instructions: "  ",
+      },
+      { defaultModel: "a/b", reasoning: "low", turnBudget: 5, tokenBudget: 9, instructions: "x" },
     );
     expect(cleared).toEqual({});
     expect("reasoning" in cleared).toBe(false);
@@ -99,6 +117,10 @@ describe("definitionProblems (mirrors validateProfileDefinition)", () => {
     expect(definitionProblems({ turnBudget: 1.5 })).toHaveLength(1);
     expect(definitionProblems({ turnBudget: 1_000_001 })).toHaveLength(1);
     expect(definitionProblems({ turnBudget: Number.NaN })).toHaveLength(1);
+    expect(definitionProblems({ tokenBudget: 0 })).toHaveLength(1);
+    expect(definitionProblems({ tokenBudget: 2.5 })).toHaveLength(1);
+    expect(definitionProblems({ tokenBudget: 1_000_000_000_001 })).toHaveLength(1);
+    expect(definitionProblems({ tokenBudget: 1_000_000_000_000 })).toEqual([]);
     expect(definitionProblems({ instructions: "   " })).toHaveLength(1);
     expect(definitionProblems({ instructions: "x".repeat(8001) })).toHaveLength(1);
     expect(definitionProblems({ mcpServers: ["Bad Name"] })).toHaveLength(1);

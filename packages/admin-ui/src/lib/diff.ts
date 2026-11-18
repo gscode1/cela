@@ -39,6 +39,7 @@ function showProfile(
     case "defaultModel":
     case "reasoning":
     case "turnBudget":
+    case "tokenBudget":
       return String(definition[field] ?? "global default");
   }
 }
@@ -50,6 +51,7 @@ const DEFINITION_FIELDS = [
   "defaultModel",
   "reasoning",
   "turnBudget",
+  "tokenBudget",
   "mcpServers",
   "skills",
   "repoSkills",

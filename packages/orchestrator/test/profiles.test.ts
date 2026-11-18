@@ -278,6 +278,39 @@ describe("SessionService with profiles", () => {
     tight.stop();
   });
 
+  it("enforces the profile's token budget instead of the settings', in both directions (#184)", async () => {
+    const host = await openHost();
+    const conversationId = await host.createConversation(MODEL);
+    const { service: unlimited } = service(host);
+    await unlimited.apply(message("one", "1"), session(null, conversationId));
+    let state = await host.submissionState(conversationId, "1");
+    for (let i = 0; i < 200 && state?.status !== "done"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      state = await host.submissionState(conversationId, "1");
+    }
+    const used = await host.tokensUsed(conversationId);
+    expect(used).toBeGreaterThan(0);
+    unlimited.stop();
+
+    // The settings say exhausted; the profile's larger budget wins.
+    const roomy = { name: "roomy", version: 1, snapshot: { tokenBudget: used + 1_000 } };
+    const { service: strictSettings, queries: strictQueries } = service(host, 100, used);
+    await strictSettings.apply(message("two", "2"), session(roomy, conversationId));
+    expect(strictQueries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
+    strictSettings.stop();
+
+    // The settings say no limit; the profile's budget is used up.
+    const tight = { name: "tight", version: 1, snapshot: { tokenBudget: used } };
+    const { service: noLimit, queries } = service(host, 100, null);
+    await expect(
+      noLimit.apply(message("three", "3"), session(tight, conversationId)),
+    ).rejects.toThrow(/token budget exhausted/);
+    expect(queries.find((q) => q.sql.includes("status = 'failed'"))?.params).toContain(
+      TOKEN_BUDGET_EXHAUSTED,
+    );
+    noLimit.stop();
+  });
+
   it("a steer sent mid-run does not count the running run's turns twice (#177)", async () => {
     // `hold` blocks until released, so the steer arrives while round 3 of the run is in progress.
     let release: () => void = () => undefined;
