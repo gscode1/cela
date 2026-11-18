@@ -395,6 +395,98 @@ describe("publishAndCheckProfiles", () => {
   });
 });
 
+describe("a tool the profile removed is refused, not only hidden (#181)", () => {
+  /** Two tools that record each call; the profile allows only `allowed`. */
+  function spyTools(ran: string[], names: readonly string[]) {
+    return defineExtension({
+      name: "coding",
+      tools: names.map((name) =>
+        defineTool<object>({
+          name,
+          description: `records a call to ${name}`,
+          parameters: { type: "object", properties: {} },
+          execute: () => {
+            ran.push(name);
+            return Promise.resolve({ output: [{ type: "text", text: `${name} ran` }] });
+          },
+        }),
+      ),
+    });
+  }
+  async function open(
+    storage: Parameters<typeof Host.open>[0],
+    extension: Extension,
+    profiles?: Map<number, ProfileDefinition>,
+  ) {
+    const host = await Host.open(
+      storage,
+      config,
+      (error) => {
+        throw error;
+      },
+      () => Promise.resolve("session"),
+      {},
+      [],
+      {
+        codingExtension: extension,
+        ...(profiles === undefined
+          ? {}
+          : { conversationProfiles: () => Promise.resolve(profiles) }),
+      },
+    );
+    hosts.push(host);
+    return host;
+  }
+  /** Asks the scripted model to call `tool`, waits for the answer, and returns the tool result. */
+  async function call(host: Host, id: number, tool: string, requestId: string) {
+    const script = { steps: [{ tool, args: {} }], final: "answered" };
+    await host.submitInput(id, { text: JSON.stringify(script), requestId, steer: false });
+    expect(await host.settlement(id, requestId)).toEqual({ status: "done" });
+    return (await host.status(id))?.results.at(-1);
+  }
+
+  it("a call the model makes to a removed tool settles tool_unavailable and never runs it", async () => {
+    const ran: string[] = [];
+    const host = await open(new MemoryStorage(), spyTools(ran, ["allowed", "forbidden"]));
+    const id = await host.createConversation(MODEL, { tools: ["allowed"] });
+    expect((await host.toolsOf(id)).offered).toEqual(["allowed"]);
+
+    expect(await call(host, id, "forbidden", "r1")).toEqual({
+      text: expect.stringContaining("not available") as unknown,
+      isError: true,
+    });
+    expect(ran).toEqual([]);
+    // The allowed tool still runs, so the refusal is the filter's doing, not a broken session.
+    expect(await call(host, id, "allowed", "r2")).toEqual({ text: "allowed ran", isError: false });
+    expect(ran).toEqual(["allowed"]);
+  }, 10_000);
+
+  it("a tool a later release installs is refused too, once the filters are recomputed at open", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-refused-"));
+    try {
+      const ran: string[] = [];
+      const definition = { tools: ["allowed"] };
+      const first = await open(
+        await openNodeJsonlStorage(dir, context),
+        spyTools(ran, ["allowed"]),
+      );
+      const id = await first.createConversation(MODEL, definition);
+      await first.close();
+
+      const second = await open(
+        await openNodeJsonlStorage(dir, context),
+        spyTools(ran, ["allowed", "extra"]),
+        new Map([[id, definition]]),
+      );
+      expect(await call(second, id, "extra", "r1")).toMatchObject({ isError: true });
+      expect(ran).toEqual([]);
+    } finally {
+      for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+});
+
 describe("a coding tool installed by a later release", () => {
   const EXTRA = defineTool<object>({
     name: "extra",
