@@ -138,9 +138,9 @@ owner. `hack/install.sh` creates that Secret with a token for each `api.admins` 
 a token when the Secret already exists. Use one name per operator. The token also carries that owner's session API
 access. Token changes take effect after the ingest pods restart.
 
-Access goes through a localhost port-forward or a restricted HTTPS route. The chart ships no Ingress, and a
-NetworkPolicy cannot filter by path. Where ingest also serves ordinary clients, the installer's ingress must route
-`/console` and `/admin` only through operator access.
+Access goes through a localhost port-forward or a restricted HTTPS route. The chart's optional `ingest.httpRoute` and
+`ingest.ingress` render one ([ADR 0026](decisions/0026-ingest-routes.md)), and a NetworkPolicy cannot filter by path.
+Where ingest also serves ordinary clients, the route must send `/console` and `/admin` only through operator access.
 
 1. The operator opens `/console/`, enters their token, and the UI checks it with `GET /admin/settings`.
 2. `401` means an invalid token, `403` a valid owner without admin access. Successful writes record the operator as

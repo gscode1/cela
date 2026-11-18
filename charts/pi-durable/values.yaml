@@ -147,11 +147,35 @@ ingest:
     enabled: false
     nodePort: 30080
     sourceCidr: ""
+  # Optional routes to the pi-ingest Service (port 8080), off by default (ADR 0026). Either one also needs
+  # networkPolicy.ingest.clients to admit the gateway's or controller's pods; the chart refuses to render without it.
+  # `paths` are path prefixes: ["/"] serves the session API, /admin and the console; ["/console", "/admin"] serves only
+  # the operator screens. Ingest does not rate-limit failed sign-ins: keep a route on a trusted network, or rate-limit on
+  # the gateway.
+  # Gateway API HTTPRoute (needs the Gateway API CRDs). Example for an Envoy Gateway `main`:
+  #   parentRefs: [{ name: main, namespace: envoy-gateway-system, sectionName: https }]
+  #   hostnames: [pi.example.lan]
+  httpRoute:
+    enabled: false
+    parentRefs: []
+    hostnames: []
+    paths: ["/"]
+    annotations: {}
+  # networking.k8s.io/v1 Ingress. `tls` is the Ingress `spec.tls` list as is, for example
+  #   [{ hosts: [pi.example.lan], secretName: pi-tls }]
+  ingress:
+    enabled: false
+    className: ""
+    hosts: []
+    paths: ["/"]
+    tls: []
+    annotations: {}
 
 # The admin console: a static web app that ingest serves under /console/ (docs/admin-ui-plan.md). Off by default, and
 # then /console/ is a 404. The page holds no secret; the operator's token (api.admins) is typed into it and goes only
-# to /admin/*. Reach it by `kubectl port-forward svc/pi-ingest 8080` or a route restricted to operators. The chart
-# ships no Ingress: where ingest also serves ordinary clients, route /console and /admin through operator access only.
+# to /admin/*. Reach it by `kubectl port-forward svc/pi-ingest 8080` or a route restricted to operators
+# (ingest.httpRoute or ingest.ingress): where ingest also serves ordinary clients, route /console and /admin through
+# operator access only.
 console:
   enabled: false
   # What the Skills and MCP servers screens offer: `manage` (publish, register, edit, delete) or `readOnly` (browse

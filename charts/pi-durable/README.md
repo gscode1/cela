@@ -72,6 +72,8 @@ per database: the schema `inbox` is fixed.
 | `orchestrator.shards`                                                                    | number of orchestrator Deployments (can only grow, see below); `resources`, `noProxy`, `extraEnv`                                                                                                                                                |
 | `console.enabled`                                                                        | serve the admin console under `/console/` from the ingest image (default `false`: `/console/` is a 404). See [Admin console](#admin-console)                                                                                                     |
 | `console.catalogs`                                                                       | `manage` (default) or `readOnly`: whether the console's Skills and MCP servers screens offer writes. UI only, see [Admin console](#admin-console)                                                                                                |
+| `ingest.httpRoute.*`                                                                     | optional Gateway API HTTPRoute to ingest: `enabled`, `parentRefs`, `hostnames`, `paths` (prefixes, default `/`), `annotations`. See [Routes](#routes)                                                                                            |
+| `ingest.ingress.*`                                                                       | optional Ingress to ingest: `enabled`, `className`, `hosts`, `paths`, `tls`, `annotations`. See [Routes](#routes)                                                                                                                                |
 | `ingest.replicas`, `resources`                                                           | ingest scale                                                                                                                                                                                                                                     |
 | `api.admins`, `api.existingSecret`                                                       | owners who may call `/admin/*`; Secret with key `tokens`, one `owner:token` line per owner                                                                                                                                                       |
 | `models.default`, `allowlist`, `turnBudget`                                              | seeds Postgres once (ADR 0008); change later with `PUT /admin/settings`                                                                                                                                                                          |
@@ -91,7 +93,7 @@ Access:
 
 - Prefer a localhost port-forward: `kubectl -n pi-durable port-forward svc/pi-ingest 8080:8080`, then open
   `http://localhost:8080/console/`.
-- The chart renders no Ingress, and a NetworkPolicy cannot filter by path. If ingest is also reachable by ordinary
+- `ingest.httpRoute` or `ingest.ingress` publishes ingest on a hostname (see [Routes](#routes)). A NetworkPolicy cannot filter by path: if ingest is also reachable by ordinary
   clients through your ingress, that ingress must route `/console` and `/admin` only through operator access (a
   restricted HTTPS route, VPN or an authenticating proxy), and must rate-limit failed sign-ins: ingest does not.
 - Tokens are the existing named bearer tokens; a change takes effect after the ingest pods restart.
@@ -100,6 +102,35 @@ Access:
 MCP servers screens (browsing, history and the skill zip download stay). Ingest tells the page through
 `GET /console/config.json` (`{"catalogs":"readOnly"}`, no token needed). This hides controls only: `/admin/*` still accepts
 writes from every admin, so it is not an access control. Use it when a catalog repository is meant to be the one writer.
+
+### Routes
+
+Off by default; `kubectl port-forward` needs no route. `ingest.httpRoute` renders a Gateway API `HTTPRoute` and
+`ingest.ingress` an `Ingress`, both named `pi-ingest` and pointing at the `pi-ingest` Service, port 8080
+([ADR 0026](../../docs/decisions/0026-ingest-routes.md)). Either one also needs `networkPolicy.ingest.clients` to admit
+the gateway's pods, because `default-deny-all` drops its traffic otherwise; the chart refuses to render a route without
+it. For an Envoy Gateway named `main`:
+
+```yaml
+networkPolicy:
+  ingest:
+    clients:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
+        podSelector:
+          {
+            matchLabels:
+              { app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gateway-name: main },
+          }
+ingest:
+  httpRoute:
+    enabled: true
+    parentRefs: [{ name: main, namespace: envoy-gateway-system, sectionName: https }]
+    hostnames: [pi.example.lan]
+```
+
+`paths: ["/"]` (the default) serves the session API, `/admin` and the console; `["/console", "/admin"]` serves only the
+operator screens. Ingest does not rate-limit failed sign-ins: keep the route on a trusted network, or rate-limit and
+authenticate on the gateway.
 
 ### Models and OneCLI
 
