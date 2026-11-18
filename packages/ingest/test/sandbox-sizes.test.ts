@@ -16,6 +16,7 @@ const seed: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 const spec = (cpu: string) => ({
   resources: { requests: { cpu }, limits: { cpu, memory: "1Gi" } },

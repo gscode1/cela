@@ -17,8 +17,8 @@
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-durable": "1.5.2",
     "@earendil-works/pi-mcp": "1.5.2",
+    "@gscode1/pi-durable-postgres": "0.3.0",
     "@kubernetes/client-node": "2.0.0",
-    "@netzlabor/pi-durable-postgres": "file:../../vendor/netzlabor-pi-durable-postgres-0.2.0.tgz",
     "@pi-durable-k8s/sandbox-env": "workspace:*",
     "@pi-durable-k8s/session-core": "workspace:*",
     "undici": "8.12.4"

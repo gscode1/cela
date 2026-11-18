@@ -62,7 +62,8 @@ the cost. No ADR requires the separate process.
 - The memory per in-process handle (gRPC channel and Kubernetes client per `start`) is unmeasured. Compare `bridge`,
   `sandbox-to-exec`, `bridge-rss` (now the relay) and orchestrator RSS at 12 and 50 sessions with
   [docs/metrics.md](../metrics.md).
-- The relay's exit code is 0 or 1 by whether the data socket errored; pi-env only needs the exit.
+- The relay's exit code is 1 when the data socket errored or the broker ended its side before the relay's stdin ended
+  (a lost stream or failed start), else 0; pi-env only needs the exit, the code is for whoever reads it.
 
 ## Measured (2026-11-16, the example test cluster, throwaway e2e namespaces, same four phase 4 tests, 5 cold + 1 resumed turn)
 

@@ -184,6 +184,8 @@ orchestrator does not restart. `PUT` on the same path restored the grant, and th
 | `PI_MODEL_REASONING`     | `reasoning`: effort of every new session, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `null`. |
 | `PI_MODEL_ALLOWLIST`     | `allowlist`: `provider/model` pairs; the model id may contain slashes. The default is always allowed.     |
 | `PI_SESSION_TURN_BUDGET` | `turnBudget`: model turns one session may use in total (default 100).                                     |
+| `PI_SESSION_TOKEN_BUDGET` | `tokenBudget`: tokens one session may use in total; unset is no limit (ADR 0028).                       |
+| `PI_REPO_ALLOWLIST`      | `repoAllowlist`: comma-separated `owner/name`, `owner/*` or `*`; unset refuses repo sessions (ADR 0032). |
 
 Example for OpenRouter (seed values): `PI_MODEL_PROVIDER=openrouter`, `PI_MODEL_ID=openai/gpt-4.1-nano`,
 `PI_MODEL_ALLOWLIST=openrouter/openai/gpt-4.1-nano,openrouter/google/gemini-2.5-flash-lite`. An allowlisted model that

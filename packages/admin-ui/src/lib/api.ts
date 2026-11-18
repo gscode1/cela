@@ -8,6 +8,8 @@ export interface AdminSettings {
   turnBudget: number;
   /** Null: no token limit. Absent from an API that predates it. */
   tokenBudget?: number | null;
+  /** `*`, `owner/*` or `owner/name`; empty refuses repo sessions. Absent from an API that predates it. */
+  repoAllowlist?: string[];
   /** Goes back as `expectedRevision` on the next write (docs/decisions/0023-admin-revisions.md). */
   revision: number;
   updatedAt: string;

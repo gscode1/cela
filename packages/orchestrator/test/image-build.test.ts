@@ -99,7 +99,6 @@ describe("image delivery replaces mutable code uploads", () => {
     for (const image of ["orchestrator", "ingest", "e2e-driver"]) {
       const dockerfile = readFileSync(join(root, "images", image, "Dockerfile"), "utf8");
       expect(dockerfile).toContain("pnpm install --frozen-lockfile");
-      expect(dockerfile).toContain("COPY vendor ./vendor");
       expect(dockerfile).toContain("COPY packages ./packages");
       expect(dockerfile).toContain(" deploy --prod");
       expect(dockerfile).toContain("USER 1000:1000");

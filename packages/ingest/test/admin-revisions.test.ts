@@ -15,6 +15,7 @@ const seed: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 let server: Server | undefined;

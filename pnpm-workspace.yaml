@@ -6,6 +6,11 @@ allowBuilds:
   protobufjs: false
   "@google/genai": false
 
+# Our own adapter release (ADR 0033), tested in the fork before publishing. The release-age wait guards against
+# compromised third-party releases, not against this one. Exempt only the exact pinned version.
+minimumReleaseAgeExclude:
+  - "@gscode1/pi-durable-postgres@0.3.0"
+
 # The e2e bundle is installed here and run in an arm64 Linux pod, so keep those native bindings too.
 supportedArchitectures:
   os: [current, linux]

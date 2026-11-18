@@ -151,11 +151,16 @@ describe("SessionService after a run answered", () => {
     error: null,
   };
 
-  function setup(status: string) {
+  /**
+   * A conversation whose transcript turns (`used`) and running-run rounds (`running`) the test moves. `turnsUsed` can
+   * be held (`holdUsed`) to open the window between an admission's reads and its write. Settlements resolve on demand.
+   */
+  function setup(status: string, budget = 10) {
     const limits: number[] = [];
-    // Admission: 2 turns used, idle. Once the run answered: 5 used, 2 of them by the queued run already going.
-    const turns = [2, 5];
-    const running = [0, 2];
+    const state = { used: 0, running: 0 };
+    let hold: Promise<void> | undefined;
+    let onRunTurns: (() => void) | undefined;
+    const settlements: ((value: { status: "done" }) => void)[] = [];
     const pool = {
       query: (sql: string) =>
         Promise.resolve(
@@ -166,40 +171,112 @@ describe("SessionService after a run answered", () => {
     } as unknown as pg.Pool;
     const host = {
       applyProfileTools: () => Promise.resolve(),
-      runTurns: () => Promise.resolve(running.shift() ?? 0),
-      turnsUsed: () => Promise.resolve(turns.shift() ?? 0),
+      runTurns: () => {
+        const running = state.running;
+        const hook = onRunTurns;
+        onRunTurns = undefined;
+        hook?.();
+        return Promise.resolve(running);
+      },
+      turnsUsed: async () => {
+        const held = hold;
+        hold = undefined;
+        await held;
+        return state.used;
+      },
       limitTurns: (_id: number, limit: number) => {
         limits.push(limit);
         return Promise.resolve();
       },
       submitInput: () => Promise.resolve(),
-      settlement: () => Promise.resolve({ status: "done" }),
+      settlement: () => new Promise<{ status: "done" }>((resolve) => settlements.push(resolve)),
     } as unknown as Host;
     const service = new SessionService(pool, host, {
       shard: 0,
       testFaults: false,
       defaultModel: { provider: "p", model: "m" },
-      turnBudget: () => 10,
+      turnBudget: () => budget,
     });
-    return { service, limits };
+    const answer = async (): Promise<void> => {
+      for (let i = 0; i < 100 && settlements.length === 0; i += 1) await tick();
+      settlements.shift()?.({ status: "done" });
+    };
+    const holdUsed = (): (() => void) => {
+      let release: () => void = () => undefined;
+      hold = new Promise<void>((resolve) => (release = resolve));
+      return release;
+    };
+    const afterNextRunTurns = (hook: () => void): void => {
+      onRunTurns = hook;
+    };
+    return { service, limits, state, answer, holdUsed, afterNextRunTurns };
   }
 
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const waitFor = async (done: () => boolean): Promise<void> => {
+    for (let i = 0; i < 100 && !done(); i += 1) await tick();
+  };
+
   it("sets maxTurns again, so a run queued behind it gets what is left of the budget", async () => {
-    const { service, limits } = setup("active");
+    const { service, limits, state, answer } = setup("active");
+    // Admission: 2 turns used, idle.
+    state.used = 2;
     await service.apply(message, session);
-    for (let i = 0; i < 100 && limits.length < 2; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    // The run answered: 5 used, 2 of them by the queued run already going.
+    state.used = 5;
+    state.running = 2;
+    await answer();
+    await waitFor(() => limits.length >= 2);
     // 10 − 2 at admission; then 10 − (5 − 2): the turns before the queued run, not its own.
     expect(limits).toEqual([8, 7]);
     service.stop();
   });
 
   it("leaves a session alone that is no longer active", async () => {
-    const { service, limits } = setup("failed");
+    const { service, limits, state, answer } = setup("failed");
+    state.used = 2;
     await service.apply(message, session);
+    await answer();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(limits).toEqual([8]);
+    service.stop();
+  });
+
+  it("never lets an admission's stale limit overwrite the one set after the run answered (#203)", async () => {
+    const { service, limits, state, answer, holdUsed } = setup("active", 50);
+    state.used = 30;
+    await service.apply(message, session);
+    expect(limits).toEqual([20]);
+    // Run A is 8 rounds in when a follow-up is admitted; its transcript read is slow.
+    state.used = 38;
+    state.running = 8;
+    const release = holdUsed();
+    const followUp = service.apply({ ...message, id: "2", sourceEventId: "m2" }, session);
+    await tick();
+    // Meanwhile A answers and nothing runs yet: 12 turns are left.
+    state.running = 0;
+    await answer();
+    await tick();
+    release();
+    await followUp;
+    await waitFor(() => limits.length >= 3);
+    await tick();
+    expect(limits.at(-1)).toBe(12);
+    service.stop();
+  });
+
+  it("does not set a limit one too low when a round commits between its reads (#203)", async () => {
+    const { service, limits, state, afterNextRunTurns } = setup("active");
+    // A run is 2 rounds in, with no turns before it: all 10 are its to take.
+    state.used = 2;
+    state.running = 2;
+    // Its next round commits right after the admission read the run's rounds.
+    afterNextRunTurns(() => {
+      state.used = 3;
+      state.running = 3;
+    });
+    await service.apply(message, session);
+    expect(limits).toEqual([10]);
     service.stop();
   });
 });

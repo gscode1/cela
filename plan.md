@@ -17,7 +17,7 @@ Run Pi Durable agents on your own Kubernetes cluster so that:
 | Decision | Choice | Reason |
 |---|---|---|
 | Durability layer | Native Pi Durable, no durable-harness | Single replica is enough; avoids the reference-grade Postgres World and the 120 s takeover trap |
-| Storage | `@netzlabor/pi-durable-postgres`, ported to current Pi Durable | Exists, passes upstream conformance on 1.0.3; needs the 1.5 batched-commit contract |
+| Storage | `@gscode1/pi-durable-postgres`: our fork of `@netzlabor/pi-durable-postgres`, ported to current Pi Durable and published to npm ([ADR 0033](docs/decisions/0033-own-adapter-package.md)) | The upstream adapter exists and passes conformance on 1.0.3; it needed the 1.5 batched-commit contract, and the port had no upstream review |
 | Orchestrator topology | One replica per shard, `strategy: Recreate`; shard 0 is the default single orchestrator. More shards by Postgres schema sharding, one Deployment each (`docs/decisions/0017-schema-sharding.md`, `docs/scaling.md`) | Adapter allows one owner per schema (advisory lock); shards scale capacity without an adapter fork |
 | Execution | `pi-env` daemon inside the sandbox, bridged over Agent Sandbox `commands.start()`. Since [ADR 0016](docs/decisions/0016-in-process-broker.md) the bridge runs in an in-process broker in the orchestrator and pi-env spawns only a thin `node:net` relay per session (this replaced one Node bridge process per session) | Conformance-tested `RemoteExecutionEnv`; avoids hand-writing FileSystem + Shell |
 | Execution fallback | `pi-env` over SSH | Documented path if the stdio bridge fails |
@@ -75,7 +75,7 @@ Findings that change this plan:
 - Constraint: connect to the `-rw` service or a session-mode pooler only.
 
 **Phase 2 result (2026-11-15): port done, upstream PR open (j-koester/pi-durable-postgres#20, awaiting review).**
-- The port is consumed as the packed adapter under `vendor/` (version `0.2.0`), traced to the fork tag and checked by sha256 in `vendor/README.md`. It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
+- The port was consumed as a packed tarball under `vendor/` (version `0.2.0`) until 2026-11-18. Since [ADR 0033](docs/decisions/0033-own-adapter-package.md) it is the npm package `@gscode1/pi-durable-postgres`, pinned to an exact version. It started from upstream `e66d502`, which already targeted Pi Durable 1.1.0, not 1.0.3.
 - The upstream storage conformance suite passes 32/32 on PostgreSQL 17, plus 32 adapter tests: lock, fail-closed on `pg_terminate_backend`, batched refusals, and the v2 migration. The contract diff is in that repo's `docs/port-1.5.md`.
 - Schema migration v2 adds the `sleeping` status, and older adapter builds cannot open a migrated database.
 - Watch/changes needs no storage work: conversation views and `observeCommits` live in Session/Harness.
@@ -95,7 +95,7 @@ Wire orchestrator, storage and sandbox together, then run:
 | Concurrency | Two sessions run in parallel with separate sandboxes and no cross-access |
 | Isolation | Sandbox cannot reach the orchestrator, Postgres or other sandboxes (NetworkPolicy) |
 
-**Phase 3 result (2026-11-15): done.** `tests/e2e/run-phase3.sh` ran twice in a row on the example test cluster: restart, double owner, long command, sandbox loss and concurrency pass; isolation is KNOWN-FAIL (flannel does not enforce NetworkPolicy; an in-sandbox probe reached the orchestrator, Postgres and another sandbox's sandboxd). The orchestrator is `packages/orchestrator` (scripted Pi faux model, no LLM); the adapter is consumed as a packed tarball under `vendor/`.
+**Phase 3 result (2026-11-15): done.** `tests/e2e/run-phase3.sh` ran twice in a row on the example test cluster: restart, double owner, long command, sandbox loss and concurrency pass; isolation is KNOWN-FAIL (flannel does not enforce NetworkPolicy; an in-sandbox probe reached the orchestrator, Postgres and another sandbox's sandboxd). The orchestrator is `packages/orchestrator` (scripted Pi faux model, no LLM); the adapter was then a packed tarball under `vendor/` (now an npm package, [ADR 0033](docs/decisions/0033-own-adapter-package.md)).
 - Open questions answered. (1) SIGKILL of the remote stream: the command's process group and same-group descendants were reaped about 20 s after the orchestrator pod was killed, but a background child that called `setsid` survived. Interrupted commands can therefore leak escaped children until the sandbox is recycled (done: [ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)). (2) A long-lived `Connection` survives Pod recreation: the bridge dies with the stream, pi-env's `Connection` respawns it on the next call, and a call issued while the Pod was still being replaced also completed. No reconnect code was needed.
 - The adapter refuses a second owner immediately instead of blocking, so the orchestrator waits in a retry loop (2 s) until it gets the lock. After `pg_terminate_backend` the first owner exits with code 1 at its next write (`fail-closed`), and `durable_metadata.next_seq` stayed frozen while the lock was held by the test.
 - A tool that was running when the orchestrator died reads as `interrupted` after restart and is not replayed (`bash` is not replay-safe).
@@ -217,7 +217,7 @@ Tests:
 
 - `POST /sessions` takes an optional `{ repo, branch }`. Without it, `/workspace` stays empty and no OneCLI agent is created.
 - With a repo:
-  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection: apply `hack/agent-ruleset.sh` to each repo so the App can only write `agent/**` (see `docs/repo-workspace.md`).
+  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection is the repository owner's: protect `main` and release branches with GitHub's own rules, without the App as a bypass actor (`docs/repo-workspace.md`, ADR 0027).
   - It passes the proxy token, `HTTPS_PROXY` and the CA to that session's commands.
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
@@ -278,7 +278,7 @@ About 2–3 weeks part-time to a working PoC. This is an estimate, not a measure
 ## 9. Open questions
 
 - Is `commands.start()` stdio binary-clean and unbuffered enough for pi-env's framed protocol? (Answered yes, Phase 1.)
-- Does the adapter maintainer want the 1.5 port, or is a fork needed? (Open: the port is published as the fork https://github.com/gscode1/pi-durable-postgres and proposed upstream in https://github.com/j-koester/pi-durable-postgres/pull/20; it is consumed as the packed tarball `vendor/netzlabor-pi-durable-postgres-0.2.0.tgz` until a maintainer answers.)
+- Does the adapter maintainer want the 1.5 port, or is a fork needed? (Answered 2026-11-18, [ADR 0033](docs/decisions/0033-own-adapter-package.md): we do not wait. The fork https://github.com/gscode1/pi-durable-postgres publishes `@gscode1/pi-durable-postgres` to npm and this repo consumes that. The upstream proposal https://github.com/j-koester/pi-durable-postgres/pull/20 stays open.)
 - Which Pi Durable version to pin: 1.5.x now, or wait for the churn to slow? (Pinned 1.5.2.)
 - Is `in-cluster-service` DNS staleness after Pod recreation a problem in practice? (Not seen, Phase 1 and 3.)
 
@@ -288,11 +288,11 @@ Split by where the code ends up, not by phase.
 
 | Repo | Contents | When |
 |---|---|---|
-| Fork of `pi-durable-postgres` (`gscode1/pi-durable-postgres`) | Port to current Pi Durable; goes back as a PR (upstream PR #20 open) | Phase 2 |
+| Fork of `pi-durable-postgres` (`gscode1/pi-durable-postgres`) | Port to current Pi Durable, published to npm as `@gscode1/pi-durable-postgres`; also proposed upstream (PR #20 open) | Phase 2 |
 | Main repo `pi-durable-k8s` (own) | Orchestrator, pi-env bridge, session API, sandbox image, manifests, tests | Phase 1 onward |
 | Fork of `agent-sandbox` | Example or sandboxd change | Phase 5, only when contributing |
 
-The main repo consumes the adapter fork as a pinned dependency (git tag or pre-release package).
+The main repo consumes the adapter fork as a pinned npm dependency (exact version).
 
 Main repo layout:
 
@@ -305,9 +305,8 @@ packages/
   session-core/     # shared schema, migrations, settings, profiles, skills, MCP catalog, auth
   egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
-vendor/             # packed Postgres adapter port
 charts/             # pi-durable (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
-hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules, repo ruleset), onecli-policies/
+hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules), onecli-policies/
 images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), e2e-driver/, egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
 examples/           # recorded load-test and bug-hunt runs
