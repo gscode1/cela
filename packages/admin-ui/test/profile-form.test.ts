@@ -270,6 +270,7 @@ describe("diffs", () => {
         defaultProfile: "coding",
         turnBudget: 10,
         tokenBudget: null,
+        repoAllowlist: [],
       }),
     );
     expect(diffSettings(values, { ...values, reasoning: "low", turnBudget: 20 })).toEqual([
@@ -279,7 +280,10 @@ describe("diffs", () => {
     expect(diffSettings(values, { ...values, tokenBudget: 5000 })).toEqual([
       { field: "tokenBudget", before: "no limit", after: "5000" },
     ]);
-    expect(diffSettings(null, values)).toHaveLength(7);
+    expect(diffSettings(values, { ...values, repoAllowlist: ["acme/*"] })).toEqual([
+      { field: "repoAllowlist", before: "none (repo sessions refused)", after: "acme/*" },
+    ]);
+    expect(diffSettings(null, values)).toHaveLength(8);
     // A reordering of the allowlist is no change; a spelling of an empty list is no change either.
     expect(
       diffSettings(
@@ -301,6 +305,7 @@ describe("settings form", () => {
       defaultProfile: "coding",
       turnBudget: 7,
       tokenBudget: null,
+      repoAllowlist: [],
     });
     expect(valuesFromForm({ ...form, reasoning: "", maxReasoning: "" })).toMatchObject({
       reasoning: null,
@@ -322,6 +327,7 @@ describe("settings form", () => {
       defaultProfile: "coding",
       turnBudget: 1,
       tokenBudget: null,
+      repoAllowlist: [],
     });
     expect(valuesFromForm({ ...form, allowlist: ["c/d", "a/b"] }).allowlist).toEqual([
       "a/b",
@@ -338,6 +344,7 @@ describe("settings form", () => {
       defaultProfile: "coding",
       turnBudget: 5,
       tokenBudget: null,
+      repoAllowlist: [],
     } satisfies SettingsValues;
     expect(settingsProblems(ok)).toEqual([]);
     expect(settingsProblems({ ...ok, defaultModel: "nope" })).toHaveLength(1);

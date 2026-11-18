@@ -18,6 +18,7 @@ const settings: SettingsValues = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 const coding: ProfileFacts = {

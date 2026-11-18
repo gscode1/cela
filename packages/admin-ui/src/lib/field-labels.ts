@@ -11,6 +11,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   defaultProfile: "Default profile",
   turnBudget: "Turn budget",
   tokenBudget: "Token budget",
+  repoAllowlist: "Allowed repositories",
   // Profiles
   instructions: "Instructions",
   tools: "Tools",
