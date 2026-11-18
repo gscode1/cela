@@ -148,6 +148,11 @@ networkPolicy:
   orchestrator:
     # Extra raw egress rules, for example api.github.com:443 with provider standard and kubeApiCidrs.
     extraEgress: []
+  sandbox:
+    # CIDRs (IPv4 or IPv6) that sandboxes must not reach on top of the built-in private, CGNAT, link-local and loopback
+    # ranges: the Kubernetes API endpoint when it has a public address, global IPv6 node and pod ranges, an external
+    # database or OneCLI on a public IP, NAT64 64:ff9b::/96. Appended to sandbox-allow-internet-egress by address family.
+    extraEgressExcept: []
 
 orchestrator:
   # One Deployment per shard, one replica each, strategy Recreate (one owner per schema, ADR 0017). The count can only
