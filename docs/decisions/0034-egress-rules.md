@@ -16,7 +16,7 @@ slice 3.
 
 ### Rule sets, and what applies to a session
 
-- **Rules live in named rule sets** (`npm`, `pypi`, `open-web`, ...). A profile names the sets it uses in its
+- **Rules live in named rule sets** (`packages`, `github-public`, `open-web`, ...). A profile names the sets it uses in its
   definition (`egressRuleSets`, [0010](0010-session-profiles.md)); a set with `applies_to_all` applies to every
   session. This replaces a per-rule scope: "global" is a set that applies to all, "profile" is a set only that profile
   names.
@@ -46,7 +46,7 @@ slice 3.
 - **Every write** takes the advisory lock `egress:rules`, checks `expectedRevision`, adds a `revisions` row, writes its
   rows and history and runs `select pg_notify('egress_rules', '<revision>')`, in one transaction. The notification is
   delivered at commit. A change that alters nothing writes nothing.
-- **Seed.** The migration creates these rule sets once, when no revision exists, all with `applies_to_all = false` and
+- **Seed.** (Replaced in part, see the addendum "One packages set".) The migration creates these rule sets once, when no revision exists, all with `applies_to_all = false` and
   all rules `allow`, `direct`, port 443 unless noted: `npm` (`registry.npmjs.org`), `pypi` (`pypi.org`,
   `files.pythonhosted.org`), `debian` (`deb.debian.org`, `security.debian.org`; ports 80 and 443), `github-public`
   (`github.com`, `codeload.github.com`, `.githubusercontent.com`), `go` (`proxy.golang.org`, `sum.golang.org`), `rust`
@@ -185,3 +185,22 @@ policy, and a network policy alone does not make the proxy connect.
 - One global revision means two admins editing unrelated rules can see a `409`. A reload resolves it.
 - The evaluator is O(rules) per request. At 2000 rules the proxy can run it per connection; slice 3 may index it.
 - Sessions pin a profile snapshot, so the proxy needs the profile's rule set names per session (slice 4 principals).
+
+## Addendum: one `packages` set (migration `030_egress_packages.sql`)
+
+The seeded `npm`, `pypi`, `debian`, `go` and `rust` sets were too granular for the admins of this proof of concept. They
+are replaced by one set, `packages` ("Package registries and mirrors"): `allow`, `direct`, `applies_to_all = false`,
+with `registry.npmjs.org`, `registry.yarnpkg.com`, `pypi.org`, `files.pythonhosted.org`, `deb.debian.org` and
+`security.debian.org` (ports 80 and 443 for the two Debian hosts, 443 for the rest), `proxy.golang.org`,
+`sum.golang.org`, `crates.io`, `index.crates.io` and `static.crates.io`. `github-public` and `open-web` stay as they
+were. A fresh database therefore has `packages`, `github-public`, `open-web` and the system set `mcp-catalog`.
+
+- Migration 024 is unchanged (an applied migration never is), so a fresh database seeds the old sets and 030 converts
+  them in the same run, as it does on an existing one.
+- 030 creates `packages` unless a set of that name exists, and deletes each old set only when it is **untouched**: the
+  set row and its rules are as 024 wrote them (same description, revision, `created_by` and `updated_by` `migration
+  024`, exactly the seeded rules), `egress.rules_history` has no entry for it, and no profile version of any age names
+  it. Any other old set stays, unedited. A database where 024 found a revision and seeded nothing loses nothing.
+- It writes like the admin API: one revision, history rows (actor `migration 030`; the deleted sets keep their rules in
+  `old`), and a NOTIFY. It runs once, guarded by its own revision row.
+- Hosts a deleted set allowed to a session through a profile cannot be lost by this: a profile that names a set keeps it.

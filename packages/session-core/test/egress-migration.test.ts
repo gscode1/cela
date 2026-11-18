@@ -197,3 +197,52 @@ describe("migration 029_egress_system_sets.sql", () => {
     expect(sql).not.toMatch(/\binbox\./);
   });
 });
+
+const SQL_030 = readFile(new URL("../migrations/030_egress_packages.sql", import.meta.url), "utf8");
+
+/** The conversion of ADR 0034's addendum, checked on the migration text (the SQL itself ran against Postgres 17 in the PR). */
+describe("migration 030_egress_packages.sql", () => {
+  it("creates `packages` with valid rules for exactly the hosts of the replaced sets", async () => {
+    const sql = await SQL_030;
+    const block = sql.slice(
+      sql.indexOf("insert into egress.rules"),
+      sql.indexOf("as s (host, ports)"),
+    );
+    const rules = [...block.matchAll(/\('([^']+)', '\{([\d,]+)\}'/g)].map((m) => ({
+      host: m[1] ?? "",
+      ports: (m[2] ?? "").split(",").map(Number),
+    }));
+    expect(rules.map((r) => r.host)).toEqual([
+      "registry.npmjs.org",
+      "registry.yarnpkg.com",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "deb.debian.org",
+      "security.debian.org",
+      "proxy.golang.org",
+      "sum.golang.org",
+      "crates.io",
+      "index.crates.io",
+      "static.crates.io",
+    ]);
+    for (const rule of rules) {
+      const checked = validateEgressRule(
+        { effect: "allow", host: rule.host, ports: rule.ports },
+        new Date(),
+      );
+      expect(typeof checked, rule.host).toBe("object");
+    }
+    expect(sql).toMatch(/'Package registries and mirrors'/);
+  });
+
+  it("deletes only the five old sets, never a set a profile names, and writes revision, history and NOTIFY", async () => {
+    const sql = (await SQL_030).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/array\['npm', 'pypi', 'debian', 'go', 'rust'\]/);
+    expect(sql).not.toMatch(/github-public|open-web/);
+    expect(sql).toMatch(/inbox\.profile_versions[^;]*egressRuleSets/);
+    expect(sql).toMatch(/egress\.rules_history h where h\.kind = 'rule-set'/);
+    expect(sql).toMatch(/pg_advisory_xact_lock\(hashtext\('egress:rules'\)\)/);
+    expect(sql).toMatch(/changed_by = 'migration 030'/);
+    expect(sql).toMatch(/pg_notify\('egress_rules'/);
+  });
+});
