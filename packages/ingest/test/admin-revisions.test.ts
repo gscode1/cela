@@ -158,6 +158,30 @@ describe("profile revision", () => {
         .status,
     ).toBe(400);
   });
+
+  it("expectedRevision 0 creates only: 201 for a new name, 409 and no new version for an existing one", async () => {
+    const { base, db } = await start();
+    const created = await call(base, "PUT", "/admin/profiles/research", {
+      definition: {},
+      expectedRevision: 0,
+    });
+    expect(created.status).toBe(201);
+    const again = await call(base, "PUT", "/admin/profiles/research", {
+      definition: { turnBudget: 4 },
+      expectedRevision: 0,
+    });
+    expect(again.status).toBe(409);
+    expect((await json(again)).error as string).toMatch(/already exists/);
+    expect(db.versions.filter((v) => v.name === "research")).toHaveLength(1);
+    expect(
+      (
+        await call(base, "PUT", "/admin/profiles/research", {
+          definition: {},
+          expectedRevision: -1,
+        })
+      ).status,
+    ).toBe(400);
+  });
 });
 
 describe("MCP server revision and source", () => {
@@ -196,6 +220,28 @@ describe("MCP server revision and source", () => {
     const del = await call(base, "DELETE", "/admin/mcp-servers/demo?expectedRevision=2");
     expect(del.status).toBe(200);
     expect(db.mcp.size).toBe(0);
+  });
+
+  it("expectedRevision 0 creates only: 409 for an existing server, which is left as it was", async () => {
+    const { base, db } = await start();
+    const created = await call(base, "PUT", "/admin/mcp-servers/demo", {
+      ...SERVER,
+      expectedRevision: 0,
+    });
+    expect(created.status).toBe(201);
+    await call(base, "PUT", "/admin/mcp-servers/demo", { enabled: false });
+    const again = await call(base, "PUT", "/admin/mcp-servers/demo", {
+      ...SERVER,
+      enabled: true,
+      expectedRevision: 0,
+    });
+    expect(again.status).toBe(409);
+    expect((await json(again)).error as string).toMatch(/already exists/);
+    expect(db.mcp.get("demo")).toMatchObject({ enabled: false, revision: 2 });
+    // A DELETE always names the revision it saw: 0 is not one.
+    expect((await call(base, "DELETE", "/admin/mcp-servers/demo?expectedRevision=0")).status).toBe(
+      400,
+    );
   });
 });
 

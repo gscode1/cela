@@ -309,6 +309,7 @@ export interface PutResult {
  * Creates or updates one server from `by` (the owner name). A create needs `url` and `readOnly`; an update lays the
  * body over the stored row (locked, so two admins cannot interleave). Row, history and notification are written in one
  * transaction; a change that alters nothing writes nothing. Resolves to the stored server or the message for a 400.
+ * `expectedRevision` as in ADR 0023; `CREATE_ONLY_REVISION` (0) refuses a name that exists.
  */
 export async function putMcpServer(
   pool: pg.Pool,
