@@ -202,6 +202,40 @@ describe("the LISTEN connection", () => {
     await vi.waitFor(() => expect(release).toHaveBeenCalledWith(true), { timeout: 2_000 });
     expect(on).not.toHaveBeenCalled();
   });
+  it("is released once when stop() runs while the listener reconnects", async () => {
+    const handlers = new Map<string, () => void>();
+    let releases = 0;
+    const client = {
+      // pg-pool throws on a second release of the same client.
+      release: () => {
+        releases += 1;
+        if (releases > 1)
+          throw new Error("Release called on client which has already been released to the pool.");
+      },
+      on: (event: string, handler: () => void) => handlers.set(event, handler),
+      query: () => Promise.resolve({ rows: [] }),
+      removeAllListeners: () => handlers.clear(),
+    } as unknown as pg.PoolClient;
+    let connects = 0;
+    const pool = {
+      connect: () => {
+        connects += 1;
+        // Only the first connect succeeds; the reconnect never resolves within the test.
+        return connects === 1
+          ? Promise.resolve(client)
+          : new Promise<pg.PoolClient>(() => undefined);
+      },
+      query: () => Promise.resolve({ rows: [] }),
+    } as unknown as pg.Pool;
+    const loop = new InboxLoop(pool, 0, () => Promise.resolve());
+    loop.start();
+    await vi.waitFor(() => expect(handlers.has("end")).toBe(true), { timeout: 2_000 });
+    // The LISTEN connection drops: #listen releases it and waits before reconnecting.
+    handlers.get("end")?.();
+    await vi.waitFor(() => expect(releases).toBe(1), { timeout: 2_000 });
+    await expect(loop.stop()).resolves.toBeUndefined();
+    expect(releases).toBe(1);
+  });
 });
 
 describe("a batch with a message followed by a delete", () => {
