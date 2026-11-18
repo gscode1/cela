@@ -49,6 +49,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | Path                                   | What                                                                                                                       |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                   |
+| `packages/mcp`                         | Stdio MCP adapter: coding agents start and follow sessions through the session API ([docs](docs/mcp-adapter.md))           |
 | `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))       |
 | `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                             |
 | `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                          |
@@ -66,6 +67,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 ## Docs
 
 - [Session API](docs/session-api.md)
+- [MCP adapter for coding agents](docs/mcp-adapter.md)
 - [Model credentials through OneCLI](docs/model-credentials.md)
 - [Repository workspaces](docs/repo-workspace.md)
 - [Scaling: one orchestrator per schema shard](docs/scaling.md)
