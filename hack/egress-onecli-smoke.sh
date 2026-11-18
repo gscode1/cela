@@ -206,7 +206,9 @@ prov=$(driver provision "$sa" "$echo_host")
 echo "$prov" | grep -v '^echo-credential' | sed 's/^/  driver: /'
 check "RepoAccess's shell env for a repo session holds no OneCLI token" "$prov" "env-has-onecli-token no"
 check "and no OneCLI gateway address" "$prov" "env-has-onecli-gateway no"
-check "and points at the egress proxy" "$prov" "env-proxy pi-egress-proxy\.$namespace\.svc:3128"
+# The address of the Service, not its name: a proxied sandbox has no DNS (ADR 0038).
+proxy_ip=$(k get svc pi-egress-proxy -o jsonpath='{.spec.clusterIP}')
+check "and points at the egress proxy" "$prov" "env-proxy $(sed 's/\./\\./g' <<<"$proxy_ip"):3128"
 cred=$(sed -n 's/^echo-credential //p' <<<"$prov")
 [[ -n $cred ]] || fail "the driver did not report the echo credential"
 facts=$(driver facts "$sa")

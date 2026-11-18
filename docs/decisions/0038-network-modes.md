@@ -66,6 +66,9 @@ With `egressProxy.enabled` (the cutover):
   their own policy.
 - `sandbox-allow-onecli-egress` is removed. A proxied sandbox reaches OneCLI only through the proxy (0037, `route=onecli`);
   a direct sandbox may not use OneCLI at all (below).
+- A proxied sandbox cannot resolve names, so its proxy environment carries the **address** of the proxy Service
+  (`http://x:<token>@<ClusterIP>:3128`), which the orchestrator looks up from `PI_EGRESS_PROXY_URL` (kept for a minute) when
+  it builds the environment. The proxy still resolves the destination names itself.
 - `egressProxy.requireAuth` now defaults to `true`: nothing but a sandbox with its token reaches the proxy. The value is
   still a switch, for test pods that call the proxy anonymously.
 

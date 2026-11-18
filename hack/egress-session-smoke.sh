@@ -18,8 +18,8 @@
 #   3. a session rule added through the admin API takes effect within 10 s
 #   4. A's token used from B's sandbox is denied; from A's own sandbox it works
 #   5. deleting A makes its token useless within 10 s
-#   6. with egressProxy.enabled=false a new session has no proxy variables, no principal exists for it, and nothing else
-#      changes (git still works directly); the proxy is switched on again at the end
+#   6. with egressProxy.enabled=false (the network cutover is then off, ADR 0038) a new session has no proxy variables, no
+#      principal exists for it, and git works directly; the proxy is switched on again at the end
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -101,7 +101,7 @@ sandbox() { kc ask "$1" "$(script_json "$2" "$3")" "$2" 600; }
 conn_fn='ph=${HTTPS_PROXY#*@}; pp=${ph##*:}; ph=${ph%:*}; tok=${HTTPS_PROXY#http://x:}; tok=${tok%%@*}; auth=$(printf "x:%s" "$tok" | base64 -w0);
 conn() { exec 3<>/dev/tcp/$ph/$pp || { echo "$1 noconnect"; return; }; printf "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: Basic %s\r\n\r\n" "$1" "$1" "$auth" >&3; read -t 15 -r line <&3; exec 3>&-; echo "$1 ${line%$(printf "\r")}"; }'
 # The token is masked and the proxy's address shortened to P (the tool output is cut at 400 characters).
-mask='sed -E "s#(://x:)[^@]*@pi-egress-proxy[^ ]*#\1***@P#"'
+mask='sed -E "s#(://x:)[^@]*@[0-9.]+:3128#\1***@P#"'
 pod_of() { # session -> the sandbox Pod's name (the claim and the Sandbox share a name)
   local claim
   claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
@@ -109,6 +109,10 @@ pod_of() { # session -> the sandbox Pod's name (the claim and the Sandbox share 
   echo "$claim"
 }
 epoch_in() { k exec "$1" -- date +%s; } # the clock the sandbox's own processes see
+
+# The direct-egress gate (ADR 0038) needs the proxy: step 6 switches it off with the proxy and restores it afterwards.
+gate_before=$(k get deploy pi-ingest -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_ALLOW_DIRECT_SANDBOX_EGRESS")].value}')
+[[ $gate_before == true ]] || gate_before=false
 
 # ------------------------------------------------------------------ cleanup, always
 sessions=()
@@ -177,7 +181,7 @@ has() { grep -Eq -- "(^| )$1( |\$)" <<<"$out"; }
 for var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
   has "$var=http://x:\*\*\*@P" || fail "A's sandbox lacks $var pointing at the proxy with a masked token" "$out"
 done
-ok "A's sandbox has HTTP_PROXY, HTTPS_PROXY and both lower-case forms, each http://x:<token>@pi-egress-proxy.$namespace.svc:3128"
+ok "A's sandbox has HTTP_PROXY, HTTPS_PROXY and both lower-case forms, each http://x:<token>@<the proxy Service address>:3128 (a proxied sandbox has no DNS, ADR 0038)"
 has "NO_PROXY=localhost,127.0.0.1,::1" && has "NODE_USE_ENV_PROXY=1" || fail "NO_PROXY or NODE_USE_ENV_PROXY is missing" "$out"
 ok "A's sandbox has NO_PROXY=localhost,127.0.0.1,::1 and NODE_USE_ENV_PROXY=1"
 check "A's sandbox has git's http.proxyAuthMethod=basic" "$out" "GIT_CONFIG_KEY_0=http.proxyAuthMethod.*GIT_CONFIG_VALUE_0=basic"
@@ -285,7 +289,7 @@ check "the deleted session's token is still refused afterwards" "$again" "github
 # ------------------------------------------------------------------ 6. the proxy off
 echo "## 6. egressProxy.enabled=false changes nothing for a new session"
 helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
-  --set egressProxy.enabled=false --wait --timeout 5m >/dev/null
+  --set egressProxy.enabled=false --set security.allowDirectSandboxEgress=false --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
 [[ -z $(k get deploy pi-orchestrator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]] || fail "the orchestrator still has PI_EGRESS_PROXY_URL"
 ok "the orchestrator has no PI_EGRESS_PROXY_URL with the proxy off"
@@ -300,7 +304,7 @@ counts_after=$(api GET /admin/egress/status | jq_ 'j.principals')
 [[ $counts_off == "$counts_after" ]] || fail "a principal was created for a session with the proxy off ($counts_off -> $counts_after)"
 ok "no principal was created for it ($counts_after)"
 helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
-  --set egressProxy.enabled=true --wait --timeout 5m >/dev/null
+  --set egressProxy.enabled=true --set "security.allowDirectSandboxEgress=$gate_before" --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
 ok "the proxy is switched on again"
 echo

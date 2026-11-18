@@ -94,6 +94,7 @@ jq_() { node -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); co
 # ------------------------------------------------------------------ cleanup, always
 created_sets=()
 open_web_was_all=""
+restore_auth=0
 cleanup() {
   local rc=$?
   set +e
@@ -106,9 +107,21 @@ cleanup() {
   [[ $open_web_was_all != false ]] || api PUT /admin/egress/rule-sets/open-web '{"appliesToAll":false}' >/dev/null 2>&1
   [[ -z $(k get statefulset pi-postgres -o jsonpath='{.spec.replicas}' 2>/dev/null | grep -x 0) ]] || k scale statefulset pi-postgres --replicas=1 >/dev/null 2>&1
   kubectl --context "$ctx" delete namespace "$test_ns" --ignore-not-found --wait=false >/dev/null 2>&1
+  [[ $restore_auth -eq 0 ]] || helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+    --set egressProxy.requireAuth=true --wait --timeout 5m >/dev/null 2>&1
   exit $rc
 }
 trap cleanup EXIT
+
+# ------------------------------------------------------------------ anonymous test pods
+# The chart refuses a request without a session token by default (the network cutover, ADR 0038). These checks call the proxy
+# from test pods that have no token, so the proxy is told to judge anonymous requests for the length of the run.
+if [[ $(k get deploy pi-egress-proxy -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="EGRESS_REQUIRE_AUTH")].value}') == true ]]; then
+  echo "## egressProxy.requireAuth=false for this run (test pods have no token)"
+  restore_auth=1
+  helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+    --set egressProxy.requireAuth=false --wait --timeout 5m >/dev/null
+fi
 
 # ------------------------------------------------------------------ test pods
 echo "## test pods in namespace $test_ns"

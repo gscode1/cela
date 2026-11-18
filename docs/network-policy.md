@@ -118,7 +118,7 @@ spec:
       ports: [{ protocol: TCP, port: 3128 }]
 ```
 
-The proxy accepts a session's token only from that sandbox's Pod address, so a token read inside one sandbox is useless in
+A proxied sandbox cannot resolve names, so its `HTTPS_PROXY` holds the proxy Service's address (ClusterIP), not its name. The proxy accepts a session's token only from that sandbox's Pod address, so a token read inside one sandbox is useless in
 another. A repo session's credentialed hosts (`github.com`, `api.github.com`) go through the proxy to the OneCLI gateway: the
 proxy's own egress to the gateway port is `egress-proxy-allow-onecli-egress`, and OneCLI's gateway ingress admits the proxy
 (`charts/pi-onecli` `clients.egressProxy`). With an **external OneCLI** (`onecli.mode=external`) the operator admits the proxy
