@@ -17,6 +17,7 @@ const settings: SettingsValues = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 };
 
 const coding: ProfileFacts = {

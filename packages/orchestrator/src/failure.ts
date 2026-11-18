@@ -4,6 +4,10 @@ export interface RunOutcome {
   detail?: string;
 }
 
+/** The stored failure of a session that used its token budget (checked before each input, ADR 0028). */
+export const TOKEN_BUDGET_EXHAUSTED =
+  "token budget exhausted: the session used all the model tokens it is allowed";
+
 /**
  * Model-side signs that the credentials are not accepted: an HTTP status of 401 or 403 from the provider (a missing
  * or revoked key, a revoked OneCLI grant leaves the gateway injecting nothing), 407 from the gateway itself (the

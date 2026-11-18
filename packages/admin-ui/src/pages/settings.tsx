@@ -311,6 +311,21 @@ export function GlobalSettings() {
                 }}
               />
             </Field>
+            <Field
+              id="token-budget"
+              label={fieldLabel("tokenBudget")}
+              hint="Model tokens one session may use in total, checked before each message. Empty: no limit."
+            >
+              <Input
+                id="token-budget"
+                inputMode="numeric"
+                placeholder="No limit"
+                value={current.form.tokenBudgetText}
+                onChange={(event) => {
+                  edit({ tokenBudgetText: event.target.value });
+                }}
+              />
+            </Field>
           </form>
         </CardContent>
       </Card>

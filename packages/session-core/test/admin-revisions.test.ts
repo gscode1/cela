@@ -23,6 +23,7 @@ const SEED: Settings = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 };
 const SERVER = { url: "https://mcp.example.com/mcp", readOnly: true };
 

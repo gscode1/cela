@@ -10,6 +10,7 @@ const fallback: Settings = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 11,
+  tokenBudget: null,
 };
 
 const caches: SettingsCache[] = [];

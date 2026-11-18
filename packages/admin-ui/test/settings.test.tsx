@@ -46,9 +46,39 @@ describe("settings editor", () => {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 150,
+      tokenBudget: null,
       expectedRevision: 1,
     });
     expect(screen.queryByText("Review before saving")).not.toBeInTheDocument();
+  });
+
+  it("sets a token budget, and clears it back to no limit by sending null", async () => {
+    const admin = createFakeAdmin();
+    await open(admin);
+    const tokens = screen.getByLabelText("Token budget");
+    expect(tokens).toHaveValue("");
+    await userEvent.type(tokens, "500000");
+    expect(screen.getByText("Token budget", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("no limit", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText(/One run can go past it/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByTestId("saved");
+    expect(admin.writes[0]?.body).toMatchObject({ tokenBudget: 500000 });
+    expect(admin.settings.tokenBudget).toBe(500000);
+
+    await userEvent.clear(screen.getByLabelText("Token budget"));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => {
+      expect(admin.writes).toHaveLength(2);
+    });
+    expect(admin.writes[1]?.body).toMatchObject({ tokenBudget: null });
+  });
+
+  it("refuses a token budget that is not a whole number", async () => {
+    await open();
+    await userEvent.type(screen.getByLabelText("Token budget"), "1.5");
+    expect(await screen.findByText(/tokenBudget must be null or an integer/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
   });
 
   it("clears reasoning and max reasoning by sending null", async () => {

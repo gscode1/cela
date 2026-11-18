@@ -99,6 +99,11 @@ export class SettingsCache {
     return this.get().turnBudget;
   }
 
+  /** Null: no token limit. */
+  tokenBudget(): number | null {
+    return this.get().tokenBudget;
+  }
+
   async #load(): Promise<void> {
     try {
       const stored = await readSettings(this.#pool);

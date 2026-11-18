@@ -48,6 +48,7 @@ export async function resetSettings(request: APIRequestContext): Promise<void> {
     maxReasoning: null,
     defaultProfile: "coding",
     turnBudget: 100,
+    tokenBudget: null,
   });
 }
 

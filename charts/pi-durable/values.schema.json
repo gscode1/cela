@@ -327,7 +327,8 @@
           "type": "array",
           "items": { "type": "string", "pattern": "^[^/,\\s]+/[^,\\s]+$" }
         },
-        "turnBudget": { "type": "integer", "minimum": 1 }
+        "turnBudget": { "type": "integer", "minimum": 1 },
+        "tokenBudget": { "type": ["integer", "null"], "minimum": 1 }
       }
     },
     "github": {

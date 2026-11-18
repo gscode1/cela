@@ -247,13 +247,17 @@ describe("diffs", () => {
         maxReasoning: "low",
         defaultProfile: "coding",
         turnBudget: 10,
+        tokenBudget: null,
       }),
     );
     expect(diffSettings(values, { ...values, reasoning: "low", turnBudget: 20 })).toEqual([
       { field: "reasoning", before: "model default", after: "low" },
       { field: "turnBudget", before: "10", after: "20" },
     ]);
-    expect(diffSettings(null, values)).toHaveLength(6);
+    expect(diffSettings(values, { ...values, tokenBudget: 5000 })).toEqual([
+      { field: "tokenBudget", before: "no limit", after: "5000" },
+    ]);
+    expect(diffSettings(null, values)).toHaveLength(7);
     // A reordering of the allowlist is no change; a spelling of an empty list is no change either.
     expect(
       diffSettings(
@@ -274,6 +278,7 @@ describe("settings form", () => {
       maxReasoning: "high",
       defaultProfile: "coding",
       turnBudget: 7,
+      tokenBudget: null,
     });
     expect(valuesFromForm({ ...form, reasoning: "", maxReasoning: "" })).toMatchObject({
       reasoning: null,
@@ -294,6 +299,7 @@ describe("settings form", () => {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 1,
+      tokenBudget: null,
     });
     expect(valuesFromForm({ ...form, allowlist: ["c/d", "a/b"] }).allowlist).toEqual([
       "a/b",
@@ -309,6 +315,7 @@ describe("settings form", () => {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 5,
+      tokenBudget: null,
     } satisfies SettingsValues;
     expect(settingsProblems(ok)).toEqual([]);
     expect(settingsProblems({ ...ok, defaultModel: "nope" })).toHaveLength(1);
@@ -316,6 +323,9 @@ describe("settings form", () => {
     expect(settingsProblems({ ...ok, reasoning: "high", maxReasoning: "low" })).toHaveLength(1);
     expect(settingsProblems({ ...ok, turnBudget: 0 })).toHaveLength(1);
     expect(settingsProblems({ ...ok, turnBudget: Number.NaN })).toHaveLength(1);
+    expect(settingsProblems({ ...ok, tokenBudget: 1 })).toEqual([]);
+    expect(settingsProblems({ ...ok, tokenBudget: 0 })).toHaveLength(1);
+    expect(settingsProblems({ ...ok, tokenBudget: 1.5 })).toHaveLength(1);
     expect(settingsProblems({ ...ok, defaultProfile: "" })).toHaveLength(1);
   });
 });

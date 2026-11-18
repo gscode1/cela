@@ -18,6 +18,7 @@ const base: Settings = {
   maxReasoning: null,
   defaultProfile: "coding",
   turnBudget: 100,
+  tokenBudget: null,
 };
 
 describe("settingsFromEnv", () => {
@@ -37,6 +38,7 @@ describe("settingsFromEnv", () => {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 7,
+      tokenBudget: null,
     });
   });
 
@@ -45,6 +47,13 @@ describe("settingsFromEnv", () => {
     expect(() => settingsFromEnv({ PI_SESSION_TURN_BUDGET: "0" })).toThrow(
       /PI_SESSION_TURN_BUDGET/,
     );
+  });
+
+  it("seeds a token budget only when PI_SESSION_TOKEN_BUDGET is set, and rejects a bad one", () => {
+    expect(settingsFromEnv({}).tokenBudget).toBeNull();
+    expect(settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "" }).tokenBudget).toBeNull();
+    expect(settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "2000000" }).tokenBudget).toBe(2_000_000);
+    expect(() => settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "lots" })).toThrow(/tokenBudget/);
   });
 });
 
@@ -64,6 +73,7 @@ describe("validateSettings", () => {
       maxReasoning: null,
       defaultProfile: "coding",
       turnBudget: 5,
+      tokenBudget: null,
     });
   });
 
@@ -85,6 +95,18 @@ describe("validateSettings", () => {
     const legacy: Record<string, unknown> = { ...base };
     delete legacy.maxReasoning;
     expect(validateSettings(legacy)).toEqual({ ...base, maxReasoning: null });
+  });
+
+  it("treats a missing tokenBudget as no limit, accepts a positive integer and refuses anything else", () => {
+    const legacy: Record<string, unknown> = { ...base };
+    delete legacy.tokenBudget;
+    expect(validateSettings(legacy)).toEqual({ ...base, tokenBudget: null });
+    expect(validateSettings({ ...base, tokenBudget: 500_000 })).toMatchObject({
+      tokenBudget: 500_000,
+    });
+    for (const bad of [0, -1, 1.5, "100", 2e12, Number.NaN]) {
+      expect(validateSettings({ ...base, tokenBudget: bad }), String(bad)).toMatch(/tokenBudget/);
+    }
   });
 
   it("accepts max as a reasoning level and a cap at or above the default", () => {
@@ -236,6 +258,21 @@ describe("updateSettings", () => {
     expect(notified).toBe(1);
     const history = await listSettingsHistory(db.asPool(), 10);
     expect(history.map((h) => h.changedBy)).toEqual(["alice", "seed"]);
+  });
+
+  it("stores a token budget and reads the bigint column back as a number; a partial update keeps it", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), base);
+    await updateSettings(db.asPool(), { tokenBudget: 750_000 }, "alice");
+    expect(db.row?.token_budget).toBe("750000");
+    expect((await readSettings(db.asPool()))?.settings.tokenBudget).toBe(750_000);
+    await updateSettings(db.asPool(), { turnBudget: 9 }, "alice");
+    expect((await readSettings(db.asPool()))?.settings).toMatchObject({
+      turnBudget: 9,
+      tokenBudget: 750_000,
+    });
+    await updateSettings(db.asPool(), { tokenBudget: null }, "alice");
+    expect((await readSettings(db.asPool()))?.settings.tokenBudget).toBeNull();
   });
 
   it("stores the cap and refuses one below the stored default", async () => {

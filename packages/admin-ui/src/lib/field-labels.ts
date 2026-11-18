@@ -10,6 +10,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   maxReasoning: "Highest reasoning allowed",
   defaultProfile: "Default profile",
   turnBudget: "Turn budget",
+  tokenBudget: "Token budget",
   // Profiles
   instructions: "Instructions",
   tools: "Tools",

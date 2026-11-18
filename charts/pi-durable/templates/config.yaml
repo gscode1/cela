@@ -14,3 +14,6 @@ data:
   PI_MODEL_REASONING: {{ .Values.models.default.reasoning | quote }}
   PI_MODEL_ALLOWLIST: {{ join "," .Values.models.allowlist | quote }}
   PI_SESSION_TURN_BUDGET: {{ .Values.models.turnBudget | quote }}
+  {{- with .Values.models.tokenBudget }}
+  PI_SESSION_TOKEN_BUDGET: {{ . | quote }}
+  {{- end }}
