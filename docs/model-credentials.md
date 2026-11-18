@@ -219,9 +219,10 @@ model.
   not exit, so there is no restart loop. Other model errors (429 after the retries, network errors) leave the session
   active for its next message.
 - **Where it is detected.** Pi Durable reports a model error only inside the conversation (the run's submissions end
-  `unanswered` with the reason and text), not through `onReport`. The orchestrator's run watcher polls the
-  submissions it handed over until they settle, and re-adds the last 24 hours of submitted events at start, so a run
-  a previous process started is still seen.
+  `unanswered` with the reason and text), not through `onReport`. The orchestrator's run watcher awaits each
+  submission it handed over with `Submission.wait()` (one lookup by request id, then no polling), and re-adds the last
+  24 hours of submitted events at start, so a run a previous process started is still seen. When a run answers it sets
+  the turn limit again for a run queued behind it ([ADR 0029](decisions/0029-run-outcomes-from-wait.md)).
 - **Turn budget.** The budget is checked before each input: the session profile's `turnBudget` if it has one, else the live `turnBudget` setting in Postgres (`PI_SESSION_TURN_BUDGET` only seeds that setting). A session that used all its turns becomes
   `failed` with "turn budget exhausted".
 - **Token budget.** The `tokenBudget` setting (null: no limit) is checked before each input against the tokens the

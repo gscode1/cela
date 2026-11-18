@@ -25,7 +25,7 @@ import type { McpFetch } from "@earendil-works/pi-mcp";
 import { Sandboxes, WORKSPACE } from "./sandboxes.js";
 import type { SandboxHooks, SessionKeyOf } from "./sandboxes.js";
 import type { TurnTimings } from "./timing.js";
-import type { SubmissionState } from "./watcher.js";
+import type { Settlement, SubmissionState } from "./watcher.js";
 import type { WorkspaceEnv } from "./workspace.js";
 
 export interface SessionEvent {
@@ -250,7 +250,9 @@ export class Host {
       {
         models,
         registry,
-        settings: { extensions: [coding] },
+        // A failed run withdraws the inputs queued behind it (they settle `unanswered`, `run_failed`) instead of
+        // leaving them until the next input (`keep`), and never retries paid calls by itself (`continue`) (ADR 0029).
+        settings: { extensions: [coding], afterFailedRun: "withdraw" },
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {
@@ -469,7 +471,31 @@ export class Host {
     await (await this.#conversation(id)).configure({ maxTurns }, context);
   }
 
-  /** The stored state of a submission, for the run watcher. */
+  /**
+   * Resolves once the submission with `requestId` settles, from `Submission.wait()`; undefined when it was never
+   * admitted. The lookup by request id is a Storage read (the Harness has none); the wait is the Harness's own. Rejects
+   * when the Harness closes.
+   */
+  async settlement(id: number, requestId: string): Promise<Settlement> {
+    const record = await this.#storage.submissionByRequest(
+      id as ConversationId,
+      requestId,
+      context,
+    );
+    if (record === undefined) return undefined;
+    const submission = await this.#harness.submission(record.id, context);
+    if (submission === undefined) return undefined;
+    const settled = await submission.wait(context);
+    return settled.status === "done"
+      ? { status: "done" }
+      : {
+          status: "unanswered",
+          reason: settled.reason,
+          ...(settled.detail === undefined ? {} : { detail: settled.detail }),
+        };
+  }
+
+  /** The stored state of a submission, read once. */
   async submissionState(id: number, requestId: string): Promise<SubmissionState | undefined> {
     return this.#storage.submissionByRequest(id as ConversationId, requestId, context);
   }

@@ -14,99 +14,98 @@ export type SubmissionState =
   | { status: "done" }
   | { status: "unanswered"; reason: string; detail?: unknown };
 
+/** A submission once it settled; undefined when Pi Durable never admitted it. */
+export type Settlement = Extract<SubmissionState, { status: "done" | "unanswered" }> | undefined;
+
 export interface RunWatcherOptions {
-  lookup: (conversationId: number, requestId: string) => Promise<SubmissionState | undefined>;
+  /** Resolves once the submission settles (`Host.settlement`, built on `Submission.wait()`). */
+  settle: (conversationId: number, requestId: string) => Promise<Settlement>;
   /** A submission ended `unanswered`: the run it belonged to failed or was aborted. Called once per submission. */
   onUnanswered: (watched: Watched, outcome: RunOutcome) => Promise<void>;
-  pollMs?: number;
+  /** A submission was answered. A run queued behind it may have started right away. */
+  onDone?: (watched: Watched) => Promise<void>;
   onError?: (error: unknown) => void;
+  /** Wait before retrying a failed `settle` or handler; tests shorten it. */
+  retryMs?: number;
 }
 
 /**
  * Notices runs that end without an answer. Pi Durable reports a model error only inside the conversation (the run's
- * submissions settle `unanswered` with the reason and error text), not to the host, so the orchestrator reads the
- * submissions it handed over until each is settled. Polling the storage also covers a run that a previous process
- * started and this one resumed: `add` it again at start and it is picked up the same way.
+ * submissions settle `unanswered` with the reason and error text), not through `onReport`, so the orchestrator awaits
+ * each submission it handed over with `Submission.wait()`. A run that a previous process started and this one resumed
+ * is covered the same way: `add` it again at start. Each watch is its own promise, so a slow handler never holds back
+ * the others; a failed `settle` or handler is retried until `stop()`, so a storage hiccup does not lose the failure.
  */
 export class RunWatcher {
   readonly #options: RunWatcherOptions;
-  readonly #pending = new Map<string, Watched>();
-  #timer: NodeJS.Timeout | undefined;
-  #polling = false;
-  /** Submissions whose handler is running: later passes leave them alone. */
-  readonly #handling = new Set<string>();
+  readonly #pending = new Map<string, Promise<void>>();
+  #stopped = false;
 
   constructor(options: RunWatcherOptions) {
     this.#options = options;
   }
 
   add(watched: Watched): void {
-    this.#pending.set(`${String(watched.conversationId)}/${watched.requestId}`, watched);
-    this.#timer ??= setInterval(() => void this.poll(), this.#options.pollMs ?? 2_000);
-    this.#timer.unref();
+    if (this.#stopped) return;
+    const key = `${String(watched.conversationId)}/${watched.requestId}`;
+    if (this.#pending.has(key)) return;
+    const followed = this.#follow(watched).finally(() => this.#pending.delete(key));
+    this.#pending.set(key, followed);
   }
 
   get size(): number {
     return this.#pending.size;
   }
 
+  /** Resolves once every watch added so far ended. Exposed so tests need no timers. */
+  async idle(): Promise<void> {
+    while (this.#pending.size > 0) await Promise.all([...this.#pending.values()]);
+  }
+
+  /** Stops retrying. A wait in flight ends when the Harness closes and is then dropped. */
   stop(): void {
-    if (this.#timer !== undefined) clearInterval(this.#timer);
-    this.#timer = undefined;
+    this.#stopped = true;
   }
 
-  /**
-   * One pass over the pending submissions. Exposed so tests need no timers. The lookups run one after the other, but a
-   * handler runs on its own: `onUnanswered` aborts the run and resolves only once the conversation is idle, which can
-   * take as long as a tool call, and must not hold back the failure detection of every other watch.
-   */
-  async poll(): Promise<void> {
-    if (this.#polling) return;
-    this.#polling = true;
-    const handlers: Promise<void>[] = [];
-    try {
-      for (const [key, watched] of [...this.#pending]) {
-        if (this.#handling.has(key)) continue;
-        try {
-          const state = await this.#options.lookup(watched.conversationId, watched.requestId);
-          if (state === undefined || state.status === "done") {
-            this.#pending.delete(key);
-          } else if (state.status === "unanswered") {
-            const detail =
-              typeof state.detail === "string"
-                ? state.detail
-                : state.detail === undefined
-                  ? undefined
-                  : JSON.stringify(state.detail);
-            this.#handling.add(key);
-            handlers.push(
-              this.#handle(key, watched, {
-                reason: state.reason,
-                ...(detail === undefined ? {} : { detail }),
-              }),
-            );
-          }
-        } catch (error) {
-          // Keep it pending: a storage hiccup must not lose the watch, nor crash the orchestrator.
-          this.#options.onError?.(error);
-        }
+  /** A call, not a field read: `stop()` can run while `#retry` awaits, which flow narrowing cannot see. */
+  #isStopped(): boolean {
+    return this.#stopped;
+  }
+
+  async #follow(watched: Watched): Promise<void> {
+    const settled = await this.#retry(() =>
+      this.#options.settle(watched.conversationId, watched.requestId),
+    );
+    if (settled === undefined || settled.value === undefined) return;
+    const state = settled.value;
+    if (state.status === "done") {
+      const onDone = this.#options.onDone;
+      if (onDone !== undefined) await this.#retry(() => onDone(watched));
+      return;
+    }
+    const detail =
+      typeof state.detail === "string"
+        ? state.detail
+        : state.detail === undefined
+          ? undefined
+          : JSON.stringify(state.detail);
+    const outcome = { reason: state.reason, ...(detail === undefined ? {} : { detail }) };
+    await this.#retry(() => this.#options.onUnanswered(watched, outcome));
+  }
+
+  /** Runs `work` until it succeeds; undefined once stopped. */
+  async #retry<T>(work: () => Promise<T>): Promise<{ value: T } | undefined> {
+    while (!this.#isStopped()) {
+      try {
+        return { value: await work() };
+      } catch (error) {
+        // A wait rejected by the Harness closing at shutdown is not an error worth logging.
+        if (this.#isStopped()) return undefined;
+        this.#options.onError?.(error);
+        // Unref'd like the old poll timer: a watch waiting to retry must not keep the process alive.
+        await new Promise((resolve) => setTimeout(resolve, this.#options.retryMs ?? 2_000).unref());
       }
-    } finally {
-      this.#polling = false;
     }
-    await Promise.all(handlers);
-    if (this.#pending.size === 0) this.stop();
-  }
-
-  async #handle(key: string, watched: Watched, outcome: RunOutcome): Promise<void> {
-    try {
-      await this.#options.onUnanswered(watched, outcome);
-      // Only now: a handler that threw leaves the watch in place, so the failure is not lost.
-      this.#pending.delete(key);
-    } catch (error) {
-      this.#options.onError?.(error);
-    } finally {
-      this.#handling.delete(key);
-    }
+    return undefined;
   }
 }
