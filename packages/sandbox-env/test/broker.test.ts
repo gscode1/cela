@@ -152,6 +152,58 @@ describe("broker socket", () => {
   });
 });
 
+describe("broker", () => {
+  it("serves the next connection while an earlier start still hangs", async () => {
+    let starts = 0;
+    let hung: () => void = () => undefined;
+    const hanging = new Promise<void>((resolve) => (hung = resolve));
+    const broker = startBroker({
+      start: (command, args, handlers) => {
+        if (++starts > 1) return localStart({ command: "cat", args: [] })(command, args, handlers);
+        hung();
+        return new Promise(() => undefined);
+      },
+      command: "cat",
+    });
+    await broker.ready;
+    const spawnRelay = (): ReturnType<typeof spawn> =>
+      spawn(
+        process.execPath,
+        [
+          relay[1] ?? "",
+          "--socket",
+          broker.socketPath,
+          "--nonce",
+          broker.issueNonce(),
+          "serve",
+          "--token",
+          "x",
+        ],
+        { stdio: ["pipe", "pipe", "pipe"] },
+      );
+    const first = spawnRelay();
+    const second: { child?: ReturnType<typeof spawn> } = {};
+    try {
+      await hanging;
+      // What pi-env does when the relay stays silent: kill it and spawn a new one.
+      first.kill("SIGKILL");
+      second.child = spawnRelay();
+      const child = second.child;
+      child.stdin?.end("hi\n");
+      const code = await Promise.race([
+        new Promise<number | null>((done) => child.once("close", (c) => done(c))),
+        new Promise<string>((done) => setTimeout(() => done("hung"), 8_000)),
+      ]);
+      expect(code).toBe(0);
+      expect(starts).toBe(2);
+    } finally {
+      first.kill("SIGKILL");
+      second.child?.kill("SIGKILL");
+      broker.close();
+    }
+  }, 15_000);
+});
+
 describe("relay", () => {
   it("exits when the broker ends the connection while stdin is still open", async () => {
     const broker = startBroker({

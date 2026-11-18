@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { runBridge } from "../src/bridge.ts";
+import type { RemoteProcess } from "../src/bridge.ts";
 import { localStart } from "./local-start.ts";
 
 function collect(stream: PassThrough): () => Buffer {
@@ -146,6 +147,71 @@ describe("runBridge", () => {
       stderr: new PassThrough(),
     });
     expect(code).toBe(1);
+  }, 15_000);
+
+  it("gives up on a start that never resolves after the start timeout", async () => {
+    const stderr = new PassThrough();
+    const err = collect(stderr);
+    const code = await runBridge({
+      start: () => new Promise(() => undefined),
+      command: "pi-env",
+      args: ["serve"],
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr,
+      startTimeoutMs: 100,
+    });
+    expect(code).toBe(1);
+    expect(err().toString()).toContain("timed out after 100 ms");
+  }, 15_000);
+
+  it("gives up on a start that never resolves when the connection is aborted", async () => {
+    const stderr = new PassThrough();
+    const err = collect(stderr);
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 50);
+    const code = await runBridge({
+      start: () => new Promise(() => undefined),
+      command: "pi-env",
+      args: ["serve"],
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr,
+      signal: stop.signal,
+    });
+    expect(code).toBe(1);
+    expect(err().toString()).toContain("connection closed");
+  }, 15_000);
+
+  it("closes a handle that a start delivers after the bridge gave up", async () => {
+    let closeLate: () => void = () => undefined;
+    const closedLate = new Promise<void>((resolve) => (closeLate = resolve));
+    const code = await runBridge({
+      start: () =>
+        new Promise<RemoteProcess>((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                write: () => Promise.resolve(),
+                closeStdin: () => Promise.resolve(),
+                wait: () => new Promise(() => undefined),
+                close: () => {
+                  closeLate();
+                  return Promise.resolve();
+                },
+              }),
+            200,
+          ),
+        ),
+      command: "pi-env",
+      args: ["serve"],
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      startTimeoutMs: 20,
+    });
+    expect(code).toBe(1);
+    await closedLate;
   }, 15_000);
 
   it("exits non-zero when the process cannot be started", async () => {

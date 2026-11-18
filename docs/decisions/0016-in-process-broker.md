@@ -54,6 +54,8 @@ the cost. No ADR requires the separate process.
 
 - SDK faults and event-loop load now land in the orchestrator: a blocked loop delays every session's stdio, and an
   uncaught exception thrown outside a promise from SDK code would no longer kill one bridge only.
+- A start may take 30 s, the time pi-env gives a silent relay, and is abandoned when the relay goes, so a hung one
+  cannot hold the env's next connection (#200).
 - The memory per in-process handle (gRPC channel and Kubernetes client per `start`) is unmeasured. Compare `bridge`,
   `sandbox-to-exec`, `bridge-rss` (now the relay) and orchestrator RSS at 12 and 50 sessions with
   [docs/metrics.md](../metrics.md).

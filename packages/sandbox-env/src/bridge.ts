@@ -33,7 +33,12 @@ export interface BridgeOptions {
   stderr: Writable;
   /** Ends the bridge as a fatal loss (the in-process broker uses it when the relay's socket is gone). */
   signal?: AbortSignal;
+  /** How long `start` may take; a handle that comes later is closed. Default {@link START_TIMEOUT_MS}. */
+  startTimeoutMs?: number;
 }
+
+/** pi-env gives a spawned relay 30 s to speak before it kills it, so a slower start is lost anyway. */
+export const START_TIMEOUT_MS = 30_000;
 
 type Outcome =
   { kind: "exit"; exitCode: number } | { kind: "stdin-done" } | { kind: "fatal"; reason: string };
@@ -52,6 +57,14 @@ function flush(stream: Writable): Promise<void> {
   return new Promise((resolve) => stream.write(new Uint8Array(0), () => resolve()));
 }
 
+function delay(ms: number): { promise: Promise<void>; cancel: () => void } {
+  let timer: NodeJS.Timeout | undefined;
+  const promise = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
 /**
  * Pipes stdin to the remote process and its stdout to ours, byte for byte, and returns the exit code
  * the bridge should exit with. Stdin writes are awaited one at a time: the SDK sends each as its own
@@ -60,16 +73,37 @@ function flush(stream: Writable): Promise<void> {
  */
 export async function runBridge(options: BridgeOptions): Promise<number> {
   const { stdin, stdout, stderr } = options;
-  let proc: RemoteProcess;
-  try {
-    proc = await options.start(options.command, options.args, {
+  const aborted = new Promise<Outcome>((resolve) => {
+    const abort = (): void => resolve({ kind: "fatal", reason: "connection closed" });
+    if (options.signal?.aborted === true) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+  });
+
+  // The broker serves an env's connections one after another, so a start that hangs (the Sandbox not Ready, sandboxd
+  // unreachable) must not hold the next connection: race it against the abort and a timeout.
+  const starting = (async () =>
+    options.start(options.command, options.args, {
       onStdout: (chunk) => void stdout.write(chunk),
       onStderr: (chunk) => void stderr.write(chunk),
-    });
-  } catch (error) {
-    stderr.write(`bridge: cannot start ${options.command}: ${describe(error)}\n`);
+    }))();
+  const timeoutMs = options.startTimeoutMs ?? START_TIMEOUT_MS;
+  const timeout = delay(timeoutMs);
+  const started = await Promise.race([
+    starting.then(
+      (proc) => ({ proc }),
+      (error: unknown) => ({ reason: describe(error) }),
+    ),
+    timeout.promise.then(() => ({ reason: `timed out after ${String(timeoutMs)} ms` })),
+    aborted.then(() => ({ reason: "connection closed" })),
+  ]);
+  timeout.cancel();
+  if (!("proc" in started)) {
+    // A handle that comes after we gave up still holds a remote process and an SDK connection.
+    starting.then((proc) => proc.close()).catch(() => undefined);
+    stderr.write(`bridge: cannot start ${options.command}: ${started.reason}\n`);
     return 1;
   }
+  const proc = started.proc;
   // Tells the parent that the cold start (the CPU-heavy part) is over; see StartGate.
   stderr.write(`${BRIDGE_READY}\n`);
 
@@ -96,12 +130,6 @@ export async function runBridge(options: BridgeOptions): Promise<number> {
       return { kind: "fatal", reason: `stdin write failed: ${describe(error)}` };
     }
   })();
-
-  const aborted = new Promise<Outcome>((resolve) => {
-    const abort = (): void => resolve({ kind: "fatal", reason: "connection closed" });
-    if (options.signal?.aborted === true) abort();
-    else options.signal?.addEventListener("abort", abort, { once: true });
-  });
   let outcome = await Promise.race([exited, pumped, outputFailed, aborted]);
   if (outcome.kind === "stdin-done") {
     // Stdin ended cleanly: pi-env exits on EOF, so wait for it.
