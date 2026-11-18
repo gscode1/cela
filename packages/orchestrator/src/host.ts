@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import type {
@@ -68,6 +68,17 @@ export function toEvent(message: Message): SessionEvent {
   }
   if (message.role === "toolResult") event.isError = message.isError;
   return event;
+}
+
+/**
+ * `Host.abort` gave up waiting for the conversation to go idle. The abort itself is committed (queued inputs withdrawn,
+ * tasks marked), so the run still stops once its tools honour the signal; only the wait ended.
+ */
+export class AbortWaitTimeoutError extends Error {
+  constructor(id: number, waitMs: number) {
+    super(`conversation ${String(id)} did not go idle within ${String(waitMs)} ms of its abort`);
+    this.name = "AbortWaitTimeoutError";
+  }
 }
 
 /** Where the host reads the MCP catalog from: the `McpCatalogCache` (enabled and disabled servers). */
@@ -531,9 +542,24 @@ export class Host {
     return record !== undefined;
   }
 
-  /** Withdraws queued inputs, aborts the running turn and resolves once the conversation is idle. */
-  async abort(id: number): Promise<void> {
-    await (await this.#conversation(id)).abort(context);
+  /**
+   * Withdraws queued inputs, aborts the running turn and resolves once the conversation is idle. With `waitMs` the wait
+   * for idle is bounded and ends in `AbortWaitTimeoutError`: a tool that ignores its abort signal must not hold the
+   * caller (an inbox transaction, a pool client) forever. The abort mark is committed before the wait either way.
+   */
+  async abort(id: number, waitMs?: number): Promise<void> {
+    const conversation = await this.#conversation(id);
+    if (waitMs === undefined) {
+      await conversation.abort(context);
+      return;
+    }
+    const deadline = AbortSignal.timeout(waitMs);
+    try {
+      await conversation.abort(withAbortSignal(deadline, context));
+    } catch (error) {
+      if (deadline.aborted) throw new AbortWaitTimeoutError(id, waitMs);
+      throw error;
+    }
   }
 
   /** The conversation and a watch of its structural view (a window over the transcript plus live state). */
