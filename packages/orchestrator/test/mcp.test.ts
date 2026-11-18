@@ -384,7 +384,10 @@ describe("McpTools follows the catalog", () => {
         finish = () => resolve({ content: [{ type: "text", text: "late answer" }] });
       });
     const { registry, tools } = open(fake.transport);
-    tools.apply([SPEC]);
+    // The call must outlive the removal, however slow the machine: SPEC's 300 ms timeout
+    // could elapse before the assertions below and settle the call on its own.
+    const spec = { ...SPEC, timeoutMs: 60_000 };
+    tools.apply([spec]);
     await until(() => toolNames(tools).length > 0, "discovery");
     const tool = tools.servers[0]?.extension.tools?.[0];
     if (tool === undefined) throw new Error("no tool");
@@ -393,6 +396,7 @@ describe("McpTools follows the catalog", () => {
 
     tools.apply([]);
     expect(installed(registry)).toEqual([]);
+    // Give a wrongly eager close the time to happen before checking that it did not.
     await new Promise((resolve) => setTimeout(resolve, 50));
     // The call is still on the wire: the client stays open until it settles.
     expect(fake.open.size).toBe(1);
