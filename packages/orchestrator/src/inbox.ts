@@ -73,8 +73,11 @@ export class InboxLoop {
   async stop(): Promise<void> {
     this.#stopped = true;
     if (this.#timer !== undefined) clearInterval(this.#timer);
-    this.#listener?.removeAllListeners();
-    this.#listener?.release(true);
+    // Take the listener before releasing it: #listen clears it on a drop too, and pg-pool throws on a second release.
+    const listener = this.#listener;
+    this.#listener = undefined;
+    listener?.removeAllListeners();
+    listener?.release(true);
     // Let drains in flight finish their current step: a claim holds row locks and a transaction.
     while (this.#inFlight.size > 0) await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -116,8 +119,12 @@ export class InboxLoop {
           client.on("end", () => resolve());
           client.query("listen inbox_events").catch(() => resolve());
         });
-        client.removeAllListeners();
-        client.release(true);
+        // stop() may already have released it; it cleared #listener when it did.
+        if (this.#listener === client) {
+          this.#listener = undefined;
+          client.removeAllListeners();
+          client.release(true);
+        }
       } catch (error) {
         log("inbox-listen-failed", { message: errorMessage(error) });
       }
