@@ -35,7 +35,9 @@ same holds for the recycle at start. The in-flight record stays set until a recy
 **Across an orchestrator restart.** The dead process cannot tell us. So the orchestrator records "a command may be
 running" in Postgres before the first command of a burst (`inbox.sessions.exec_in_flight_at`, migration 005) and clears
 it when the last call ended without interruption, or once a recycle has finished. A record still set at start means the
-previous process died mid-command. `Host.open` recycles those sandboxes' Pods *before* `harness.resume()`, so the
+previous process died mid-command. The clear is not awaited by the call that ends the burst, but the next burst's set
+waits for it: the two run on different pool connections, and an unordered clear landing after the set would leave the
+record cleared while a command runs (issue #207). `Host.open` recycles those sandboxes' Pods *before* `harness.resume()`, so the
 continuing run (the interrupted command reads as `interrupted`, and is not replayed) finds a clean Pod. If a recycle
 fails, the record stays and the next start tries again.
 
