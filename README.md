@@ -56,7 +56,6 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                        |
 | `packages/egress-proxy`                | Go module: Smokescreen chained to OneCLI, a spike not yet deployed ([ADR 0012](docs/decisions/0012-egress-proxy-spike.md)) |
 | `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                 |
-| `vendor/`                              | Packed `@netzlabor/pi-durable-postgres` adapter, ported to Pi Durable 1.5.2                                                |
 | `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                          |
 | `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)            |
 | `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                |
