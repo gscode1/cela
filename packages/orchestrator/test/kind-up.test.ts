@@ -63,6 +63,8 @@ const run = (args: string[], env: Record<string, string> = {}) =>
       ...process.env,
       PATH: `${dir}:${process.env.PATH ?? ""}`,
       FAKE_LOG: join(dir, "log"),
+      // The quiet mode's log file lands in the test's temp dir.
+      TMPDIR: dir,
       ...env,
     },
   });
@@ -194,6 +196,32 @@ describe("hack/kind-up.sh localhost ports", () => {
     expect(r.stderr).toContain("cannot read the IPv4 gateway");
   });
 
+  it("keeps the steps' output in a log, and on a failure shows the step's last lines and the log's path", () => {
+    const r = run(["--name", "demo"], { IMAGE_TAG: "t", CI: "" });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("✓ check the tools and the images");
+    // helm's version line is step output: in the log, not on the terminal.
+    expect(r.stdout).not.toContain("v4.3.1+gfake");
+    expect(r.stderr).toContain("✗ kind cluster demo failed");
+    expect(r.stderr).toContain("cannot reach the cluster through context kind-demo");
+    const path = /Full log: (\S+)/.exec(r.stderr)?.[1] ?? "";
+    expect(path.startsWith(dir)).toBe(true);
+    expect(readFileSync(path, "utf8")).toContain("v4.3.1+gfake");
+  });
+
+  it("--verbose, and CI in the environment, stream the steps' output and keep no log", () => {
+    for (const [args, env] of [
+      [["--name", "demo", "--verbose"], { CI: "" }],
+      [["--name", "demo"], { CI: "true" }],
+    ] as const) {
+      const r = run([...args], { IMAGE_TAG: "t", ...env });
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("## check the tools and the images");
+      expect(r.stdout).toContain("v4.3.1+gfake");
+      expect(r.stderr).not.toContain("Full log");
+    }
+  });
+
   it("passes the gateway as a /32 to the install, and to OneCLI only with --onecli", () => {
     const kindUp = readFileSync(script, "utf8");
     expect(kindUp).toContain(
@@ -237,6 +265,8 @@ describe("kind values and workflow", () => {
     expect(values).toMatch(/^ {2}allowInsecureRuntime: true/m);
     expect(values).toMatch(/^ {2}provider: standard/m);
     expect(values).toMatch(/^ {2}mode: disabled/m);
+    // kind-up.sh checks the admin console and prints its URL.
+    expect(values).toMatch(/^console:\n {2}enabled: true/m);
     const workflow = readFileSync(join(root, ".github/workflows/kind.yml"), "utf8");
     // Every action is pinned by full commit SHA.
     for (const use of workflow.matchAll(/uses: (\S+)/g)) expect(use[1]).toMatch(/@[0-9a-f]{40}$/);
