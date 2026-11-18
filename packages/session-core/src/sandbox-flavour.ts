@@ -32,7 +32,9 @@ export function browserFlavourConflict(
   state: { mcpServers: readonly StoredMcpServer[]; egress: EgressData },
 ): string | undefined {
   const source = credentialSource(definition, state);
-  return source === undefined ? undefined : `sandboxFlavour browser cannot be combined with ${source}`;
+  return source === undefined
+    ? undefined
+    : `sandboxFlavour browser cannot be combined with ${source}`;
 }
 
 export const BROWSER_WITH_REPO =

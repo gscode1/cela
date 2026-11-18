@@ -37,7 +37,7 @@
 #
 # --browser (issue #48, docs/decisions/0041-browser-sandbox.md) enables the browser sandbox flavour
 # (sandbox.flavours.browser.enabled) with the image pi-sandbox-browser (SANDBOX_BROWSER_IMAGE overrides it; --build builds it
-# too: the image is about 1 GB, so it is built only on request). It needs the egress proxy (--egress-proxy): a browser
+# too: the image is about 1.6 GB, so it is built only on request). It needs the egress proxy (--egress-proxy): a browser
 # profile is proxied.
 #
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,

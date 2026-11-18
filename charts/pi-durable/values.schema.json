@@ -300,7 +300,13 @@
             "browser": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "resources", "ephemeralStorage", "shmSize", "warmPoolReplicas"],
+              "required": [
+                "enabled",
+                "resources",
+                "ephemeralStorage",
+                "shmSize",
+                "warmPoolReplicas"
+              ],
               "properties": {
                 "enabled": { "type": "boolean" },
                 "resources": { "$ref": "#/definitions/resources" },

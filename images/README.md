@@ -26,7 +26,7 @@ keep the restricted Pod Security controls (ADR 0019).
 `pi-sandbox-browser` (`images/sandbox-browser`, ADR 0041) is the sandbox image plus Chromium (Chrome for Testing, installed
 by Playwright 1.66.0-alpha-2026-11-18), Playwright CLI 0.1.25 and agent-browser 0.43.0 (release binaries by sha256), and the
 loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/sandbox-browser/package-lock.json`. It is
-about 1 GB and used only with the chart's `sandbox.flavours.browser.enabled`; `hack/kind-up.sh --browser --build` builds it.
+about 1.6 GB (arm64, uncompressed) and used only with the chart's `sandbox.flavours.browser.enabled`; `hack/kind-up.sh --browser --build` builds it.
 
 The sandbox selects `pi-env` 1.5.2 from its npm tarball by `TARGETARCH`. Verified binary SHA-256 values:
 

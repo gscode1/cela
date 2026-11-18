@@ -11,6 +11,7 @@
 # which only a network-mode direct sandbox can use), PI_BROWSER_CDP_PORT (9222), PI_BROWSER_PROXY_PORT (3129),
 # PI_BROWSER_DOWNLOADS (/workspace/downloads), PI_BROWSER_MAX_DOWNLOAD_MB (256), PI_BROWSER_STATE (/tmp/pi-browser).
 set -euo pipefail
+export NODE_NO_WARNINGS=1 # the platform sets NODE_USE_ENV_PROXY, whose experimental warning would fill every command's output
 
 cdp_port=${PI_BROWSER_CDP_PORT:-9222}
 proxy_port=${PI_BROWSER_PROXY_PORT:-3129}
@@ -80,7 +81,8 @@ start() {
   [[ ${shm_kb:-0} -ge 262144 ]] || shm_flags=(--disable-dev-shm-usage)
 
   # --no-sandbox: Chromium's own sandbox needs user namespaces, which the Pod does not have; gVisor is the boundary.
-  HOME="$state/home" setsid pi-chromium \
+  # The shell around Chromium only records how it ended (a signal shows as 128+n), so a lost browser has a reason on file.
+  HOME="$state/home" setsid bash -c 'pi-chromium "$@"; echo "chromium exited with status $? at $(date +%T)" >>"$0"' "$state/exit.log" \
     --headless=new --no-sandbox --disable-gpu \
     --user-data-dir="$state/profile" \
     --remote-debugging-address=127.0.0.1 --remote-debugging-port="$cdp_port" \
