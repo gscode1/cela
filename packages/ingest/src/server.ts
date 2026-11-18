@@ -541,9 +541,9 @@ function skillVersionJson(meta: SkillVersionMeta) {
 /**
  * `/admin/skills` (the caller is already known to be an admin): list, get one with its versions, publish a version
  * (`POST /admin/skills/{name}/versions`) and read one (`GET .../versions/{v}`, with the file contents for
- * `?content=true`, because a skill is reviewed like code). No update and no delete (docs/decisions/0011): a version a
- * profile or session refers to never changes or goes away; publishing identical content to the current version writes
- * nothing.
+ * `?content=true`, because a skill is reviewed like code). No update of a published version (docs/decisions/0011); a delete is
+ * refused while anything refers to it (docs/decisions/0027-admin-delete.md). A version a profile or session refers to
+ * never changes or goes away; publishing identical content to the current version writes nothing.
  */
 async function handleAdminSkills(
   req: IncomingMessage,
@@ -731,8 +731,9 @@ function profileJson(stored: StoredProfile) {
 
 /**
  * `/admin/profiles` (the caller is already known to be an admin): list, get (with every version), put (create, new
- * version, enable or disable for new sessions). No delete (docs/decisions/0010-session-profiles.md): a profile is
- * disabled, so its versions stay as the record of what sessions ran with.
+ * version, enable or disable for new sessions). A profile is disabled before it can be deleted, and a delete is
+ * refused while anything refers to it (docs/decisions/0027-admin-delete.md); until then its versions stay as the
+ * record of what sessions ran with.
  */
 async function handleAdminProfiles(
   req: IncomingMessage,

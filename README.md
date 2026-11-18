@@ -124,7 +124,7 @@ The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), in
 
 Prerequisites (separate from the chart): the **agent-sandbox controller with extensions** (v1.0.11; `hack/agent-sandbox.sh
 external` checks it), a gVisor RuntimeClass named `gvisor` (or `security.allowInsecureRuntime` for evaluation), a Postgres 17
-reachable by URI (CloudNativePG or any other), OneCLI (tested with v2.20.0) unless you only use scripted models, a
+reachable by URI (the bundled `charts/pi-postgres` or any other), OneCLI (tested with v2.20.0) unless you only use scripted models, a
 NetworkPolicy-enforcing CNI such as Cilium (or `networkPolicy.provider: standard`), and a dynamically provisioned
 StorageClass. Do not use real credentials until the isolation suite passes. Build the application and sandbox images
 for your nodes (amd64 and arm64 are supported, [build instructions](images/README.md)).
@@ -151,7 +151,7 @@ Requires Node 22.19+, pnpm and Go (`pnpm check` also builds, vets and tests `pac
 ```sh
 pnpm install
 pnpm check        # build, lint, format, typecheck, unit tests
-tests/e2e/run.sh smoke   # needs a cluster with agent-sandbox, gVisor, CNPG; deploys its own namespace pi-e2e-<id> and deletes it
+tests/e2e/run.sh smoke   # needs a cluster with agent-sandbox, gVisor and a Postgres (`charts/pi-postgres`); deploys its own namespace pi-e2e-<id> and deletes it
 ```
 
 ## License
