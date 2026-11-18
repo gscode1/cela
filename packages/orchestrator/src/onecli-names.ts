@@ -24,6 +24,16 @@ export const agentIdentifier = (
   prefix: string = DEFAULT_ONECLI_NAME_PREFIX,
 ): string => `${prefix}${sessionId}`;
 
+/** The agent that carries a session's credentialed MCP calls (docs/decisions/0040-mcp-egress-flow.md); swept with the session. */
+export const mcpAgentIdentifier = (
+  sessionId: string,
+  prefix: string = DEFAULT_ONECLI_NAME_PREFIX,
+): string => `${agentIdentifier(sessionId, prefix)}-mcp`;
+
+/** The agent that lists the tools of one credentialed MCP server (no session: the catalog's own, `tools/list` only). */
+export const mcpDiscoveryPrefix = (prefix: string = DEFAULT_ONECLI_NAME_PREFIX): string =>
+  `${prefix}mcp-discovery-`;
+
 export const secretName = (
   sessionId: string,
   suffix: string,
@@ -39,7 +49,7 @@ export function namePatterns(prefix: string): { agent: RegExp; secret: RegExp } 
   // The prefix is validated to [a-z0-9-], none of which is a regex metacharacter outside a class.
   const p = validateNamePrefix(prefix);
   return {
-    agent: new RegExp(`^${p}(${UUID_SHAPE})$`),
+    agent: new RegExp(`^${p}(${UUID_SHAPE})(?:-mcp)?$`),
     secret: new RegExp(`^${p}(${UUID_SHAPE})-(git|api)$`),
   };
 }

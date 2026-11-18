@@ -24,7 +24,7 @@ import { errorMessage, log } from "./log.js";
 import { joinInstructions } from "./repo-context.js";
 import type { Script } from "./model.js";
 import { httpTransportFactory, McpTools } from "./mcp.js";
-import type { McpTimings, McpTransportFactory } from "./mcp.js";
+import type { McpIdentity, McpTimings, McpTransportFactory } from "./mcp.js";
 import { buildGatewayFetch, buildModels } from "./providers.js";
 import type { McpFetch } from "@earendil-works/pi-mcp";
 import { Sandboxes, WORKSPACE } from "./sandboxes.js";
@@ -97,6 +97,8 @@ export interface HostOptions {
   catalog?: McpCatalogSource;
   /** Test seams of the remote MCP client; production passes nothing. */
   mcpTransport?: McpTransportFactory;
+  /** Whose grants a credentialed MCP server's requests carry (docs/decisions/0040-mcp-egress-flow.md). */
+  mcpIdentity?: McpIdentity;
   mcpTimings?: McpTimings;
   /** Test seam: the coding extension to install (a later release with one more tool). Production passes nothing. */
   codingExtension?: Extension;
@@ -178,6 +180,11 @@ export class Host {
     this.#unsubscribe = unsubscribe;
   }
 
+  /** Every MCP server retries its tool discovery now (a host rule was just opened for it). */
+  nudgeMcp(): void {
+    this.#mcp.nudge();
+  }
+
   /** What the orchestrator has installed, for ingest to check profile writes against (`publishCapabilities`). */
   capabilities(): { tools: string[]; extensions: string[] } {
     return {
@@ -248,7 +255,7 @@ export class Host {
     // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
     // created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
-    const mcp = new McpTools(registry, mcpTransport, options.mcpTimings);
+    const mcp = new McpTools(registry, mcpTransport, options.mcpTimings, options.mcpIdentity);
     const toolSearch = createToolSearchExtension();
     registry.install(toolSearch);
     let unsubscribe = () => {};

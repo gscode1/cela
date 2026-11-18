@@ -163,13 +163,15 @@ function inCidr(host: string, cidr: string): boolean {
  * The dispatcher belongs to this function: nothing sets a process-wide proxy or changes the global dispatcher,
  * so the Kubernetes client, Postgres and the bridges are never proxied. Hosts in `noProxy` skip the gateway.
  */
-export function createGatewayFetch(config: OneCliConfig): FetchFunction {
+export type GatewayFetch = FetchFunction & { close: () => Promise<void> };
+
+export function createGatewayFetch(config: OneCliConfig): GatewayFetch {
   const proxy = new ProxyAgent({
     uri: config.gateway,
     token: `Basic ${Buffer.from(`x:${config.token.reveal()}`).toString("base64")}`,
     requestTls: { ca: [...rootCertificates, config.ca] },
   });
-  const gatewayFetch = (
+  const gatewayFetch = ((
     input: Parameters<FetchFunction>[0],
     init?: Parameters<FetchFunction>[1],
   ) => {
@@ -180,7 +182,10 @@ export function createGatewayFetch(config: OneCliConfig): FetchFunction {
       input as Parameters<typeof undiciFetch>[0],
       { ...init, dispatcher: proxy } as Parameters<typeof undiciFetch>[1],
     ) as unknown as ReturnType<FetchFunction>;
-  };
+  }) as GatewayFetch;
+  // Closing the dispatcher ends the connections to the gateway: a per-session fetch (the MCP identity of a session) is
+  // closed when its agent is revoked, so nothing keeps talking as that agent.
+  gatewayFetch.close = () => proxy.close();
   return gatewayFetch;
 }
 

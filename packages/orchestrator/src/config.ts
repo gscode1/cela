@@ -112,6 +112,12 @@ export interface OrchestratorConfig {
      * workspace need different ones, or each one's orphan sweep revokes the other's agents (ADR 0013).
      */
     namePrefix: string;
+    /**
+     * `PI_ONECLI_HOST_RULES=reconcile`: the orchestrator keeps OneCLI's host rules in step with the egress rules
+     * (docs/decisions/0040-mcp-egress-flow.md). Off by default: it writes to the gateway's org rules, which an operator may
+     * manage by script (docs/onecli-host-rules.md). The chart turns it on with the egress proxy.
+     */
+    reconcileHostRules: boolean;
   };
 }
 
@@ -260,8 +266,16 @@ export function loadConfig(
         maxBackoffMs: 5_000,
       },
       namePrefix: validateNamePrefix(env.PI_ONECLI_NAME_PREFIX ?? DEFAULT_ONECLI_NAME_PREFIX),
+      reconcileHostRules: hostRulesMode(env.PI_ONECLI_HOST_RULES),
     },
   };
+}
+
+function hostRulesMode(value: string | undefined): boolean {
+  const mode = value?.trim() ?? "";
+  if (mode === "" || mode === "off") return false;
+  if (mode === "reconcile") return true;
+  throw new Error("PI_ONECLI_HOST_RULES must be reconcile or off");
 }
 
 /** `http://host:port` of the proxy Service, without credentials (the token is added per session); unset: undefined. */

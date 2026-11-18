@@ -13,7 +13,8 @@ import {
   validateNamePrefix,
 } from "./onecli-names.js";
 import { OneCliError } from "./onecli-admin.js";
-import type { OneCliAdmin, OneCliGrant } from "./onecli-admin.js";
+import type { OneCliAdmin } from "./onecli-admin.js";
+import { AgentNotNarrowError, narrowAgent } from "./onecli-grants.js";
 import { buildShellEnv, buildWorkspaceEnv, prepareWorkspace } from "./workspace.js";
 import type { EgressPrincipals } from "./egress.js";
 import type { WorkspaceEnv } from "./workspace.js";
@@ -23,9 +24,6 @@ export { agentIdentifier } from "./onecli-names.js";
 
 /** A repo session that cannot be served and never will be without an operator: not configured, repo not installed. */
 export class RepoUnavailableError extends Error {}
-
-/** The grant check proved the agent holds more than the session's own secrets (as opposed to failing to check). */
-class AgentNotNarrowError extends Error {}
 
 /** Re-mint when the token has less than this left: a command can run for a long while after the check. */
 const REMINT_BEFORE_MS = 10 * 60 * 1000;
@@ -205,7 +203,7 @@ export class RepoAccess {
     }
 
     try {
-      await this.#narrow(agent.id, secretIds);
+      await this.#narrowGrants(agent.id, secretIds);
     } catch (error) {
       // This agent was proven narrow by an earlier attempt (its id was stored after that) and is not new, so a failure
       // that is not "still wide" (a listGrants or network error) says nothing about its grants. Replacing it would
@@ -247,32 +245,10 @@ export class RepoAccess {
     return mintInstallationToken(app, repo, this.#deps.fetch, this.#now(), this.#deps.githubApi);
   }
 
-  /**
-   * OneCLI grants every new agent the LLM keys (seen live), so after creating the agent every grant except this
-   * session's own two secrets is removed, then the grant list is read back and must be exactly those two. An answer
-   * that cannot be read counts as a failure: the agent is not used unless it is proven narrow.
-   */
-  async #narrow(agentId: string, secretIds: readonly string[]): Promise<void> {
+  async #narrowGrants(agentId: string, secretIds: readonly string[]): Promise<void> {
     const { onecli } = this.#deps;
     if (onecli === undefined) throw new Error("OneCLI is not configured");
-    const mine = new Set(secretIds);
-    const have = await onecli.listGrants(agentId);
-    for (const id of mine) {
-      if (!have.some((g) => g.kind === "secret" && g.id === id))
-        await onecli.grantSecret(agentId, id);
-    }
-    for (const grant of have) {
-      if (grant.kind === "secret" && mine.has(grant.id)) continue;
-      await onecli.revokeGrant(agentId, grant);
-    }
-    const left: OneCliGrant[] = await onecli.listGrants(agentId);
-    const ok =
-      left.length === mine.size && left.every((g) => g.kind === "secret" && mine.has(g.id));
-    if (!ok) {
-      throw new AgentNotNarrowError(
-        `OneCLI agent still holds ${String(left.length)} grants after narrowing; expected only the session's GitHub secrets`,
-      );
-    }
+    await narrowAgent(onecli, agentId, secretIds, "the session's GitHub secrets");
   }
 
   /**
