@@ -511,6 +511,46 @@ describe("admin egress explain and status", () => {
     ).toBe("allow");
   });
 
+  it("uses the stored rule sets of the session's principal when no profile is named, and counts principals", async () => {
+    const { base, db } = await seeded();
+    db.principals.push({
+      session_id: SESSION,
+      token_hash: "a".repeat(64),
+      token_salt: "b".repeat(64),
+      profile_name: "scraper",
+      profile_version: 1,
+      rule_sets: ["web"],
+      pod_ip: "10.244.0.5",
+      revoked_at: null,
+    });
+    const viaPrincipal = await explain(base, { host: "news.example.org", sessionId: SESSION });
+    expect(viaPrincipal).toMatchObject({
+      decision: "allow",
+      profileRuleSets: ["web"],
+      profileSource: "principal",
+    });
+    // An explicit profile wins; a session with no principal gets only the sets that apply to all.
+    expect(
+      await explain(base, { host: "news.example.org", sessionId: SESSION, profile: "coding" }),
+    ).toMatchObject({ decision: "deny", profileSource: "profile" });
+    expect(
+      await explain(base, {
+        host: "news.example.org",
+        sessionId: "99999999-9999-4999-8999-999999999999",
+      }),
+    ).toMatchObject({ decision: "deny", profileSource: "none" });
+    const status = await json(await call(base, "alice", "GET", `${BASE}/status`));
+    expect(status.principals).toEqual({ active: 1, withPodIp: 1, revoked: 0 });
+    // Neither the token hash nor the salt is ever returned.
+    expect(JSON.stringify([viaPrincipal, status])).not.toMatch(/a{64}|b{64}/);
+    // A revoked principal no longer speaks for the session.
+    for (const row of db.principals) row.revoked_at = new Date();
+    expect(await explain(base, { host: "news.example.org", sessionId: SESSION })).toMatchObject({
+      decision: "deny",
+      profileSource: "none",
+    });
+  });
+
   it("applies a session's own rules, and answers 400 for a bad request", async () => {
     const { base } = await seeded();
     await call(base, "alice", "POST", `${BASE}/sessions/${SESSION}/rules`, {

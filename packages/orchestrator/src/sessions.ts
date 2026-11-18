@@ -32,6 +32,7 @@ import {
 } from "./repo-context.js";
 import type { RepoAccess } from "./repo-access.js";
 import type { TurnTimings } from "./timing.js";
+import type { EgressPrincipals } from "./egress.js";
 import { WorkspaceLostError } from "./workspace.js";
 import { SkillIntegrityError } from "./skills.js";
 import type { SkillLibrary } from "./skills.js";
@@ -101,6 +102,8 @@ export interface SessionServiceOptions {
   tokenBudget?: () => number | null;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
   repos?: RepoAccess;
+  /** The egress proxy side of plain sessions; undefined when the proxy is off (ADR 0036). */
+  egress?: EgressPrincipals;
   /** The orchestrator shard: this service touches only the sessions assigned to it (docs/decisions/0017). */
   shard: number;
   /** Where a new conversation's skill catalog comes from. Without it a profile that names skills is refused. */
@@ -554,6 +557,9 @@ export class SessionService {
     // its proxy token is dead, whatever happens to the claim after. A plain session has no OneCLI objects.
     await writeTombstone(this.#pool, session);
     await this.#options.repos?.teardown(session);
+    // The egress token is refused by the proxy from the next notification on (well under 10 s), whatever happens to
+    // the claim after.
+    await this.#options.egress?.revoke(session.id);
     const conversationId = session.conversationId;
     if (conversationId !== null) {
       try {

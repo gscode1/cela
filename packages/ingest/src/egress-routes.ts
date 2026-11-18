@@ -10,6 +10,8 @@ import {
   normalizeHost,
   parseExpectedRevision,
   PROFILE_NAME,
+  principalCounts,
+  principalRuleSets,
   readEgress,
   readProxyStatus,
   readJsonObject,
@@ -339,13 +341,23 @@ export async function handleAdminEgress(
       return;
     }
     let profileRuleSets: string[] = [];
+    // Where the profile rule sets came from: the named profile's current version, the session's principal (the sets of the
+    // version the session was created with, which is what the proxy judges by), or nothing.
+    let profileSource: "profile" | "principal" | "none" = "none";
     if (typeof profile === "string") {
+      profileSource = "profile";
       const stored = await readProfile(pool, profile);
       if (stored === undefined) {
         bad(`profile "${profile}" not found`);
         return;
       }
       profileRuleSets = stored.definition.egressRuleSets ?? [];
+    } else if (typeof sessionId === "string") {
+      const principal = await principalRuleSets(pool, sessionId);
+      if (principal !== undefined && !principal.revoked) {
+        profileRuleSets = principal.ruleSets;
+        profileSource = "principal";
+      }
     }
     const data = await readEgress(pool);
     const decision = evaluateEgress(data.ruleSets, data.rules, {
@@ -364,6 +376,7 @@ export async function handleAdminEgress(
       port,
       revision: data.revision,
       profileRuleSets,
+      profileSource,
       matchedRule: matched === undefined ? null : ruleJson(matched),
       conflictingRules: (decision.conflictingRuleIds ?? []).flatMap((id) => {
         const rule = ruleById(id);
@@ -382,11 +395,14 @@ export async function handleAdminEgress(
     }
     const data = await readEgress(pool);
     const replicas = await readProxyStatus(pool);
+    const principals = await principalCounts(pool);
     say(200, {
       revision: data.revision,
       ruleSets: data.ruleSets.length,
       rules: data.rules.length,
       invalid: data.invalid.length,
+      // Sessions that hold an egress token (ADR 0036): counts only, never a token or a hash.
+      principals,
       // Each proxy replica's last report (ADR 0035): a change has arrived when every serving replica shows its revision.
       proxy: {
         replicas: replicas.map((replica) => ({

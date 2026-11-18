@@ -65,6 +65,9 @@ spec:
             - { name: PI_DURABLE_DATABASE_TLS_KEY_FILE, value: /etc/pi-database-tls/tls.key }
             {{- end }}
             {{- end }}
+            # Whether a request with no Proxy-Authorization is refused (true) or judged anonymously, by the rule sets that
+            # apply to all (false, the default until the network cutover, ADR 0036).
+            - { name: EGRESS_REQUIRE_AUTH, value: {{ $e.requireAuth | quote }} }
             - { name: EGRESS_POLL, value: {{ $e.rules.pollInterval | quote }} }
             # After this long without a successful read the proxy denies every connection.
             - { name: EGRESS_STALE_AFTER, value: {{ $e.rules.staleAfter | quote }} }

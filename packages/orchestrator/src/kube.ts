@@ -376,6 +376,14 @@ export async function configuredRuntime(namespace: string, warmPool: string): Pr
 }
 
 export async function observedRuntime(namespace: string, claimName: string): Promise<string> {
+  return (await observedPod(namespace, claimName)).runtime;
+}
+
+/** What the sandbox Pod of a claim is now: its runtime class and its primary IP (undefined while it has none). */
+export async function observedPod(
+  namespace: string,
+  claimName: string,
+): Promise<{ runtime: string; podIp: string | undefined }> {
   const { core, custom } = clients();
   const claim = (await custom.getNamespacedCustomObject({
     ...CLAIM_REF,
@@ -388,5 +396,10 @@ export async function observedRuntime(namespace: string, claimName: string): Pro
     metadata?: { annotations?: Record<string, string> };
   };
   const podName = sandbox.metadata?.annotations?.["agents.x-k8s.io/pod-name"] ?? name;
-  return (await core.readNamespacedPod({ namespace, name: podName })).spec?.runtimeClassName ?? "";
+  const pod = await core.readNamespacedPod({ namespace, name: podName });
+  const podIp = pod.status?.podIP;
+  return {
+    runtime: pod.spec?.runtimeClassName ?? "",
+    podIp: podIp === undefined || podIp === "" ? undefined : podIp,
+  };
 }

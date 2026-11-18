@@ -78,6 +78,7 @@ export function ExplainResultView({ result }: { result: ExplainResult }) {
         <dd>
           the sets that apply to all
           {result.profileRuleSets.length > 0 && `, and ${result.profileRuleSets.join(", ")}`}
+          {result.profileSource === "principal" && " (the sets stored for that session)"}
         </dd>
         <dt className="text-muted-foreground">Addresses</dt>
         <dd>
@@ -144,9 +145,10 @@ export function ExplainPanel() {
       <CardHeader>
         <CardTitle>Explain</CardTitle>
         <CardDescription>
-          Ask what the stored rules say about a connection. Give a profile and a session to see what
-          that session would get; nothing is resolved, so name the addresses to ask what happens if
-          the host resolves to them.
+          Ask what the stored rules say about a connection. Give a session to see what it would get:
+          without a profile, its stored rule sets are used (the ones its profile named when it was
+          created). Nothing is resolved, so name the addresses to ask what happens if the host
+          resolves to them.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

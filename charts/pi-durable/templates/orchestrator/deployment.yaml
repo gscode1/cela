@@ -85,6 +85,11 @@ spec:
             - { name: PI_ONECLI_API, value: "http://onecli-disabled.invalid:10256" }
             - { name: PI_ONECLI_GATEWAY, value: "http://onecli-disabled.invalid:10255" }
             {{- end }}
+            {{- if $root.Values.egressProxy.enabled }}
+            # Plain sessions' tool commands go through the egress proxy with a per-session token (ADR 0036). Repo sessions
+            # keep the OneCLI gateway until slice 5.
+            - { name: PI_EGRESS_PROXY_URL, value: "http://pi-egress-proxy.{{ $root.Release.Namespace }}.svc:3128" }
+            {{- end }}
             - { name: PI_ONECLI_NAME_PREFIX, value: {{ $root.Values.onecli.namePrefix | quote }} }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
             # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway.
