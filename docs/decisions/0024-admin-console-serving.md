@@ -1,6 +1,6 @@
 # 0024: How ingest serves the admin console
 
-Status: accepted, 2026-11-17 (issue #143, admin UI slice 1). Implements the "Stack and delivery" and "Admin credentials and
+Status: accepted, 2026-11-17 (issue #143, admin UI slice 1); the chart routes of [ADR 0026](0026-ingest-routes.md) amend "the chart renders no Ingress". Implements the "Stack and delivery" and "Admin credentials and
 login" sections of the [admin UI plan](../admin-ui-plan.md). The number skips 0023, which another change reserved.
 
 ## Context

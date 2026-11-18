@@ -96,6 +96,9 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if not (has .Values.networkPolicy.provider (list "cilium" "standard")) -}}
 {{- fail "networkPolicy.provider must be cilium or standard" -}}
 {{- end -}}
+{{- if and (or .Values.ingest.httpRoute.enabled .Values.ingest.ingress.enabled) (not .Values.networkPolicy.ingest.clients) -}}
+{{- fail "ingest.httpRoute or ingest.ingress is on but networkPolicy.ingest.clients is empty: default-deny-all would drop the gateway's traffic. Admit its pods there (values.yaml has an Envoy Gateway example)." -}}
+{{- end -}}
 {{- end -}}
 
 {{/* A restricted container-level security context (ADR 0019); the Pod sets user, group and seccomp. */}}

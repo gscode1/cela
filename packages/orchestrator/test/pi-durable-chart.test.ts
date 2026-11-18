@@ -902,3 +902,96 @@ describe("ingest.expose (kind only)", () => {
     ).toThrow(/nodePort|minimum/);
   });
 });
+
+describe("ingest.httpRoute and ingest.ingress (ADR 0026)", () => {
+  const sets = (...s: string[]): string[] => s.flatMap((x) => ["--set", x]);
+  const envoy = sets(
+    "networkPolicy.ingest.clients[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=envoy-gateway-system",
+  );
+  const route = sets(
+    "ingest.httpRoute.enabled=true",
+    "ingest.httpRoute.parentRefs[0].name=main",
+    "ingest.httpRoute.parentRefs[0].namespace=envoy-gateway-system",
+    "ingest.httpRoute.hostnames[0]=pi.example.lan",
+  );
+  const ingress = sets(
+    "ingest.ingress.enabled=true",
+    "ingest.ingress.className=nginx",
+    "ingest.ingress.hosts[0]=pi.example.lan",
+    "ingest.ingress.tls[0].secretName=pi-tls",
+    "ingest.ingress.tls[0].hosts[0]=pi.example.lan",
+  );
+
+  it("renders neither by default", () => {
+    const list = docs(external);
+    expect(ofKind(list, "HTTPRoute")).toEqual([]);
+    expect(ofKind(list, "Ingress")).toEqual([]);
+  });
+
+  it("routes every path of the chosen hosts to pi-ingest:8080 through the HTTPRoute", () => {
+    const r = named(docs([...external, ...envoy, ...route]), "HTTPRoute", "pi-ingest");
+    expect(r.apiVersion).toBe("gateway.networking.k8s.io/v1");
+    expect(r.metadata.namespace ?? "ns").toBe("ns");
+    expect(r.spec.parentRefs).toEqual([{ name: "main", namespace: "envoy-gateway-system" }]);
+    expect(r.spec.hostnames).toEqual(["pi.example.lan"]);
+    expect(r.spec.rules).toEqual([
+      {
+        matches: [{ path: { type: "PathPrefix", value: "/" } }],
+        backendRefs: [{ kind: "Service", name: "pi-ingest", port: 8080 }],
+      },
+    ]);
+  });
+
+  it("routes only the operator paths when asked", () => {
+    const only = sets("ingest.httpRoute.paths={/console,/admin}");
+    const r = named(docs([...external, ...envoy, ...route, ...only]), "HTTPRoute", "pi-ingest");
+    expect(r.spec.rules[0].matches.map((m: Obj) => m.path.value)).toEqual(["/console", "/admin"]);
+  });
+
+  it("renders the Ingress with class, TLS and a Prefix path per host", () => {
+    const i = named(docs([...external, ...envoy, ...ingress]), "Ingress", "pi-ingest");
+    expect(i.apiVersion).toBe("networking.k8s.io/v1");
+    expect(i.spec.ingressClassName).toBe("nginx");
+    expect(i.spec.tls).toEqual([{ secretName: "pi-tls", hosts: ["pi.example.lan"] }]);
+    expect(i.spec.rules).toEqual([
+      {
+        host: "pi.example.lan",
+        http: {
+          paths: [
+            {
+              path: "/",
+              pathType: "Prefix",
+              backend: { service: { name: "pi-ingest", port: { number: 8080 } } },
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("refuses a route while networkPolicy.ingest.clients is empty", () => {
+    expect(() => helmTemplate(chart, [...external, ...route])).toThrow(
+      /networkPolicy\.ingest\.clients/,
+    );
+    expect(() => helmTemplate(chart, [...external, ...ingress])).toThrow(
+      /networkPolicy\.ingest\.clients/,
+    );
+  });
+
+  it("rejects an HTTPRoute without a parent, an Ingress without a host, and a path without a slash", () => {
+    expect(() =>
+      helmTemplate(chart, [...external, ...envoy, ...sets("ingest.httpRoute.enabled=true")]),
+    ).toThrow(/parentRefs|minItems|minimum/);
+    expect(() =>
+      helmTemplate(chart, [...external, ...envoy, ...sets("ingest.ingress.enabled=true")]),
+    ).toThrow(/hosts|minItems|minimum/);
+    expect(() =>
+      helmTemplate(chart, [
+        ...external,
+        ...envoy,
+        ...route,
+        ...sets("ingest.httpRoute.paths={console}"),
+      ]),
+    ).toThrow(/paths|pattern/);
+  });
+});

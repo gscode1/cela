@@ -1,0 +1,71 @@
+{{- /*
+Optional routes to the pi-ingest Service (ADR 0026): a Gateway API HTTPRoute, an Ingress, or both. Off by default. The
+chart does not admit the gateway's pods by itself: networkPolicy.ingest.clients must name them (pi-durable.validate
+refuses to render a route without it). Ingest does not rate-limit failed sign-ins, so a route reachable by untrusted
+clients needs that on the gateway.
+*/ -}}
+{{- with .Values.ingest.httpRoute }}
+{{- if .enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pi-ingest
+  labels:
+    {{- include "pi-durable.labels" $ | nindent 4 }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .parentRefs | nindent 4 }}
+  {{- with .hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        {{- range .paths }}
+        - path: { type: PathPrefix, value: {{ . | quote }} }
+        {{- end }}
+      backendRefs:
+        - { kind: Service, name: pi-ingest, port: 8080 }
+---
+{{- end }}
+{{- end }}
+{{- with .Values.ingest.ingress }}
+{{- if .enabled }}
+{{- $paths := .paths }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pi-ingest
+  labels:
+    {{- include "pi-durable.labels" $ | nindent 4 }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          {{- range $paths }}
+          - path: {{ . | quote }}
+            pathType: Prefix
+            backend:
+              service: { name: pi-ingest, port: { number: 8080 } }
+          {{- end }}
+    {{- end }}
+---
+{{- end }}
+{{- end }}
