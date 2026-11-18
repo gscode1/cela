@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ChangedCell } from "@/components/changed";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { describeIntent, hasIntent, intentFromSearch, searchOf } from "@/lib/profile-links";
 import { useProfilesQuery } from "@/lib/queries";
@@ -14,6 +15,13 @@ export function ProfileList() {
   const intent = intentFromSearch(params);
   // Carried on to the profile's own route, where the draft is prepared.
   const search = searchOf(intent);
+  // Profiles cannot be deleted (ADR 0010), so disabled ones fold away instead of piling up in the list.
+  const [showDisabled, setShowDisabled] = useState(false);
+  const disabledCount = data?.profiles.filter((profile) => !profile.enabledForNew).length ?? 0;
+  const rows =
+    data === undefined
+      ? []
+      : data.profiles.filter((profile) => showDisabled || profile.enabledForNew);
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
@@ -47,7 +55,7 @@ export function ProfileList() {
               </tr>
             </thead>
             <tbody>
-              {data.profiles.map((profile) => (
+              {rows.map((profile) => (
                 <tr key={profile.name} className="border-t align-top">
                   <td className="py-2 pr-4">
                     <Link
@@ -92,6 +100,19 @@ export function ProfileList() {
               ))}
             </tbody>
           </table>
+        )}
+        {disabledCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="self-start"
+            aria-expanded={showDisabled}
+            onClick={() => {
+              setShowDisabled(!showDisabled);
+            }}
+          >
+            {showDisabled ? "Hide disabled" : `Show ${String(disabledCount)} disabled`}
+          </Button>
         )}
       </CardContent>
     </Card>
