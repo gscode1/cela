@@ -90,6 +90,38 @@ export function ExplainResultView({ result }: { result: ExplainResult }) {
             </dd>
           </>
         )}
+        {result.mcp !== undefined && result.mcp.servers.length > 0 && (
+          <>
+            <dt className="text-muted-foreground">MCP servers</dt>
+            <dd data-testid="explain-mcp">
+              {result.mcp.servers.map((server) => (
+                <span key={server.name} className="mr-3 inline-block">
+                  <Link className="underline" to="/mcp-servers">
+                    {server.name}
+                  </Link>{" "}
+                  ({server.enabled ? server.route : "disabled"}
+                  {server.namedByProfile === undefined
+                    ? ""
+                    : server.namedByProfile
+                      ? ", named by the profile"
+                      : ", not named by the profile"}
+                  )
+                </span>
+              ))}
+              <span className="block text-muted-foreground">
+                The orchestrator reaches this host for the sessions whose profile names the server,
+                through the OneCLI gateway (set{" "}
+                <Link
+                  className="underline"
+                  to={`/egress/sets/${encodeURIComponent(result.mcp.ruleSet)}`}
+                >
+                  {result.mcp.ruleSet}
+                </Link>
+                ). A sandbox's own connection is judged by the rules above.
+              </span>
+            </dd>
+          </>
+        )}
         <dt className="text-muted-foreground">Addresses</dt>
         <dd>
           {result.addressesChecked

@@ -278,7 +278,9 @@ export function RuleSetsPage() {
                       <Td className="break-words">{set.description}</Td>
                       <Td>{set.ruleCount}</Td>
                       <Td>
-                        {set.appliesToAll ? (
+                        {set.system === true ? (
+                          <Badge variant="outline">Derived from the MCP catalog</Badge>
+                        ) : set.appliesToAll ? (
                           <Badge variant="warning">Applies to all sessions</Badge>
                         ) : (
                           <span className="text-muted-foreground">named profiles</span>
@@ -294,26 +296,32 @@ export function RuleSetsPage() {
                         )}
                       </Td>
                       <Td>
-                        <span className="flex flex-wrap gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={pending !== undefined}
-                            onClick={() => setPending({ kind: "edit", set })}
-                            aria-label={`Edit ${set.name}`}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={pending !== undefined}
-                            onClick={() => setPending({ kind: "delete", set })}
-                            aria-label={`Delete ${set.name}`}
-                          >
-                            Delete
-                          </Button>
-                        </span>
+                        {set.system === true ? (
+                          <Link className="text-sm underline" to="/mcp-servers">
+                            MCP servers
+                          </Link>
+                        ) : (
+                          <span className="flex flex-wrap gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pending !== undefined}
+                              onClick={() => setPending({ kind: "edit", set })}
+                              aria-label={`Edit ${set.name}`}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pending !== undefined}
+                              onClick={() => setPending({ kind: "delete", set })}
+                              aria-label={`Delete ${set.name}`}
+                            >
+                              Delete
+                            </Button>
+                          </span>
+                        )}
                       </Td>
                     </tr>
                   );

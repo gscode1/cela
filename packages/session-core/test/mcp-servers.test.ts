@@ -181,4 +181,36 @@ describe("the catalog in the database", () => {
     expect(await putMcpServer(pool, "bad", { enabled: false }, "alice")).toMatch(/url is required/);
     expect(await putMcpServer(pool, "bad", BASE, "alice")).toMatchObject({ created: false });
   });
+
+  it("runs the `within` hook in the write's transaction: only for a change, and a failing hook rolls the write back", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    let calls = 0;
+    const within = () => {
+      calls += 1;
+      return Promise.resolve();
+    };
+    await putMcpServer(pool, "demo", BASE, "alice", undefined, { within });
+    expect(calls).toBe(1);
+    // No change: no write, no hook.
+    await putMcpServer(pool, "demo", { enabled: true }, "alice", undefined, { within });
+    expect(calls).toBe(1);
+    await expect(
+      putMcpServer(pool, "demo", { enabled: false }, "alice", undefined, {
+        within: () => Promise.reject(new Error("derivation failed")),
+      }),
+    ).rejects.toThrow("derivation failed");
+    // The row and its history are as before: nothing half-written.
+    expect(db.mcp.get("demo")?.enabled).toBe(true);
+    expect(db.mcpHistory).toHaveLength(1);
+    const revision = (await readMcpServers(pool)).servers[0]?.revision ?? 0;
+    await expect(
+      deleteMcpServer(pool, "demo", "bob", revision, {
+        within: () => Promise.reject(new Error("derivation failed")),
+      }),
+    ).rejects.toThrow("derivation failed");
+    expect(db.mcp.has("demo")).toBe(true);
+    expect(await deleteMcpServer(pool, "demo", "bob", revision, { within })).toBe(true);
+    expect(calls).toBe(2);
+  });
 });

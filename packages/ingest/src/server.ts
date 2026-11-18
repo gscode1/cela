@@ -29,6 +29,7 @@ import {
   listProfileVersions,
   listSettingsHistory,
   mcpServerNameError,
+  syncMcpRulesFromCatalog,
   listSkillVersions,
   parseExpectedRevision,
   profileNameError,
@@ -989,6 +990,8 @@ async function handleAdminMcpServers(
       taken.rest,
       principal.owner,
       taken.expectedRevision,
+      // The egress rules derived from the catalog change in the same transaction (ADR 0040).
+      { within: (client) => syncMcpRulesFromCatalog(client, principal.owner) },
     );
     if (typeof result === "string") {
       sendJson(res, 400, { error: result });
@@ -1004,7 +1007,10 @@ async function handleAdminMcpServers(
       sendJson(res, 400, { error: expected });
       return;
     }
-    if (!(await deleteMcpServer(deps.pool, name, principal.owner, expected))) {
+    const deleted = await deleteMcpServer(deps.pool, name, principal.owner, expected, {
+      within: (client) => syncMcpRulesFromCatalog(client, principal.owner),
+    });
+    if (!deleted) {
       sendJson(res, 404, { error: "server not found" });
       return;
     }

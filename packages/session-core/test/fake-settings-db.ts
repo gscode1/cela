@@ -275,11 +275,11 @@ export class FakeSettingsDb {
         },
       ]);
     }
-    if (text.startsWith("select name from egress.rule_sets")) {
+    if (text.startsWith("select name, system from egress.rule_sets")) {
       return done(
         (params[0] as string[])
           .filter((name) => this.egressRuleSets.has(name))
-          .map((name) => ({ name })),
+          .map((name) => ({ name, system: name === "mcp-catalog" })),
       );
     }
     if (text.includes("from inbox.events where session_id")) return done([]);

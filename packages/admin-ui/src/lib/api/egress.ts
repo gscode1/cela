@@ -9,6 +9,8 @@ export interface RuleSet {
   name: string;
   description: string;
   appliesToAll: boolean;
+  /** Derived from the MCP catalog and written by code (ADR 0040): shown read-only, never named by a profile. */
+  system?: boolean;
   /** The revision of the egress data at this set's last write; writes use the schema revision instead. */
   revision: number;
   createdAt: string;
@@ -195,6 +197,17 @@ export interface ExplainResult {
   addressesChecked: boolean;
   /** Whether the asked session has a OneCLI binding at the proxy (a route onecli allow is denied without one); null when no session was asked about. */
   binding?: boolean | null;
+  /** MCP servers of the catalog on this host (ADR 0040), with `namedByProfile` when a profile was given. */
+  mcp?: {
+    ruleSet: string;
+    servers: {
+      name: string;
+      enabled: boolean;
+      credentialed: boolean;
+      route: EgressRoute;
+      namedByProfile?: boolean;
+    }[];
+  };
 }
 
 export function explainEgress(token: string, request: ExplainRequest): Promise<ExplainResult> {

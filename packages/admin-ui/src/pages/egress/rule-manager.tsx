@@ -80,10 +80,13 @@ export function RuleManager({
   owner,
   rules,
   revision,
+  readOnly = false,
 }: {
   owner: RuleOwner;
   rules: EgressRule[];
   revision: number | undefined;
+  /** A derived set (ADR 0040): the rules are shown, nothing can be added, changed or deleted. */
+  readOnly?: boolean;
 }) {
   const [pending, setPending] = useState<Pending | undefined>(undefined);
   const close = (): void => {
@@ -92,7 +95,7 @@ export function RuleManager({
   const ready = revision !== undefined;
   return (
     <div className="flex flex-col gap-3">
-      {pending === undefined && (
+      {pending === undefined && !readOnly && (
         <div>
           <Button size="sm" disabled={!ready} onClick={() => setPending({ kind: "add" })}>
             Add a rule
@@ -114,9 +117,11 @@ export function RuleManager({
               <Th>Private</Th>
               <Th>Expires</Th>
               <Th>Note</Th>
-              <Th>
-                <span className="sr-only">Actions</span>
-              </Th>
+              {!readOnly && (
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -142,28 +147,30 @@ export function RuleManager({
                   )}
                 </Td>
                 <Td className="break-words">{rule.note}</Td>
-                <Td>
-                  <span className="flex flex-wrap gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!ready || pending !== undefined}
-                      onClick={() => setPending({ kind: "edit", rule })}
-                      aria-label={`Edit rule ${rule.id}`}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!ready || pending !== undefined}
-                      onClick={() => setPending({ kind: "delete", rule })}
-                      aria-label={`Delete rule ${rule.id}`}
-                    >
-                      Delete
-                    </Button>
-                  </span>
-                </Td>
+                {!readOnly && (
+                  <Td>
+                    <span className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!ready || pending !== undefined}
+                        onClick={() => setPending({ kind: "edit", rule })}
+                        aria-label={`Edit rule ${rule.id}`}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!ready || pending !== undefined}
+                        onClick={() => setPending({ kind: "delete", rule })}
+                        aria-label={`Delete rule ${rule.id}`}
+                      >
+                        Delete
+                      </Button>
+                    </span>
+                  </Td>
+                )}
               </tr>
             ))}
           </tbody>

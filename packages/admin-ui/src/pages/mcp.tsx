@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
+import { Link } from "react-router";
 import { useAuth } from "@/auth";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
@@ -347,7 +348,14 @@ export function McpServersPage() {
       <Card>
         <CardHeader>
           <CardTitle>MCP servers</CardTitle>
-          <CardDescription>Remote tool servers that sessions can call.</CardDescription>
+          <CardDescription>
+            Remote tool servers that sessions can call. Each enabled server's host gets a rule in
+            the derived{" "}
+            <Link className="underline" to="/egress/sets/mcp-catalog">
+              mcp-catalog
+            </Link>{" "}
+            rule set, and the OneCLI host rules follow within seconds.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {modeError !== undefined && <Alert variant="destructive">{modeError}</Alert>}

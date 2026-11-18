@@ -300,6 +300,15 @@ async function writeHistoryAndNotify(
   await client.query("select pg_notify($1, $2)", [MCP_SERVERS_CHANNEL, name]);
 }
 
+/**
+ * What a catalog write also does in its own transaction (docs/decisions/0040-mcp-egress-flow.md): the egress rules derived
+ * from the catalog are rewritten there, so the row, its history, the derived rules and their notifications commit or roll
+ * back together. Called after the write, only when it changed something.
+ */
+export interface CatalogWriteOptions {
+  within?: (client: pg.PoolClient) => Promise<void>;
+}
+
 export interface PutResult {
   stored: StoredMcpServer;
   created: boolean;
@@ -317,6 +326,7 @@ export async function putMcpServer(
   input: unknown,
   by: string,
   expectedRevision?: number,
+  options: CatalogWriteOptions = {},
 ): Promise<PutResult | string> {
   // `source` is not part of the server: it is split off, checked on its own and stored beside the row.
   let body = input;
@@ -394,6 +404,7 @@ export async function putMcpServer(
       current?.server ?? null,
       next,
     );
+    await options.within?.(client);
     const row = written[0];
     return {
       stored:
@@ -426,6 +437,7 @@ export async function deleteMcpServer(
   name: string,
   by: string,
   expectedRevision: number,
+  options: CatalogWriteOptions = {},
 ): Promise<boolean> {
   if (mcpServerNameError(name) !== undefined) return false;
   return inTransaction(pool, async (client) => {
@@ -455,6 +467,7 @@ export async function deleteMcpServer(
       // A row edited by hand into something invalid is still deleted; the history just has no typed old value.
     }
     await writeHistoryAndNotify(client, by, name, "delete", old, null);
+    await options.within?.(client);
     return true;
   });
 }

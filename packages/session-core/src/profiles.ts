@@ -545,14 +545,17 @@ export interface PutProfileInput {
   expectedRevision?: number;
 }
 
-/** The names among `names` that are not rule sets of the `egress` schema. */
+/**
+ * The names among `names` that a profile cannot use: not rule sets of the `egress` schema, or system sets (derived from
+ * the MCP catalog, ADR 0040), which apply to nobody and are not for a profile to name.
+ */
 async function missingRuleSets(client: pg.PoolClient, names: readonly string[]): Promise<string[]> {
   if (names.length === 0) return [];
-  const { rows } = await client.query<{ name: string }>(
-    "select name from egress.rule_sets where name = any($1::text[])",
+  const { rows } = await client.query<{ name: string; system: boolean }>(
+    "select name, system from egress.rule_sets where name = any($1::text[])",
     [[...names]],
   );
-  const found = new Set(rows.map((row) => row.name));
+  const found = new Set(rows.filter((row) => !row.system).map((row) => row.name));
   return names.filter((name) => !found.has(name));
 }
 

@@ -4,6 +4,8 @@ export interface SetRow {
   name: string;
   description: string;
   applies_to_all: boolean;
+  /** Derived sets (migration 029); absent counts as false. */
+  system?: boolean;
   revision: number;
   created_at: string;
   created_by: string;
@@ -55,6 +57,8 @@ export class FakeEgressDb {
   /** The `revision` of each row of egress.revisions, with who wrote it. */
   revisions: { revision: number; changed_by: string }[] = [];
   history: HistoryRow[] = [];
+  /** Pretend another process holds the session-level advisory lock. */
+  lockedElsewhere = false;
   /** Payloads of the notifications on `egress_rules` that committed. */
   readonly notifications: string[] = [];
   /** Profiles by name: the `egressRuleSets` of their current version. */
@@ -286,6 +290,11 @@ export class FakeEgressDb {
       return done(ids.sort().map((session_id) => ({ session_id })));
     }
     if (text.startsWith("select pg_advisory_xact_lock")) return done();
+    // Session-level advisory locks (the host-rule reconciler): another holder is `lockedElsewhere`.
+    if (text.startsWith("select pg_try_advisory_lock")) {
+      return done([{ locked: !this.lockedElsewhere }]);
+    }
+    if (text.startsWith("select pg_advisory_unlock")) return done();
     if (text.startsWith("select pg_notify")) {
       if (params[0] === "egress_rules") this.#pending.push(String(params[1]));
       return done();
@@ -342,6 +351,37 @@ export class FakeEgressDb {
         if (row.kind === "rule" && row.ref === "" && row.revision === String(revision))
           row.ref = ref;
       }
+      return done();
+    }
+    if (text.startsWith("select system from egress.rule_sets where name = $1")) {
+      const row = this.ruleSets.find((r) => r.name === params[0]);
+      return done(row === undefined ? [] : [{ system: row.system === true }]);
+    }
+    if (text.startsWith("select name from egress.rule_sets where name = $1")) {
+      const row = this.ruleSets.find((r) => r.name === params[0]);
+      return done(row === undefined ? [] : [{ name: row.name }]);
+    }
+    if (text.startsWith("select id, host, ports, route, note from egress.rules where rule_set")) {
+      return done(
+        this.rules
+          .filter((r) => r.rule_set === params[0])
+          .sort((a, b) => a.id - b.id)
+          .map(({ id, host, ports, route, note }) => ({ id, host, ports, route, note })),
+      );
+    }
+    if (text.startsWith("insert into egress.rule_sets") && text.includes("$2, true,")) {
+      const [name, description, revision, by] = params as [string, string, number, string];
+      this.ruleSets.push({
+        name,
+        description,
+        applies_to_all: false,
+        system: true,
+        revision,
+        created_at: now,
+        created_by: by,
+        updated_at: now,
+        updated_by: by,
+      });
       return done();
     }
     if (text.startsWith("select name, description") && text.includes("where name = $1")) {
