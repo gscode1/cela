@@ -119,15 +119,23 @@ install_node() {
 # ------------------------------------------------------------------ helpers for held tunnels
 stream_js=$(
   cat <<'JS'
-// A response that takes minutes, read as it arrives. One line per event, epoch seconds.
+// httpbingo caps a drip at about 10 s, so the tunnel is held with back-to-back drips: keep-alive reuses the one CONNECT
+// tunnel, and the first failure (a closed tunnel, or a new CONNECT the proxy denies) ends the loop. One line per event,
+// epoch seconds.
 const now = () => Math.floor(Date.now() / 1000);
 console.log("START", now());
+const until = Date.now() + Number(process.argv[3]) * 1000;
 let n = 0;
-fetch(process.argv[2]).then(async (r) => {
-  console.log("HEADERS", r.status, now());
-  for await (const chunk of r.body) { n += chunk.length; console.log("DATA", now(), n); }
+try {
+  while (Date.now() < until) {
+    const r = await fetch(process.argv[2]);
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    for await (const chunk of r.body) { n += chunk.length; console.log("DATA", now(), n); }
+  }
   console.log("END-CLEAN", now(), n);
-}).catch((e) => console.log("END-ERR", now(), n, e.cause?.code ?? e.message));
+} catch (e) {
+  console.log("END-ERR", now(), n, e.cause?.code ?? e.message);
+}
 JS
 )
 
@@ -155,7 +163,7 @@ new_session() { # tag
   local pod
   pod=$(pod_of "$s")
   install_node "$pod"
-  printf '%s\n' "$stream_js" | k exec -i "$pod" -- bash -c 'cat > /workspace/.rv-stream.js'
+  printf '%s\n' "$stream_js" | k exec -i "$pod" -- bash -c 'cat > /workspace/.rv-stream.mjs'
   echo "$s"
 }
 url_of() { k exec "$1" -- cat /workspace/.egress-url; } # pod
@@ -166,7 +174,7 @@ start() {
   read -r url
   url=$(sed "s#@[^@]*\$#@$ip:3128#" <<<"$url")
   [[ $ca != 1 ]] || extra="export NODE_EXTRA_CA_CERTS=/workspace/.onecli/ca.pem;"
-  printf '%s\n' "$url" | k exec -i "$pod" -- bash -c "read -r HTTPS_PROXY; export HTTPS_PROXY NODE_USE_ENV_PROXY=1; $extra rm -f /workspace/.rv-$tag.log; nohup /workspace/.smoke-node /workspace/.rv-stream.js 'https://$echo_host/drip?duration=$secs&numbytes=$secs' > /workspace/.rv-$tag.log 2>&1 < /dev/null &"
+  printf '%s\n' "$url" | k exec -i "$pod" -- bash -c "read -r HTTPS_PROXY; export HTTPS_PROXY NODE_USE_ENV_PROXY=1; $extra rm -f /workspace/.rv-$tag.log; nohup /workspace/.smoke-node /workspace/.rv-stream.mjs 'https://$echo_host/drip?duration=8&numbytes=8' $secs > /workspace/.rv-$tag.log 2>&1 < /dev/null &"
 }
 rv_log() { k exec "$1" -- cat "/workspace/.rv-$2.log" 2>/dev/null || true; } # pod tag
 alive() { # pod tag: data has arrived and the stream has not ended
