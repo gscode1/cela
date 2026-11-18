@@ -120,8 +120,9 @@ export class SessionService {
     this.#host = host;
     this.#options = options;
     this.#watcher = new RunWatcher({
-      lookup: (conversationId, requestId) => host.submissionState(conversationId, requestId),
+      settle: (conversationId, requestId) => host.settlement(conversationId, requestId),
       onUnanswered: (watched, outcome) => this.#runEnded(watched, outcome),
+      onDone: (watched) => this.#relimit(watched),
       onError: (error) => {
         log("run-watch-failed", { message: errorMessage(error) });
       },
@@ -419,10 +420,7 @@ export class SessionService {
     const definition = definitionOf(session);
     // Before every input, like the budget: a coding tool installed by a later release must not reach this session.
     await this.#host.applyProfileTools(conversationId, definition);
-    const budget = definition.turnBudget ?? this.#options.turnBudget();
-    // The run's rounds before the transcript: a round committed in between only makes the limit one lower, never higher.
-    const running = await this.#host.runTurns(conversationId);
-    const used = await this.#host.turnsUsed(conversationId);
+    const { budget, used, limit } = await this.#turnLimit(session, conversationId);
     if (budget - used <= 0) {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");
@@ -434,7 +432,33 @@ export class SessionService {
       await this.#failSession(session.id, conversationId, TOKEN_BUDGET_EXHAUSTED);
       throw new PermanentError("token budget exhausted");
     }
-    await this.#host.limitTurns(conversationId, budget - Math.max(0, used - running));
+    await this.#host.limitTurns(conversationId, limit);
+  }
+
+  /** The turn budget, the turns used, and the `maxTurns` the run in progress (or the next one) may have. */
+  async #turnLimit(
+    session: SessionRow,
+    conversationId: number,
+  ): Promise<{ budget: number; used: number; limit: number }> {
+    const budget = definitionOf(session).turnBudget ?? this.#options.turnBudget();
+    // The run's rounds before the transcript: a round committed in between only makes the limit one lower, never higher.
+    const running = await this.#host.runTurns(conversationId);
+    const used = await this.#host.turnsUsed(conversationId);
+    return { budget, used, limit: Math.max(1, budget - Math.max(0, used - running)) };
+  }
+
+  /**
+   * A run answered. An input queued behind it starts its own run at once, with the `maxTurns` set when that input was
+   * admitted, before this run's turns were spent; set it again. Pi reads `maxTurns` at the end of every round, so the
+   * new run is bounded from its first round on. A session that is no longer active is left alone.
+   */
+  async #relimit(watched: Watched): Promise<void> {
+    const session = await getSession(this.#pool, watched.sessionId);
+    if (session?.status !== "active" || session.conversationId !== watched.conversationId) return;
+    await this.#host.limitTurns(
+      watched.conversationId,
+      (await this.#turnLimit(session, watched.conversationId)).limit,
+    );
   }
 
   /**

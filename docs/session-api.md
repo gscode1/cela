@@ -118,7 +118,10 @@ no secret: the operator's token goes from the browser to `/admin/*` only. Other 
    ordered by `(created_at, id)`.
 3. For each row, in order, it submits to Pi Durable with `requestId = <row id>`:
    - `message`: `whenBusy: "followUp"`. On an idle session it starts a turn; on a busy one it queues behind the
-     running turn in Pi Durable's own inbox and starts the next turn when the current one answers.
+     running turn in Pi Durable's own inbox and starts the next turn when the current one answers. When the running
+     turn fails instead (a model error, the turn limit), the messages queued behind it are withdrawn: they never run,
+     the stream's `live.runFailure` says why, and the client sends them again if it still wants them
+     ([ADR 0029](decisions/0029-run-outcomes-from-wait.md)).
    - `steer`: `whenBusy: "steer"`. The input joins the running turn after its current tool round. On an idle session
      it starts a turn like a message (it is not rejected).
    - `cancel`: `Conversation.abort()`: withdraws queued inputs, aborts the running turn, resolves when idle.
