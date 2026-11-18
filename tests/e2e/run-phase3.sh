@@ -338,6 +338,13 @@ t_sandbox_loss() {
   wait_session "$id" '.state=="done" and (.results|length)==3' 300 "a call issued while the Pod is being replaced finishes"
   s=$(status "$id")
   note "EVIDENCE connection-during-recreation: third call isError=$(jq -c '.results[2].isError' <<<"$s") text=$(jq -c '.results[2].text[0:120]' <<<"$s")"
+  if jq -e '.results[2].isError' <<<"$s" >/dev/null 2>&1; then # #122: what the orchestrator saw of this sandbox
+    local pod
+    for pod in $(orch_pods); do
+      note "---- logs $pod for $claim (last 10 min) ----"
+      k logs "$pod" -c orchestrator --since=10m 2>&1 | grep -F -- "$claim" | tail -80 | sed 's/^/     /' || true
+    done
+  fi
   assert_jq "third call worked with no explicit reconnect step" "$s" '(.results[2].isError|not) and (.results[2].text|contains("persisted-data"))'
 }
 

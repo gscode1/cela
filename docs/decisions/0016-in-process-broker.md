@@ -30,6 +30,9 @@ the cost. No ADR requires the separate process.
 - **One connection at a time per env.** A new `data` connection first aborts the previous one (`runBridge` has an abort
   signal now) and waits for its task. When the stream or socket is lost `runBridge` returns, the broker closes both
   sockets, the relay exits, `Connection` respawns it and it connects again. No reconnect code beyond what ADR 0003 found.
+  Addendum (#122): before each respawn (not the first spawn) `connectSandboxEnv` waits until the Sandbox is Ready again.
+  pi-env gives a spawned relay 30 s of silence, and a Pod replacement under load took longer, so the wait has to come
+  before the spawn. It also comes before the start gate, so an env waiting for its Pod holds no other env's start.
 - **Containment.** Every connection's task is wrapped: a rejection or throw destroys only its own sockets, and every
   socket carries an `error` listener. The `bridge: ready` line is still written, so the `bridge-ready` timing phase and
   the start gate work as before.
