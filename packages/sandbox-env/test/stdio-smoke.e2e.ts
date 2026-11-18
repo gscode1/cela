@@ -20,8 +20,9 @@ const proc = await sandboxStart({
   onStdout: (chunk) => {
     received.update(chunk);
     receivedBytes += chunk.length;
+    return Promise.resolve();
   },
-  onStderr: () => undefined,
+  onStderr: () => Promise.resolve(),
 });
 
 const sent = createHash("sha256");
