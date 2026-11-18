@@ -5,7 +5,7 @@ import { BRIDGE_READY } from "./bridge.js";
 import type { StartProcess } from "./bridge.js";
 import { startBroker } from "./broker.js";
 import { DEFAULT_ENV_BINARY, ENV } from "./config.js";
-import { sandboxStart } from "./sandbox-client.js";
+import { sandboxStart, waitSandboxReady } from "./sandbox-client.js";
 import { StartGate, gatedStart } from "./start-gate.js";
 import type { GatedStart } from "./start-gate.js";
 
@@ -62,6 +62,11 @@ export interface SandboxEnvOptions {
    * `bridge-ready` when the bridge reported ready. Fires again for every respawn; must not throw.
    */
   onPhase?: (phase: "bridge-started" | "bridge-ready") => void;
+  /**
+   * Awaited before every relay respawn (not the first spawn, which follows the caller's own claim wait). Defaults to
+   * waiting until the Sandbox is Ready, or to nothing when `startProcess` replaces the sandbox hop.
+   */
+  awaitSandbox?: () => Promise<void>;
 }
 
 export interface SandboxEnv {
@@ -84,15 +89,14 @@ export function connectSandboxEnv(options: SandboxEnvOptions): SandboxEnv {
     process.execPath,
     fileURLToPath(new URL("./relay.js", import.meta.url)),
   ];
+  const target = {
+    claimName: options.claimName,
+    namespace: options.namespace,
+    connectivity: options.connectivity ?? "in-cluster-service",
+    ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
+  } as const;
   const broker = startBroker({
-    start:
-      options.startProcess ??
-      sandboxStart({
-        claimName: options.claimName,
-        namespace: options.namespace,
-        connectivity: options.connectivity ?? "in-cluster-service",
-        ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
-      }),
+    start: options.startProcess ?? sandboxStart(target),
     command: options.envBinary ?? (process.env[ENV.envBinary] || DEFAULT_ENV_BINARY),
   });
   const start = gatedStart(startGate, async () => {
@@ -108,15 +112,22 @@ export function connectSandboxEnv(options: SandboxEnvOptions): SandboxEnv {
     ];
   });
   const onPhase = options.onPhase;
+  const awaitSandbox =
+    options.awaitSandbox ??
+    (options.startProcess === undefined ? () => waitSandboxReady(target) : undefined);
+  let spawned = false;
   const connection = new Connection({
-    command:
-      onPhase === undefined
-        ? start.command
-        : async () => {
-            const argv = await start.command();
-            onPhase("bridge-started");
-            return argv;
-          },
+    command: async () => {
+      // A respawn usually follows a lost stream, often a Pod being replaced. pi-env starts its 30 s silence limit when
+      // it spawns the relay, and the bridge's own wait for the new Pod (scheduling, the RWO workspace moving over) can
+      // take longer than that under load: "pi-env connection timed out" (#122). Waiting here comes before the spawn,
+      // so no pi-env timer runs yet, and before the start gate, so a waiting env does not hold other envs' starts.
+      if (spawned) await awaitSandbox?.();
+      spawned = true;
+      const argv = await start.command();
+      onPhase?.("bridge-started");
+      return argv;
+    },
     onLog: (text) => {
       freeGateOnBridgeLog(start, text);
       if (text.includes(BRIDGE_READY)) onPhase?.("bridge-ready");

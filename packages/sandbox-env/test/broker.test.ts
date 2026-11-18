@@ -220,6 +220,64 @@ describe("relay", () => {
   });
 });
 
+describe("respawn after a lost stream", () => {
+  it("waits for the sandbox before it spawns the relay again, and not on the first spawn", async () => {
+    const lose: Array<(reason: Error) => void> = [];
+    const losing: StartProcess = async (command, args, handlers) => {
+      const real = await localStart()(command, args, handlers);
+      const lost = new Promise<{ exitCode: number }>((_resolve, reject) => lose.push(reject));
+      const proc: RemoteProcess = { ...real, wait: () => Promise.race([real.wait(), lost]) };
+      return proc;
+    };
+    const events: string[] = [];
+    let ready: () => void = () => undefined;
+    const sandbox = connectSandboxEnv({
+      claimName: "pi-conv-respawn-wait",
+      namespace: "test",
+      cwd: "/tmp",
+      id: "pi-env:pi-conv-respawn-wait",
+      relayCommand: relay,
+      startProcess: losing,
+      envBinary: localDaemon(),
+      awaitSandbox: () => {
+        events.push("await-sandbox");
+        return new Promise((resolve) => {
+          ready = () => {
+            events.push("sandbox-ready");
+            resolve();
+          };
+        });
+      },
+      onPhase: (phase) => events.push(phase),
+    });
+    open.push(sandbox);
+    expect((await run(sandbox, "echo first")).ok).toBe(true);
+    expect(events).toEqual(["bridge-started", "bridge-ready"]);
+
+    lose[0]?.(new Error("stream reset"));
+    // The relay exit reaches Connection asynchronously; the next call then respawns it.
+    const deadline = Date.now() + 10_000;
+    while (!events.includes("await-sandbox") && Date.now() < deadline) {
+      const probe = run(sandbox, "echo probe");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (events.includes("await-sandbox")) {
+        // No relay while the sandbox is not ready: nothing started after the wait began.
+        expect(events.slice(events.indexOf("await-sandbox"))).toEqual(["await-sandbox"]);
+        ready();
+        expect((await probe).stdout).toContain("probe");
+        break;
+      }
+      await probe;
+    }
+    expect(events.slice(2)).toEqual([
+      "await-sandbox",
+      "sandbox-ready",
+      "bridge-started",
+      "bridge-ready",
+    ]);
+  }, 30_000);
+});
+
 describe("two envs in one process", () => {
   it("aborting an exec on one leaves the other completing", async () => {
     const a = env("pi-conv-a");

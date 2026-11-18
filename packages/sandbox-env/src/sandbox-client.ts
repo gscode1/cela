@@ -52,6 +52,22 @@ export function sandboxStart(target: SandboxTarget): StartProcess {
   };
 }
 
+/**
+ * Waits until the claim's Sandbox is Ready again (the SDK's own wait, 180 s by default), e.g. after its Pod was replaced.
+ * Rejects when the claim is gone or the wait times out.
+ */
+export async function waitSandboxReady(target: SandboxTarget): Promise<void> {
+  const client = new SandboxClient({
+    namespace: target.namespace,
+    sandboxd: {
+      connectivity: target.connectivity,
+      ...(target.authToken === undefined ? {} : { authToken: target.authToken }),
+    },
+  });
+  const sandbox = await client.getSandbox(target.claimName, target.namespace);
+  await sandbox.closeLocal();
+}
+
 export interface ClaimRequest extends SandboxTarget {
   /** SandboxWarmPool the claim references; a pool with `replicas: 0` is a plain template alias. */
   warmPool: string;
