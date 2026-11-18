@@ -59,7 +59,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | `vendor/`                              | Packed `@netzlabor/pi-durable-postgres` adapter, ported to Pi Durable 1.5.2                                                |
 | `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                          |
 | `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)            |
-| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules, repository ruleset)            |
+| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                |
 | `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                              |
 | `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                       |
 | `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                           |

@@ -292,7 +292,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
       proves that plain TCP is rejected; [e2e](e2e.md#database-tls)). Run green on the test cluster on 2026-11-17 (`smoke`: plain TCP rejected by `pg_hba.conf`, `verify-full` accepted).
     - 11b (done, issue #141): `deploy/` is removed. The manifests and `add-shard.sh` the charts replaced are deleted; the
       scripts that e2e and the external-OneCLI path still call moved to `hack/` (`gen-secret.sh`, `gen-api-secret.sh`,
-      `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `agent-ruleset.sh` and `.json`, `onecli-policies/`); the ExternalSecret
+      `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `agent-ruleset.sh` and `.json`, removed later by issue #160, `onecli-policies/`); the ExternalSecret
       examples are in `charts/pi-durable/examples/`; the image build notes are `images/README.md`. The pod-security,
       image-build and e2e-namespace tests read the rendered charts or `hack/`; the stub-kubectl test of `add-shard.sh` went with it.
     - Done when: e2e passes against an external Postgres that requires TLS (done, see 11a); no doc points at a removed

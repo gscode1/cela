@@ -76,37 +76,20 @@ conversation's instructions.
 With `repoContext` (ADR 0015) the same pass also reads the repo's `AGENTS.md` / `CLAUDE.md` (the first of five names, at the
 checkout root) into the instructions, before the skills catalog.
 
-## Branch ruleset: agents may only touch `agent/**`
+## Branch protection is the repository owner's job
 
-A session token has `contents: write` on its repository, and GitHub cannot scope a token by ref. Without a guard the agent can
-push, force-push or delete `main`. `hack/agent-ruleset.json` is a repository ruleset that closes this:
+A session token has `contents: write` (and `pull_requests: write`) on its repository, and GitHub cannot scope a token by ref.
+Whatever the repository does not protect, the agent can push to, force-push, delete or merge into, and so can a prompt
+injection in what it reads. pi-durable does not impose a branch policy on the repository ([ADR 0027](decisions/0027-no-agent-branch-ruleset.md)):
+protect the branches that matter with GitHub's own branch protection or rulesets. A sensible minimum for `main` and release
+branches:
 
-- Target: branches, `include: ["~ALL"]`, `exclude: ["refs/heads/agent/**"]`. Every branch except `agent/**` is covered.
-- Rules `creation`, `update`, `deletion`, `non_fast_forward`: nobody without bypass can create, push to (including merging a PR
-  into), force-push or delete a covered branch. `update` also stops the App merging a pull request into `main`, which its
-  `pull_requests: write` would otherwise allow.
-- Bypass list: only the repository role Admin (`actor_type: RepositoryRole`, `actor_id: 5`, `bypass_mode: always`) so the human
-  owner can still push and merge `main`. The App's installation is **not** a bypass actor; adding it would void the whole control.
-  Admin bypass is a trade-off: it is the simplest way to keep the owner working and the App is not an admin role, but it also lets
-  admins skip the rule by accident. A stricter option is `bypass_mode: pull_request` (admins only via PR); change the JSON and re-apply.
-- Tags are not covered (the ruleset targets branches). The agent can still create tags. Add a second tag ruleset if that matters.
-- Agents keep working on `agent/**`: they can create, push, force-push and delete those branches, and open a PR from one.
-  `branch` in `POST /sessions` should therefore be an `agent/...` name for repository sessions that push.
+- require a pull request (with review) before merging, so the App cannot push or merge on its own;
+- block force-pushes and deletion;
+- do **not** add the GitHub App to the bypass list: that would void the protection for every session.
 
-Apply to every repository the GitHub App is installed on (needs `gh` logged in as a repo admin, and `jq`):
-
-```
-hack/agent-ruleset.sh owner/repo           # create, or update the ruleset named pi-agent-branches (idempotent)
-hack/agent-ruleset.sh --check owner/repo   # read-only; exit 0 when present and matching, 1 when missing or different
-```
-
-Rulesets need a public repo, or a private one on a paid plan (GitHub Pro/Team/Enterprise). Run `--check` after every new installation.
-
-Live check (not automated yet): with a session token, `git push origin HEAD:refs/heads/agent/x` succeeds; `git push origin HEAD:main`,
-`git push --force origin HEAD:main` and `git push origin :main` are each rejected (`GH013: Repository rule violations`).
-
-Future work: the orchestrator could refuse a repo session when `--check` would fail (the App needs `administration: read` for that).
-It does not today; the ruleset is an operator step, and nothing at startup calls GitHub for it.
+Tags are not covered by branch protection; add a tag ruleset if that matters. `branch` in `POST /sessions` can be any branch
+name the repository lets the App push to.
 
 ## OneCLI call bounds
 

@@ -217,7 +217,7 @@ Tests:
 
 - `POST /sessions` takes an optional `{ repo, branch }`. Without it, `/workspace` stays empty and no OneCLI agent is created.
 - With a repo:
-  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection: apply `hack/agent-ruleset.sh` to each repo so the App can only write `agent/**` (see `docs/repo-workspace.md`).
+  - The orchestrator creates a OneCLI agent per session with only the GitHub connection grant, scoped to exactly that repo. OneCLI v2 can't do this, so the orchestrator mints the token itself with the user's existing GitHub App (the one OneCLI's connection uses), using an extra private key kept in `secret-store` and exposed by an ExternalSecret to the orchestrator only. It calls `POST /app/installations/{id}/access_tokens` with `repositories:[repo]` and minimal `permissions` (contents, pull_requests). The result is a 1 h token, stored as that session's OneCLI secret (hosts github.com and api.github.com) and re-minted before expiry. Session agents never get a grant for the OneCLI GitHub connection, because it gives account-wide access. Branch protection is the repository owner's: protect `main` and release branches with GitHub's own rules, without the App as a bypass actor (`docs/repo-workspace.md`, ADR 0027).
   - It passes the proxy token, `HTTPS_PROXY` and the CA to that session's commands.
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
@@ -307,7 +307,7 @@ packages/
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
 vendor/             # packed Postgres adapter port
 charts/             # pi-durable (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
-hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules, repo ruleset), onecli-policies/
+hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules), onecli-policies/
 images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), e2e-driver/, egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
 examples/           # recorded load-test and bug-hunt runs
