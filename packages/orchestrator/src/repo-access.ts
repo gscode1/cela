@@ -34,7 +34,7 @@ export interface RepoAccessDeps {
   /** Undefined when `ONECLI_API_KEY` is not set: repo sessions are then refused. */
   onecli: OneCliAdmin | undefined;
   /**
-   * Whether the live repo allowlist still lists the repository (docs/decisions/0030-repo-allowlist.md). Asked before
+   * Whether the live repo allowlist still lists the repository (docs/decisions/0032-repo-allowlist.md). Asked before
    * every mint, so a repository an admin removes gets no new token and its session's access ends with the current one.
    */
   repoAllowed: (repo: string) => boolean;

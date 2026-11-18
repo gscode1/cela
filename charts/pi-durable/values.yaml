@@ -88,12 +88,40 @@ sandbox:
   # usually runc) needs security.allowInsecureRuntime, or the chart refuses to render (docs/decisions/0020).
   runtimeClassName: gvisor
   storageClass: "" # workspace PVCs; "" = the cluster default. Use a class that reclaims with Delete.
-  workspaceSize: 1Gi
   masterSecret: sandboxd-auth # Secret with key `master`: HMAC key of every sandbox's token. A backup asset.
-  warmPoolReplicas: 0
-  resources:
-    requests: { cpu: 100m, memory: 128Mi }
-    limits: { cpu: 250m, memory: 256Mi }
+  # Named sandbox sizes (docs/decisions/0030-sandbox-sizes.md). Each renders a SandboxTemplate pi-env-template-<name> and
+  # a SandboxWarmPool pi-env-pool-<name>; profiles and POST /sessions pick among them, never free numbers. A changed
+  # size applies to new sessions only. Names: 1 to 16 of [a-z0-9-], starting with a letter.
+  defaultSize: s
+  sizes:
+    s: # the size every sandbox had before sizes existed
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: 250m, memory: 256Mi }
+      workspaceSize: 1Gi
+      ephemeralStorage: 1Gi # limit on what the sandbox writes outside /workspace
+      warmPoolReplicas: 0
+    m:
+      resources:
+        requests: { cpu: 500m, memory: 1Gi }
+        limits: { cpu: "1", memory: 2Gi }
+      workspaceSize: 5Gi
+      ephemeralStorage: 2Gi
+      warmPoolReplicas: 0
+    l:
+      resources:
+        requests: { cpu: "1", memory: 2Gi }
+        limits: { cpu: "2", memory: 4Gi }
+      workspaceSize: 10Gi
+      ephemeralStorage: 4Gi
+      warmPoolReplicas: 0
+    xl:
+      resources:
+        requests: { cpu: "2", memory: 4Gi }
+        limits: { cpu: "4", memory: 8Gi }
+      workspaceSize: 20Gi
+      ephemeralStorage: 8Gi
+      warmPoolReplicas: 0
 
 security:
   # Acknowledges that the sandbox runtime is not gVisor. The orchestrator refuses to start without it too
@@ -211,6 +239,6 @@ models:
 github:
   app:
     existingSecret: "" # optional: keys private-key.pem, app-id, installation-id. Repo sessions are off without it.
-  # Seeds the repositories a session may clone (ADR 0030): owner/name, owner/* or *. Empty refuses every repo session.
+  # Seeds the repositories a session may clone (ADR 0032): owner/name, owner/* or *. Empty refuses every repo session.
   # Seed only, like models: change it later on the console's settings page or with PUT /admin/settings.
   repoAllowlist: []

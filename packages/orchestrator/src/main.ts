@@ -141,6 +141,11 @@ async function main(): Promise<void> {
   });
   const skills = new SkillLibrary(pool, config.shard);
   const hooks: SandboxHooks = {
+    // The session's size picks its pool; a session from before sizes keeps the unsized one.
+    warmPoolOf: async (conversationId) => {
+      const size = (await sessionByConversation(pool, config.shard, conversationId))?.sandboxSize;
+      return size === null || size === undefined ? undefined : `${config.warmPool}-${size}`;
+    },
     // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {
       try {

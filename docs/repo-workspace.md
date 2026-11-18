@@ -14,7 +14,7 @@ Stored in `inbox.sessions` (`repo`, `repo_branch`; migration `004_repo.sql`).
 
 ## Which repositories: the repo allowlist
 
-A session may only clone a repository the `repoAllowlist` setting lists ([ADR 0030](decisions/0030-repo-allowlist.md)):
+A session may only clone a repository the `repoAllowlist` setting lists ([ADR 0032](decisions/0032-repo-allowlist.md)):
 `owner/name`, `owner/*` or `*`, matched case-insensitively. Empty, the default, refuses every repo session. Ingest
 answers `403` for a repository it does not list. The orchestrator checks the list again before every token mint, so a
 repository an admin removes gets no new token and its running sessions lose access within the hour the current token

@@ -37,6 +37,8 @@ describe("profile form round trips", () => {
         skills: [{ name: "lint", version: 2, digest: "a".repeat(64) }],
         repoSkills: true,
         repoContext: true,
+        sandboxSize: "m",
+        sandboxSizes: ["l", "xl"],
       },
     ],
     [
@@ -57,6 +59,23 @@ describe("profile form round trips", () => {
       instructions: "y",
       tokenBudget: 500_000,
     });
+  });
+
+  it("keeps sandbox sizes set through the API when the console saves an edit elsewhere", () => {
+    const stored: ProfileDefinition = { instructions: "x", sandboxSize: "l", sandboxSizes: ["xl"] };
+    expect(
+      definitionFromForm({ ...formFromDefinition(stored), instructions: "y" }, stored),
+    ).toEqual({
+      instructions: "y",
+      sandboxSize: "l",
+      sandboxSizes: ["xl"],
+    });
+    // Cleared: the size inherits again, and an explicit empty list keeps its spelling.
+    const cleared = definitionFromForm(
+      { ...formFromDefinition(stored), sandboxSize: "", sandboxSizes: [] },
+      stored,
+    );
+    expect(cleared).toEqual({ instructions: "x", sandboxSizes: [] });
   });
 
   it("omits a cleared override instead of sending it empty", () => {
@@ -124,6 +143,9 @@ describe("definitionProblems (mirrors validateProfileDefinition)", () => {
     expect(definitionProblems({ instructions: "   " })).toHaveLength(1);
     expect(definitionProblems({ instructions: "x".repeat(8001) })).toHaveLength(1);
     expect(definitionProblems({ mcpServers: ["Bad Name"] })).toHaveLength(1);
+    expect(definitionProblems({ sandboxSize: "Big" })).toHaveLength(1);
+    expect(definitionProblems({ sandboxSizes: ["x".repeat(17)] })).toHaveLength(1);
+    expect(definitionProblems({ sandboxSize: "m", sandboxSizes: ["l"] })).toEqual([]);
     expect(
       definitionProblems({ turnBudget: 1_000_000, instructions: "ok", defaultModel: "a/b/c" }),
     ).toEqual([]);
@@ -243,6 +265,16 @@ describe("diffs", () => {
     expect(diffDefinitions({ tools: [] }, {})).toEqual([
       { field: "tools", before: "no tools", after: "all tools" },
     ]);
+  });
+
+  it("shows sandbox sizes, and a reordered list is no change", () => {
+    expect(diffDefinitions({}, { sandboxSize: "l", sandboxSizes: ["xl", "m"] })).toEqual([
+      { field: "sandboxSize", before: "global default", after: "l" },
+      { field: "sandboxSizes", before: "only the default", after: "m, xl" },
+    ]);
+    expect(diffDefinitions({ sandboxSizes: ["m", "xl"] }, { sandboxSizes: ["xl", "m"] })).toEqual(
+      [],
+    );
   });
 
   it("ignores a digest the API has not filled in yet", () => {

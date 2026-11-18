@@ -274,6 +274,80 @@ describe("orchestrator and ingest configuration", () => {
   });
 });
 
+describe("sandbox sizes (docs/decisions/0030-sandbox-sizes.md)", () => {
+  const sandboxd = (template: Obj): Obj => template.spec.podTemplate.spec.containers[0];
+
+  it("renders a template and a pool per size, plus the unsized pair on the default size", () => {
+    const list = docs(external);
+    expect(ofKind(list, "SandboxTemplate").map((d) => d.metadata.name)).toEqual([
+      "pi-env-template",
+      "pi-env-template-l",
+      "pi-env-template-m",
+      "pi-env-template-s",
+      "pi-env-template-xl",
+    ]);
+    const l = named(list, "SandboxTemplate", "pi-env-template-l");
+    expect(sandboxd(l).resources).toEqual({
+      requests: { cpu: "1", memory: "2Gi" },
+      limits: { cpu: "2", memory: "4Gi", "ephemeral-storage": "4Gi" },
+    });
+    expect(l.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("10Gi");
+    // The unsized template is the default size, as every sandbox was before sizes.
+    const unsized = named(list, "SandboxTemplate", "pi-env-template");
+    expect(sandboxd(unsized).resources).toEqual(
+      sandboxd(named(list, "SandboxTemplate", "pi-env-template-s")).resources,
+    );
+    expect(sandboxd(unsized).resources.limits).toEqual({
+      cpu: "250m",
+      memory: "256Mi",
+      "ephemeral-storage": "1Gi",
+    });
+    for (const size of ["l", "m", "s", "xl"]) {
+      const pool = named(list, "SandboxWarmPool", `pi-env-pool-${size}`);
+      expect(pool.spec.sandboxTemplateRef.name).toBe(`pi-env-template-${size}`);
+    }
+    expect(named(list, "SandboxWarmPool", "pi-env-pool").spec).toEqual({
+      replicas: 0,
+      sandboxTemplateRef: { name: "pi-env-template" },
+    });
+    // Every size keeps the claim-env policy the per-sandbox token needs (ADR 0001).
+    for (const template of ofKind(list, "SandboxTemplate")) {
+      expect(template.spec.envVarsInjectionPolicy).toBe("Allowed");
+    }
+  });
+
+  it("gives ingest the sizes and the default, and each size its own warm pool replicas", () => {
+    const list = docs([
+      ...external,
+      "--set",
+      "sandbox.defaultSize=m",
+      "--set",
+      "sandbox.sizes.m.warmPoolReplicas=2",
+    ]);
+    const env = envOf(named(list, "Deployment", "pi-ingest"));
+    expect(env.PI_SANDBOX_DEFAULT_SIZE?.value).toBe("m");
+    expect(Object.keys(JSON.parse(env.PI_SANDBOX_SIZES?.value) as object).sort()).toEqual([
+      "l",
+      "m",
+      "s",
+      "xl",
+    ]);
+    expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(2);
+    expect(named(list, "SandboxWarmPool", "pi-env-pool").spec.sandboxTemplateRef.name).toBe(
+      "pi-env-template",
+    );
+    expect(
+      sandboxd(named(list, "SandboxTemplate", "pi-env-template")).resources.limits.memory,
+    ).toBe("2Gi");
+  });
+
+  it("refuses a default size that is not defined", () => {
+    expect(() => helmTemplate(chart, [...external, "--set", "sandbox.defaultSize=huge"])).toThrow(
+      /sandbox.defaultSize "huge" is not one of sandbox.sizes/,
+    );
+  });
+});
+
 describe("the runtime guard", () => {
   const refuses = (args: string[]) =>
     expect(() => helmTemplate(chart, args)).toThrow(/gvisor|runtimeClassName/);

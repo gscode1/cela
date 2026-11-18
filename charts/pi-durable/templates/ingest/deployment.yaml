@@ -55,6 +55,10 @@ spec:
             # sessions name a shard without a route.
             - { name: PI_ORCH_SHARDS, value: {{ $shards | quote }} }
             - { name: PI_ORCH_URL, value: {{ ternary "http://pi-orchestrator:8081" "http://pi-orchestrator-{shard}:8081" (eq $shards 1) | quote }} }
+            # The sizes the chart rendered templates for (docs/decisions/0030-sandbox-sizes.md): what POST /sessions and
+            # profiles may name, and what GET /admin/sandbox-sizes lists.
+            - { name: PI_SANDBOX_SIZES, value: {{ .Values.sandbox.sizes | toJson | quote }} }
+            - { name: PI_SANDBOX_DEFAULT_SIZE, value: {{ .Values.sandbox.defaultSize | quote }} }
             # Owners (names from the api Secret, not secrets) who may call /admin/*.
             - { name: PI_API_ADMINS, value: {{ join "," .Values.api.admins | quote }} }
             {{- if .Values.console.enabled }}

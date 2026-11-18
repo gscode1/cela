@@ -1,10 +1,23 @@
+{{- /* One SandboxWarmPool per size, plus the unsized pi-env-pool on the default size (see template.yaml). */ -}}
+{{- $root := . -}}
+{{- $pools := list (dict "name" "pi-env-pool" "template" "pi-env-template" "size" .Values.sandbox.defaultSize) -}}
+{{- range $name := keys .Values.sandbox.sizes | sortAlpha -}}
+{{- $pools = append $pools (dict "name" (printf "pi-env-pool-%s" $name) "template" (printf "pi-env-template-%s" $name) "size" $name) -}}
+{{- end -}}
+{{- range $i, $p := $pools -}}
+{{- if $i }}
+---
+{{ end -}}
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
-  name: pi-env-pool
+  name: {{ $p.name }}
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "pi-durable.labels" $root | nindent 4 }}
+    pi-durable.dev/sandbox-size: {{ $p.size }}
 spec:
-  replicas: {{ .Values.sandbox.warmPoolReplicas }}
+  {{- /* The unsized pool keeps no warm Pods: they would duplicate the default size's pool. */}}
+  replicas: {{ if eq $p.name "pi-env-pool" }}0{{ else }}{{ (index $root.Values.sandbox.sizes $p.size).warmPoolReplicas }}{{ end }}
   sandboxTemplateRef:
-    name: pi-env-template
+    name: {{ $p.template }}
+{{ end -}}

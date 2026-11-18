@@ -29,6 +29,8 @@ describe("validateProfileDefinition", () => {
       instructions: "Only read.",
       modelTools: ["read"],
       tools: ["read", "bash", "read"],
+      sandboxSizes: ["l", "m", "l"],
+      sandboxSize: "s",
     });
     expect(full).toEqual({
       tools: ["read", "bash"],
@@ -39,6 +41,8 @@ describe("validateProfileDefinition", () => {
       turnBudget: 12,
       tokenBudget: 250_000,
       mcpServers: ["demo", "other"],
+      sandboxSize: "s",
+      sandboxSizes: ["l", "m"],
     });
     expect(Object.keys(full as object)).toEqual([
       "tools",
@@ -49,6 +53,8 @@ describe("validateProfileDefinition", () => {
       "turnBudget",
       "tokenBudget",
       "mcpServers",
+      "sandboxSize",
+      "sandboxSizes",
     ]);
   });
 
@@ -81,6 +87,10 @@ describe("validateProfileDefinition", () => {
     [{ tokenBudget: "5" }, "tokenBudget"],
     [{ mcpServers: ["Bad Name"] }, "mcpServers must contain only MCP server names"],
     [{ mcpServers: "demo" }, "mcpServers must be an array"],
+    [{ sandboxSize: "Big" }, "sandboxSize must be a size name"],
+    [{ sandboxSize: 3 }, "sandboxSize must be a size name"],
+    [{ sandboxSizes: "m" }, "sandboxSizes must be an array"],
+    [{ sandboxSizes: ["x".repeat(17)] }, "sandboxSizes must contain only size names"],
   ])("rejects %j", (input, message) => {
     const result = validateProfileDefinition(input);
     expect(typeof result).toBe("string");
@@ -184,6 +194,16 @@ describe("checkProfileNames", () => {
     );
     expect(checkProfileNames({ modelTools: ["grep"] }, KNOWN)).toMatch(/modelTools: "grep"/);
     expect(checkProfileNames({ mcpServers: ["nope"] }, KNOWN)).toMatch(/not in the MCP catalog/);
+  });
+
+  it("checks sandboxSize and sandboxSizes against the deployment's sizes, and refuses any without sizes", () => {
+    const sized = { ...KNOWN, sandboxSizes: ["s", "m"] };
+    expect(checkProfileNames({ sandboxSize: "m", sandboxSizes: ["s"] }, sized)).toBeUndefined();
+    expect(checkProfileNames({ sandboxSize: "xl" }, sized)).toBe(
+      'sandbox size "xl" is not defined (defined: s, m)',
+    );
+    expect(checkProfileNames({ sandboxSizes: ["s", "l"] }, sized)).toMatch(/"l" is not defined/);
+    expect(checkProfileNames({ sandboxSize: "s" }, KNOWN)).toMatch(/defines no sandbox sizes/);
   });
 
   it("the built-in names are the four coding tools", () => {

@@ -6,6 +6,8 @@ import type { ReasoningLevel } from "@/lib/api/settings";
 export const PROFILE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MCP_SERVER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+/** `SANDBOX_SIZE_NAME` (packages/session-core/src/sandbox-sizes.ts). */
+const SANDBOX_SIZE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
 const MAX_LIST = 32;
 const MAX_SKILLS = 20;
 const MAX_INSTRUCTIONS = 8_000;
@@ -32,6 +34,9 @@ export interface ProfileForm {
   skills: SkillPin[];
   repoSkills: boolean;
   repoContext: boolean;
+  /** Empty for the deployment default. */
+  sandboxSize: string;
+  sandboxSizes: string[];
 }
 
 export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
@@ -49,6 +54,8 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     skills: definition.skills ?? [],
     repoSkills: definition.repoSkills ?? false,
     repoContext: definition.repoContext ?? false,
+    sandboxSize: definition.sandboxSize ?? "",
+    sandboxSizes: definition.sandboxSizes ?? [],
   };
 }
 
@@ -77,6 +84,9 @@ export function definitionFromForm(
   if (form.repoSkills || original.repoSkills !== undefined) definition.repoSkills = form.repoSkills;
   if (form.repoContext || original.repoContext !== undefined)
     definition.repoContext = form.repoContext;
+  if (form.sandboxSize !== "") definition.sandboxSize = form.sandboxSize;
+  if (form.sandboxSizes.length > 0 || original.sandboxSizes !== undefined)
+    definition.sandboxSizes = form.sandboxSizes;
   return definition;
 }
 
@@ -133,6 +143,14 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
     (servers.length > MAX_LIST || !servers.every((name) => MCP_SERVER_NAME.test(name)))
   )
     problems.push("mcpServers must be an array of MCP server names");
+  if (definition.sandboxSize !== undefined && !SANDBOX_SIZE_NAME.test(definition.sandboxSize))
+    problems.push("sandboxSize must be a size name");
+  const sizes = definition.sandboxSizes;
+  if (
+    sizes !== undefined &&
+    (sizes.length > MAX_LIST || !sizes.every((name) => SANDBOX_SIZE_NAME.test(name)))
+  )
+    problems.push("sandboxSizes must be an array of size names");
   if (definition.skills !== undefined && definition.skills.length > MAX_SKILLS)
     problems.push(`skills must be an array of at most ${String(MAX_SKILLS)} entries`);
   problems.push(...readProblems(definition));
@@ -246,7 +264,9 @@ export function isEmptyForm(form: ProfileForm): boolean {
     form.mcpServers.length === 0 &&
     form.skills.length === 0 &&
     !form.repoSkills &&
-    !form.repoContext
+    !form.repoContext &&
+    form.sandboxSize === "" &&
+    form.sandboxSizes.length === 0
   );
 }
 

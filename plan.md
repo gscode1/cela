@@ -301,6 +301,7 @@ packages/
   sandbox-env/      # pi-env bridge over commands.start(): broker, relay, start gate
   orchestrator/     # Pi Durable host, sandbox lifecycle, one process per shard
   ingest/           # session API (stateless HTTP front, 2 replicas)
+  mcp/              # stdio MCP adapter for coding agents, a session-API client only (ADR 0031)
   session-core/     # shared schema, migrations, settings, profiles, skills, MCP catalog, auth
   egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit

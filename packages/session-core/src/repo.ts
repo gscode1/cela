@@ -64,7 +64,7 @@ export function chooseRepo(body: Record<string, unknown>): RepoSpec | string | u
 
 /**
  * Returns an error message, or undefined when `pattern` is a repo allowlist entry: `*` (every repository the GitHub App
- * can reach), `owner/*` (every repository of that owner) or an exact `owner/name` (docs/decisions/0030-repo-allowlist.md).
+ * can reach), `owner/*` (every repository of that owner) or an exact `owner/name` (docs/decisions/0032-repo-allowlist.md).
  */
 export function repoPatternError(pattern: string): string | undefined {
   if (pattern === "*") return undefined;

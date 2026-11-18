@@ -70,6 +70,14 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if ne .Values.agentSandbox.mode "external" -}}
 {{- fail "agentSandbox.mode must be external: install or check the controller with hack/agent-sandbox.sh (bundled mode comes in a later slice)" -}}
 {{- end -}}
+{{- if not (hasKey .Values.sandbox.sizes .Values.sandbox.defaultSize) -}}
+{{- fail (printf "sandbox.defaultSize %q is not one of sandbox.sizes (%s)" .Values.sandbox.defaultSize (keys .Values.sandbox.sizes | sortAlpha | join ", ")) -}}
+{{- end -}}
+{{- range $name, $_ := .Values.sandbox.sizes -}}
+{{- if not (regexMatch "^[a-z][a-z0-9-]{0,15}$" $name) -}}
+{{- fail (printf "sandbox.sizes: %q is not a size name (1 to 16 of [a-z0-9-], starting with a letter)" $name) -}}
+{{- end -}}
+{{- end -}}
 {{- $db := .Values.database.external -}}
 {{- if not $db.existingSecret -}}
 {{- fail "database.external.existingSecret is required: a Secret in the release namespace holding the Postgres connection URI" -}}

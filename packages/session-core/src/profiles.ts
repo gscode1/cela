@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
+import { SANDBOX_SIZE_NAME } from "./sandbox-sizes.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
 import { isSkillDigest, pinSkillRefs, SKILL_LIMITS, SKILL_NAME } from "./skills.js";
@@ -56,6 +57,8 @@ const KEYS = [
   "skills",
   "repoSkills",
   "repoContext",
+  "sandboxSize",
+  "sandboxSizes",
 ] as const;
 
 /**
@@ -97,6 +100,10 @@ export interface ProfileDefinition {
    * (docs/decisions/0015-repo-context.md). Absent: off. Ignored for a session without a repo.
    */
   repoContext?: boolean;
+  /** The sandbox size of this profile's sessions (docs/decisions/0030-sandbox-sizes.md); absent: the deployment default. */
+  sandboxSize?: string;
+  /** Sizes a caller may ask for in `POST /sessions`, besides the default; absent: none, only the default. */
+  sandboxSizes?: string[];
 }
 
 export interface ProfileRef {
@@ -240,6 +247,17 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     if (typeof body.repoContext !== "boolean") return "repoContext must be true or false";
     definition.repoContext = body.repoContext;
   }
+  if (body.sandboxSize !== undefined) {
+    if (typeof body.sandboxSize !== "string" || !SANDBOX_SIZE_NAME.test(body.sandboxSize)) {
+      return `sandboxSize must be a size name (${SANDBOX_SIZE_NAME.source})`;
+    }
+    definition.sandboxSize = body.sandboxSize;
+  }
+  if (body.sandboxSizes !== undefined) {
+    const sizes = nameList("sandboxSizes", body.sandboxSizes, SANDBOX_SIZE_NAME, "size");
+    if (typeof sizes === "string") return sizes;
+    definition.sandboxSizes = sizes;
+  }
   return ordered(definition);
 }
 
@@ -298,7 +316,13 @@ export function profileDefinitionsEqual(a: ProfileDefinition, b: ProfileDefiniti
  */
 export function checkProfileNames(
   definition: ProfileDefinition,
-  known: { tools: readonly string[]; mcpServers: readonly string[]; models?: readonly string[] },
+  known: {
+    tools: readonly string[];
+    mcpServers: readonly string[];
+    models?: readonly string[];
+    /** The deployment's sandbox sizes; undefined (no sizes) refuses any size a profile names. */
+    sandboxSizes?: readonly string[];
+  },
 ): string | undefined {
   if (
     definition.defaultModel !== undefined &&
@@ -315,6 +339,17 @@ export function checkProfileNames(
   }
   const missing = definition.mcpServers?.find((name) => !known.mcpServers.includes(name));
   if (missing !== undefined) return `mcpServers: "${missing}" is not in the MCP catalog`;
+  const sizes = known.sandboxSizes ?? [];
+  for (const size of [
+    ...(definition.sandboxSize === undefined ? [] : [definition.sandboxSize]),
+    ...(definition.sandboxSizes ?? []),
+  ]) {
+    if (!sizes.includes(size)) {
+      return sizes.length === 0
+        ? `sandbox size "${size}": this deployment defines no sandbox sizes`
+        : `sandbox size "${size}" is not defined (defined: ${sizes.join(", ")})`;
+    }
+  }
   return undefined;
 }
 
@@ -479,7 +514,7 @@ export async function putProfile(
   name: string,
   input: PutProfileInput,
   by: string,
-  known: { tools: readonly string[]; mcpServers: readonly string[]; models?: readonly string[] },
+  known: Parameters<typeof checkProfileNames>[1],
 ): Promise<PutProfileResult> {
   const nameError = profileNameError(name);
   if (nameError !== undefined) return { ok: false, message: nameError };

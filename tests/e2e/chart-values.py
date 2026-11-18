@@ -59,7 +59,7 @@ def main() -> None:
                 "adminKeySecret": "pi-onecli-admin",
             },
         },
-        # Only REPO_A: phase4c's sessions clone it, REPO_B is the repository its token must not reach (ADR 0030).
+        # Only REPO_A: phase4c's sessions clone it, REPO_B is the repository its token must not reach (ADR 0032).
         "github": {
             "app": {"existingSecret": "pi-github-app"},
             "repoAllowlist": [os.environ["REPO_A"]] if os.environ.get("REPO_A") else [],

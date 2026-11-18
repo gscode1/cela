@@ -107,6 +107,7 @@ describe("SessionService creates the conversation with the catalog", () => {
     workspaceReadyAt: null,
     profile: { name: "docs", version: 1, snapshot },
     usage: null,
+    sandboxSize: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

@@ -45,7 +45,7 @@ export interface Settings {
   tokenBudget: number | null;
   /**
    * The repositories a session may clone: `*`, `owner/*` or `owner/name`, lowercase. Empty refuses every repo session
-   * (docs/decisions/0030-repo-allowlist.md).
+   * (docs/decisions/0032-repo-allowlist.md).
    */
   repoAllowlist: string[];
 }

@@ -20,6 +20,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   skills: "Skills",
   repoSkills: "Skills from the repository",
   repoContext: "Repository instructions (AGENTS.md)",
+  sandboxSize: "Sandbox size",
+  sandboxSizes: "Sizes a session may ask for",
   enabledForNew: "Available to new sessions",
   // MCP servers
   url: "URL",

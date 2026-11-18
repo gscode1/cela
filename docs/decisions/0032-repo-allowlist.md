@@ -1,4 +1,4 @@
-# 0030: Repo allowlist
+# 0032: Repo allowlist
 
 Status: accepted, 2026-11-18 (issue #197). Amends [0008](0008-settings-in-postgres.md).
 
@@ -12,7 +12,7 @@ anyone reading private code or opening pull requests.
 
 ## Decision
 
-- **A `repoAllowlist` setting** (`inbox.settings.repo_allowlist`, `jsonb`, migration `022_repo_allowlist.sql`).
+- **A `repoAllowlist` setting** (`inbox.settings.repo_allowlist`, `jsonb`, migration `023_repo_allowlist.sql`).
   - **Entries.** Each entry is `owner/name`, `owner/*` (every repository of that owner) or `*` (every repository the App
     can reach). At most 200, stored lowercase and deduplicated, matched case-insensitively like GitHub names.
   - **Seed and changes.** It is seeded from `PI_REPO_ALLOWLIST` (comma-separated; chart value `github.repoAllowlist`).
