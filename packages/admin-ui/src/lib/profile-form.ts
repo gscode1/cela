@@ -4,6 +4,15 @@ import type { ReasoningLevel } from "@/lib/api/settings";
 
 /** `PROFILE_NAME` (packages/session-core/src/profiles.ts). */
 export const PROFILE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** `profileNameError` (packages/session-core/src/profiles.ts): the message for a name that cannot be a profile's. */
+export function profileNameProblem(name: string): string | undefined {
+  if (!PROFILE_NAME.test(name)) {
+    return "Names start with a letter and use lowercase letters, digits and hyphens, at most 32 characters.";
+  }
+  // `/profiles/new` is the create route.
+  return name === "new" ? 'The name "new" is reserved.' : undefined;
+}
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MCP_SERVER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** `SANDBOX_SIZE_NAME` (packages/session-core/src/sandbox-sizes.ts). */

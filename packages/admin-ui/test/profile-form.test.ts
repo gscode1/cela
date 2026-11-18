@@ -7,6 +7,7 @@ import {
   definitionProblems,
   executableSkillsWithoutBash,
   formFromDefinition,
+  profileNameProblem,
   readProblems,
   referenceProblems,
   withoutBrokenReferences,
@@ -388,5 +389,14 @@ describe("settings form", () => {
     expect(settingsProblems({ ...ok, tokenBudget: 0 })).toHaveLength(1);
     expect(settingsProblems({ ...ok, tokenBudget: 1.5 })).toHaveLength(1);
     expect(settingsProblems({ ...ok, defaultProfile: "" })).toHaveLength(1);
+  });
+});
+
+describe("profileNameProblem", () => {
+  it("accepts a valid name and refuses a malformed one and the reserved create route", () => {
+    expect(profileNameProblem("research")).toBeUndefined();
+    expect(profileNameProblem("newer")).toBeUndefined();
+    expect(profileNameProblem("Bad Name")).toMatch(/lowercase letters/);
+    expect(profileNameProblem("new")).toBe('The name "new" is reserved.');
   });
 });

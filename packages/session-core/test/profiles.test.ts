@@ -290,6 +290,12 @@ describe("putProfile versioning", () => {
       expect(result.ok ? "" : result.message).toMatch(message);
     }
     expect((await putProfile(pool, "Bad Name", { definition: {} }, "a", KNOWN)).ok).toBe(false);
+    // `/profiles/new` is the admin console's create route.
+    expect(await putProfile(pool, "new", { definition: {} }, "a", KNOWN)).toEqual({
+      ok: false,
+      message: 'profile name "new" is reserved',
+    });
+    expect(db.profiles.has("new")).toBe(false);
     expect(db.profiles.has("fresh")).toBe(false);
     expect(db.versions).toHaveLength(1);
     // An update that fails validation leaves the current version.
