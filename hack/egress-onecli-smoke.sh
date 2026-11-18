@@ -23,9 +23,9 @@
 #   3. the proxy's pod label reaches the OneCLI gateway port through the NetworkPolicy and nothing else of OneCLI
 #   4. no binding: denied within 10 s and never direct; a binding again: allowed again
 #   5. session B (a rule, no binding) is denied; A's sealed row copied onto B does not open; A's token from B's Pod is refused
-#   6. tunnels: closing A's open tunnel through the proxy's admin endpoint ends a live stream (needs EGRESS_ADMIN_TOKEN, set
-#      here temporarily)
-#   7. deleting A removes its binding and rules and refuses its token within 10 s
+#   6. deleting A removes its binding and rules and refuses its token within 10 s
+# (Open tunnels are closed by the proxy itself on every snapshot, ADR 0039; hack/egress-revoke-smoke.sh checks that. The
+# admin endpoint that an earlier version of this script used to close one was removed in slice 7.)
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -151,9 +151,6 @@ cleanup() {
     driver cleanup "$s" >/dev/null 2>&1
   done
   [[ -z ${echo_allowed:-} ]] || driver disallow-host "$echo_host" >/dev/null 2>&1
-  if [[ -n ${admin_token_set:-} ]]; then
-    k set env deploy/pi-egress-proxy EGRESS_ADMIN_TOKEN- >/dev/null 2>&1
-  fi
   kubectl --context "$ctx" -n "$namespace" delete pod smoke-proxy-label --ignore-not-found --wait=false >/dev/null 2>&1
   rm -rf "$scratch"
   exit $rc
@@ -333,50 +330,8 @@ check "A's sealed row copied onto B's session id does not open (bound to the ses
 check "A's egress token used from B's Pod is refused" "$(printf '%s\n' "$url_a" | one "$pod_b" api.github.com)" "api.github.com HTTP/1.1 407"
 check "A's own token from A's Pod still works" "$(printf '%s\n' "$url_a" | one "$pod_a" api.github.com)" "api.github.com HTTP/1.[01] 200"
 
-# ------------------------------------------------------------------ 6. kill a live tunnel
-echo "## 6. closing a live tunnel on the OneCLI path"
-admin_token=$(openssl rand -hex 16)
-k set env deploy/pi-egress-proxy "EGRESS_ADMIN_TOKEN=$admin_token" >/dev/null
-admin_token_set=1
-k rollout status deploy/pi-egress-proxy --timeout=180s >/dev/null
-sleep 5
-echo "(the admin endpoint listens on each proxy pod's loopback: reached through kubectl port-forward)"
-ports=()
-for pod in $(k get pods -l app.kubernetes.io/name=pi-egress-proxy -o jsonpath='{.items[*].metadata.name}'); do
-  port=$((20000 + RANDOM % 10000))
-  k port-forward "pod/$pod" "$port:3129" >"$scratch/pf-$pod.log" 2>&1 &
-  watchers+=($!)
-  ports+=("$port")
-done
-sleep 3
-# A response of 10 s (httpbingo drips at most 8 s of payload) through OneCLI; closing the session's tunnels on both replicas ends it early.
-start_stream=$(date +%s)
-(printf '%s\n' "$url_a" | nfetch "$pod_a" 1 "https://$echo_host/drip?duration=8&numbytes=8" >"$scratch/stream.log" 2>&1) &
-stream=$!
-sleep 4
-closed=0
-for port in "${ports[@]}"; do
-  res=$(curl -s -m 5 -X POST -H "Authorization: Bearer $admin_token" "http://127.0.0.1:$port/admin/sessions/$sa/close-tunnels" || true)
-  n=$(sed -n 's/.*"closed":\([0-9]*\).*/\1/p' <<<"$res")
-  closed=$((closed + ${n:-0}))
-done
-wait "$stream" || true
-took=$(($(date +%s) - start_stream))
-if ((closed >= 1 && took < 8)) && grep -q "ERROR" "$scratch/stream.log"; then
-  ok "closing the session's tunnel ($closed closed) ended a 10 s response through OneCLI after $took s: $(grep -E 'ERROR|STATUS' "$scratch/stream.log" | tr '\n' ' ')"
-else
-  echo "note: tunnel kill not proven (closed=$closed, response took ${took}s): $(grep -E 'ERROR|STATUS' "$scratch/stream.log" | tr '\n' ' ')"
-  tunnel_unproven=1
-fi
-for w in "${watchers[@]}"; do kill "$w" 2>/dev/null || true; done
-watchers=()
-k set env deploy/pi-egress-proxy EGRESS_ADMIN_TOKEN- >/dev/null
-admin_token_set=""
-k rollout status deploy/pi-egress-proxy --timeout=180s >/dev/null
-sleep 5
-
-# ------------------------------------------------------------------ 7. deleting A
-echo "## 7. deleting session A revokes its binding"
+# ------------------------------------------------------------------ 6. deleting A
+echo "## 6. deleting session A revokes its binding"
 printf '%s\n' "$url_a" | watch "$pod_a" api.github.com "$scratch/revoke.log" &
 watchers+=($!)
 sleep 4
@@ -398,5 +353,4 @@ driver cleanup "$sa" >/dev/null
 ok "the OneCLI agent and secrets of A are removed (the sweep does the same for a session that is gone)"
 echo
 [[ -z ${gw_log_unproven:-} ]] || echo "unproven: OneCLI's gateway log line naming the agent"
-[[ -z ${tunnel_unproven:-} ]] || echo "unproven: tunnel kill on the live path"
 echo "egress-onecli-smoke: all checks passed"
