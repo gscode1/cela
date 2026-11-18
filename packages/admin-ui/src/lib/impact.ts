@@ -30,5 +30,9 @@ export function profileImpact(changed: readonly string[]): string[] {
     );
   if (changed.includes("turnBudget")) notes.push(TURN_BUDGET);
   if (changed.includes("tokenBudget")) notes.push(PROFILE_TOKEN_BUDGET);
+  if (changed.includes("egressRuleSets"))
+    notes.push(
+      "A running session keeps the rule sets of the version it started with; edits to the rules inside a set reach every session that uses it.",
+    );
   return notes;
 }

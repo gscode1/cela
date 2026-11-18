@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import type { RuleSetSummary } from "@/lib/api/egress";
 import type {
   McpServerRef,
   SandboxSize,
@@ -297,6 +298,94 @@ export function McpPicker({
           <span className="font-mono break-all">{name}</span>
           <span className="text-muted-foreground">
             It is not registered any more, so a new version cannot list it.
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              onChange(selected.filter((entry) => entry !== name));
+            }}
+          >
+            Remove {name}
+          </Button>
+        </div>
+      ))}
+    </Fieldset>
+  );
+}
+
+/**
+ * The egress rule sets a profile uses (docs/decisions/0034-egress-rules.md). A set that applies to all sessions is
+ * already included for every profile, so it cannot be added again; naming one that does not exist is refused by the
+ * API, so a deleted one shows with a way to drop it.
+ */
+export function EgressRuleSetPicker({
+  selected,
+  catalog,
+  onChange,
+}: {
+  selected: string[];
+  catalog: RuleSetSummary[] | undefined;
+  onChange: (selected: string[]) => void;
+}) {
+  const missing =
+    catalog === undefined ? [] : selected.filter((name) => !catalog.some((s) => s.name === name));
+  const empty = catalog?.length === 0;
+  return (
+    <Fieldset
+      legend={fieldLabel("egressRuleSets")}
+      {...(empty
+        ? {}
+        : {
+            hint: "Hosts the sandbox may reach, on top of the sets that apply to every session.",
+          })}
+    >
+      {empty && (
+        <p className="text-sm text-muted-foreground">
+          No rule sets yet.{" "}
+          <Link className="underline underline-offset-4" to="/egress">
+            Create one
+          </Link>
+        </p>
+      )}
+      {(catalog ?? []).map((set) => {
+        const chosen = selected.includes(set.name);
+        return (
+          <div key={set.name} className="flex flex-wrap items-center gap-2 text-sm">
+            <Checkbox
+              id={`egress-set-${set.name}`}
+              checked={chosen}
+              disabled={set.appliesToAll && !chosen}
+              onChange={(event) => {
+                onChange(
+                  event.target.checked
+                    ? [...selected, set.name]
+                    : selected.filter((entry) => entry !== set.name),
+                );
+              }}
+            />
+            <Label htmlFor={`egress-set-${set.name}`}>{set.name}</Label>
+            <span className="text-muted-foreground">
+              {set.ruleCount} {set.ruleCount === 1 ? "rule" : "rules"}
+            </span>
+            {set.appliesToAll && (
+              <Badge variant="warning">
+                {chosen ? "Applies to all sessions" : "Already included: applies to all sessions"}
+              </Badge>
+            )}
+          </div>
+        );
+      })}
+      {missing.map((name) => (
+        <div
+          key={name}
+          className="flex flex-wrap items-center gap-2 text-sm"
+          data-testid="missing-rule-set"
+        >
+          <Badge variant="destructive">deleted rule set</Badge>
+          <span className="font-mono break-all">{name}</span>
+          <span className="text-muted-foreground">
+            It does not exist any more, so a new version cannot list it.
           </span>
           <Button
             size="sm"

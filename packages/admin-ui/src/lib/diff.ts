@@ -26,6 +26,9 @@ function showProfile(
     }
     case "mcpServers":
       return list(definition.mcpServers ?? [], "none");
+    case "egressRuleSets":
+      // Order carries no meaning, so a reordering is not a change.
+      return list([...(definition.egressRuleSets ?? [])].sort(), "only the sets that apply to all");
     case "sandboxSize":
       return definition.sandboxSize ?? "global default";
     case "sandboxSizes":
@@ -58,6 +61,7 @@ const DEFINITION_FIELDS = [
   "turnBudget",
   "tokenBudget",
   "mcpServers",
+  "egressRuleSets",
   "skills",
   "repoSkills",
   "repoContext",

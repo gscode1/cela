@@ -8,6 +8,7 @@ export const SECTIONS = [
   { path: "profiles", title: "Session profiles" },
   { path: "mcp-servers", title: "MCP servers" },
   { path: "skills", title: "Skills" },
+  { path: "egress", title: "Egress" },
   { path: "status", title: "Isolation" },
 ] as const;
 

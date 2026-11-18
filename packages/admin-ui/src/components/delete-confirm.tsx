@@ -61,6 +61,7 @@ export function DeleteConfirm({
   kind,
   name,
   contents,
+  nameReusable = false,
   blocked = false,
   note,
   actions,
@@ -73,6 +74,8 @@ export function DeleteConfirm({
   name: string;
   /** What goes with it, for the warning: "all its versions". */
   contents: string;
+  /** The name may be used again after the delete (a rule set); the default says it never can. */
+  nameReusable?: boolean;
   blocked?: boolean;
   note?: ReactNode;
   /** Other ways out, such as "Disable instead". */
@@ -92,8 +95,8 @@ export function DeleteConfirm({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <p className="text-sm">
-          This removes the {kind} {name} and {contents} for good. It cannot be undone, and the name{" "}
-          {name} can never be used again.
+          This removes the {kind} {name} and {contents} for good. It cannot be undone
+          {nameReusable ? "." : `, and the name ${name} can never be used again.`}
         </p>
         {note}
         {error?.blockedBy !== undefined && (

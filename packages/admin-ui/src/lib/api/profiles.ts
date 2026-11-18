@@ -21,6 +21,8 @@ export interface ProfileDefinition {
   turnBudget?: number;
   tokenBudget?: number;
   mcpServers?: string[];
+  /** Names of egress rule sets; the sets that apply to all sessions come on top (ADR 0034). */
+  egressRuleSets?: string[];
   skills?: SkillPin[];
   repoSkills?: boolean;
   repoContext?: boolean;

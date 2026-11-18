@@ -17,6 +17,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   tools: "Tools",
   modelTools: "Tools the model can call",
   mcpServers: "MCP servers",
+  egressRuleSets: "Egress rule sets",
   skills: "Skills",
   repoSkills: "Skills from the repository",
   repoContext: "Repository instructions (AGENTS.md)",
