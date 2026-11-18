@@ -186,6 +186,16 @@ describe("McpAccess: a session's MCP identity", () => {
     expect(await tokenOf(await access.forConversation(2, DOCS))).toMatch(/^aoc_/);
   });
 
+  it("provisions before the first turn, and only for a profile that names a credentialed server", async () => {
+    const sessions = [session(A, 1, ["docs"]), session(B, 2, ["open"]), session(C, 3, null)];
+    const { fake, access } = setUp(sessions);
+    for (const s of sessions) await access.provision(s);
+    expect([...fake.agents.values()].map((a) => a.identifier)).toEqual([mcpAgentIdentifier(A)]);
+    // Again: nothing new is created, and the call finds the agent it made.
+    await access.provision(sessions[0] as SessionRow);
+    expect(fake.calls.filter((c) => c === "POST /v1/agents")).toHaveLength(1);
+  });
+
   it("makes no OneCLI call for a session whose profile names no MCP server", async () => {
     const plain = session(C, 3, ["not-a-server"].slice(1));
     const { fake, access } = setUp([plain]);

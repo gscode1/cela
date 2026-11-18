@@ -191,7 +191,11 @@ export class McpAccess {
     if (!servers.some((server) => server.name === spec.name)) {
       throw new McpNotGrantedError(`MCP server ${spec.name} is not a credentialed server now`);
     }
-    // One provisioning at a time per session, so concurrent calls share the agent.
+    return (await this.#ensure(session, servers)).stable;
+  }
+
+  /** One provisioning at a time per session, so concurrent calls share the agent. */
+  #ensure(session: SessionRow, servers: readonly McpServerConfig[]): Promise<Identity> {
     let running = this.#inFlight.get(session.id);
     if (running === undefined) {
       running = this.#identity(
@@ -203,7 +207,17 @@ export class McpAccess {
       ).finally(() => this.#inFlight.delete(session.id));
       this.#inFlight.set(session.id, running);
     }
-    return (await running).stable;
+    return running;
+  }
+
+  /**
+   * Before the session's first turn: creates its agent and proves the grants (see `forConversation`). A session whose
+   * profile names no credentialed server holds nothing and makes no OneCLI call.
+   */
+  async provision(session: SessionRow): Promise<void> {
+    const servers = this.credentialedFor(session);
+    if (servers.length === 0) return;
+    await this.#ensure(session, servers);
   }
 
   /** The `fetch` for listing the tools of a credentialed server (its own agent, its one secret). */

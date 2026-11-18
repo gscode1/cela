@@ -199,6 +199,13 @@
           "type": "string",
           "pattern": "^[a-z0-9-]{1,39}-$"
         },
+        "hostRules": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reconcile": { "type": "boolean" }
+          }
+        },
         "bundled": {
           "type": "object",
           "additionalProperties": false,

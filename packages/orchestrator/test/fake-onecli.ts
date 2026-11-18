@@ -154,7 +154,11 @@ export class FakeOneCli {
       if (init.method === "GET")
         return reply(
           200,
-          [...this.secrets.values()].map((s) => ({ id: s.id, name: s.name, hostPattern: s.hostPattern })),
+          [...this.secrets.values()].map((s) => ({
+            id: s.id,
+            name: s.name,
+            hostPattern: s.hostPattern,
+          })),
         );
       const secretId = `sec-${String(++this.#seq).padStart(20, "0")}`;
       this.secrets.set(secretId, {
