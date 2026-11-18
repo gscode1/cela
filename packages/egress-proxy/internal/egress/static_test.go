@@ -1,6 +1,3 @@
-// Package egress is the session egress proxy: Stripe Smokescreen's CONNECT
-// handling plus our token-to-session mapping, per-session ACL, a chained
-// upstream (OneCLI) and a tunnel registry.
 package egress
 
 import (
@@ -13,36 +10,9 @@ import (
 	"strings"
 )
 
-// Route says how a tunnel leaves the proxy.
-type Route string
-
-const (
-	// RouteDirect dials the origin itself, after Smokescreen's address checks.
-	RouteDirect Route = "direct"
-	// RouteOneCLI chains to the fixed OneCLI upstream with the session's own agent token.
-	RouteOneCLI Route = "onecli"
-)
-
-// Principal is what an egress token stands for. OneCLIToken is the session's
-// OneCLI agent token; it never reaches the sandbox.
-type Principal struct {
-	Session     string
-	OneCLIToken string
-}
-
-// Principals maps an egress token (the secret the sandbox holds) to a Principal.
-// The spike uses a static file; slice 4 replaces it with Postgres (token hash
-// lookup) behind this same interface.
-type Principals interface {
-	Lookup(egressToken string) (Principal, bool)
-	// OneCLIToken returns the upstream token bound to a session, if any.
-	OneCLIToken(session string) (string, bool)
-}
-
-// Policy decides which hosts a session may reach and by which route. Deny by default.
-type Policy interface {
-	Route(session, host string, port int) (Route, bool)
-}
+// Static is a fixed set of principals and per-session host rules, for tests of the proxy's CONNECT handling, token
+// lookup and OneCLI chaining. It judges names only (the addresses are ignored), so a test can reach a loopback origin.
+// The production authorizer is Rules (store.go).
 
 // HostRule allows host (exact, or "*.suffix" for subdomains only) on the listed
 // ports (empty means 443 only) via Route.
@@ -64,7 +34,7 @@ type StaticPrincipal struct {
 	OneCLIToken string `json:"onecliToken,omitempty"`
 }
 
-// Static implements Principals and Policy from a StaticConfig.
+// Static implements Principals and Authorizer from a StaticConfig.
 type Static struct {
 	byHash map[string]Principal
 	bySess map[string]Principal
@@ -130,6 +100,20 @@ func (s *Static) Lookup(egressToken string) (Principal, bool) {
 	return p, ok
 }
 
+func (s *Static) BySession(session string) (Principal, bool) {
+	p, ok := s.bySess[session]
+	return p, ok
+}
+
+// Authorize judges by name: the session's first matching rule decides.
+func (s *Static) Authorize(p Principal, host string, port int, _ []string) Decision {
+	route, ok := s.Route(p.Session, host, port)
+	if !ok {
+		return Decision{Kind: KindDefaultDeny, Reason: "host not allowed for this session"}
+	}
+	return Decision{Allow: true, Route: route, Kind: KindAllowed, Reason: "allowed, route " + string(route)}
+}
+
 func (s *Static) OneCLIToken(session string) (string, bool) {
 	p, ok := s.bySess[session]
 	if !ok || p.OneCLIToken == "" {
@@ -143,7 +127,7 @@ func (s *Static) OneCLIToken(session string) (string, bool) {
 func (s *Static) Route(session, host string, port int) (Route, bool) {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	for _, r := range s.rules[session] {
-		if !hostMatches(r.Host, host) || !portAllowed(r.Ports, port) {
+		if !staticHostMatches(r.Host, host) || !portAllowed(r.Ports, port) {
 			continue
 		}
 		return r.Route, true
@@ -151,7 +135,7 @@ func (s *Static) Route(session, host string, port int) (Route, bool) {
 	return "", false
 }
 
-func hostMatches(pattern, host string) bool {
+func staticHostMatches(pattern, host string) bool {
 	pattern = strings.ToLower(pattern)
 	if suffix, ok := strings.CutPrefix(pattern, "*."); ok {
 		return strings.HasSuffix(host, "."+suffix)
