@@ -102,13 +102,18 @@ api() { # METHOD PATH [JSON] -> the body; fails unless the status is 2xx
   [[ $status == 2?? ]] || fail "admin API $1 $2 answered $status" "$(tail -n +2 <<<"$out")"
   tail -n +2 <<<"$out"
 }
-status_of() { api_raw "$@" | head -1; } # METHOD PATH [JSON] -> the status code only
+status_of() { # METHOD PATH [JSON] -> the status code only
+  local out
+  out=$(api_raw "$@") || fail "admin API call $1 $2 failed" "$out"
+  head -1 <<<"$out"
+}
 jq_() { node -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); const f = new Function("j", "return " + process.argv[1]); const v = f(j); console.log(typeof v === "object" ? JSON.stringify(v) : String(v))' "$1"; }
 client_js=$(cat "$root/hack/kind-client.mjs")
 kc() { k exec deploy/pi-ingest -c ingest -- node --input-type=module -e "$client_js" "$1" "$owner" "${@:2}"; }
 script_json() { node -e 'console.log(JSON.stringify({ steps: [{ bash: process.argv[2], timeout: 170 }], final: process.argv[1] }))' "$1" "$2"; }
-# sandbox SESSION MARKER BASH -> the tool output of one tool call in that session's sandbox
-sandbox() { kc ask "$1" "$(script_json "$2" "$3")" "$2" 600; }
+# sandbox SESSION MARKER BASH -> the tool output of one tool call in that session's sandbox. The client replays the
+# session's earlier tool results too, so only the last `TOOL` line, the call's own, is kept.
+sandbox() { kc ask "$1" "$(script_json "$2" "$3")" "$2" 600 | grep '^TOOL ' | tail -1; }
 claim_of() { # session -> its SandboxClaim (also the Sandbox and the Pod name)
   local claim
   claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
@@ -308,7 +313,8 @@ k rollout status deploy/pi-ingest --timeout=300s >/dev/null
 ok "no direct policy, template or warm pool is left"
 code=$(status_of PUT "/admin/profiles/smoke-nope-$run" "$def_dr")
 [[ $code == 400 ]] || fail "writing a direct profile answered $code with the gate off, wanted 400"
-check "the 400 names the gate" "$(api_raw PUT "/admin/profiles/smoke-nope-$run" "$def_dr")" 'allowDirectSandboxEgress'
+body=$(api_raw PUT "/admin/profiles/smoke-nope-$run" "$def_dr") || fail "admin API call failed" "$body"
+check "the 400 names the gate" "$body" 'allowDirectSandboxEgress'
 code=$(k exec deploy/pi-ingest -c ingest -- env OWNER="$owner" node --input-type=module -e '
 let token = "";
 for (const entry of (process.env.PI_API_TOKENS ?? "").split(/[\n,]/)) { const l = entry.trim(), at = l.indexOf(":"); if (at > 0 && l.slice(0, at) === process.env.OWNER) token = l.slice(at + 1); }
