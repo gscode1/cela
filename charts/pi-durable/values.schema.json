@@ -316,9 +316,12 @@
     "security": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowInsecureRuntime"],
+      "required": ["allowInsecureRuntime", "allowDirectSandboxEgress"],
       "properties": {
         "allowInsecureRuntime": {
+          "type": "boolean"
+        },
+        "allowDirectSandboxEgress": {
           "type": "boolean"
         }
       }

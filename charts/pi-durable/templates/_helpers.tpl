@@ -63,6 +63,9 @@ Everything that must be true for the chart to render. Schema checks come first (
 rules a schema cannot say well, and they also hold under --skip-schema-validation.
 */}}
 {{- define "pi-durable.validate" -}}
+{{- if and .Values.security.allowDirectSandboxEgress (not .Values.egressProxy.enabled) -}}
+{{- fail "security.allowDirectSandboxEgress needs egressProxy.enabled: without the egress proxy every sandbox already has the open internet (the network cutover is off), so there is no direct mode to allow (docs/decisions/0038-network-modes.md)" -}}
+{{- end -}}
 {{- $runtime := .Values.sandbox.runtimeClassName -}}
 {{- if and (ne $runtime "gvisor") (not .Values.security.allowInsecureRuntime) -}}
 {{- fail (printf "sandbox.runtimeClassName is %q, not gvisor. Sandboxes would run agent code without gVisor isolation. Set security.allowInsecureRuntime=true to accept that, or install the gvisor RuntimeClass." $runtime) -}}
@@ -259,3 +262,38 @@ the pod from starting, which is wanted: a pod that cannot verify the server must
       - { key: {{ .Values.database.tls.keyKey }}, path: tls.key }
       {{- end }}
 {{- end }}
+
+{{/*
+The network cutover (ADR 0038): with the egress proxy on, a sandbox reaches the proxy and nothing else, unless its Pod
+carries pi-durable.dev/network-mode=direct (only possible with security.allowDirectSandboxEgress). Without the proxy the
+sandbox policies are the ones from before the cutover.
+*/}}
+{{- define "pi-durable.networkCutover" -}}
+{{- if .Values.egressProxy.enabled }}true{{ end -}}
+{{- end -}}
+
+{{/* Where a direct sandbox may connect: the public internet minus every address that is ours (ADR 0038). */}}
+{{- define "pi-durable.sandboxInternetTo" -}}
+- ipBlock:
+    cidr: 0.0.0.0/0
+    except:
+      {{- range (list "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" "127.0.0.0/8") }}
+      - {{ . }}
+      {{- end }}
+      {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
+      {{- if not (contains ":" .) }}
+      - {{ . | quote }}
+      {{- end }}
+      {{- end }}
+- ipBlock:
+    cidr: "::/0"
+    except:
+      {{- range (list "fc00::/7" "fe80::/10" "::1/128") }}
+      - {{ . | quote }}
+      {{- end }}
+      {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
+      {{- if contains ":" . }}
+      - {{ . | quote }}
+      {{- end }}
+      {{- end }}
+{{- end -}}

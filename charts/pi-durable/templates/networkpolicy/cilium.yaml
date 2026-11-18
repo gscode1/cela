@@ -23,7 +23,8 @@ spec:
             - { port: "443", protocol: TCP }
             - { port: "6443", protocol: TCP }
 ---
-# DNS for every pod in the namespace, to CoreDNS only. The Cilium form of allow-dns-egress.
+# DNS for every pod in the namespace, to CoreDNS only. The Cilium form of allow-dns-egress, and like it without sandboxes
+# when the network cutover is on (ADR 0038).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -31,7 +32,13 @@ metadata:
   labels:
     {{- include "pi-durable.labels" . | nindent 4 }}
 spec:
+  {{- if include "pi-durable.networkCutover" . }}
+  endpointSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: NotIn, values: [pi-sandbox] }
+  {{- else }}
   endpointSelector: {}
+  {{- end }}
   egress:
     - toEndpoints:
         - matchLabels:

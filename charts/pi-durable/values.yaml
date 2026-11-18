@@ -133,6 +133,11 @@ security:
   # Acknowledges that the sandbox runtime is not gVisor. The orchestrator refuses to start without it too
   # (PI_ALLOW_INSECURE_RUNTIME) and reports the configured and the observed runtime in GET /admin/status.
   allowInsecureRuntime: false
+  # Lets a profile choose `networkMode: direct` (docs/decisions/0038-network-modes.md): its sandboxes reach the open internet
+  # and DNS directly, with no egress rule and no audit (private, cluster, metadata and platform addresses stay blocked).
+  # Off (the default): the chart renders no direct template, pool or policy, and the API refuses `networkMode: direct`.
+  # Needs egressProxy.enabled: without the proxy every sandbox already has the open internet.
+  allowDirectSandboxEgress: false
 
 networkPolicy:
   # cilium: also CiliumNetworkPolicies (kube-apiserver entity, FQDN rule for the GitHub App). Needs the Cilium CRDs.
@@ -256,8 +261,10 @@ github:
 
 # The egress proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md): a CONNECT proxy that allows a connection only
 # when the rules in Postgres (the admin console's Egress page) say so, on the address the host resolves to. Off by
-# default: no sandbox uses it yet (the sandbox proxy environment and the network cutover are later slices). Turn it on to
-# try it: sandboxes and the pods in `clients` can then use pi-egress-proxy.<namespace>.svc:3128.
+# default, because turning it on is the network cutover (ADR 0038): a sandbox then reaches the proxy and nothing else (no
+# DNS, no direct internet, no direct OneCLI gateway) and every connection is judged by the rules, unless its profile asks
+# for `networkMode: direct` (security.allowDirectSandboxEgress). Without it the sandbox policies stay as they were: DNS,
+# the OneCLI gateway and the public internet, directly.
 egressProxy:
   enabled: false
   replicas: 2
@@ -283,10 +290,11 @@ egressProxy:
   binding:
     existingSecret: ""
     key: key
-  # Sandboxes send every session's traffic here with a per-session token (ADR 0036, 0037). false: a request without a token is
-  # judged as anonymous (only the rule sets that apply to all); true: it is refused. A token that is unknown, revoked or
-  # used from another Pod is always refused. Turn it on with the network cutover, when nothing else may reach the proxy.
-  requireAuth: false
+  # Sandboxes send every session's traffic here with a per-session token (ADR 0036, 0037). true (the default, since the
+  # network cutover): a request without a token is refused. false: it is judged as anonymous (only the rule sets that apply
+  # to all); for a proxy that test pods in `clients` use without a token. A token that is unknown, revoked or used from
+  # another Pod is always refused.
+  requireAuth: true
   rules:
     pollInterval: 5s # a read without a notification; a rule change usually arrives at once (LISTEN)
     # After this long without a successful read the proxy denies every connection (it never allows on old rules).

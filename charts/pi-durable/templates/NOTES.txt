@@ -5,10 +5,29 @@ pi-durable is installed in namespace {{ .Release.Namespace }}: {{ .Values.orches
   Agent sandbox: {{ .Values.agentSandbox.mode }} (controller and CRDs are not managed here)
   Runtime:       {{ .Values.sandbox.runtimeClassName | default "(node default)" }}
   Network policy: {{ .Values.networkPolicy.provider }}
+{{- if .Values.egressProxy.enabled }}
+  Sandbox network: proxied (the egress proxy only: no DNS, no direct internet){{ if .Values.security.allowDirectSandboxEgress }}; direct allowed per profile{{ end }}
+{{- else }}
+  Sandbox network: direct internet and DNS for every sandbox, unfiltered and unaudited (egressProxy.enabled=false, the network cutover is off)
+{{- end }}
 {{- if ne .Values.sandbox.runtimeClassName "gvisor" }}
 
 WARNING: sandboxes do NOT run under gVisor (security.allowInsecureRuntime=true, runtime {{ .Values.sandbox.runtimeClassName | default "(node default)" | quote }}).
 Agent code runs with container isolation only. Use this for evaluation, never for untrusted code.
+{{- end }}
+{{- if .Values.security.allowDirectSandboxEgress }}
+
+WARNING: security.allowDirectSandboxEgress=true. A profile with networkMode "direct" gets sandboxes that reach the open
+internet and DNS directly: no egress rule applies and nothing is audited (private, cluster, metadata and platform
+addresses stay blocked). The pools pi-env-direct-pool* and the policy sandbox-direct-allow-egress exist for them. Anyone
+who can write a profile can opt a session into that; direct is refused together with a repo, the onecli route and
+credentialed MCP servers. Direct sessions are counted in GET /admin/status (directSessions) and marked in the console.
+{{- end }}
+{{- if not .Values.egressProxy.enabled }}
+
+NOTICE: egressProxy.enabled=false, so the network cutover is off: every sandbox keeps DNS, the OneCLI gateway and the open
+internet directly, as before the proxy existed, and no egress rule applies. Turn the proxy on to make it the only way out
+of a sandbox (docs/network-policy.md, docs/decisions/0038-network-modes.md).
 {{- end }}
 
 WARNING: NetworkPolicies isolate sandboxes only if the cluster's CNI enforces them (Cilium, Calico, kindnet since kind

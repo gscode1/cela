@@ -1,7 +1,12 @@
 {{- /*
 Sandboxes (label app.kubernetes.io/name=pi-sandbox from the template, which sets networkPolicyManagement: Unmanaged).
-Invariant: a sandbox reaches DNS, the OneCLI gateway port and the public internet, and nothing else of ours: not the
-orchestrator, ingest, the database, the Kubernetes API, the OneCLI management API or another sandbox.
+Invariant: a sandbox never reaches ours: not the orchestrator, ingest, the database, the Kubernetes API, the OneCLI
+management API or another sandbox. What it may reach beyond that depends on the network cutover (ADR 0038):
+- egressProxy.enabled (cutover on): the egress proxy port 3128 and nothing else (sandbox-allow-egress-proxy-egress, in
+  egress-proxy.yaml): no DNS, no OneCLI gateway, no internet. Fail closed: a Pod without the mode label, or with an
+  unknown one, is a proxied sandbox. A Pod labelled pi-durable.dev/network-mode=direct (its template exists only with
+  security.allowDirectSandboxEgress) additionally gets DNS and the public internet (sandbox-direct-allow-egress).
+- no egress proxy: DNS (allow-dns-egress), the OneCLI gateway port and the public internet, as before the cutover.
 */ -}}
 # A pod-level deny for sandboxes, so removing default-deny-all cannot open them.
 apiVersion: networking.k8s.io/v1
@@ -36,9 +41,11 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 9090 }
+{{- if not (include "pi-durable.networkCutover" .) }}
 {{- if ne .Values.onecli.mode "disabled" }}
 ---
 # Egress: the OneCLI gateway port only (the management API is another port of the same pod and stays unreachable).
+# Before the network cutover only: with the egress proxy on, a sandbox reaches OneCLI through the proxy (ADR 0037).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -60,7 +67,8 @@ spec:
 # Egress: direct public internet (decision 2026-11-15: package installs for every session). Private, CGNAT,
 # link-local/metadata and loopback ranges stay blocked, so the cluster, the node network and other sandboxes remain
 # unreachable. networkPolicy.sandbox.extraEgressExcept adds operator ranges (public API endpoints, global IPv6 node/pod
-# ranges), split by address family.
+# ranges), split by address family. Only without the egress proxy: the cutover (egressProxy.enabled) ends this for every
+# sandbox but a direct one (ADR 0038).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -74,25 +82,37 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              {{- range (list "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" "127.0.0.0/8") }}
-              - {{ . }}
-              {{- end }}
-              {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
-              {{- if not (contains ":" .) }}
-              - {{ . | quote }}
-              {{- end }}
-              {{- end }}
-        - ipBlock:
-            cidr: "::/0"
-            except:
-              {{- range (list "fc00::/7" "fe80::/10" "::1/128") }}
-              - {{ . | quote }}
-              {{- end }}
-              {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
-              {{- if contains ":" . }}
-              - {{ . | quote }}
-              {{- end }}
-              {{- end }}
+        {{- include "pi-durable.sandboxInternetTo" . | nindent 8 }}
+{{- else if .Values.security.allowDirectSandboxEgress }}
+---
+# Direct mode (security.allowDirectSandboxEgress, ADR 0038): the sandboxes whose Pod carries
+# pi-durable.dev/network-mode=direct get what every sandbox had before the cutover, DNS and the public internet, with no
+# rule and no audit. Private, CGNAT, link-local/metadata and loopback ranges and networkPolicy.sandbox.extraEgressExcept
+# stay blocked, so the cluster, the node network, the platform and other sandboxes remain unreachable. Not the OneCLI
+# gateway: a direct sandbox has no credential injection. Additive to the proxy-only policy of every sandbox.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-direct-allow-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+      pi-durable.dev/network-mode: direct
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dns.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 14 }}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        {{- include "pi-durable.sandboxInternetTo" . | nindent 8 }}
+{{- end }}
