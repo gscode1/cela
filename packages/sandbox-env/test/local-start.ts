@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import type { Readable } from "node:stream";
 import type { OutputHandlers, RemoteProcess, StartProcess } from "../src/bridge.ts";
 
 /** A fake `start` that runs the command as a local process, standing in for sandboxd. */
@@ -13,8 +14,15 @@ export function localStart(overrides?: {
     const child = spawn(overrides?.command ?? command, [...(overrides?.args ?? args)], {
       stdio: ["pipe", "pipe", "pipe"],
     });
-    child.stdout.on("data", (chunk: Buffer) => handlers.onStdout(chunk));
-    child.stderr.on("data", (chunk: Buffer) => handlers.onStderr(chunk));
+    // Like sandbox-client: read on only once the handler let the chunk go, so back-pressure reaches the process.
+    const forward = (stream: Readable, handler: (chunk: Uint8Array) => Promise<void>): void => {
+      stream.on("data", (chunk: Buffer) => {
+        stream.pause();
+        void handler(chunk).finally(() => stream.resume());
+      });
+    };
+    forward(child.stdout, (chunk) => handlers.onStdout(chunk));
+    forward(child.stderr, (chunk) => handlers.onStderr(chunk));
     child.stdin.on("error", () => undefined);
     const closed = new Promise<{ exitCode: number }>((resolve) =>
       // "close" fires after stdio ended, so every stdout chunk was delivered first, as in sandboxd.

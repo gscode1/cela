@@ -501,7 +501,10 @@ export interface PutProfileInput {
   definition?: unknown;
   /** Default true on create; a change is written to the profile row (versions are untouched). */
   enabledForNew?: unknown;
-  /** The revision the caller saw; any other (or none stored) throws `AdminConflictError` and writes nothing. */
+  /**
+   * The revision the caller saw; any other (or none stored) throws `AdminConflictError` and writes nothing.
+   * `CREATE_ONLY_REVISION` (0): the profile must not exist yet.
+   */
   expectedRevision?: number;
 }
 

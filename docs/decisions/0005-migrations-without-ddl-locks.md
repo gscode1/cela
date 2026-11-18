@@ -76,9 +76,17 @@ it is still absent, so it is never created twice. The worst case for one call is
 
 ### The pool
 
-The prepare phase uses a pool connection only for single statements, so a busy session no longer pins one. The pool of
-10 now serves eight concurrent claims (each short) plus the listener and other users; sizing it as
-`MAX_PARALLEL_SESSIONS + listener + headroom` is no longer needed for repo starts.
+The prepare phase uses a pool connection only for single statements, so a busy session no longer pins one.
+
+Correction (issue #208): the pool of 10 was too small. Three clients stay in LISTEN for good (the inbox's
+`inbox_events`, `SettingsCache` and `McpCatalogCache`), not one, which left 7 for up to `MAX_PARALLEL_SESSIONS` (8)
+claims. Code inside a claim also needs a second connection (`#delete`'s tombstone and status writes, `#failSession`,
+`ensureConversation`), so with 7 or more sessions draining at once the claims held every free connection and their
+nested queries timed out after `connectionTimeoutMillis`. The pool is now sized from its users, `INBOX_POOL_SIZE` in
+`inbox.ts`: 3 listeners + 2 x 8 drains + 5 headroom (streams, run watchers, exec-in-flight records, HTTP routes, the
+sweep) = 24 per shard. `test/inbox-pool.test.ts` checks the listener count against `main.ts` and the arithmetic. With the
+default `max_connections` of 100 this fits a few shards next to the Pi Durable connections and ingest; a deployment with
+more shards raises `max_connections` with them.
 
 ## Earlier assessment (kept for history)
 

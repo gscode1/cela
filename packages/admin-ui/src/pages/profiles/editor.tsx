@@ -21,6 +21,7 @@ import { isConflict } from "@/lib/api";
 import { putProfile } from "@/lib/api/profiles";
 import type { ProfileDefinition, ProfileDetail } from "@/lib/api/profiles";
 import { REASONING_LEVELS, valuesOf } from "@/lib/api/settings";
+import { CREATE_ONLY_REVISION } from "@/lib/conflict";
 import { diffDefinitions } from "@/lib/diff";
 import { profileImpact } from "@/lib/impact";
 import {
@@ -148,7 +149,7 @@ export function ProfileEditor({
     mutationFn: () =>
       putProfile(token ?? "", name, {
         definition,
-        ...(draft.baseRevision === undefined ? {} : { expectedRevision: draft.baseRevision }),
+        expectedRevision: draft.baseRevision ?? CREATE_ONLY_REVISION,
       }),
     onSuccess: (result) => {
       setDraft(undefined);
@@ -162,7 +163,10 @@ export function ProfileEditor({
       );
     },
     onError: (error) => {
-      if (isConflict(error)) setConflict({ message: error.message });
+      if (!isConflict(error)) return;
+      // A create has nothing to reload and compare: the name is taken (or was deleted), so the list is out of date.
+      if (creating) void queryClient.invalidateQueries({ queryKey: keys.profiles });
+      else setConflict({ message: error.message });
     },
   });
 
@@ -498,6 +502,11 @@ export function ProfileEditor({
             ))}
             {save.isError && !isConflict(save.error) && (
               <Alert variant="destructive">{save.error.message}</Alert>
+            )}
+            {save.isError && isConflict(save.error) && creating && (
+              <Alert variant="destructive">
+                Not created: {save.error.message}. Nothing was written.
+              </Alert>
             )}
             <div className="flex flex-wrap items-center gap-2">
               <Button
