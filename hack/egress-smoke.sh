@@ -208,7 +208,7 @@ api POST /admin/egress/rule-sets/smoke-all/rules '{"effect":"allow","host":"10.0
 sleep 8
 expect_via "localhost (loopback) is denied" https://localhost:443 '^407 '
 expect_via "a name that resolves to the metadata address is denied" https://169.254.169.254.nip.io:443 '^407 '
-expect_via "a name that resolves to a private address is denied by the platform-agnostic tier (10.0.0.1)" https://10.0.0.1.nip.io:443 '^(407|502|504) '
+expect_via "a name that resolves to a private address (10.0.0.1) is not connected (the wide private rule admits it in the proxy, the network layer refuses)" https://10.0.0.1.nip.io:443 '^(407|502|504) '
 expect_via "the bundled Postgres is denied (platform), * and a wide private rule notwithstanding" "http://pi-postgres.$namespace.svc.cluster.local:5432" '^407 '
 expect_via "ingest is denied (platform)" "http://pi-ingest.$namespace.svc.cluster.local:8080" '^407 '
 expect_via "the Kubernetes API is denied (platform)" https://kubernetes.default.svc.cluster.local:443 '^407 '
