@@ -78,6 +78,7 @@ async function setup(repo: SessionRow["repo"]) {
   };
   const repos = new RepoAccess({
     pool,
+    repoAllowed: () => true,
     onecli: new OneCliAdmin("http://onecli:10256", new Redacted("oc_admin"), (url, init) => {
       if (init.method === "DELETE" && url.includes("/v1/agents/") && !url.includes("/grants/"))
         order.push("agent-deleted");

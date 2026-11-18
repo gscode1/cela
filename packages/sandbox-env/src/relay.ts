@@ -71,16 +71,23 @@ async function main(): Promise<void> {
   const data = await open(socket, { nonce, role: "data", args });
 
   let failed = false;
+  // pi-env closes our stdin to stop the daemon; only after that is the broker's EOF a clean end.
+  let stdinEnded = false;
   data.on("error", () => {
     failed = true;
+  });
+  process.stdin.once("end", () => {
+    stdinEnded = true;
   });
   process.stdin.on("error", () => data.destroy());
   process.stdout.on("error", () => data.destroy());
   process.stdin.pipe(data);
   data.pipe(process.stdout, { end: false });
   // The broker ended its side (remote start failed, stream lost). pi-env's stdin stays open, so with half-open sockets
-  // `close` would never come: treat EOF as fatal, stop forwarding stdin and let the close path flush and exit.
+  // `close` would never come: treat EOF as fatal, stop forwarding stdin and let the close path flush and exit. The exit
+  // code must say so, or pi-env cannot tell the loss from a clean shutdown.
   const lost = (socket: Socket): void => {
+    if (!stdinEnded) failed = true;
     process.stdin.unpipe(data);
     socket.destroy();
     data.destroy();

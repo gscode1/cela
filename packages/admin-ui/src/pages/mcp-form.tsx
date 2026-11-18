@@ -107,8 +107,11 @@ export function McpForm({
   const [baseRevision, setBaseRevision] = useState(server?.revision);
   const [stored, setStored] = useState<McpServer | undefined>(undefined);
   const [saved, setSaved] = useState<McpServer | undefined>(undefined);
+  // What the next save is laid over: after a reload the stored server, so a value set back to what the server had when
+  // the form opened is still a change from what is stored now.
+  const base = stored ?? server;
 
-  const urlChanged = editing && !sameUrl(url, server.url);
+  const urlChanged = base !== undefined && !sameUrl(url, base.url);
   // A changed URL is a different server: the declaration has to be made again for it.
   const mustReask = urlChanged;
   const readOnlyAnswered = readOnly !== "" && (!mustReask || reasked);
@@ -130,13 +133,12 @@ export function McpForm({
   const maxOutputBytes =
     fromTyped(maxOutput, OUTPUT_FIELD.scale) ?? MCP_LIMITS.maxOutputBytes.default;
   const changes: Partial<McpFields> = {};
-  if (editing) {
+  if (base !== undefined) {
     if (urlChanged) changes.url = url;
-    if (timeoutMs !== server.timeoutMs && timeoutIssue === undefined) changes.timeoutMs = timeoutMs;
-    if (maxOutputBytes !== server.maxOutputBytes && outputIssue === undefined)
+    if (timeoutMs !== base.timeoutMs && timeoutIssue === undefined) changes.timeoutMs = timeoutMs;
+    if (maxOutputBytes !== base.maxOutputBytes && outputIssue === undefined)
       changes.maxOutputBytes = maxOutputBytes;
-    if (mustReask || (readOnly === "yes") !== server.readOnly)
-      changes.readOnly = readOnly === "yes";
+    if (mustReask || (readOnly === "yes") !== base.readOnly) changes.readOnly = readOnly === "yes";
   }
   const nothingChanged = editing && Object.keys(changes).length === 0;
 

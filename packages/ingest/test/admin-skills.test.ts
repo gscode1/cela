@@ -14,6 +14,7 @@ const seed: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: ["acme/widgets"],
 };
 
 let server: Server | undefined;

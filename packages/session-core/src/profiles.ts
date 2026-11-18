@@ -586,7 +586,11 @@ export async function putProfile(
       definition !== undefined &&
       (current === undefined || !sameDefinition(current, definition))
     ) {
-      const unknown = checkProfileNames(definition, known);
+      // ADR 0025: a model kept from the current version is not re-checked, so an operator can change another field
+      // while that model has left the catalog.
+      const modelKept =
+        current !== undefined && definition.defaultModel === current.definition.defaultModel;
+      const unknown = checkProfileNames(definition, modelKept ? withoutModels(known) : known);
       if (unknown !== undefined) return { ok: false, message: unknown };
       version += 1;
       versionCreated = true;
@@ -670,6 +674,12 @@ export async function deleteProfile(
     await client.query("delete from inbox.profiles where name = $1", [name]);
     return { lastVersion };
   });
+}
+
+function withoutModels<T extends { models?: readonly string[] }>(known: T): Omit<T, "models"> {
+  const copy = { ...known };
+  delete copy.models;
+  return copy;
 }
 
 function sameDefinition(current: StoredProfile, next: ProfileDefinition): boolean {

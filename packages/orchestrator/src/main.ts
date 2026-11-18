@@ -7,6 +7,7 @@ import {
   createPool,
   errorMessage,
   listSessionRefs,
+  repoAllowed,
   sessionByConversation,
   setExecInFlight,
   McpCatalogCache,
@@ -136,6 +137,7 @@ async function main(): Promise<void> {
   const repos = new RepoAccess({
     pool,
     onecli,
+    repoAllowed: (repo) => repoAllowed(repo, settings.repoAllowlist()),
     githubAppDir: config.repos.githubAppDir,
     gateway: config.onecli.gateway,
     caFile: config.onecli.caFile,

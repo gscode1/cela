@@ -10,6 +10,8 @@ export interface ShardStatus {
   networkPolicyCheckedAt: Date | null;
   /** What the probe saw (targets, controls, reason). Shard 0's row only. */
   networkPolicyDetail: unknown;
+  /** When an admin asked for a probe that the orchestrator has not taken yet; null when none waits. Shard 0's row only. */
+  probeRequestedAt: Date | null;
   updatedAt: Date;
 }
 
@@ -98,7 +100,7 @@ export async function readShardStatus(pool: pg.Pool): Promise<ShardStatus[]> {
     await pool.query<ShardStatus>(`select shard, configured_runtime as "configuredRuntime",
     observed_runtime as "observedRuntime", network_policy as "networkPolicy",
     network_policy_checked_at as "networkPolicyCheckedAt", network_policy_detail as "networkPolicyDetail",
-    updated_at as "updatedAt" from inbox.shard_status order by shard`);
+    probe_requested_at as "probeRequestedAt", updated_at as "updatedAt" from inbox.shard_status order by shard`);
   const probed = rows.find((row) => row.shard === PROBE_SHARD);
   if (probed === undefined) return rows;
   return rows.map((row) =>
@@ -109,6 +111,7 @@ export async function readShardStatus(pool: pg.Pool): Promise<ShardStatus[]> {
           networkPolicy: probed.networkPolicy,
           networkPolicyCheckedAt: null,
           networkPolicyDetail: null,
+          probeRequestedAt: null,
         },
   );
 }

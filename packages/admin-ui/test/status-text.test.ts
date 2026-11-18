@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isStale, runtimeName, runtimeText, summarizeIsolation } from "@/lib/api/status";
+import {
+  isStale,
+  runtimeName,
+  runtimeText,
+  statusPollInterval,
+  summarizeIsolation,
+} from "@/lib/api/status";
 import type { ShardStatus } from "@/lib/api/status";
 
 const shard = (over: Partial<ShardStatus> = {}): ShardStatus => ({
@@ -9,6 +15,7 @@ const shard = (over: Partial<ShardStatus> = {}): ShardStatus => ({
   networkPolicy: "enforced",
   networkPolicyCheckedAt: null,
   networkPolicyDetail: null,
+  probeRequestedAt: null,
   updatedAt: "2026-11-17T00:00:00.000Z",
   ...over,
 });
@@ -84,5 +91,18 @@ describe("isolation summary", () => {
     const now = new Date("2026-11-17T12:00:00Z");
     expect(isStale("2026-11-17T00:00:00Z", now)).toBe(false);
     expect(isStale("2026-11-15T00:00:00Z", now)).toBe(true);
+  });
+});
+
+describe("status polling", () => {
+  it("polls while a probe runs or a request waits for shard 0, and stops after", () => {
+    expect(statusPollInterval(undefined)).toBe(false);
+    expect(statusPollInterval([shard()])).toBe(false);
+    expect(statusPollInterval([shard({ networkPolicy: "running" })])).toBe(3_000);
+    // Re-check asked: the state is still the old verdict until the orchestrator takes the request.
+    const asked = [shard({ probeRequestedAt: "2026-11-18T00:00:00.000Z" })];
+    expect(statusPollInterval(asked)).toBe(3_000);
+    expect(summarizeIsolation(asked)).toMatchObject({ checking: true, healthy: false });
+    expect(summarizeIsolation([shard()])).toMatchObject({ checking: false, healthy: true });
   });
 });

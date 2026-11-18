@@ -49,6 +49,7 @@ export async function resetSettings(request: APIRequestContext): Promise<void> {
     defaultProfile: "coding",
     turnBudget: 100,
     tokenBudget: null,
+    repoAllowlist: [],
   });
 }
 

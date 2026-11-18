@@ -14,6 +14,7 @@ const seed: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 /** What the fake shard 0 row says to a probe request; reset by every `start`. */
@@ -53,6 +54,7 @@ async function start(
             networkPolicy: "unknown",
             networkPolicyCheckedAt: null,
             networkPolicyDetail: null,
+            probeRequestedAt: new Date(7),
             updatedAt: new Date(0),
           },
         ],
@@ -228,6 +230,27 @@ describe("admin settings", () => {
     expect((await call(base, "alice", "DELETE", "/admin/settings")).status).toBe(405);
   });
 
+  it("refuses a repo session for a repo off the allowlist with 403, and admits it once an admin lists it", async () => {
+    const { base, sessions } = await start();
+    const refused = await call(base, "bob", "POST", "/sessions", { repo: "acme/private" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'repo "acme/private" is not on the repo allowlist',
+    });
+    expect(sessions).toHaveLength(0);
+
+    expect(
+      (await call(base, "alice", "PUT", "/admin/settings", { repoAllowlist: ["acme/*"] })).status,
+    ).toBe(200);
+    expect((await call(base, "bob", "POST", "/sessions", { repo: "Acme/Private" })).status).toBe(
+      201,
+    );
+    expect((await call(base, "bob", "POST", "/sessions", { repo: "other/app" })).status).toBe(403);
+    // A plain session never needs the list.
+    expect((await call(base, "bob", "POST", "/sessions", {})).status).toBe(201);
+    expect(sessions).toHaveLength(2);
+  });
+
   it("uses a new default model and reasoning for POST /sessions at once, without a restart", async () => {
     const { base, sessions } = await start();
     const first = (await (await call(base, "bob", "POST", "/sessions", {})).json()) as Record<
@@ -330,10 +353,17 @@ describe("admin shard status", () => {
           networkPolicy: "unknown",
           networkPolicyCheckedAt: null,
           networkPolicyDetail: null,
+          probeRequestedAt: "1970-01-01T00:00:00.007Z",
           updatedAt: "1970-01-01T00:00:00.000Z",
         },
       ],
-      networkPolicy: { state: "unknown", checkedAt: null, detail: null },
+      // A request shard 0 has not taken yet: the console polls until it is gone.
+      networkPolicy: {
+        state: "unknown",
+        checkedAt: null,
+        detail: null,
+        requestedAt: "1970-01-01T00:00:00.007Z",
+      },
     });
     expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
     expect((await call(base, "alice", "GET", "/admin/status/extra")).status).toBe(404);

@@ -33,7 +33,7 @@ sessions_file=$work/sessions
 repo_session_file=$work/repo-session
 : >"$sessions_file"
 run_id=$(date +%s)
-branch="agent/pi-e2e-$run_id" # the agent ruleset (hack/agent-ruleset.sh) only allows agent/**
+branch="agent/pi-e2e-$run_id" # any name works (ADR 0027); agent/ keeps test repos that still carry the old ruleset working
 
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
@@ -180,6 +180,8 @@ t_no_repo() {
   assert_jq "an option-like branch is refused" "$out" '.status==400'
   out=$(api alice POST /sessions '{"repo":"a/../b"}')
   assert_jq "a traversal is refused" "$out" '.status==400'
+  out=$(api alice POST /sessions '{"repo":"pi-e2e-not-listed/b"}')
+  assert_jq "a repo off the allowlist is refused (ADR 0032)" "$out" '.status==403'
 }
 
 t_clone_push() {

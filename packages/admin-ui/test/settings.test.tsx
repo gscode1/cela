@@ -47,6 +47,7 @@ describe("settings editor", () => {
       defaultProfile: "coding",
       turnBudget: 150,
       tokenBudget: null,
+      repoAllowlist: [],
       expectedRevision: 1,
     });
     expect(screen.queryByText("Review before saving")).not.toBeInTheDocument();
@@ -79,6 +80,27 @@ describe("settings editor", () => {
     await userEvent.type(screen.getByLabelText("Token budget"), "1.5");
     expect(await screen.findByText(/tokenBudget must be null or an integer/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+  });
+
+  it("edits the repo allowlist one entry per line, warns while it is empty, and refuses a bad entry", async () => {
+    const admin = createFakeAdmin();
+    await open(admin);
+    const repos = screen.getByLabelText("Allowed repositories");
+    expect(repos).toHaveValue("");
+    expect(screen.getByTestId("repo-allowlist-empty")).toHaveTextContent(/refused/);
+
+    await userEvent.type(repos, "acme/he*");
+    expect(await screen.findByText(/is not \*, owner\/\* or owner\/name/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+
+    await userEvent.clear(repos);
+    await userEvent.type(repos, "Acme/*{Enter}{Enter}  acme/app  {Enter}acme/*");
+    expect(screen.queryByTestId("repo-allowlist-empty")).not.toBeInTheDocument();
+    expect(screen.getByText("Allowed repositories", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText(/loses access when its GitHub token next renews/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByTestId("saved");
+    expect(admin.writes[0]?.body).toMatchObject({ repoAllowlist: ["acme/*", "acme/app"] });
   });
 
   it("clears reasoning and max reasoning by sending null", async () => {
