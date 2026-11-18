@@ -101,7 +101,7 @@ anything is created in OneCLI.
 the console's Explain page shows it. `GET /admin/egress/status` adds `bindings: { total }`. Neither returns ciphertext,
 nonce or key id.
 
-## #42: the orchestrator's own MCP identity (not in this slice)
+## #42: the orchestrator's own MCP identity (not in this slice; done in [0040](0040-mcp-egress-flow.md), which keeps the orchestrator's MCP calls off the proxy)
 
 Issue #42 wants the orchestrator's MCP calls for a session to go through that session's OneCLI agent. The orchestrator's
 own gateway fetch (`createGatewayFetch`, one orchestrator-wide token) is unchanged here and is moved in slice 8. The

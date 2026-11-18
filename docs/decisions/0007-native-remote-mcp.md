@@ -38,7 +38,8 @@ in the sandbox would need sandbox egress and, later, would put the server's cred
 - **Bounded.** Message size (2 MiB), call time (60 s), the text the model sees (`limitMcpContent`, 20 KB, then Pi's
   `outputLimits`), and the abort signal of the conversation reaches `callTool`.
 - **Credentials are out of scope.** Only servers that need none (DeepWiki). #42 decides how a credential reaches the
-  gateway; the orchestrator never puts a secret in a tool call.
+  gateway; the orchestrator never puts a secret in a tool call. (Decided in [0040](0040-mcp-egress-flow.md): the session's own
+  OneCLI agent, one connection per conversation for a credentialed server.)
 
 > Amended by 0009: the server list is the catalog in Postgres, not `PI_MCP_SERVERS`, and the host default is pinned
 > always, not only "with the flag on".
