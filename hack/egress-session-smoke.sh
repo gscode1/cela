@@ -12,7 +12,7 @@
 # variables are shown with the password masked, and a token that has to move between two Pods goes through a shell variable
 # and a pipe. Every check prints `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still runs.
 #
-#   1. two sessions on profiles with different rule sets (smoke-gh: github-public, smoke-py: pypi); each sandbox has the
+#   1. two sessions on profiles with different rule sets (smoke-gh: github-public, smoke-py: packages); each sandbox has the
 #      proxy variables, and a real `git ls-remote https://github.com/...` runs through the proxy in session A
 #   2. a host allowed by A's profile only is allowed for A and denied for B, and the other way round
 #   3. a session rule added through the admin API takes effect within 10 s
@@ -161,14 +161,14 @@ coding=$(api GET /admin/profiles/coding | jq_ 'j.definition')
 run=$(printf '%04x' "$RANDOM")
 prof_gh=smoke-gh-$run
 prof_py=smoke-py-$run
-for pair in "$prof_gh:github-public" "$prof_py:pypi"; do
+for pair in "$prof_gh:github-public" "$prof_py:packages"; do
   p=${pair%%:*}
   set_=${pair##*:}
   def=$(node -e 'const d = JSON.parse(process.argv[1]); d.egressRuleSets = [process.argv[2]]; console.log(JSON.stringify({ definition: d }))' "$coding" "$set_")
   profiles+=("$p")
   api PUT "/admin/profiles/$p" "$def" >/dev/null
 done
-ok "profiles $prof_gh (github-public) and $prof_py (pypi) exist"
+ok "profiles $prof_gh (github-public) and $prof_py (packages) exist"
 sa=$(kc create "$prof_gh" | sed -n 's/^session //p')
 sessions+=("$sa")
 sb=$(kc create "$prof_py" | sed -n 's/^session //p')
