@@ -341,6 +341,10 @@
           "additionalProperties": false,
           "required": ["existingSecret"],
           "properties": { "existingSecret": { "type": "string" } }
+        },
+        "repoAllowlist": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^(\\*|[A-Za-z0-9-]+/(\\*|[A-Za-z0-9._-]+))$" }
         }
       }
     }

@@ -180,6 +180,8 @@ t_no_repo() {
   assert_jq "an option-like branch is refused" "$out" '.status==400'
   out=$(api alice POST /sessions '{"repo":"a/../b"}')
   assert_jq "a traversal is refused" "$out" '.status==400'
+  out=$(api alice POST /sessions '{"repo":"pi-e2e-not-listed/b"}')
+  assert_jq "a repo off the allowlist is refused (ADR 0030)" "$out" '.status==403'
 }
 
 t_clone_push() {

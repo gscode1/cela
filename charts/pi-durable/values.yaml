@@ -211,3 +211,6 @@ models:
 github:
   app:
     existingSecret: "" # optional: keys private-key.pem, app-id, installation-id. Repo sessions are off without it.
+  # Seeds the repositories a session may clone (ADR 0030): owner/name, owner/* or *. Empty refuses every repo session.
+  # Seed only, like models: change it later on the console's settings page or with PUT /admin/settings.
+  repoAllowlist: []
