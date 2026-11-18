@@ -136,16 +136,19 @@ func (d *DB) Close() { d.Pool.Close() }
 
 const loadSQL = `select (select coalesce(max(revision), 0) from egress.revisions) as revision,
        (select coalesce(jsonb_agg(to_jsonb(s)), '[]'::jsonb) from egress.rule_sets s) as rule_sets,
-       (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from egress.rules r) as rules`
+       (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from egress.rules r) as rules,
+       (select coalesce(jsonb_agg(jsonb_build_object('session_id', p.session_id, 'token_hash', p.token_hash,
+                'rule_sets', p.rule_sets, 'pod_ip', host(p.pod_ip))), '[]'::jsonb)
+          from egress.principals p where p.revoked_at is null) as principals`
 
-// Fetch reads the revision, the rule sets and the rules in one statement, so one snapshot.
+// Fetch reads the revision, the rule sets, the rules and the live principals (never their salt) in one statement, so one snapshot.
 func (d *DB) Fetch(ctx context.Context) (*Snapshot, error) {
 	var revision int64
-	var sets, rules []byte
-	if err := d.Pool.QueryRow(ctx, loadSQL).Scan(&revision, &sets, &rules); err != nil {
+	var sets, rules, principals []byte
+	if err := d.Pool.QueryRow(ctx, loadSQL).Scan(&revision, &sets, &rules, &principals); err != nil {
 		return nil, scrub(err)
 	}
-	return parseSnapshot(revision, sets, rules)
+	return parseSnapshot(revision, sets, rules, principals)
 }
 
 // scrub keeps an error useful without echoing connection details: the server's message and code, or the error kind.

@@ -13,9 +13,14 @@ type Snapshot struct {
 	Revision int64
 	RuleSets []RuleSet
 	Rules    []Rule
+	// byHash and bySession index the principals that are not revoked (a revoked or deleted one is not in the snapshot).
+	byHash    map[string]Principal
+	bySession map[string]Principal
 	// Invalid counts the stored rows that were left out because they do not pass the rule shape checks; the
 	// admin API reports the same rows as invalid, and the evaluation of explain skips them too.
 	Invalid int
+	// InvalidPrincipals counts principal rows that could not be used.
+	InvalidPrincipals int
 }
 
 type setRow struct {
@@ -35,10 +40,41 @@ type ruleRow struct {
 	ExpiresAt     *string     `json:"expires_at"`
 }
 
-// parseSnapshot builds a Snapshot from the JSON columns of the load statement (egress.rule_sets and egress.rules as
-// jsonb arrays). A row that fails the shape checks is counted and skipped, not fatal: one bad hand edit must not stop
+// parseSnapshot builds a Snapshot from the JSON columns of the load statement (egress.rule_sets, egress.rules and the
+// live egress.principals as jsonb arrays). A row that fails the shape checks is counted and skipped, not fatal: one bad hand edit must not stop
 // the proxy from enforcing the rest.
-func parseSnapshot(revision int64, setsJSON, rulesJSON []byte) (*Snapshot, error) {
+type principalRow struct {
+	SessionID string   `json:"session_id"`
+	TokenHash string   `json:"token_hash"`
+	RuleSets  []string `json:"rule_sets"`
+	PodIP     *string  `json:"pod_ip"`
+}
+
+// addPrincipals indexes the principal rows. A row without a session id or with a hash that is not sha256 hex is skipped
+// (and counted in InvalidPrincipals), as is an address that does not parse (the token is then refused, like an unknown one).
+func (s *Snapshot) addPrincipals(rows []principalRow) {
+	s.byHash = make(map[string]Principal, len(rows))
+	s.bySession = make(map[string]Principal, len(rows))
+	for _, row := range rows {
+		if row.SessionID == "" || len(row.TokenHash) != 64 {
+			s.InvalidPrincipals++
+			continue
+		}
+		p := Principal{Session: strings.ToLower(row.SessionID), RuleSets: row.RuleSets}
+		if row.PodIP != nil {
+			if a, err := netip.ParseAddr(*row.PodIP); err == nil {
+				p.PodIP = a.Unmap()
+			}
+		}
+		s.byHash[row.TokenHash] = p
+		s.bySession[p.Session] = p
+	}
+}
+
+// Principals is how many principals the snapshot holds (not revoked).
+func (s *Snapshot) Principals() int { return len(s.byHash) }
+
+func parseSnapshot(revision int64, setsJSON, rulesJSON, principalsJSON []byte) (*Snapshot, error) {
 	var sets []setRow
 	if err := json.Unmarshal(setsJSON, &sets); err != nil {
 		return nil, fmt.Errorf("rule sets: %w", err)
@@ -47,7 +83,14 @@ func parseSnapshot(revision int64, setsJSON, rulesJSON []byte) (*Snapshot, error
 	if err := json.Unmarshal(rulesJSON, &rows); err != nil {
 		return nil, fmt.Errorf("rules: %w", err)
 	}
+	var principals []principalRow
+	if len(principalsJSON) > 0 {
+		if err := json.Unmarshal(principalsJSON, &principals); err != nil {
+			return nil, fmt.Errorf("principals: %w", err)
+		}
+	}
 	s := &Snapshot{Revision: revision}
+	s.addPrincipals(principals)
 	for _, r := range sets {
 		s.RuleSets = append(s.RuleSets, RuleSet{Name: r.Name, AppliesToAll: r.AppliesToAll})
 	}

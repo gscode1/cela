@@ -67,6 +67,12 @@ type rulesEnvOpts struct {
 	stale    *atomic.Bool
 	platform *Platform
 	dns      map[string][]string
+	// principals serves the snapshot's principals (production wiring); requireAuth refuses anonymous requests.
+	principals  bool
+	requireAuth bool
+	logs        io.Writer
+	// live, when set, replaces snap as the snapshot in use (a test swaps it, like the loader does).
+	live *atomic.Pointer[Snapshot]
 }
 
 // newRulesEnv serves the production wiring (Rules, anonymous principals, private ranges opened to the evaluator). The
@@ -80,13 +86,26 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 		if o.stale != nil && o.stale.Load() {
 			return nil, false
 		}
+		if o.live != nil {
+			return o.live.Load(), true
+		}
 		return o.snap, true
 	})
 	dns := &sequenceResolver{calls: map[string]int{}, data: o.dns}
+	var principals Principals
+	if o.principals {
+		principals = SnapshotPrincipals{Source: src}
+	}
+	logs := o.logs
+	if logs == nil {
+		logs = io.Discard
+	}
 	p, err := Build(Options{
 		Authorizer:        &Rules{Source: src, Platform: o.platform, Now: time.Now},
+		Principals:        principals,
+		RequireAuth:       o.requireAuth,
 		OpenPrivateRanges: true,
-		Log:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:               slog.New(slog.NewTextHandler(logs, nil)),
 		Tweak: func(c *smokescreen.Config) {
 			c.Resolver = dns
 			c.ProxyDialTimeout = func(_ context.Context, network, address string, timeout time.Duration) (net.Conn, error) {

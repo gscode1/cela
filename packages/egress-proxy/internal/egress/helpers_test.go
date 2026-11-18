@@ -231,6 +231,7 @@ func newEnv(t *testing.T, o envOpts) *env {
 	}
 	p, err := Build(Options{
 		Principals:               st,
+		RequireAuth:              true,
 		Authorizer:               st,
 		UpstreamAddr:             upAddr,
 		UpstreamHandshakeTimeout: o.handshake,

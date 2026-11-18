@@ -25,9 +25,11 @@ const upstreamHeader = "X-Upstream-Https-Proxy"
 type Options struct {
 	// Authorizer judges every connection (Rules in production).
 	Authorizer Authorizer
-	// Principals maps egress tokens to sessions. Nil serves every request anonymously (slice 3: no per-session tokens
-	// yet); a request's Proxy-Authorization is then ignored.
+	// Principals maps egress tokens to sessions. Nil serves every request anonymously and ignores
+	// Proxy-Authorization (the unit tests of the tunnel code; the command always sets it).
 	Principals Principals
+	// RequireAuth refuses a request without Proxy-Authorization instead of serving it anonymously (ADR 0036).
+	RequireAuth bool
 	// UpstreamAddr is the one fixed upstream proxy (OneCLI), host:port. It is
 	// the only private address the proxy may dial, and only for route=onecli.
 	// Empty (slice 3): no onecli route; a rule that selects it is a deny.
@@ -160,17 +162,26 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	p.inner.ServeHTTP(w, r)
 }
 
-// roleFromRequest maps the egress token in Proxy-Authorization to a session.
-// The header is removed once read so nothing downstream can forward it.
+// roleFromRequest maps the egress token in Proxy-Authorization to a session (ADR 0036). The header is removed once
+// read so nothing downstream can forward it, and no error text carries the token.
+//
+//   - No Proxy-Authorization: anonymous (only the rule sets that apply to all), unless RequireAuth, then 407.
+//   - A Basic token that is unknown or revoked: 407. It never falls back to anonymous, so a revoked sandbox is not
+//     quietly served with the open rules.
+//   - A known token is accepted only from the sandbox Pod's address. A principal whose address is not recorded yet
+//     is refused too (fail closed): the orchestrator records the address before it hands out the token.
 func (p *Proxy) roleFromRequest(r *http.Request) (string, error) {
 	h := r.Header.Get("Proxy-Authorization")
 	r.Header.Del("Proxy-Authorization")
 	if p.opts.Principals == nil {
-		// Slice 3: no per-session tokens. Everyone is anonymous; the header, if any, is dropped above.
+		// No principals configured: everyone is anonymous; the header, if any, is dropped above.
 		return AnonymousRole, nil
 	}
 	if h == "" {
-		return "", smokescreen.MissingRoleError("no Proxy-Authorization")
+		if p.opts.RequireAuth {
+			return "", smokescreen.MissingRoleError("no Proxy-Authorization")
+		}
+		return AnonymousRole, nil
 	}
 	probe := http.Request{Header: http.Header{"Authorization": {h}}}
 	_, token, ok := probe.BasicAuth()
@@ -179,18 +190,25 @@ func (p *Proxy) roleFromRequest(r *http.Request) (string, error) {
 	}
 	pr, ok := p.opts.Principals.Lookup(token)
 	if !ok {
-		return "", errors.New("unknown egress token")
+		return "", errors.New("unknown or revoked egress token")
+	}
+	if !pr.PodIP.IsValid() {
+		return "", errors.New("egress token refused: the sandbox's address is not recorded yet")
+	}
+	src, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil || src.Addr().Unmap() != pr.PodIP {
+		return "", errors.New("egress token refused: it is not valid from this address")
 	}
 	return pr.Session, nil
 }
 
-// principalOf is the principal behind a role: anonymous without Principals, otherwise the session's.
-func (p *Proxy) principalOf(role string) Principal {
+// principalOf is the principal behind a role: anonymous without Principals, otherwise the session's. ok is false for a
+// session the snapshot no longer has (revoked between the token check and the decision): the caller denies.
+func (p *Proxy) principalOf(role string) (Principal, bool) {
 	if p.opts.Principals == nil || role == AnonymousRole {
-		return Principal{}
+		return Principal{}, true
 	}
-	pr, _ := p.opts.Principals.BySession(role)
-	return pr
+	return p.opts.Principals.BySession(role)
 }
 
 // selectUpstream chains route=onecli tunnels to the fixed upstream. An
@@ -202,7 +220,11 @@ func (p *Proxy) selectUpstream(_ *smokescreen.SmokescreenContext, d *smokescreen
 	if !ok {
 		return "http://deny.invalid:1"
 	}
-	v := p.opts.Authorizer.Authorize(p.principalOf(d.Role), normalizeHost(host), port, nil)
+	pr, known := p.principalOf(d.Role)
+	if !known {
+		return "http://deny.invalid:1"
+	}
+	v := p.opts.Authorizer.Authorize(pr, normalizeHost(host), port, nil)
 	switch {
 	case v.Allow && v.Route == RouteDirect:
 		return ""
@@ -357,7 +379,10 @@ func (d *decider) Decide(a acl.DecideArgs) (acl.Decision, error) {
 	if st == nil {
 		return deny("request has no state")
 	}
-	pr := d.p.principalOf(a.Service)
+	pr, known := d.p.principalOf(a.Service)
+	if !known {
+		return deny("the egress token was revoked")
+	}
 	az := d.p.opts.Authorizer
 
 	// By name first: a host that no rule names is denied without a lookup, so the proxy is no DNS oracle.

@@ -126,7 +126,11 @@ func run() error {
 
 	rules := &egress.Rules{Source: loader, Platform: platform}
 	p, err := egress.Build(egress.Options{
-		Authorizer:        rules,
+		Authorizer: rules,
+		// The sandboxes' egress tokens, from the same snapshot as the rules (ADR 0036). A request with no token is
+		// anonymous unless EGRESS_REQUIRE_AUTH is true; a token that is unknown, revoked or used from another Pod is 407.
+		Principals:        egress.SnapshotPrincipals{Source: loader},
+		RequireAuth:       os.Getenv("EGRESS_REQUIRE_AUTH") == "true",
 		OpenPrivateRanges: true,
 		UpstreamAddr:      os.Getenv("EGRESS_UPSTREAM_ADDR"), // empty until slice 5: onecli matches are denied
 		MaxTunnelAge:      maxAge,
