@@ -88,8 +88,8 @@ describe("the catalog in the database", () => {
       created: false,
       stored: { server: { enabled: false }, createdBy: "alice", updatedBy: "bob" },
     });
-    expect(await deleteMcpServer(pool, "demo", "carol")).toBe(true);
-    expect(await deleteMcpServer(pool, "demo", "carol")).toBe(false);
+    expect(await deleteMcpServer(pool, "demo", "carol", 2)).toBe(true);
+    expect(await deleteMcpServer(pool, "demo", "carol", 2)).toBe(false);
     expect((await readMcpServers(pool)).servers).toEqual([]);
     const history = await listMcpServerHistory(pool, 10);
     expect(history.map((h) => [h.action, h.changedBy, h.old === null, h.new === null])).toEqual([

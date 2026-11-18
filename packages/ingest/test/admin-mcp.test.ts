@@ -125,10 +125,14 @@ describe("admin MCP servers", () => {
   it("DELETE removes the row for real and puts the delete in the history; a second DELETE is 404", async () => {
     const { base, db } = await start();
     await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO);
-    const gone = await call(base, "alice", "DELETE", "/admin/mcp-servers/demo");
+    // The revision is required (ADR 0027).
+    expect((await call(base, "alice", "DELETE", "/admin/mcp-servers/demo")).status).toBe(400);
+    const gone = await call(base, "alice", "DELETE", "/admin/mcp-servers/demo?expectedRevision=1");
     expect(gone.status).toBe(200);
     expect(db.mcp.size).toBe(0);
-    expect((await call(base, "alice", "DELETE", "/admin/mcp-servers/demo")).status).toBe(404);
+    expect(
+      (await call(base, "alice", "DELETE", "/admin/mcp-servers/demo?expectedRevision=1")).status,
+    ).toBe(404);
     expect((await call(base, "alice", "GET", "/admin/mcp-servers/demo")).status).toBe(404);
     const history = (await (
       await call(base, "alice", "GET", "/admin/mcp-servers/history?name=demo&limit=1")
@@ -187,7 +191,7 @@ describe("admin MCP servers", () => {
     await listener.query("listen pi_mcp_servers");
     await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO);
     await call(base, "alice", "PUT", "/admin/mcp-servers/demo", DEMO); // no change, no notification
-    await call(base, "alice", "DELETE", "/admin/mcp-servers/demo");
+    await call(base, "alice", "DELETE", "/admin/mcp-servers/demo?expectedRevision=1");
     expect(seen).toEqual(["pi_mcp_servers", "pi_mcp_servers"]);
   });
 });

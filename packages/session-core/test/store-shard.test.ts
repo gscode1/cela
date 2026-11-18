@@ -10,12 +10,13 @@ import {
 /** Records the statements; answers with the rows it was given. */
 function recorder(rows: unknown[] = []) {
   const calls: { sql: string; params: unknown[] }[] = [];
-  const db = {
-    query: (sql: string, params: unknown[] = []) => {
-      calls.push({ sql, params });
-      return Promise.resolve({ rows, rowCount: rows.length });
-    },
+  const query = (sql: string, params: unknown[] = []) => {
+    calls.push({ sql, params });
+    // The session insert returns its id; every other statement answers with the given rows.
+    const answer = sql.includes("insert into inbox.sessions") ? [{ id: params[0] }] : rows;
+    return Promise.resolve({ rows: answer, rowCount: answer.length });
   };
+  const db = { query, connect: () => Promise.resolve({ query, release: () => undefined }) };
   return { calls, db: db as unknown as pg.Pool };
 }
 
@@ -30,16 +31,26 @@ describe("sharded store functions", () => {
       undefined,
       3,
     );
-    expect(calls[0]?.params.at(-1)).toBe(3);
-    expect(calls[0]?.sql).toMatch(/generate_series\(0, \$12::int - 1\)/);
-    expect(calls[0]?.sql).toMatch(/status = 'active'/);
-    expect(calls[0]?.sql).toMatch(/order by coalesce\(a\.n, 0\), c\.shard limit 1/);
+    // One transaction: the catalog lock shared (ADR 0027), then the insert.
+    expect(calls.map((call) => call.sql.split("(")[0]?.trim())).toEqual([
+      "begin",
+      "select pg_advisory_xact_lock_shared",
+      "insert into inbox.sessions",
+      "commit",
+    ]);
+    const insert = calls[2];
+    expect(insert?.params.at(-1)).toBe(3);
+    expect(insert?.sql).toMatch(/generate_series\(0, \$12::int - 1\)/);
+    expect(insert?.sql).toMatch(/status = 'active'/);
+    expect(insert?.sql).toMatch(/order by coalesce\(a\.n, 0\), c\.shard limit 1/);
   });
 
   it("createSession defaults to a single shard", async () => {
     const { calls, db } = recorder();
     await createSession(db, { owner: "a", subject: "s" }, { provider: "p", model: "m" });
-    expect(calls[0]?.params.at(-1)).toBe(1);
+    expect(
+      calls.find((call) => call.sql.includes("insert into inbox.sessions"))?.params.at(-1),
+    ).toBe(1);
   });
 
   it("looks a session up by shard and conversation id together", async () => {

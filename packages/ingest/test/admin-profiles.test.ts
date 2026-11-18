@@ -164,7 +164,7 @@ describe("admin profiles", () => {
     expect((await call(base, "alice", "GET", "/admin/profiles/missing")).status).toBe(404);
   });
 
-  it("enabledForNew toggles without a version; DELETE is not offered", async () => {
+  it("enabledForNew toggles without a version", async () => {
     const { base } = await start();
     await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
     const off = await call(base, "alice", "PUT", "/admin/profiles/research", {
@@ -175,7 +175,32 @@ describe("admin profiles", () => {
       currentVersion: 1,
       versionCreated: false,
     });
-    expect((await call(base, "alice", "DELETE", "/admin/profiles/research")).status).toBe(405);
+  });
+
+  it("DELETE needs the revision, is refused while open to new sessions, and frees nothing for reuse", async () => {
+    const { base } = await start();
+    await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
+    expect((await call(base, "alice", "DELETE", "/admin/profiles/research")).status).toBe(400);
+    const open = await call(base, "alice", "DELETE", "/admin/profiles/research?expectedRevision=1");
+    expect(open.status).toBe(409);
+    expect(await open.json()).toMatchObject({ blockedBy: { enabledForNew: true } });
+    await call(base, "alice", "PUT", "/admin/profiles/research", { enabledForNew: false });
+    const stale = await call(
+      base,
+      "alice",
+      "DELETE",
+      "/admin/profiles/research?expectedRevision=1",
+    );
+    expect(stale.status).toBe(409);
+    const gone = await call(base, "alice", "DELETE", "/admin/profiles/research?expectedRevision=2");
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toEqual({ name: "research", deleted: true, lastVersion: 1 });
+    expect((await call(base, "alice", "GET", "/admin/profiles/research")).status).toBe(404);
+    const again = await call(base, "alice", "PUT", "/admin/profiles/research", { definition: {} });
+    expect(again.status).toBe(409);
+    expect(
+      (await call(base, "alice", "DELETE", "/admin/profiles/coding?expectedRevision=1")).status,
+    ).toBe(409);
   });
 
   it("answers 400 for bad input, unknown tools, an MCP server not in the catalog, and writes nothing", async () => {

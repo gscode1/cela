@@ -21,6 +21,8 @@ export {
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
 export { AdminConflictError, parseExpectedRevision } from "./revision.js";
+export { AdminBlockedError, CATALOG_LOCK } from "./deletion.js";
+export type { BlockedBy } from "./deletion.js";
 export { sourceFromColumn, validateSource } from "./source.js";
 export type { CatalogSource } from "./source.js";
 export { buildZip } from "./zip.js";
@@ -60,6 +62,7 @@ export {
   catalogKeys,
   publishCapabilities,
   putProfile,
+  deleteProfile,
   readCapabilities,
   readProfile,
   readProfiles,
@@ -86,6 +89,7 @@ export {
   manifestOf,
   pinSkillRefs,
   putSkillVersion,
+  deleteSkill,
   readSkill,
   readSkillBundle,
   readSkills,
@@ -131,6 +135,7 @@ export {
   completeTombstone,
   conversationsWithExecInFlight,
   createSession,
+  StaleProfileError,
   deleteEventKey,
   enqueueEvent,
   failSession,

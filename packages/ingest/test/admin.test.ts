@@ -59,7 +59,8 @@ async function start(
       });
     if (sql.startsWith("insert into inbox.sessions")) {
       sessions.push(params ?? []);
-      return Promise.resolve({ rows: [], rowCount: 0 });
+      // The insert returns the id it stored (store.ts createSession).
+      return Promise.resolve({ rows: [{ id: params?.[0] }], rowCount: 1 });
     }
     return query(sql, params);
   };

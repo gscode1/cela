@@ -28,10 +28,11 @@ needs to detect that. The console also needs a few reads and reserved fields tha
 - **`expectedRevision`.** Settings, profile and MCP server writes and the MCP `DELETE` (query parameter, as a DELETE has
   no body) accept it. It is checked first, under the same locks, against the row that is about to be changed; any other
   revision, or no row at all, throws `AdminConflictError` inside the transaction, which rolls back, and ingest answers
-  `409`. Omitted, nothing is checked (last writer wins, as before). It must be a positive integer (`400`), and ingest takes
+  `409`. Omitted, nothing is checked (last writer wins, as before), except on a DELETE, where it is required
+  ([0027](0027-admin-delete.md)). It must be a positive integer (`400`), and ingest takes
   it out of the body before the validators that refuse unknown keys, which stay `400`.
 - **Not covered.** A deleted MCP server created again under the same name restarts at revision 1, so a stale draft can
-  still overwrite it. The console ships in the ingest image, so a reload after an upgrade is enough for contract changes.
+  still overwrite it. *Closed by [0027](0027-admin-delete.md):* a deleted name is never created again. The console ships in the ingest image, so a reload after an upgrade is enough for contract changes.
 - **Reads and downloads for the console.** `GET /admin/tools` returns the names profile writes are checked against (the
   orchestrator's last publication, else the built-in names). `GET /admin/skills/{name}/versions/{v}/zip` returns a version
   as a stored zip with the executable bit in the Unix mode (`packages/session-core/src/zip.ts`, about 90 lines on

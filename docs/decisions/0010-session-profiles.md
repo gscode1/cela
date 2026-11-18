@@ -46,7 +46,9 @@ restart, and that never alter a session that already runs.
   when the settings' default is the problem. It never falls back to another profile.
 - **No DELETE.** A profile is disabled, not deleted: the versions are the audit trail of what sessions ran with, a
   delete would need "no active session uses it" (a race with creation) and buys nothing, since names are cheap. A
-  disabled profile can be enabled again, and a new version can be written while it is disabled.
+  disabled profile can be enabled again, and a new version can be written while it is disabled. *Superseded by
+  [0027](0027-admin-delete.md):* a disabled profile that is not the default can be deleted; sessions keep their
+  snapshot, and the name is never used again.
 - **Ingest.** `POST /sessions` takes an optional `profile` (a name). Model and reasoning precedence, field by field:
   explicit request, then the profile's `defaultModel` and `reasoning`, then the settings. The result goes through the
   same allowlist and `maxReasoning` checks as a plain request at creation time, so a profile that no longer fits the
