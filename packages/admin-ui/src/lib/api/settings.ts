@@ -23,6 +23,8 @@ export interface SettingsValues {
   turnBudget: number;
   /** Null: no limit. */
   tokenBudget: number | null;
+  /** The repositories a session may clone: `*`, `owner/*` or `owner/name`. Empty refuses every repo session. */
+  repoAllowlist: string[];
 }
 
 /** One row of `GET /admin/settings/history`; `old` is null for the seed. */
@@ -43,6 +45,7 @@ export function valuesOf(settings: AdminSettings): SettingsValues {
     defaultProfile: settings.defaultProfile ?? "",
     turnBudget: settings.turnBudget,
     tokenBudget: settings.tokenBudget ?? null,
+    repoAllowlist: settings.repoAllowlist ?? [],
   };
 }
 

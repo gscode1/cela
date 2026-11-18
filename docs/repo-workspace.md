@@ -12,6 +12,16 @@ characters (`repo` at most 140, the name at most 100), no `..`, no leading or tr
 `//`, `/.`, trailing `/` or `.`, and no path component ending in `.lock`. URLs are never accepted: the orchestrator builds `https://github.com/<repo>.git` itself.
 Stored in `inbox.sessions` (`repo`, `repo_branch`; migration `004_repo.sql`).
 
+## Which repositories: the repo allowlist
+
+A session may only clone a repository the `repoAllowlist` setting lists ([ADR 0032](decisions/0032-repo-allowlist.md)):
+`owner/name`, `owner/*` or `*`, matched case-insensitively. Empty, the default, refuses every repo session. Ingest
+answers `403` for a repository it does not list. The orchestrator checks the list again before every token mint, so a
+repository an admin removes gets no new token and its running sessions lose access within the hour the current token
+lives. Seed it with the chart value `github.repoAllowlist` (`PI_REPO_ALLOWLIST`). Change it on the console's settings
+page or with `PUT /admin/settings`. The list narrows what the GitHub App installation offers, so install the App only on
+the repositories you mean to use as well.
+
 ## Credentials: no GitHub token in the sandbox
 
 ```

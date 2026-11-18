@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { admitDefault, reviewSettingsSave } from "@/lib/admission";
 import type { ProfileFacts } from "@/lib/admission";
 import { isConflict } from "@/lib/api";
@@ -325,6 +326,26 @@ export function GlobalSettings() {
                   edit({ tokenBudgetText: event.target.value });
                 }}
               />
+            </Field>
+            <Field
+              id="repo-allowlist"
+              label={fieldLabel("repoAllowlist")}
+              hint="Repositories a session may clone, one per line: owner/name, owner/* for all of an owner's, or * for every repository the GitHub App can reach."
+            >
+              <Textarea
+                id="repo-allowlist"
+                spellCheck={false}
+                placeholder="acme/app"
+                value={current.form.repoAllowlistText}
+                onChange={(event) => {
+                  edit({ repoAllowlistText: event.target.value });
+                }}
+              />
+              {values.repoAllowlist.length === 0 && (
+                <Alert variant="warning" data-testid="repo-allowlist-empty">
+                  Repo sessions are refused while this list is empty.
+                </Alert>
+              )}
             </Field>
           </form>
         </CardContent>

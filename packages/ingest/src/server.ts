@@ -48,6 +48,7 @@ import {
   readProfile,
   readProfiles,
   readJsonObject,
+  repoAllowed,
   readSettings,
   PROBE_SHARD,
   readShardStatus,
@@ -1026,6 +1027,11 @@ async function postSession(
   const repo = chooseRepo(body);
   if (typeof repo === "string") {
     sendJson(res, 400, { error: repo });
+    return;
+  }
+  // The GitHub App can reach more repositories than callers should: only the ones an admin listed (ADR 0032).
+  if (repo !== undefined && !repoAllowed(repo.repo, deps.settings.get().repoAllowlist)) {
+    sendJson(res, 403, { error: `repo "${repo.repo}" is not on the repo allowlist` });
     return;
   }
   const sized = chooseSandboxSize(deps.sandboxSizes, snapshot.definition, body.sandboxSize);

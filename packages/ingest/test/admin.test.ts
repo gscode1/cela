@@ -14,6 +14,7 @@ const seed: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 /** What the fake shard 0 row says to a probe request; reset by every `start`. */
@@ -226,6 +227,27 @@ describe("admin settings", () => {
     const { base } = await start();
     expect((await call(base, "alice", "GET", "/admin/nope")).status).toBe(404);
     expect((await call(base, "alice", "DELETE", "/admin/settings")).status).toBe(405);
+  });
+
+  it("refuses a repo session for a repo off the allowlist with 403, and admits it once an admin lists it", async () => {
+    const { base, sessions } = await start();
+    const refused = await call(base, "bob", "POST", "/sessions", { repo: "acme/private" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'repo "acme/private" is not on the repo allowlist',
+    });
+    expect(sessions).toHaveLength(0);
+
+    expect(
+      (await call(base, "alice", "PUT", "/admin/settings", { repoAllowlist: ["acme/*"] })).status,
+    ).toBe(200);
+    expect((await call(base, "bob", "POST", "/sessions", { repo: "Acme/Private" })).status).toBe(
+      201,
+    );
+    expect((await call(base, "bob", "POST", "/sessions", { repo: "other/app" })).status).toBe(403);
+    // A plain session never needs the list.
+    expect((await call(base, "bob", "POST", "/sessions", {})).status).toBe(201);
+    expect(sessions).toHaveLength(2);
   });
 
   it("uses a new default model and reasoning for POST /sessions at once, without a restart", async () => {

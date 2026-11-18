@@ -11,6 +11,7 @@ const fallback: Settings = {
   defaultProfile: "coding",
   turnBudget: 11,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 const caches: SettingsCache[] = [];

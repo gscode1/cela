@@ -104,6 +104,11 @@ export class SettingsCache {
     return this.get().tokenBudget;
   }
 
+  /** The repositories a session may clone; empty refuses every repo session. */
+  repoAllowlist(): readonly string[] {
+    return this.get().repoAllowlist;
+  }
+
   async #load(): Promise<void> {
     try {
       const stored = await readSettings(this.#pool);

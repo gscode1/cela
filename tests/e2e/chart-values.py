@@ -59,7 +59,11 @@ def main() -> None:
                 "adminKeySecret": "pi-onecli-admin",
             },
         },
-        "github": {"app": {"existingSecret": "pi-github-app"}},
+        # Only REPO_A: phase4c's sessions clone it, REPO_B is the repository its token must not reach (ADR 0032).
+        "github": {
+            "app": {"existingSecret": "pi-github-app"},
+            "repoAllowlist": [os.environ["REPO_A"]] if os.environ.get("REPO_A") else [],
+        },
         "sandbox": {"storageClass": workspace_class},
         "networkPolicy": {
             "provider": "cilium",
