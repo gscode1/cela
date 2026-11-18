@@ -118,6 +118,8 @@ export class FakeSettingsDb {
   /** Shared advisory transaction locks by key, and the clients that hold each. */
   readonly sharedLocks = new Map<string, Set<FakeListener>>();
   readonly mcpHistory: McpHistoryRow[] = [];
+  /** Names of the rule sets in egress.rule_sets, which profile writes check `egressRuleSets` against. */
+  egressRuleSets = new Set<string>();
   /** inbox.profiles and inbox.profile_versions; `coding` version 1 is what migration 008 seeds. */
   profiles = new Map<string, ProfileRowF>([
     [
@@ -260,6 +262,13 @@ export class FakeSettingsDb {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     if (deletion !== undefined) return deletion;
+    if (text.startsWith("select name from egress.rule_sets")) {
+      return done(
+        (params[0] as string[])
+          .filter((name) => this.egressRuleSets.has(name))
+          .map((name) => ({ name })),
+      );
+    }
     if (text.includes("from inbox.events where session_id")) return done([]);
     if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
     if (/inbox\.skill/.test(text)) return this.#skillQuery(text, params, done);

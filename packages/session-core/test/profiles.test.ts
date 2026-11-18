@@ -137,6 +137,65 @@ describe("validateProfileDefinition", () => {
   });
 });
 
+describe("egressRuleSets", () => {
+  it("is validated as a list of rule set names, deduplicated, in a fixed key order", () => {
+    expect(
+      validateProfileDefinition({ egressRuleSets: ["npm", "pypi", "npm"], sandboxSize: "s" }),
+    ).toEqual({
+      sandboxSize: "s",
+      egressRuleSets: ["npm", "pypi"],
+    });
+    for (const bad of [
+      "npm",
+      [1],
+      ["Npm"],
+      ["a b"],
+      ["x".repeat(33)],
+      Array.from({ length: 65 }, (_, i) => `s${String(i)}`),
+    ]) {
+      expect(typeof validateProfileDefinition({ egressRuleSets: bad }), JSON.stringify(bad)).toBe(
+        "string",
+      );
+    }
+  });
+
+  it("must name rule sets that exist when the profile is written", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    db.egressRuleSets.add("npm");
+    const missing = await putProfile(
+      db.asPool(),
+      "web",
+      { definition: { egressRuleSets: ["npm", "nope"] } },
+      "alice",
+      KNOWN,
+    );
+    expect(missing).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('"nope"') as unknown,
+    });
+    expect(await readProfile(db.asPool(), "web")).toBeUndefined();
+    const ok = await putProfile(
+      db.asPool(),
+      "web",
+      { definition: { egressRuleSets: ["npm"] } },
+      "alice",
+      KNOWN,
+    );
+    expect(ok).toMatchObject({ ok: true, created: true });
+    expect((await readProfile(db.asPool(), "web"))?.definition.egressRuleSets).toEqual(["npm"]);
+    db.egressRuleSets.delete("npm");
+    const gone = await putProfile(
+      db.asPool(),
+      "web",
+      { definition: { egressRuleSets: ["npm"], instructions: "x" } },
+      "alice",
+      KNOWN,
+    );
+    expect(gone).toMatchObject({ ok: false });
+  });
+});
+
 describe("repoSkills", () => {
   it("is a boolean, absent means off, and it keeps its place in the key order", () => {
     expect(validateProfileDefinition({ repoSkills: true, instructions: "x" })).toEqual({
