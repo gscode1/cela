@@ -15,26 +15,42 @@ export interface AdminSettings {
 }
 
 /** A non-2xx answer. `message` is the API's own error text, to be shown as text only. */
+/** What keeps a delete from happening, as the API names it in a 409 (docs/session-api.md, "Deleting"). */
+export interface BlockedBy {
+  profiles?: { name: string; version: number }[];
+  sessions?: { count: number; sample: string[] };
+  defaultProfile?: true;
+  enabledForNew?: true;
+}
+
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** Only on a refused delete. */
+  readonly blockedBy: BlockedBy | undefined;
+  constructor(status: number, message: string, blockedBy?: BlockedBy) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.blockedBy = blockedBy;
   }
 }
 
-async function errorText(res: Response): Promise<string> {
+/** The `ApiError` for a failed response: its `error` text (else the status line) and any `blockedBy`. */
+export async function apiErrorOf(res: Response): Promise<ApiError> {
   try {
     const body: unknown = await res.json();
     if (typeof body === "object" && body !== null && "error" in body) {
       const { error } = body;
-      if (typeof error === "string") return error;
+      const blockedBy =
+        "blockedBy" in body && typeof body.blockedBy === "object" && body.blockedBy !== null
+          ? (body.blockedBy as BlockedBy)
+          : undefined;
+      if (typeof error === "string") return new ApiError(res.status, error, blockedBy);
     }
   } catch {
     // Not JSON: fall through to the status line.
   }
-  return `HTTP ${String(res.status)}`;
+  return new ApiError(res.status, `HTTP ${String(res.status)}`);
 }
 
 /**
@@ -55,7 +71,7 @@ export async function adminFetch<T>(
       ...(init.body === undefined ? {} : { "content-type": "application/json" }),
     },
   });
-  if (!res.ok) throw new ApiError(res.status, await errorText(res));
+  if (!res.ok) throw await apiErrorOf(res);
   return (await res.json()) as T;
 }
 

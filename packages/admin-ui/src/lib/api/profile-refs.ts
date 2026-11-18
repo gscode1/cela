@@ -44,3 +44,9 @@ export const profilesPinning = (
   profiles.filter((profile) =>
     profile.skills.some((pin) => pin.name === skill && pin.version === version),
   );
+
+/** Profiles whose current version pins any version of the skill. */
+export const profilesPinningSkill = (
+  profiles: readonly ProfileRef[],
+  skill: string,
+): ProfileRef[] => profiles.filter((profile) => profile.skills.some((pin) => pin.name === skill));
