@@ -108,6 +108,10 @@ spec:
             - { name: ONECLI_ROLE, value: {{ $db.onecli.role | quote }} }
             - { name: ONECLI_DB, value: {{ $db.onecli.name | quote }} }
             {{- include "pi-postgres.secretEnv" (dict "name" "ONECLI_PASSWORD" "secret" $db.onecli.existingSecret "key" $db.onecli.passwordKey) | nindent 12 }}
+            {{- if .Values.auth.egressReader.enabled }}
+            - { name: EGRESS_ROLE, value: {{ .Values.auth.egressReader.role | quote }} }
+            {{- include "pi-postgres.secretEnv" (dict "name" "EGRESS_PASSWORD" "secret" .Values.auth.egressReader.existingSecret "key" .Values.auth.egressReader.passwordKey) | nindent 12 }}
+            {{- end }}
           securityContext:
             {{- include "pi-postgres.containerSecurityContext" . | nindent 12 }}
           readinessProbe:

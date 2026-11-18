@@ -1,0 +1,129 @@
+{{- /*
+The egress proxy's own policies (ADR 0035, docs/network-policy.md). It is the one pod that may open connections on a
+sandbox's behalf, so its egress is the narrowest of any pod that reaches the internet: public addresses on a few ports
+(never private, CGNAT, link-local or loopback ranges), the database, DNS (allow-dns-egress), and what the operator lists
+in egressProxy.privateEgress. A private rule in the database opens a destination only inside that list: the two layers
+must agree.
+*/ -}}
+{{- if .Values.egressProxy.enabled }}
+{{- $e := .Values.egressProxy }}
+# Ingress: sandboxes (the proxy port) and the clients the operator names (a test pod, a gateway). Kubelet probes on the
+# health port come from the node, which the CNIs admit.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-clients-ingress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-sandbox
+        {{- with $e.clients }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+# Egress to the database (the read-only role's URI) on the port of database.external.egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-database-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-durable.databaseTo" . | trim | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.database.external.egress.port }} }
+---
+# Egress to the public internet, on egressProxy.publicPorts, minus the private, CGNAT, link-local and loopback ranges and
+# networkPolicy.sandbox.extraEgressExcept (the same list that keeps sandboxes off the cluster). The proxy refuses private
+# destinations itself; this is the second layer, in the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-internet-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range (list "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" "127.0.0.0/8") }}
+              - {{ . }}
+              {{- end }}
+              {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+        - ipBlock:
+            cidr: "::/0"
+            except:
+              {{- range (list "fc00::/7" "fe80::/10" "::1/128") }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- range .Values.networkPolicy.sandbox.extraEgressExcept }}
+              {{- if contains ":" . }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+      ports:
+        {{- range $e.publicPorts }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+{{- range $i, $p := $e.privateEgress }}
+---
+# Operator-approved private destination {{ $i }} (egressProxy.privateEgress): reachable by the proxy on these ports. A
+# private rule in the database still has to name the destination before the proxy connects.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-private-egress-{{ $i }}
+  labels:
+    {{- include "pi-durable.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- if $p.cidr }}
+        - ipBlock:
+            cidr: {{ $p.cidr | quote }}
+        {{- else }}
+        - {{- with $p.namespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $p.podSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      ports:
+        {{- range $p.ports }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+{{- end }}
+{{- end }}

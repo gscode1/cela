@@ -1,15 +1,15 @@
-# Egress proxy (issue #51). Build context: packages/egress-proxy.
-#   docker buildx build --platform linux/arm64,linux/amd64 -f images/egress-proxy/Dockerfile packages/egress-proxy
-# Not built or pushed by the spike. Keep the Go version equal to go.mod's toolchain line (ADR 0012).
+# The egress proxy (epic #50, ADR 0012 and 0035): a static Go binary on distroless. Build context is the repository root,
+# like the other images (images/build.sh egress-proxy). Keep the Go version equal to go.mod's toolchain line (ADR 0012).
 FROM --platform=$BUILDPLATFORM golang:1.27.3 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY packages/egress-proxy/go.mod packages/egress-proxy/go.sum ./
 RUN go mod download
-COPY . .
+COPY packages/egress-proxy/ ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/egress-proxy ./cmd/egress-proxy
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/egress-proxy /egress-proxy
-USER nonroot
+# The chart runs the pod as uid/gid 1000 like the other images; the binary needs no user of its own.
+USER 1000:1000
 ENTRYPOINT ["/egress-proxy"]

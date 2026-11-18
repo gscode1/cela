@@ -22,6 +22,12 @@ images:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
+  # Only needed with egressProxy.enabled.
+  egressProxy:
+    repository: ghcr.io/gscode1/pi-egress-proxy
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
 imagePullSecrets: []
 
 database:
@@ -247,3 +253,48 @@ github:
   # Seeds the repositories a session may clone (ADR 0032): owner/name, owner/* or *. Empty refuses every repo session.
   # Seed only, like models: change it later on the console's settings page or with PUT /admin/settings.
   repoAllowlist: []
+
+# The egress proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md): a CONNECT proxy that allows a connection only
+# when the rules in Postgres (the admin console's Egress page) say so, on the address the host resolves to. Off by
+# default: no sandbox uses it yet (the sandbox proxy environment and the network cutover are later slices). Turn it on to
+# try it: sandboxes and the pods in `clients` can then use pi-egress-proxy.<namespace>.svc:3128.
+egressProxy:
+  enabled: false
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  # The proxy reads the rules with its own, read-only database role: it can select from the egress rule tables and
+  # write only its own status row (egress.proxy_status), so it can never change a rule. CREATE ROLE needs CREATEROLE,
+  # which the app's database user lacks, so the operator creates the role once. The bundled Postgres does it with
+  # auth.egressReader (charts/pi-postgres); for any other Postgres, see docs/network-policy.md and ADR 0035:
+  #   create role pi_egress login password '...'; grant connect on database pi to pi_egress;
+  # and, as the app's database user (the owner of the egress tables), `select egress.grant_proxy_reader('pi_egress')`
+  # (the migration does that itself for a role that is named pi_egress and exists).
+  database:
+    existingSecret: "" # required: a Secret in the release namespace that holds the connection URI of that role
+    uriKey: uri
+  rules:
+    pollInterval: 5s # a read without a notification; a rule change usually arrives at once (LISTEN)
+    # After this long without a successful read the proxy denies every connection (it never allows on old rules).
+    staleAfter: 2m
+  # What no rule can open, on top of the built-in loopback, link-local, multicast and reserved ranges: the namespace's
+  # own Services (ingest, each orchestrator shard, the OneCLI API and gateway), the kubernetes Service and the database
+  # host of the proxy's URI. The proxy resolves those names itself every 30 s. Add what DNS cannot say: the namespace's
+  # pod range, an external database, anything else that must stay out of reach even from a wide private rule.
+  # networkPolicy.kubeApiCidrs and database.external.egress.cidrs are added automatically.
+  platform:
+    hosts: []
+    cidrs: []
+  # Who may connect to the proxy besides sandboxes, as raw NetworkPolicy `from` entries (a test pod, a gateway).
+  clients: []
+  # Public ports the proxy may open towards the internet. A rule that names another port has no effect at the network.
+  publicPorts: [80, 443]
+  # Private destinations the operator approves for the proxy (the network layer of a private rule, ADR 0034): each a
+  # `cidr` or a `namespaceSelector` (with an optional `podSelector`), and the `ports` it is open on. A private rule in
+  # the database (Egress page) is still needed; this list alone connects nothing. Cilium does not match pod or service
+  # addresses with a cidr: use selectors there.
+  #   - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: billing } }
+  #     podSelector: { matchLabels: { app: api } }
+  #     ports: [8080]
+  privateEgress: []
