@@ -252,7 +252,9 @@ admits exactly that address as an `ipBlock` `/32` (the chart schema rejects anyt
 The node IP and the Pod network are not admitted: a sandbox can reach the node, so admitting either would open ingest and
 OneCLI's sign-up-open API to it.
 
-**Residual kind-only risk, not closed here.** kindnet does not filter traffic to the node itself (hostNetwork Pods: the
-Kubernetes API server, kubelet, etcd), so a sandbox on kind can still reach those ports, as the isolation probe's `kube-api`
-target shows. It has no credentials for them (`automountServiceAccountToken` is false), so what it reaches is
-unauthenticated endpoints. An enforcing CNI such as Cilium closes this; that is out of scope for the kind trial and tracked in issue #139.
+**Residual risk on kindnet only.** kindnet does not filter traffic to the node itself (hostNetwork Pods: the
+Kubernetes API server, kubelet, etcd), so a sandbox on a default kind cluster can still reach those ports, as the isolation
+probe's `kube-api` target shows. It has no credentials for them (`automountServiceAccountToken` is false), so what it reaches
+is unauthenticated endpoints. `hack/kind-up.sh --cni cilium` (issue #139) closes it: Cilium's CIDR rules do not select the
+node, so the sandbox policy's internet `ipBlock` does not open it, the probe reports `enforced`, and `hack/kind-smoke.sh`
+fails if a sandbox reaches the node's :6443 or :10250. The `kind-cilium` CI job runs that lane.

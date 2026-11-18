@@ -167,8 +167,9 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
 
 1. Check docker, kind, helm and kubectl versions. Use its own cluster name and context, and refuse to reuse an
    unrelated cluster.
-2. `kind create cluster` with a pinned node image and the default kindnet (`--cni cilium` optional, for the full
-   policy set).
+2. `kind create cluster` with a pinned node image and the default kindnet. `--cni cilium` (issue #139) creates it with
+   `disableDefaultCNI`, installs a pinned Cilium and installs the chart with `networkPolicy.provider: cilium`, for the
+   full policy set; there the probe must report `enforced` (`NETPOL_ENFORCED` defaults to 1).
 3. Build native-arch images and `kind load` them; the release path pulls digests instead.
 4. `hack/install.sh --values values-kind.yaml`: runc with `allowInsecureRuntime`, kind's `standard` StorageClass,
    bundled Postgres and agent-sandbox, `onecli.mode: disabled` and the scripted model by default. `hack/kind-up.sh
@@ -259,6 +260,9 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
      Issue #138 adds localhost ports on kind (session API 8080, OneCLI 10254 and 10256) without port-forward, behind a /32
      ingress rule for the Docker gateway of the kind network ([ADR 0022 addendum](decisions/0022-bundled-onecli.md)).
      The kindnet limit above is unchanged by it: a sandbox still reaches the node's own ports.
+     Issue #139 adds the Cilium lane: `hack/kind-up.sh --cni cilium` and the `kind-cilium` job of the kind workflow (on
+     main, nightly and by hand). The probe reports `enforced` there, including `kube-api`, and `hack/kind-smoke.sh` checks
+     from a real sandbox that the node's API server (:6443) and kubelet (:10250) are blocked (on kindnet it only warns).
 9. **Isolation probe.**
    - The orchestrator runs the probe at start and on `POST /admin/status/probe`, and writes `enforced | not-enforced |
      inconclusive` to its status row. NOTES.txt, `install.sh` and `kind-up.sh` print it.

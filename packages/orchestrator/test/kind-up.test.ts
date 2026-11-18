@@ -47,7 +47,9 @@ echo v4.3.1+gfake`,
     "kubectl",
     `printf 'kubectl %s\\n' "$*" >>"$FAKE_LOG"
 [[ $* == *"version --client"* ]] && echo '"gitVersion": "v1.36.1",'
-[[ $* == *"get nodes"* ]] && exit 1
+[[ $* == *"get nodes"* ]] && exit "\${FAKE_NODES_RC:-1}"
+[[ $* == *"daemonset kindnet"* ]] && printf '%s' "\${FAKE_KINDNET:-}"
+[[ $* == *"daemonset cilium"* ]] && printf '%s' "\${FAKE_CILIUM:-}"
 exit 0`,
   );
   fake("curl", "exit 0");
@@ -118,7 +120,7 @@ describe("hack/kind-up.sh", () => {
       `docker manifest inspect registry.local:5000/pi-ingest@sha256:${"a".repeat(64)}`,
     );
     expect(calls).toMatch(
-      /^kind create cluster --name demo --config .*hack\/kind-config\.yaml --wait 180s$/m,
+      /^kind create cluster --name demo --config \S+\/kind-config\.yaml --wait 180s$/m,
     );
     // The current context of the user's kubeconfig is never used.
     for (const line of calls
@@ -232,6 +234,57 @@ describe("hack/kind-up.sh localhost ports", () => {
       /\[\[ \$onecli -eq 0 \]\] \|\| extra_args\+=\(--onecli-expose-cidr "\$expose_cidr"\)/,
     );
     expect(kindUp).toMatch(/--no-expose\) expose=0/);
+  });
+});
+
+describe("hack/kind-up.sh --cni", () => {
+  const config = () => readFileSync(join(dir, "log.config"), "utf8");
+
+  it("rejects an unknown CNI", () => {
+    const r = run(["--cni", "calico"], { IMAGE_TAG: "t" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("bad --cni 'calico'");
+    expect(run(["--cni"]).status).toBe(64);
+  });
+
+  it("kindnet (the default) keeps the pinned config and waits for the node", () => {
+    run(["--name", "demo"], { IMAGE_TAG: "t" });
+    expect(config()).not.toMatch(/^networking:/m);
+    expect(log()).toMatch(/^kind create cluster --name demo --config \S+ --wait 180s$/m);
+  });
+
+  it("cilium creates the cluster without kindnet and does not wait for a node that has no CNI yet", () => {
+    run(["--name", "demo", "--cni", "cilium"], { IMAGE_TAG: "t" });
+    expect(config()).toMatch(/^networking:\n {2}disableDefaultCNI: true$/m);
+    expect(config()).toContain("extraPortMappings:");
+    expect(log()).toMatch(/^kind create cluster --name demo --config \S+$/m);
+  });
+
+  it("refuses to reuse a cluster whose CNI does not match", () => {
+    const reuse = { IMAGE_TAG: "t", FAKE_CLUSTERS: "demo\n", FAKE_NODES_RC: "0" };
+    let r = run(["--name", "demo", "--no-expose", "--cni", "cilium"], {
+      ...reuse,
+      FAKE_KINDNET: "daemonset.apps/kindnet",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cluster demo runs kindnet");
+    r = run(["--name", "demo", "--no-expose"], { ...reuse, FAKE_CILIUM: "daemonset.apps/cilium" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("pass --cni cilium");
+    expect(log()).not.toContain("helm --kube-context");
+  });
+
+  it("installs a pinned Cilium and the chart's Cilium policies, and requires an enforced probe", () => {
+    const kindUp = readFileSync(script, "utf8");
+    expect(kindUp).toMatch(/^cilium_version=\d+\.\d+\.\d+$/m);
+    expect(kindUp).toContain('--repo https://helm.cilium.io --version "$cilium_version"');
+    // The user's Helm repositories are never read or changed.
+    expect(kindUp).toContain("HELM_REPOSITORY_CONFIG=$helm_home/repositories.yaml");
+    expect(kindUp).toContain("--set networkPolicy.provider=cilium");
+    expect(kindUp).toContain("export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}");
+    const smoke = readFileSync(join(root, "hack/kind-smoke.sh"), "utf8");
+    expect(smoke).toContain("export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}");
+    expect(smoke).toContain('check "the sandbox does not reach the kubelet on the node"');
   });
 });
 

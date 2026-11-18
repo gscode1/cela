@@ -28,6 +28,9 @@
 # also checks, without --status:
 #   1d. from this machine: localhost:8080 (the session API: /healthz answers 200, /sessions without a token 401) and, with
 #       OneCLI, localhost:10254 (dashboard) and localhost:10256 (management API) answer
+#   4d. from the sandbox: the node itself, the API server (:6443) and the kubelet (:10250) on the node IP (issue #139). On
+#       Cilium both must be blocked; on kindnet, which does not filter traffic to hostNetwork Pods, a reachable one is a
+#       warning
 #   4c. from the sandbox: the node IP on each exposed NodePort and each ClusterIP Service port are blocked. A sandbox must
 #       not reach ingest or OneCLI's API through the published ports (only the Docker gateway /32 is admitted)
 #
@@ -67,6 +70,11 @@ command -v kubectl >/dev/null 2>&1 || die "kubectl is required"
 
 ctx=kind-$name
 k() { kubectl --context "$ctx" -n "$namespace" "$@"; }
+# A cluster made with hack/kind-up.sh --cni cilium: Cilium filters traffic to the node, so nothing may be reachable and
+# the probe must say enforced (NETPOL_ENFORCED defaults to 1 there).
+cilium=0
+[[ -z $(kubectl --context "$ctx" -n kube-system get daemonset cilium --ignore-not-found -o name) ]] || cilium=1
+[[ $cilium -eq 0 ]] || export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}
 client_js=$(cat "$root/hack/kind-client.mjs")
 # Runs one hack/kind-client.mjs command inside an ingest pod.
 api() {
@@ -209,10 +217,26 @@ if [[ $onecli -eq 1 ]]; then
   check "the sandbox does not reach the OneCLI management API" "$out" "api-closed"
 fi
 
+node_ip=$(kubectl --context "$ctx" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+[[ $node_ip =~ ^[0-9.]+$ ]] || die "cannot read the node IP: '$node_ip'"
+
+log "from the sandbox: the node's API server (:6443) and kubelet (:10250) are blocked"
+# Both listen on every kind control-plane node (hostNetwork), so "blocked" is the policy, not a closed port.
+cmd=""
+for port in 6443 10250; do
+  cmd+="if timeout 5 bash -c 'exec 3<>/dev/tcp/\$0/\$1' $node_ip $port 2>/dev/null; then echo OPEN-$port; else echo blocked-$port; fi; "
+done
+out=$(api ask "$session" "$(script_json "node-$marker" "$cmd")" "node-$marker" 600)
+printf '%s\n' "$out"
+if [[ $cilium -eq 1 ]]; then
+  check "the sandbox does not reach the API server on the node" "$out" "blocked-6443"
+  check "the sandbox does not reach the kubelet on the node" "$out" "blocked-10250"
+elif grep -q 'OPEN-' <<<"$out"; then
+  echo "WARNING: a sandbox reaches the node ($(grep -o 'OPEN-[0-9]*' <<<"$out" | tr '\n' ' ')): kindnet does not filter traffic to hostNetwork Pods. hack/kind-up.sh --cni cilium closes it (issue #139)" >&2
+fi
+
 if [[ $exposed -eq 1 ]]; then
   log "from the sandbox: the published NodePorts (on the node IP) and the ClusterIP Services are blocked"
-  node_ip=$(kubectl --context "$ctx" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-  [[ $node_ip =~ ^[0-9.]+$ ]] || die "cannot read the node IP: '$node_ip'"
   # "<ip> <port>" pairs: each NodePort on the node IP, then the ClusterIP of the Service behind it.
   pairs=("$node_ip $(k get service pi-ingest-nodeport -o jsonpath='{.spec.ports[0].nodePort}')"
     "$(k get service pi-ingest -o jsonpath='{.spec.clusterIP} {.spec.ports[0].port}')")
