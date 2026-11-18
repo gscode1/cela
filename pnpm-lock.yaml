@@ -321,12 +321,12 @@ importers:
       '@earendil-works/pi-mcp':
         specifier: 1.5.2
         version: 1.5.2
+      '@gscode1/pi-durable-postgres':
+        specifier: 0.3.0
+        version: 0.3.0(@earendil-works/chord@1.5.2(ws@8.23.0))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7))
       '@kubernetes/client-node':
         specifier: 2.0.0
         version: 2.0.0(bare-buffer@3.7.2)
-      '@netzlabor/pi-durable-postgres':
-        specifier: file:../../vendor/netzlabor-pi-durable-postgres-0.2.0.tgz
-        version: file:vendor/netzlabor-pi-durable-postgres-0.2.0.tgz(@earendil-works/chord@1.5.2(ws@8.23.0))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7))
       '@pi-durable-k8s/sandbox-env':
         specifier: workspace:*
         version: link:../sandbox-env
@@ -662,6 +662,13 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
+  '@gscode1/pi-durable-postgres@0.3.0':
+    resolution: {integrity: sha512-80vXWPoiSQZIgAy1prqIsNWF5epaGmenzr8U/PTDkEp1uxMOcbaDv5Fq0cTxX99w8ryYAX18lpp/PJPjzZht2A==}
+    engines: {node: '>=22.19.0'}
+    peerDependencies:
+      '@earendil-works/chord': 1.5.2
+      '@earendil-works/pi-durable': 1.5.2
+
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
     engines: {node: '>=18.18.0'}
@@ -743,14 +750,6 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
-
-  '@netzlabor/pi-durable-postgres@file:vendor/netzlabor-pi-durable-postgres-0.2.0.tgz':
-    resolution: {integrity: sha512-DGF4Z2TZl/5jPNxa1RKOtXahzXotdn3AuURjCLrOx47knf9sKusynU0EmcnsULeigitcastCd1RvAM2FlmhN5w==, tarball: file:vendor/netzlabor-pi-durable-postgres-0.2.0.tgz}
-    version: 0.2.0
-    engines: {node: '>=22.19.0'}
-    peerDependencies:
-      '@earendil-works/chord': 1.5.2
-      '@earendil-works/pi-durable': 1.5.2
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -2942,6 +2941,15 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@gscode1/pi-durable-postgres@0.3.0(@earendil-works/chord@1.5.2(ws@8.23.0))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7))':
+    dependencies:
+      '@earendil-works/chord': 1.5.2(ws@8.23.0)
+      '@earendil-works/pi-durable': 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7)
+      '@types/pg': 8.23.1
+      pg: 8.23.1
+    transitivePeerDependencies:
+      - pg-native
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -3046,15 +3054,6 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.4
     optional: true
-
-  '@netzlabor/pi-durable-postgres@file:vendor/netzlabor-pi-durable-postgres-0.2.0.tgz(@earendil-works/chord@1.5.2(ws@8.23.0))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7))':
-    dependencies:
-      '@earendil-works/chord': 1.5.2(ws@8.23.0)
-      '@earendil-works/pi-durable': 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@8.12.4)(ws@8.23.0)(zod@4.6.7)
-      '@types/pg': 8.23.1
-      pg: 8.23.1
-    transitivePeerDependencies:
-      - pg-native
 
   '@opentelemetry/api@1.9.0': {}
 
