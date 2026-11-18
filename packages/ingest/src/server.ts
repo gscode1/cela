@@ -186,6 +186,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       ...repoFlagsOf(session),
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
+      ...(session.usage === null ? {} : { usage: session.usage }),
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,

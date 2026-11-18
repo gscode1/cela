@@ -19,6 +19,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   onecli: null,
   workspaceReadyAt: null,
   profile: null,
+  usage: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

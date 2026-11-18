@@ -132,6 +132,7 @@ describe("SessionService after a run answered", () => {
     onecli: null,
     workspaceReadyAt: null,
     profile: null,
+    usage: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };
@@ -200,4 +201,73 @@ describe("SessionService after a run answered", () => {
     expect(limits).toEqual([8]);
     service.stop();
   });
+});
+
+describe("usage on the session row (#185)", () => {
+  it("copies the conversation's pi.usage totals to the session when its input settles", async () => {
+    const { host, release } = await holdingHost();
+    release();
+    const conversationId = await host.createConversation(MODEL);
+    const queries: { sql: string; params: unknown[] }[] = [];
+    const pool = {
+      query: (sql: string, params: unknown[] = []) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      },
+    } as unknown as pg.Pool;
+    const service = new SessionService(pool, host, {
+      shard: 0,
+      testFaults: false,
+      defaultModel: MODEL,
+      turnBudget: () => 10,
+    });
+    const session: SessionRow = {
+      id: "usage-session",
+      owner: "alice",
+      ownerSubject: "static:alice",
+      status: "active",
+      shard: 0,
+      conversationId,
+      model: null,
+      failure: null,
+      repo: null,
+      onecli: null,
+      workspaceReadyAt: null,
+      profile: null,
+      usage: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+    };
+    await service.apply(
+      {
+        id: "1",
+        sessionId: session.id,
+        source: "api:alice",
+        sourceEventId: "m1",
+        kind: "message",
+        payload: { text: "hi" },
+        status: "pending",
+        attempts: 0,
+        createdAt: new Date(),
+        submittedAt: null,
+        error: null,
+      },
+      session,
+    );
+    const written = () => queries.find((q) => q.sql.includes("set usage"));
+    for (let i = 0; i < 200 && written() === undefined; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const write = written();
+    expect(write?.params[0]).toBe("usage-session");
+    const usage = JSON.parse(String(write?.params[1])) as Awaited<ReturnType<Host["usage"]>>;
+    const total = await host.tokensUsed(conversationId);
+    expect(total).toBeGreaterThan(0);
+    expect(usage).toEqual(await host.usage(conversationId));
+    expect(usage.totalTokens).toBe(total);
+    expect(usage.input + usage.output).toBeGreaterThan(0);
+    // The guard against an older read overwriting a newer one compares with the same total.
+    expect(write?.params[2]).toBe(total);
+    service.stop();
+  }, 15_000);
 });

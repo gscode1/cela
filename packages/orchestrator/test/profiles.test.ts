@@ -62,6 +62,7 @@ const session = (profile: SessionRow["profile"], conversationId: number | null):
   onecli: null,
   workspaceReadyAt: null,
   profile,
+  usage: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

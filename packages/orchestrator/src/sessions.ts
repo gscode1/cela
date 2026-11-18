@@ -6,6 +6,7 @@ import {
   errorMessage,
   failSession,
   getSession,
+  recordSessionUsage,
   validateProfileDefinition,
   writeTombstone,
 } from "@pi-durable-k8s/session-core";
@@ -131,8 +132,14 @@ export class SessionService {
     this.#abortWaitMs = options.abortWaitMs ?? DEFAULT_ABORT_WAIT_MS;
     this.#watcher = new RunWatcher({
       settle: (conversationId, requestId) => host.settlement(conversationId, requestId),
-      onUnanswered: (watched, outcome) => this.#runEnded(watched, outcome),
-      onDone: (watched) => this.#relimit(watched),
+      onUnanswered: async (watched, outcome) => {
+        await this.#publishUsage(watched);
+        await this.#runEnded(watched, outcome);
+      },
+      onDone: async (watched) => {
+        await this.#publishUsage(watched);
+        await this.#relimit(watched);
+      },
       onError: (error) => {
         log("run-watch-failed", { message: errorMessage(error) });
       },
@@ -198,6 +205,22 @@ export class SessionService {
    * A submission ended without an answer. Rejected model credentials and a used-up turn budget end the session
    * for good (`failed`); anything else leaves it active. The stored message is ours, never the provider's text.
    */
+  /**
+   * Copies the conversation's usage to the session row, where ingest reads it for `GET /sessions/:id` (#185). Best
+   * effort: a failure is logged and the next settled input copies it again, so it never holds back failure handling.
+   */
+  async #publishUsage(watched: Watched): Promise<void> {
+    try {
+      await recordSessionUsage(
+        this.#pool,
+        watched.sessionId,
+        await this.#host.usage(watched.conversationId),
+      );
+    } catch (error) {
+      log("usage-publish-failed", { session: watched.sessionId, message: errorMessage(error) });
+    }
+  }
+
   async #runEnded(watched: Watched, outcome: RunOutcome): Promise<void> {
     const failure = terminalFailure(outcome);
     if (failure === undefined) return;

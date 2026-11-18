@@ -9,7 +9,12 @@ import type {
   Cursor,
   Storage,
 } from "@earendil-works/pi-durable";
-import type { McpServerConfig, ModelChoice, ProfileDefinition } from "@pi-durable-k8s/session-core";
+import type {
+  McpServerConfig,
+  ModelChoice,
+  ProfileDefinition,
+  SessionUsage,
+} from "@pi-durable-k8s/session-core";
 import { defineExtension } from "@earendil-works/pi-durable";
 import type { AgentChange, Extension, ToolRegistration } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
@@ -468,13 +473,25 @@ export class Host {
    * attempts and compaction included) and every tool that reports usage. Subagents count their own conversation.
    */
   async tokensUsed(id: number): Promise<number> {
+    return (await this.usage(id)).totalTokens;
+  }
+
+  /** The conversation's `pi.usage` summed over every bucket: what the session API shows (#185). */
+  async usage(id: number): Promise<Omit<SessionUsage, "updatedAt">> {
+    const sum = { totalTokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
     const usage = await this.#harness.snapshot(UsageDoc, id as ConversationId, context);
-    if (usage === undefined) return 0;
-    let total = 0;
+    if (usage === undefined) return sum;
     for (const bucket of [usage.models, usage.tools]) {
-      for (const entry of Object.values(bucket)) total += entry.totalTokens;
+      for (const entry of Object.values(bucket)) {
+        sum.totalTokens += entry.totalTokens;
+        sum.input += entry.input;
+        sum.output += entry.output;
+        sum.cacheRead += entry.cacheRead;
+        sum.cacheWrite += entry.cacheWrite;
+        sum.cost += entry.cost.total;
+      }
     }
-    return total;
+    return sum;
   }
 
   /** Caps the tool rounds of any run of this conversation, so one run cannot overshoot the session's turn budget. */

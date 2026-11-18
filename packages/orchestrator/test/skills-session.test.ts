@@ -106,6 +106,7 @@ describe("SessionService creates the conversation with the catalog", () => {
     onecli: null,
     workspaceReadyAt: null,
     profile: { name: "docs", version: 1, snapshot },
+    usage: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });
