@@ -73,7 +73,7 @@ Skipped when `/workspace/repo/.git` exists. Otherwise `git clone [--branch b] --
 repository is gone is `failed` ("workspace is missing"), never re-cloned. Only a check that succeeds and reports the
 path absent counts: a failing check (bridge or Pod error) is a transient error and retries. GitHub refusing the token
 (repo not in the installation) also fails the session; transient errors, GitHub rate limiting (429, or 403 with
-`x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (5 attempts).
+`x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) included, retry through the inbox (8 attempts with backoff, about two minutes).
 
 ## Repo skills
 

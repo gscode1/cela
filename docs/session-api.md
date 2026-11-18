@@ -143,8 +143,9 @@ Guarantees:
   submission but before the row was marked, the transaction rolls back, the row is `pending` again, and the retry
   submits with the same `requestId`, for which Pi Durable returns the original submission: no second turn.
 - **Per-session order.** One drain per session at a time, oldest first. A transient failure stops that session's
-  batch so later rows cannot overtake it. After 5 attempts (or at once for a permanent error such as a deleted
-  session) the row is `failed` with `error` set and later rows proceed.
+  batch so later rows cannot overtake it, and the session waits out a backoff (1 s doubling to 60 s) before the
+  retry. After 8 attempts, about two minutes, (or at once for a permanent error such as a deleted session) the row is
+  `failed` with `error` set and later rows proceed.
 - **Batching.** Pending rows of a session are claimed together and submitted one by one in order. They are not
   merged into one model input: each keeps its own `requestId`, so each is an idempotent submission. (Merging would
   make the `requestId` depend on which rows happened to be pending.)
@@ -304,7 +305,7 @@ A deletion cut off by a crash is safe to repeat: the `delete` row is still pendi
 "not found".
 
 **A delete is retried until it succeeds** (`docs/decisions/0006-deletes-retry-until-done.md`). Other events end `failed`
-after 5 attempts; a `delete` row has no attempt cap, because a failed delete leaves the session `deleting` with its
+after 8 attempts (with the same backoff, about two minutes); a `delete` row has no attempt cap, because a failed delete leaves the session `deleting` with its
 sandbox, PVC and OneCLI agent alive, and the orphan sweep never touches a `deleting` session. A failing delete is
 retried with a backoff of 1 s, 2 s, 4 s ... up to 60 s (held in memory per session; a restart retries at once). Only a
 `PermanentError` (the session row is gone or already `deleted`) ends the row `failed`. A repeated `DELETE` also puts a

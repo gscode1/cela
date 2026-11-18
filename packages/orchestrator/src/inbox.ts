@@ -7,17 +7,19 @@ import { PermanentError } from "./sessions.js";
 const POLL_MS = 1_000;
 const BATCH = 20;
 const MAX_PARALLEL_SESSIONS = 8;
-const MAX_ATTEMPTS = 5;
-const DELETE_RETRY_BASE_MS = 1_000;
-const DELETE_RETRY_MAX_MS = 60_000;
+/** Tries of an event other than `delete` before it ends `failed`. With the backoff they span about two minutes. */
+const MAX_ATTEMPTS = 8;
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 60_000;
 
 /**
- * Wait before the next try of a failing `delete` row: 1 s, 2 s, 4 s ... capped at 60 s. A delete is not given up after
- * MAX_ATTEMPTS like other events (docs/decisions/0006-deletes-retry-until-done.md): five tries a second apart end
- * inside one short Kubernetes or OneCLI outage, and a failed delete leaks the sandbox, PVC and OneCLI agent.
+ * Wait before the next try of a failing row: 1 s, 2 s, 4 s ... capped at 60 s (docs/decisions/0006). Five tries a
+ * second apart end inside one short Kubernetes, OneCLI or GitHub outage. A `delete` is never given up, since a failed
+ * delete leaks the sandbox, PVC and OneCLI agent; any other row ends `failed` after MAX_ATTEMPTS, which the backoff
+ * spreads over 1+2+4+8+16+32+60 s, about two minutes.
  */
-export function deleteRetryDelayMs(attempt: number): number {
-  return Math.min(DELETE_RETRY_MAX_MS, DELETE_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1));
+export function retryDelayMs(attempt: number): number {
+  return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1));
 }
 
 export type ApplyEvent = (event: InboxEvent, session: SessionRow) => Promise<void>;
@@ -49,7 +51,7 @@ export class InboxLoop {
   readonly #apply: ApplyEvent;
   readonly #prepare: PrepareEvent | undefined;
   readonly #inFlight = new Set<string>();
-  /** Sessions whose failing delete waits out its backoff (epoch ms). In memory: a restart simply retries at once. */
+  /** Sessions whose failing row waits out its backoff (epoch ms). In memory: a restart simply retries at once. */
   readonly #notBefore = new Map<string, number>();
   #listener: pg.PoolClient | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -135,7 +137,7 @@ export class InboxLoop {
 
   async #tick(): Promise<void> {
     try {
-      // Sessions that cannot be started now (in flight, or waiting out a delete backoff) stay out of the query: with
+      // Sessions that cannot be started now (in flight, or waiting out a retry backoff) stay out of the query: with
       // a bare `limit` 100 of them would fill the page and starve every other session. Oldest pending event first.
       const now = Date.now();
       const skip = [...this.#inFlight];
@@ -317,9 +319,8 @@ export class InboxLoop {
     const message = errorMessage(error).slice(0, 500);
     const permanent =
       error instanceof PermanentError || (attempt >= MAX_ATTEMPTS && event.kind !== "delete");
-    if (!permanent && event.kind === "delete") {
-      this.#notBefore.set(event.sessionId, Date.now() + deleteRetryDelayMs(attempt));
-    }
+    // The whole session waits: the rows behind this one must not overtake it.
+    if (!permanent) this.#notBefore.set(event.sessionId, Date.now() + retryDelayMs(attempt));
     await db.query(
       "update inbox.events set status = $2, attempts = $3, error = $4 where id = $1 and status = 'pending'",
       [event.id, permanent ? "failed" : "pending", attempt, message],

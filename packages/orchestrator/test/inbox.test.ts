@@ -1,7 +1,7 @@
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventDbRow, InboxEvent } from "@pi-durable-k8s/session-core";
-import { deleteRetryDelayMs, InboxLoop } from "../src/inbox.ts";
+import { retryDelayMs, InboxLoop } from "../src/inbox.ts";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
 
@@ -93,11 +93,11 @@ const flush = async (): Promise<void> => {
 beforeEach(() => vi.useFakeTimers({ toFake: ["Date"] }));
 afterEach(() => vi.useRealTimers());
 
-describe("deleteRetryDelayMs", () => {
+describe("retryDelayMs", () => {
   it("doubles from one second and stops at one minute", () => {
-    expect([1, 2, 3, 4].map(deleteRetryDelayMs)).toEqual([1_000, 2_000, 4_000, 8_000]);
-    expect(deleteRetryDelayMs(7)).toBe(60_000);
-    expect(deleteRetryDelayMs(500)).toBe(60_000);
+    expect([1, 2, 3, 4].map(retryDelayMs)).toEqual([1_000, 2_000, 4_000, 8_000]);
+    expect(retryDelayMs(7)).toBe(60_000);
+    expect(retryDelayMs(500)).toBe(60_000);
   });
 });
 
@@ -141,16 +141,67 @@ describe("a failing delete", () => {
     expect(row.status).toBe("failed");
   });
 
-  it("other events still fail after five attempts", async () => {
+  it("other events still end failed once their attempts run out", async () => {
     const inbox = new FakeInbox();
     const row = inbox.add("message");
     const loop = new InboxLoop(inbox.pool(), 0, () => Promise.reject(new Error("boom")));
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 12; i++) {
+      vi.setSystemTime(Date.now() + 61_000);
       loop.wake();
       await flush();
     }
     expect(row.status).toBe("failed");
-    expect(row.attempts).toBe(5);
+    expect(row.attempts).toBe(8);
+  });
+});
+
+describe("a failing message or steer", () => {
+  for (const kind of ["message", "steer"] as const) {
+    it(`(${kind}) backs off and outlasts a short outage instead of failing within seconds`, async () => {
+      const inbox = new FakeInbox();
+      const row = inbox.add(kind);
+      let calls = 0;
+      const outageUntil = Date.now() + 60_000;
+      const apply = (): Promise<void> => {
+        calls += 1;
+        return Date.now() < outageUntil
+          ? Promise.reject(new Error("onecli unavailable"))
+          : Promise.resolve();
+      };
+      const loop = new InboxLoop(inbox.pool(), 0, apply);
+      loop.wake();
+      await flush();
+      expect(calls).toBe(1);
+      // An immediate wake (the 1 s poll) does not retry before the backoff has passed.
+      loop.wake();
+      await flush();
+      expect(calls).toBe(1);
+      // The poll keeps waking the loop every second through a one-minute outage.
+      for (let t = 0; t < 120 && row.status === "pending"; t++) {
+        vi.setSystemTime(Date.now() + 1_000);
+        loop.wake();
+        await flush();
+      }
+      expect(row.status).toBe("submitted");
+      expect(calls).toBeLessThan(10);
+    });
+  }
+
+  it("is held back after a failed prepare as well", async () => {
+    const inbox = new FakeInbox();
+    const row = inbox.add("message");
+    let prepares = 0;
+    const prepare = (): Promise<void> => {
+      prepares += 1;
+      return Promise.reject(new Error("github 502"));
+    };
+    const loop = new InboxLoop(inbox.pool(), 0, () => Promise.resolve(), prepare);
+    loop.wake();
+    await flush();
+    loop.wake();
+    await flush();
+    expect(prepares).toBe(1);
+    expect(row.status).toBe("pending");
   });
 });
 
