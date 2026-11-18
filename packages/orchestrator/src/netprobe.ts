@@ -20,6 +20,8 @@ export interface ProbeIo {
   control: { host: string; port: number };
   /** The sandbox has the proxy only and no DNS (the network cutover, ADR 0038): no DNS control, an address for the control. */
   proxyOnly?: boolean;
+  /** Pause before a probe is repeated because the proxy, its only allowed control, was not answering yet; default 10 s. */
+  retryDelayMs?: number;
   /** TCP connect from the orchestrator, which is allowed to reach every denied target but the one it is. */
   reachableHere(host: string, port: number): Promise<boolean>;
   /** Starts the probe Pod with the plan, waits, returns its report, deletes the Pod. */
@@ -28,7 +30,22 @@ export interface ProbeIo {
 
 const DNS_CONTROL_NAME = "kubernetes.default.svc.cluster.local";
 
+/**
+ * With the proxy as the only allowed control, a probe at the orchestrator's start can run before the proxy is ready: the
+ * control then fails and the verdict is `inconclusive`. That is repeated a few times before it is reported.
+ */
 export async function runNetworkProbe(io: ProbeIo): Promise<ProbeResult> {
+  const attempts = io.proxyOnly === true ? 4 : 1;
+  let result = await probeOnce(io);
+  for (let attempt = 1; attempt < attempts; attempt++) {
+    if (result.state !== "inconclusive" || result.controls?.allowedTcp !== false) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, io.retryDelayMs ?? 10_000));
+    result = await probeOnce(io);
+  }
+  return result;
+}
+
+async function probeOnce(io: ProbeIo): Promise<ProbeResult> {
   const found = await io.targets();
   const targets: DeniedTarget[] = await Promise.all(
     found.map(async (t) => ({

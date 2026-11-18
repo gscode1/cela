@@ -409,6 +409,7 @@ describe("behind the egress proxy (ADR 0037)", () => {
     const egress = new EgressPrincipals({
       pool: db.asPool(),
       proxyUrl: "http://pi-egress-proxy.ns.svc:3128",
+      resolve: () => Promise.resolve("10.96.1.2"),
       bindingKey: key ?? undefined,
       master: () => "master-key-for-tests",
       sleep: () => Promise.resolve(),
@@ -421,9 +422,7 @@ describe("behind the egress proxy (ADR 0037)", () => {
     const env = await repos.shellEnv(session(), 7);
     const [agent] = [...onecli.agents.values()];
     const everything = JSON.stringify(env);
-    expect(env?.HTTPS_PROXY).toMatch(
-      /^http:\/\/x:[A-Za-z0-9_-]{43}@pi-egress-proxy\.ns\.svc:3128$/,
-    );
+    expect(env?.HTTPS_PROXY).toMatch(/^http:\/\/x:[A-Za-z0-9_-]{43}@10\.96\.1\.2:3128$/);
     expect(env?.HTTP_PROXY).toBe(env?.HTTPS_PROXY);
     expect(everything).not.toContain(agent?.accessToken ?? "unreachable");
     expect(everything).not.toContain("onecli.onecli");

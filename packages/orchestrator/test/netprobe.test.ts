@@ -49,7 +49,7 @@ describe("runNetworkProbe", () => {
       }),
     );
     const result = await runNetworkProbe(
-      io({ proxyOnly: true, control: { host: "127.0.0.1", port: 3128 }, runPod }),
+      io({ proxyOnly: true, retryDelayMs: 0, control: { host: "127.0.0.1", port: 3128 }, runPod }),
     );
     expect(runPod).toHaveBeenCalledWith({
       control: { host: "127.0.0.1", port: 3128 },
@@ -57,6 +57,32 @@ describe("runNetworkProbe", () => {
     });
     expect(result.state).toBe("enforced");
     expect(result.controls).toEqual({ dns: null, allowedTcp: true });
+  }, 1000);
+
+  it("proxied: repeats a probe whose only control, the proxy, was not up yet", async () => {
+    const reports = [
+      { dns: null, control: "timeout" as const, targets: { postgres: "timeout" as const } },
+      { dns: null, control: "connected" as const, targets: { postgres: "timeout" as const } },
+    ];
+    const runPod = vi.fn(() => Promise.resolve({ report: reports.shift(), failure: "" }));
+    const result = await runNetworkProbe(io({ proxyOnly: true, retryDelayMs: 0, runPod }));
+    expect(runPod).toHaveBeenCalledTimes(2);
+    expect(result.state).toBe("enforced");
+  }, 1000);
+
+  it("without the proxy a failed control is reported at once", async () => {
+    const runPod = vi.fn(() =>
+      Promise.resolve({
+        report: {
+          dns: true,
+          control: "timeout" as const,
+          targets: { postgres: "timeout" as const },
+        },
+        failure: "",
+      }),
+    );
+    expect((await runNetworkProbe(io({ runPod }))).state).toBe("inconclusive");
+    expect(runPod).toHaveBeenCalledTimes(1);
   }, 1000);
 
   it("is inconclusive when the denied target is down for the orchestrator too", async () => {
