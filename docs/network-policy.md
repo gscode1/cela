@@ -40,7 +40,7 @@ Files:
 
 These selectors are configuration, not required installation names. Set them in your values file
 (see the [chart README](../charts/pi-durable/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
-not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment with `networkPolicy.sandbox.extraEgressExcept` (IPv4 and IPv6 CIDRs, appended to the `except` lists of `sandbox-allow-internet-egress`): a public Kubernetes API endpoint, global IPv6 node and pod ranges, an external Postgres or OneCLI on a public IP, NAT64 `64:ff9b::/96`.
+not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment with `networkPolicy.sandbox.extraEgressExcept` (IPv4 and IPv6 CIDRs, appended to the `except` lists of `sandbox-allow-internet-egress` or, with the proxy on, `sandbox-direct-allow-egress`): a public Kubernetes API endpoint, global IPv6 node and pod ranges, an external Postgres or OneCLI on a public IP, NAT64 `64:ff9b::/96`.
 
 Namespaces are matched with `kubernetes.io/metadata.name`.
 
@@ -61,13 +61,13 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | orchestrator | `api.github.com` | 443 (+ DNS lookup of that name) | direct call that mints the repo-scoped GitHub App installation token (the App key never leaves the orchestrator); the only public host it may reach | C orchestrator-egress-github-api |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
-| sandbox | OneCLI gateway | 10255 | credentialed traffic of repo sessions **when the egress proxy is off**; with the proxy on, repo sessions no longer use it and the rule is removed by the network cutover (slice 6) | S sandbox-allow-onecli-egress |
-| sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
-| sandbox | egress proxy | 3128 | every session's tool traffic with a per-session token (ADR 0036, 0037), additive until the network cutover, see below | S sandbox-allow-egress-proxy-egress (with `egressProxy.enabled`) |
+| sandbox | OneCLI gateway | 10255 | credentialed traffic of repo sessions **only when the egress proxy is off**; with the proxy on the rule is not rendered (ADR 0038) | S sandbox-allow-onecli-egress (proxy off) |
+| sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs, **only when the egress proxy is off** (decision 2026-11-15, reversed by ADR 0038 for the proxy on) | S sandbox-allow-internet-egress (proxy off) |
+| sandbox | egress proxy | 3128 | the whole egress of a proxied sandbox: every session's tool traffic with a per-session token (ADR 0036, 0037, 0038), see below | S sandbox-allow-egress-proxy-egress (with `egressProxy.enabled`) |
+| direct sandbox (`pi-durable.dev/network-mode=direct`) | CoreDNS; public internet (same exceptions as above) | 53; any | opt-in per profile, behind `security.allowDirectSandboxEgress`: no rules, no audit (ADR 0038) | S sandbox-direct-allow-egress |
 | egress proxy | OneCLI gateway | 10255 (gateway port only) | the proxy's one upstream: `route=onecli` tunnels carry the session's OneCLI token (ADR 0037); the management API port stays closed | S egress-proxy-allow-onecli-egress (proxy and OneCLI on) |
 | egress proxy (ingress side) | | | OneCLI's gateway admits `app.kubernetes.io/name=pi-egress-proxy` on 10255 | S onecli-gateway-allow-ingress (`charts/pi-onecli`, `clients.egressProxy`) |
-| orchestrator, ingest, sandboxes in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
-| orchestrator, ingest, sandboxes, e2e driver | CoreDNS | 53 | same, for every pod | same |
+| every pod but a sandbox (with the proxy on; all pods with it off) | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |
 | pi-durable-poc orchestrator | OneCLI gateway, API | 10255, 10256 | (ingress side, `onecli` ns) | C onecli-ingress |
 | pi-durable-poc sandboxes | OneCLI gateway | 10255 only | (ingress side) | C onecli-ingress |
@@ -80,14 +80,33 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 
 Rows marked "(ingress side)" repeat a flow from the receiving end and add no rules. The bundled Postgres has no egress rule of its own; in the same namespace `default-deny-all` also covers it.
 
-## Sandboxes and the egress proxy (until the network cutover)
+## Sandboxes: network modes and the cutover
 
-With `egressProxy.enabled` the orchestrators give every session's tool commands, repo sessions included, the proxy variables and
-a per-session token ([ADR 0036](decisions/0036-egress-principals.md), [ADR 0037](decisions/0037-egress-onecli-route.md)). The chart then renders one additive sandbox policy, which admits the
-proxy port and changes nothing else (the sandbox network modes are slice 6 of epic #50): a sandbox still has direct
-internet, and proxy-aware tools now go through the proxy:
+[ADR 0038](decisions/0038-network-modes.md), epic #50 slice 6; it reverses the 2026-11-15 "open internet for every session".
+What a sandbox may reach depends on `egressProxy.enabled` (the cutover) and on the Pod's `pi-durable.dev/network-mode` label,
+which its SandboxTemplate bakes in (one template and warm pool per size and mode: `pi-env-pool-<size>` proxied,
+`pi-env-direct-pool-<size>` direct).
+
+| | Proxy on, mode `proxied` (default) | Proxy on, mode `direct` (needs `security.allowDirectSandboxEgress`) | Proxy off |
+|---|---|---|---|
+| egress proxy :3128 | yes | yes (unused: no proxy environment) | n/a |
+| DNS | no (the proxy resolves) | yes, CoreDNS only | yes |
+| public internet, any port, TCP and UDP | no: only through CONNECT, to `egressProxy.publicPorts` | yes | yes |
+| private, CGNAT, link-local, metadata, loopback, `extraEgressExcept` | no | no | no |
+| OneCLI gateway | only through the proxy (`route=onecli`) | no | direct, port 10255 |
+| cluster, platform, other sandboxes | no | no | no |
+| rules and audit | yes | none | none |
+
+Fail closed. With the proxy on, the base policy `sandbox-allow-egress-proxy-egress` selects every sandbox Pod whatever its
+labels, so a Pod without the label, or with an unknown mode, has the proxy port and nothing else. The additive policy
+`sandbox-direct-allow-egress` selects `pi-durable.dev/network-mode=direct` and adds DNS and the public internet with the same
+`except` ranges as before. `allow-dns-egress` and the Cilium `dns-egress-kube-dns-only` exclude sandboxes
+(`app.kubernetes.io/name NotIn [pi-sandbox]`), and `sandbox-allow-onecli-egress` is not rendered. With the proxy off the
+chart renders today's policies unchanged (so an upgrade does not cut the internet), `security.allowDirectSandboxEgress` is
+refused, and every sandbox is effectively direct. `egressProxy.requireAuth` defaults to `true`.
 
 ```yaml
+# the whole egress of a proxied sandbox
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: sandbox-allow-egress-proxy-egress }
@@ -104,9 +123,25 @@ another. A repo session's credentialed hosts (`github.com`, `api.github.com`) go
 proxy's own egress to the gateway port is `egress-proxy-allow-onecli-egress`, and OneCLI's gateway ingress admits the proxy
 (`charts/pi-onecli` `clients.egressProxy`). With an **external OneCLI** (`onecli.mode=external`) the operator admits the proxy
 pods on its side: allow ingress to the gateway port (default 10255) from pods labelled `app.kubernetes.io/name=pi-egress-proxy`
-in the proxy's namespace, and nothing for the management API. The sandbox's own `sandbox-allow-onecli-egress` is unchanged until
-the network cutover. `hack/egress-session-smoke.sh` and `hack/egress-onecli-smoke.sh` check all of this on a throwaway kind
-cluster. The binding key (`egressProxy.binding.existingSecret`) is mounted into the proxy and the orchestrators only.
+in the proxy's namespace, and nothing for the management API.
+
+**Direct and credentials.** A direct session has no proxy environment, principal, token or binding, and the API refuses
+direct together with a repo, a credentialed MCP server, or an allow rule with `route=onecli` in a rule set that applies to
+the profile.
+
+**Odd ports.** A CONNECT to a public host is limited to `egressProxy.publicPorts` (80 and 443): a rule for another port has
+no effect at the network. Widen the list per deployment, or use `direct`.
+
+**DNS in a proxied sandbox.** There is none, so `getent hosts` and `dig example.org` fail by design. To troubleshoot name
+resolution, use DNS over HTTPS through the proxy (a rule must allow the resolver host on 443):
+`curl --doh-url https://cloudflare-dns.com/dns-query https://example.org` or `dig +https @cloudflare-dns.com example.org`
+(the sandbox needs the proxy variables, which its tool commands have). The proxy's own error says which rule denied a host
+(`hack/egress-cutover-smoke.sh` runs these checks, and the bypass probes below, on a throwaway kind cluster).
+
+**Bypass probes.** `hack/egress-cutover-smoke.sh` runs, from real sessions' sandboxes of each mode: a direct IP, another
+port, IPv6, UDP/53, DNS, `curl --noproxy '*'`, `NO_PROXY=*` and the OneCLI gateway directly. In `proxied` all of them fail;
+in `direct` the internet works (the IP, the port, IPv6 where the node has it, DNS, UDP) and the private, cluster, metadata
+and platform addresses and the OneCLI gateway still fail.
 
 ## Assumptions to check before applying
 
@@ -207,15 +242,19 @@ it never gates readiness, sessions or tools.
   image (`node`, already pullable), the sandbox runtime class, the restricted Pod Security profile, no service account
   token, no volume, a 120 s `activeDeadlineSeconds`, and is deleted when the probe ends. Leftovers are deleted at the
   next start. It is a plain Pod, not a SandboxClaim: no PVC, no per-sandbox token and no warm-pool slot, and the
-  network position is the same (same label, namespace and runtime).
+  network position is the same (same label, namespace and runtime). With the egress proxy on it also wears
+  `pi-durable.dev/network-mode=proxied`, the strictest position (ADR 0038): whatever it cannot reach, a direct sandbox cannot
+  reach either, so one probe covers both modes.
 - **Denied targets** (IP addresses, resolved by the orchestrator, so DNS is not a variable): Postgres, the orchestrator's
   Service IP and its Pod IP, the Kubernetes API (`KUBERNETES_SERVICE_HOST`), the OneCLI management API (when OneCLI is
-  not disabled) and, when one exists, another sandbox's sandboxd (:8080). Not covered: ingest, node, private and
+  not disabled), with the proxy on the OneCLI gateway (sandboxes no longer reach it directly) and, when one exists,
+  another sandbox's sandboxd (:8080). Not covered: ingest, node, private and
   metadata addresses (no allowed source can show that they are up; the CIDR exceptions are asserted on the rendered chart).
 - **Positive controls.** For every denied target the orchestrator, an allowed source, first connects to it; only a target
   that is up from there can count as blocked. From the Pod the allowed controls are a DNS lookup and a TCP connection to
   the OneCLI gateway (without OneCLI: `1.1.1.1:443`, which sandboxes may reach, so an air-gapped cluster reports
-  `inconclusive`).
+  `inconclusive`). With the egress proxy on, the only control is a TCP connection to the proxy port (a proxied sandbox
+  has no DNS: `controls.dns` is `null`, not a failure).
 - **Verdict.** `not-enforced`: any denied target accepted a connection from the Pod. `inconclusive`: no report (Pod failed,
   no RBAC, image not pullable), or an allowed control failed, or no denied target was up from the orchestrator.
   `enforced`: the controls work, at least one verified target was blocked and none got through. A refusal, a timeout
@@ -292,7 +331,7 @@ fails if a sandbox reaches the node's :6443 or :10250. The `kind-cilium` CI job 
 
 ## Egress proxy (`egressProxy.enabled`)
 
-ADR [0035](decisions/0035-egress-proxy-runtime.md). Off by default; no sandbox policy changes in this slice. With it on,
+ADR [0035](decisions/0035-egress-proxy-runtime.md). Off by default; turning it on is the network cutover for sandboxes ([ADR 0038](decisions/0038-network-modes.md), above). With it on,
 the pods `app.kubernetes.io/name=pi-egress-proxy` get these policies on top of `default-deny-all` and the DNS rule:
 
 | Policy | Direction | Allows |
