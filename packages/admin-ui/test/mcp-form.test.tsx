@@ -37,7 +37,7 @@ describe("McpForm", () => {
     const puts: unknown[] = [];
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "PUT") {
-        const body = JSON.parse(String(init.body)) as { expectedRevision?: number };
+        const body = JSON.parse(init.body as string) as { expectedRevision?: number };
         puts.push(body);
         return Promise.resolve(
           body.expectedRevision === 2
