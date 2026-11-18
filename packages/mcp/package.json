@@ -1,0 +1,28 @@
+{
+  "name": "@pi-durable-k8s/mcp",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Stdio MCP server that exposes the session API (and nothing else) to MCP clients.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "pi-durable-mcp": "dist/main.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

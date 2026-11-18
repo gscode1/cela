@@ -87,6 +87,7 @@ const SETTINGS_FIELDS = [
   "defaultProfile",
   "turnBudget",
   "tokenBudget",
+  "repoAllowlist",
 ] as const;
 
 function showSetting(field: (typeof SETTINGS_FIELDS)[number], values: SettingsValues): string {
@@ -101,6 +102,11 @@ function showSetting(field: (typeof SETTINGS_FIELDS)[number], values: SettingsVa
     case "tokenBudget":
       // History rows written before the field existed lack it: no limit then too.
       return String(values.tokenBudget ?? "no limit");
+    case "repoAllowlist": {
+      // History rows written before the field existed lack it: none then, as now for an empty list.
+      const repos = (values as Partial<SettingsValues>).repoAllowlist ?? [];
+      return list([...repos].sort(), "none (repo sessions refused)");
+    }
     default:
       return String(values[field]);
   }

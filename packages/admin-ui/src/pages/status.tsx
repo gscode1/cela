@@ -13,6 +13,7 @@ import {
   requestProbe,
   runtimeName,
   runtimeText,
+  statusPollInterval,
   summarizeIsolation,
 } from "@/lib/api/status";
 import type { ShardStatus } from "@/lib/api/status";
@@ -90,11 +91,7 @@ export function ShardStatusPage() {
   const status = useQuery({
     queryKey: ["status"],
     queryFn: ({ signal }) => getStatus(token ?? "", signal),
-    // A probe takes seconds to a minute; follow it until the state leaves `running`.
-    refetchInterval: (query) =>
-      query.state.data?.shards.some((shard) => shard.networkPolicy === "running") === true
-        ? 3_000
-        : false,
+    refetchInterval: (query) => statusPollInterval(query.state.data?.shards),
   });
   const probe = useMutation({
     mutationFn: () => requestProbe(token ?? ""),

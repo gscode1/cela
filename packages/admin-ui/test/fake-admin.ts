@@ -23,6 +23,7 @@ export interface FakeSettings {
   defaultProfile: string;
   turnBudget: number;
   tokenBudget: number | null;
+  repoAllowlist: string[];
   revision: number;
   updatedAt: string;
   updatedBy: string;
@@ -65,6 +66,7 @@ export function createFakeAdmin(): FakeAdmin {
       defaultProfile: "coding",
       turnBudget: 100,
       tokenBudget: null,
+      repoAllowlist: [],
       revision: 1,
       updatedAt: NOW,
       updatedBy: "seed",

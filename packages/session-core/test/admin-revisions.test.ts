@@ -25,6 +25,7 @@ const SEED: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 const SERVER = { url: "https://mcp.example.com/mcp", readOnly: true };
 

@@ -340,7 +340,11 @@ export function createFakeAdmin() {
       json(res, 200, {
         shards,
         networkPolicy: shards[0]
-          ? { state: shards[0].networkPolicy, checkedAt: shards[0].networkPolicyCheckedAt ?? null }
+          ? {
+              state: shards[0].networkPolicy,
+              checkedAt: shards[0].networkPolicyCheckedAt ?? null,
+              requestedAt: shards[0].probeRequestedAt ?? null,
+            }
           : null,
       });
     else if (parts[1] === "status" && parts[2] === "probe" && req.method === "POST") {

@@ -1,5 +1,5 @@
 import type { Storage } from "@earendil-works/pi-durable";
-import { openNodePostgresStorage } from "@netzlabor/pi-durable-postgres";
+import { openNodePostgresStorage } from "@gscode1/pi-durable-postgres";
 import { connectionOptions, createPool } from "@pi-durable-k8s/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";

@@ -19,6 +19,7 @@ const base: Settings = {
   defaultProfile: "coding",
   turnBudget: 100,
   tokenBudget: null,
+  repoAllowlist: [],
 };
 
 describe("settingsFromEnv", () => {
@@ -39,6 +40,7 @@ describe("settingsFromEnv", () => {
       defaultProfile: "coding",
       turnBudget: 7,
       tokenBudget: null,
+      repoAllowlist: [],
     });
   });
 
@@ -54,6 +56,16 @@ describe("settingsFromEnv", () => {
     expect(settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "" }).tokenBudget).toBeNull();
     expect(settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "2000000" }).tokenBudget).toBe(2_000_000);
     expect(() => settingsFromEnv({ PI_SESSION_TOKEN_BUDGET: "lots" })).toThrow(/tokenBudget/);
+  });
+
+  it("seeds the repo allowlist from PI_REPO_ALLOWLIST, empty by default, and rejects a bad entry", () => {
+    expect(settingsFromEnv({}).repoAllowlist).toEqual([]);
+    expect(
+      settingsFromEnv({ PI_REPO_ALLOWLIST: " Octo/* , octo/*,acme/app ," }).repoAllowlist,
+    ).toEqual(["octo/*", "acme/app"]);
+    expect(() => settingsFromEnv({ PI_REPO_ALLOWLIST: "https://github.com/octo/x" })).toThrow(
+      /repo allowlist entry/,
+    );
   });
 });
 
@@ -74,6 +86,7 @@ describe("validateSettings", () => {
       defaultProfile: "coding",
       turnBudget: 5,
       tokenBudget: null,
+      repoAllowlist: [],
     });
   });
 
@@ -273,6 +286,32 @@ describe("updateSettings", () => {
     });
     await updateSettings(db.asPool(), { tokenBudget: null }, "alice");
     expect((await readSettings(db.asPool()))?.settings.tokenBudget).toBeNull();
+  });
+
+  it("stores the repo allowlist lowercased and deduplicated; a partial update keeps it; a row without it reads as empty", async () => {
+    const db = new FakeSettingsDb();
+    await seedSettings(db.asPool(), base);
+    expect((await readSettings(db.asPool()))?.settings.repoAllowlist).toEqual([]);
+    await updateSettings(db.asPool(), { repoAllowlist: ["Octo/*", "octo/*", "acme/app"] }, "alice");
+    expect(db.row?.repo_allowlist).toEqual(["octo/*", "acme/app"]);
+    await updateSettings(db.asPool(), { turnBudget: 9 }, "alice");
+    expect((await readSettings(db.asPool()))?.settings.repoAllowlist).toEqual([
+      "octo/*",
+      "acme/app",
+    ]);
+    expect(await updateSettings(db.asPool(), { repoAllowlist: ["octo/he*"] }, "alice")).toMatch(
+      /repo allowlist entry "octo\/he\*"/,
+    );
+    expect(await updateSettings(db.asPool(), { repoAllowlist: "octo/*" }, "alice")).toMatch(
+      /repoAllowlist must be an array/,
+    );
+    expect(
+      await updateSettings(
+        db.asPool(),
+        { repoAllowlist: Array.from({ length: 201 }, (_, i) => `octo/r${String(i)}`) },
+        "alice",
+      ),
+    ).toMatch(/at most 200 distinct/);
   });
 
   it("stores the cap and refuses one below the stored default", async () => {
