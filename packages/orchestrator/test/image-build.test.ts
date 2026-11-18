@@ -45,17 +45,64 @@ describe("image delivery replaces mutable code uploads", () => {
   it("builds all images for both architectures without publishing by default", () => {
     const result = run(["all"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(5);
+    expect(log().trim().split("\n")).toHaveLength(6);
     expect(log()).toContain("--platform linux/amd64,linux/arm64");
     expect(log()).toContain("type=oci,dest=");
     expect(log()).not.toMatch(/--push|--load/);
-    expect(result.stdout.match(/digest:/g)).toHaveLength(5);
+    expect(result.stdout.match(/digest:/g)).toHaveLength(6);
+  });
+
+  it("builds the browser sandbox image from its own Dockerfile", () => {
+    expect(run(["sandbox-browser", "--platform", "linux/arm64"]).status).toBe(0);
+    expect(log()).toContain(`-f ${root}/images/sandbox-browser/Dockerfile`);
+    expect(log()).toMatch(/-t pi-sandbox-browser:0\.0\.0-[a-f0-9]+/);
+  });
+
+  it("keeps the browser image on the sandbox's pi-env, pinned tools and a non-root user", () => {
+    const base = readFileSync(join(root, "images/sandbox/Dockerfile"), "utf8");
+    const browser = readFileSync(join(root, "images/sandbox-browser/Dockerfile"), "utf8");
+    // The pi-env stage (version, checksums) is the same text in both: a bump of one must bump the other.
+    const stage = (text: string): string =>
+      text.slice(text.indexOf("FROM node"), text.indexOf("\n\n", text.indexOf("FROM node")));
+    expect(stage(browser)).toBe(stage(base));
+    expect(browser).toMatch(/FROM registry\.k8s\.io\/agent-sandbox\/sandboxd:v1\.0\.11/);
+    expect(browser.trimEnd().endsWith("USER 1000:1000")).toBe(true);
+    // Exact versions with checksums: agent-browser per architecture, the npm tools from a lockfile.
+    expect(
+      browser.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} .*agent-browser\/releases\/download\/v0\.43\.0\//g,
+      ),
+    ).toHaveLength(2);
+    expect(browser).toContain("npm ci");
+    const pkg = JSON.parse(
+      readFileSync(join(root, "images/sandbox-browser/package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    expect(pkg.dependencies).toEqual({ "@playwright/cli": "0.1.25" });
+    // Both tools drive the one Chromium that Playwright installs, with the flags only the wrapper sets.
+    const wrapper = readFileSync(join(root, "images/sandbox-browser/files/pi-browser"), "utf8");
+    for (const flag of [
+      "--no-sandbox",
+      "--disable-quic",
+      "--remote-debugging-address=127.0.0.1",
+      "--proxy-server=http://127.0.0.1:",
+      "--host-resolver-rules=",
+    ]) {
+      expect(wrapper).toContain(flag);
+    }
+    expect(wrapper).not.toContain("--remote-debugging-address=0.0.0.0");
+    const policy = JSON.parse(
+      readFileSync(join(root, "images/sandbox-browser/files/chromium-policy.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(policy.URLBlocklist).toEqual(expect.arrayContaining(["file://*", "chrome://*"]));
+    expect(policy.DownloadDirectory).toBe("/workspace/downloads");
+    expect(policy.QuicAllowed).toBe(false);
+    expect(policy.DnsOverHttpsMode).toBe("off");
   });
 
   it("accepts build flags without an image target", () => {
     const result = run(["--platform", "linux/arm64"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(5);
+    expect(log().trim().split("\n")).toHaveLength(6);
     expect(log()).toContain("--load");
   });
 
