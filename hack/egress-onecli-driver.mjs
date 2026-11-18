@@ -18,6 +18,13 @@
 //                                    (rule pi-block-all, created last). The echo host is not on that list: add an allow rule
 //                                    for it and re-create the block rule after it (the order the script keeps), or remove it
 //   cleanup <session>                what the session delete and the sweep do, for a session that is already gone
+//   (hack/egress-bakeoff.sh, issue #264)
+//   bind-hosts <session> <h1,h2,..>  ensure the session's OneCLI agent, seal its token into the binding and create session
+//                                    rules (allow, route=onecli, 443) for the hosts
+//   secret <session> <suffix> <host> <header> <value> [pathPattern]
+//                                    a generic secret on <host> that injects <value> in <header> (only for paths matching
+//                                    pathPattern when given), granted to the session's agent. The value is a dummy
+//   direct-rule <session> <host>     a session rule: allow <host> on 443 with route=direct
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,12 +35,14 @@ import { agentIdentifier, secretName } from "/app/dist/onecli-names.js";
 import { RepoAccess } from "/app/dist/repo-access.js";
 import { EgressPrincipals } from "/app/dist/egress.js";
 import {
+  createEgressRule,
   createPool,
   ensureSessionOneCliRules,
+  SESSION_RULES_AUTHOR,
   parseBindingKey,
 } from "/app/node_modules/@pi-durable-k8s/session-core/dist/index.js";
 
-const [command, session, extra] = process.argv.slice(1);
+const [command, session, extra, ...more] = process.argv.slice(1);
 const config = loadConfig(process.env);
 if (config.egressProxyUrl === undefined || config.egressBindingKeyFile === undefined)
   throw new Error("the orchestrator has no egress proxy or binding key configured");
@@ -246,12 +255,50 @@ try {
         (a) => a.identifier === agentIdentifier(session, config.repos.namePrefix),
       );
       for (const a of agents) await onecli.deleteAgent(a.id);
-      const names = new Set(
-        ["git", "api", "echo"].map((s) => secretName(session, s, config.repos.namePrefix)),
-      );
-      for (const s of (await onecli.listSecrets()).filter((x) => names.has(x.name)))
+      const own = `${agentIdentifier(session, config.repos.namePrefix)}-`;
+      for (const s of (await onecli.listSecrets()).filter((x) => x.name.startsWith(own)))
         await onecli.deleteSecret(s.id);
       console.log("cleaned yes");
+      break;
+    }
+    case "bind-hosts": {
+      const agent = await agentToken(session);
+      await egress.bindOneCli(row(session), agent.accessToken, extra.split(","));
+      console.log(`agent ${agent.id}`);
+      break;
+    }
+    case "secret": {
+      const [host, header, value, pathPattern] = more;
+      const agent = await agentToken(session);
+      const body = {
+        name: secretName(session, extra, config.repos.namePrefix),
+        type: "generic",
+        value,
+        hostPattern: host,
+        injectionConfig: { headerName: header, valueFormat: "{value}" },
+      };
+      if (pathPattern !== undefined && pathPattern !== "-") body.pathPattern = pathPattern;
+      const made = await policy("POST", "/v1/secrets", body);
+      const id = made?.data?.id ?? made?.id;
+      if (typeof id !== "string") throw new Error("OneCLI did not return the secret id");
+      await onecli.grantSecret(agent.id, id);
+      console.log(`secret ${extra} ${host} ${pathPattern ?? "-"}`);
+      break;
+    }
+    case "direct-rule": {
+      await createEgressRule(
+        pool,
+        { sessionId: session },
+        {
+          effect: "allow",
+          host: extra,
+          ports: [443],
+          route: "direct",
+          note: "bake-off direct host",
+        },
+        SESSION_RULES_AUTHOR,
+      );
+      console.log(`direct-rule ${extra}`);
       break;
     }
     default:
