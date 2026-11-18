@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -91,14 +92,6 @@ func Build(o Options) (*Proxy, error) {
 		opts:        o,
 		upstreamURL: upstreamURL,
 	}
-	// From authorization (stamped in serve) to Track a request spends at most
-	// the connect timeout (which also bounds Smokescreen's resolve-and-dial)
-	// plus, on the onecli route, the upstream handshake. The margin covers the
-	// ACL decision and scheduling. The span is not strictly bounded: if a
-	// stage outlasts its timeout the revocation entry may expire first and
-	// that one tunnel then lives to maxAge.
-	p.Registry.horizon = o.ConnectTimeout + o.UpstreamHandshakeTimeout + 30*time.Second
-
 	cfg := smokescreen.NewConfig()
 	if o.Log != nil {
 		cfg.Log = o.Log
@@ -155,10 +148,8 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	// A client must never choose the next hop. Del removes every value.
 	r.Header.Del(upstreamHeader)
-	// Stamped before the ACL decision, never in dial, so a close that lands
-	// between the two still revokes this request. The state also carries the
-	// addresses the decision checked to dial.
-	r = r.WithContext(context.WithValue(r.Context(), stateKey{}, &reqState{authorizedAt: p.Registry.now()}))
+	// The state carries the addresses the ACL decision checked to the dial.
+	r = r.WithContext(context.WithValue(r.Context(), stateKey{}, &reqState{}))
 	p.inner.ServeHTTP(w, r)
 }
 
@@ -265,7 +256,8 @@ func (p *Proxy) authUpstream(ctx *goproxy.ProxyCtx, req *http.Request) error {
 //     proxy env var (NO_PROXY) from turning the route into a direct dial.
 //   - route=direct: the address must be the requested destination, and goes
 //     through Smokescreen's resolve-classify-dial path.
-//   - every connection is registered for revocation and maximum age.
+//   - every connection is registered with its decision inputs, for revocation and maximum age, and judged again once
+//     registered.
 func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, error) {
 	d, err := decisionOf(pctx)
 	if err != nil {
@@ -306,15 +298,102 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 	st := stateOf(pctx)
 	if st == nil {
 		_ = c.Close()
-		return nil, errors.New("tunnel has no authorization time")
+		return nil, errors.New("tunnel has no decision state")
 	}
-	return p.Registry.Track(d.Role, st.authorizedAt, c), nil
+	host, port, ok := splitHostPort(d.OutboundHost)
+	if !ok {
+		_ = c.Close()
+		return nil, errors.New("destination needs host:port")
+	}
+	info := tunnelInfo{session: d.Role, host: normalizeHost(host), port: port, addrs: addrStrings(st.addrs), route: RouteDirect}
+	if d.SelectedUpstreamProxy != "" {
+		info.route = RouteOneCLI
+		tok, ok := p.upstreamToken(d.Role)
+		if !ok {
+			_ = c.Close()
+			return nil, errors.New("no upstream token for session")
+		}
+		info.upstreamKey = sha256.Sum256([]byte(tok))
+	}
+	t := p.Registry.Track(info, c)
+	// Judge again now that the tunnel is registered. The decision above read the snapshot at some earlier moment; a
+	// snapshot that arrived since has already swept without this tunnel. From here on every new snapshot sweeps it, so
+	// no tunnel outlives a snapshot that denies it.
+	if reason := p.judge(info); reason != "" {
+		p.logRevoked(revoked{info, reason})
+		_ = t.Close()
+		return nil, errors.New("the rules changed while the tunnel was opening")
+	}
+	return t, nil
+}
+
+// upstreamToken is the session's OneCLI token, if it has a binding.
+func (p *Proxy) upstreamToken(session string) (string, bool) {
+	if p.opts.Principals == nil {
+		return "", false
+	}
+	return p.opts.Principals.OneCLIToken(session)
+}
+
+// judge asks the current snapshot whether the tunnel would be opened today: the same principal, host, port and
+// addresses it was decided on. It returns "" to keep the tunnel, or the reason to close it. A route that differs, or
+// a OneCLI token that is not the one the tunnel carries, closes it too, so the next connection takes the new route
+// or binding.
+func (p *Proxy) judge(t tunnelInfo) string {
+	pr, known := p.principalOf(t.session)
+	if !known {
+		return "principal-revoked"
+	}
+	v := p.opts.Authorizer.Authorize(pr, t.host, t.port, t.addrs)
+	if !v.Allow {
+		if v.Kind == KindStale {
+			return "stale"
+		}
+		return "rule-denied"
+	}
+	if v.Route != t.route {
+		return "route-changed"
+	}
+	if t.route == RouteOneCLI {
+		tok, ok := p.upstreamToken(t.session)
+		if !ok {
+			return "binding-removed"
+		}
+		if sha256.Sum256([]byte(tok)) != t.upstreamKey {
+			return "binding-changed"
+		}
+	}
+	return ""
+}
+
+// Sweep re-judges every open tunnel against the current snapshot and closes those it denies. The loader calls it
+// after every successful read, so a rule, principal or binding change reaches open tunnels within a poll.
+func (p *Proxy) Sweep() int { return p.sweep(p.judge) }
+
+// CloseAll closes every open tunnel with the given reason. The loader calls it when the snapshot goes stale (the
+// proxy then denies new connections and must not keep the old ones).
+func (p *Proxy) CloseAll(reason string) int {
+	return p.sweep(func(tunnelInfo) string { return reason })
+}
+
+func (p *Proxy) sweep(judge func(tunnelInfo) string) int {
+	out := p.Registry.Revalidate(judge)
+	for _, r := range out {
+		p.logRevoked(r)
+	}
+	return len(out)
+}
+
+// logRevoked records one revoked tunnel. Session, destination and reason only: never a token.
+func (p *Proxy) logRevoked(r revoked) {
+	if p.opts.Log != nil {
+		p.opts.Log.Info("tunnel-revoked", "event", "tunnel-revoked", "session", r.session, "host", r.host, "port", r.port, "route", string(r.route), "reason", r.reason)
+	}
 }
 
 // reqState is what one CONNECT carries from the front handler through the ACL decision to the dial. The ACL
 // decision (decider.Decide) is the only writer of addrs and it runs before the dial, on the same goroutine chain.
 type reqState struct {
-	authorizedAt time.Time
 	// addrs are the destination's addresses as the decision checked them; the direct route dials the first.
 	addrs []netip.Addr
 }

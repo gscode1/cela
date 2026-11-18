@@ -1,5 +1,5 @@
 // Command egress-proxy serves the session egress proxy. Configuration comes from the environment; secrets (the
-// database URI, the admin token) are never logged. It reads the egress rules from Postgres (ADR 0035) and serves
+// database URI) are never logged. It reads the egress rules from Postgres (ADR 0035) and serves
 // nothing until the first read has worked.
 package main
 
@@ -162,22 +162,18 @@ func run() error {
 		return err
 	}
 
+	// Open tunnels follow the rules: every successful read re-judges them (ADR 0039), and a snapshot gone stale closes
+	// them all. EGRESS_MAX_TUNNEL_AGE stays as the backstop. Subscribed before the first tunnel can exist.
+	loader.Subscribe(func() { p.Sweep() }, func() {
+		if n := p.CloseAll("stale"); n > 0 {
+			log.Warn("egress rules stale, open tunnels closed", "closed", n)
+		}
+	})
 	proxySrv := &http.Server{Addr: envOr("EGRESS_LISTEN", ":3128"), Handler: p.Handler(), ReadHeaderTimeout: 30 * time.Second}
 	servers := []*http.Server{proxySrv, health}
 	serve(proxySrv, errc)
-	// The tunnel-close admin endpoint is slice 7's; it only starts when a token is configured.
-	var adminSrv *http.Server
-	if token := os.Getenv("EGRESS_ADMIN_TOKEN"); token != "" {
-		adminSrv = &http.Server{
-			Addr:              envOr("EGRESS_ADMIN_LISTEN", "127.0.0.1:3129"),
-			Handler:           egress.AdminHandler(p.Registry, token),
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		servers = append(servers, adminSrv)
-		serve(adminSrv, errc)
-	}
 	ready.Store(true)
-	log.Info("listening", "proxy", proxySrv.Addr, "replica", replica, "staleAfter", staleAfter.String())
+	log.Info("listening", "proxy", proxySrv.Addr, "replica", replica, "staleAfter", staleAfter.String(), "maxTunnelAge", maxAge.String())
 
 	select {
 	case err := <-errc:
