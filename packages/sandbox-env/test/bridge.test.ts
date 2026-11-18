@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { PassThrough, Readable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { runBridge } from "../src/bridge.ts";
+import { MAX_QUEUED_OUTPUT_BYTES, runBridge } from "../src/bridge.ts";
 import type { RemoteProcess } from "../src/bridge.ts";
 import { localStart } from "./local-start.ts";
 
@@ -147,6 +147,64 @@ describe("runBridge", () => {
       stderr: new PassThrough(),
     });
     expect(code).toBe(1);
+  }, 15_000);
+
+  it("holds the remote process back while stdout is not read, instead of queuing its output", async () => {
+    // A reader that never reads: everything the bridge does not hold back piles up in its write queue.
+    const stdout = new Writable({ highWaterMark: 64 * 1024, write: () => undefined });
+    const stop = new AbortController();
+    const done = runBridge({
+      start: localStart({ command: "sh", args: ["-c", "exec yes 0123456789abcdef"] }),
+      command: "ignored",
+      args: [],
+      stdin: new PassThrough(),
+      stdout,
+      stderr: new PassThrough(),
+      signal: stop.signal,
+    });
+    // `yes` writes GiB per second when nothing holds it back.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const queued = stdout.writableLength;
+    stop.abort();
+    expect(await done).toBe(1);
+    expect(queued).toBeGreaterThan(0);
+    expect(queued).toBeLessThan(1024 * 1024);
+  }, 15_000);
+
+  it("fails when a start that ignores back-pressure queues more than the cap", async () => {
+    const stdout = new Writable({ highWaterMark: 64 * 1024, write: () => undefined });
+    const stderr = new PassThrough();
+    const err = collect(stderr);
+    let closed = false;
+    const code = await runBridge({
+      start: (_command, _args, handlers) => {
+        const chunk = new Uint8Array(1024 * 1024);
+        const flood = setInterval(() => {
+          for (let i = 0; i < 8; i++) void handlers.onStdout(chunk);
+        }, 1);
+        const proc: RemoteProcess = {
+          write: () => Promise.resolve(),
+          closeStdin: () => Promise.resolve(),
+          wait: () => new Promise(() => undefined),
+          close: () => {
+            closed = true;
+            clearInterval(flood);
+            return Promise.resolve();
+          },
+        };
+        return Promise.resolve(proc);
+      },
+      command: "ignored",
+      args: [],
+      stdin: new PassThrough(),
+      stdout,
+      stderr,
+    });
+    expect(code).toBe(1);
+    expect(closed).toBe(true);
+    expect(err().toString()).toContain("stdout reader too slow");
+    // Bounded: the cap plus what one burst adds after it.
+    expect(stdout.writableLength).toBeLessThan(MAX_QUEUED_OUTPUT_BYTES + 16 * 1024 * 1024);
   }, 15_000);
 
   it("gives up on a start that never resolves after the start timeout", async () => {

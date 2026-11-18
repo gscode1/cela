@@ -26,15 +26,18 @@ export function sandboxStart(target: SandboxTarget): StartProcess {
     // would destroy the session's sandbox (and its PVC) every time a bridge exits.
     const sandbox = await client.getSandbox(target.claimName, target.namespace);
     try {
-      // No pty: a terminal would merge stderr into stdout and mangle binary bytes.
-      const handle = await sandbox.commands.start(command, args, {
-        onStdout: (chunk) => {
-          handlers.onStdout(chunk);
-        },
-        onStderr: (chunk) => {
-          handlers.onStderr(chunk);
-        },
-      });
+      // No pty: a terminal would merge stderr into stdout and mangle binary bytes. No output callbacks either: the SDK
+      // calls them as fast as sandboxd sends, while `events` reads only when pulled, so awaiting each handler holds
+      // sandboxd's pipe (and the process) back while our reader is slow, instead of queuing in the orchestrator.
+      const handle = await sandbox.commands.start(command, args);
+      const pumped = (async (): Promise<void> => {
+        for await (const event of handle.events) {
+          if (event.type === "stdout") await handlers.onStdout(event.data);
+          else if (event.type === "stderr") await handlers.onStderr(event.data);
+        }
+      })();
+      // A lost stream also rejects wait(), which is where the bridge sees it.
+      pumped.catch(() => undefined);
       const process: RemoteProcess = {
         write: (data) => handle.write(data),
         closeStdin: () => handle.closeStdin(),
