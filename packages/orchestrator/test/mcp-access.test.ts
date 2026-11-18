@@ -34,26 +34,25 @@ const OPEN: McpServerSpec = {
   onecliSecret: null,
 };
 
-const session = (id: string, conversationId: number, mcpServers: string[] | null): SessionRow =>
-  ({
-    id,
-    owner: "alice",
-    ownerSubject: "static:alice",
-    status: "active",
-    shard: 0,
-    conversationId,
-    model: null,
-    failure: null,
-    repo: null,
-    onecli: null,
-    workspaceReadyAt: null,
-    profile: mcpServers === null ? null : { name: "p", version: 1, snapshot: { mcpServers } },
-    usage: null,
-    sandboxSize: null,
-    networkMode: "proxied",
-    createdAt: new Date(),
-    lastActivityAt: new Date(),
-  }) as SessionRow;
+const session = (id: string, conversationId: number, mcpServers: string[] | null): SessionRow => ({
+  id,
+  owner: "alice",
+  ownerSubject: "static:alice",
+  status: "active",
+  shard: 0,
+  conversationId,
+  model: null,
+  failure: null,
+  repo: null,
+  onecli: null,
+  workspaceReadyAt: null,
+  profile: mcpServers === null ? null : { name: "p", version: 1, snapshot: { mcpServers } },
+  usage: null,
+  sandboxSize: null,
+  networkMode: "proxied",
+  createdAt: new Date(),
+  lastActivityAt: new Date(),
+});
 
 interface Made {
   token: string;

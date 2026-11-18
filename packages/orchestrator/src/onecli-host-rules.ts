@@ -217,11 +217,16 @@ export class HostRuleReconciler {
     return run;
   }
 
+  /** A method, not a field read: TypeScript narrows `#stopped` to false in the loop, but stop() flips it at an await. */
+  #isStopped(): boolean {
+    return this.#stopped;
+  }
+
   async #listen(): Promise<void> {
-    while (!this.#stopped) {
+    while (!this.#isStopped()) {
       try {
         const client = await this.#opts.pool.connect();
-        if (this.#stopped) {
+        if (this.#isStopped()) {
           client.release(true);
           return;
         }

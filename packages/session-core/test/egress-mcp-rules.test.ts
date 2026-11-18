@@ -172,8 +172,10 @@ describe("syncMcpRules", () => {
   it("replaces a row that does not belong (a stale host) and a duplicate of a host", async () => {
     const db = seeded();
     await inTransaction(db, (c) => syncMcpRules(c, [server("a", "https://a.example.com/")], "x"));
-    db.rules.push({ ...db.rules[0]!, id: 99 });
-    db.rules.push({ ...db.rules[0]!, id: 100, host: "gone.example.com" });
+    const first = db.rules[0];
+    if (first === undefined) throw new Error("no derived rule");
+    db.rules.push({ ...first, id: 99 });
+    db.rules.push({ ...first, id: 100, host: "gone.example.com" });
     await inTransaction(db, (c) => syncMcpRules(c, [server("a", "https://a.example.com/")], "x"));
     expect(db.rules.map((r) => r.host)).toEqual(["a.example.com"]);
   });

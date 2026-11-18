@@ -79,7 +79,9 @@ describe("desiredHosts", () => {
       mcp("a", "https://a.example.com/"),
       mcp("b", "https://b.example.com/", "k"),
     ]);
-    db.ruleSets.push({ ...db.ruleSets[0]!, name: "web", system: false });
+    const base = db.ruleSets[0];
+    if (base === undefined) throw new Error("no seeded set");
+    db.ruleSets.push({ ...base, name: "web", system: false });
     const rule = (over: object) => ({
       id: db.rules.length + 100,
       rule_set: "web",
@@ -291,7 +293,7 @@ describe("HostRuleReconciler", () => {
     const { fake, db } = setUp();
     const pool = db.asPool();
     const busy = {
-      ...pool,
+      query: pool.query.bind(pool),
       connect: () =>
         Promise.resolve({
           query: () => Promise.resolve({ rows: [{ locked: false }] }),

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type pg from "pg";
+import { FakeEgressDb } from "./fake-egress-db.ts";
 
 interface Row {
   default_model: string;
@@ -200,6 +201,13 @@ export class FakeSettingsDb {
     };
   }
 
+  /**
+   * The `egress` schema behind the catalog writes: the MCP catalog derives its egress rules in its own transaction (ADR
+   * 0040), so a catalog write issues egress statements, answered here by the egress fake and committed or rolled back with
+   * the catalog write.
+   */
+  readonly egress = new FakeEgressDb();
+
   /** What `pg_notify` of a committed writer does. */
   notify(channel = "pi_settings"): void {
     for (const listener of this.listeners) {
@@ -215,6 +223,9 @@ export class FakeSettingsDb {
     this.statements.push(sql.trim().split("\n")[0] ?? "");
     const done = (rows: unknown[] = []) => Promise.resolve({ rows, rowCount: rows.length });
     const text = sql.replace(/\s+/g, " ").trim();
+    if (text === "begin" || text === "commit" || text === "rollback") {
+      void this.egress.query(text);
+    }
     if (text === "begin") {
       this.#snapshot = {
         row: this.row === undefined ? undefined : { ...this.row },
@@ -265,6 +276,14 @@ export class FakeSettingsDb {
     }
     if (deletion !== undefined) return deletion;
     if (text.startsWith("select shard, configured_runtime")) return done([]);
+    // What the derivation of the MCP rules reads and writes (egress-mcp-rules.ts): the egress fake answers.
+    if (
+      /^(select (name|id, host, ports, route, note|system) from egress\.|insert into egress\.(rules|rule_sets|revisions|rules_history)|update egress\.rules|delete from egress\.rules where id)/.test(
+        text,
+      )
+    ) {
+      return this.egress.query(sql, params);
+    }
     if (text.includes("from egress.revisions")) {
       return done([{ revision: 0, ...this.egressRows }]);
     }
@@ -340,6 +359,9 @@ export class FakeSettingsDb {
         new: JSON.parse(next) as unknown,
       });
       return done();
+    }
+    if (text.startsWith("select pg_notify") && params[0] === "egress_rules") {
+      return this.egress.query(sql, params);
     }
     if (text.startsWith("select pg_notify")) {
       this.#pending.push(String(params[0]));

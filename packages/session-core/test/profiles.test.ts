@@ -194,6 +194,24 @@ describe("egressRuleSets", () => {
     );
     expect(gone).toMatchObject({ ok: false });
   });
+
+  it("cannot name the derived MCP rule set: it applies to nobody and is not for a profile (ADR 0040)", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    db.egressRuleSets.add("mcp-catalog");
+    const refused = await putProfile(
+      db.asPool(),
+      "web",
+      { definition: { egressRuleSets: ["mcp-catalog"] } },
+      "alice",
+      KNOWN,
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('"mcp-catalog"') as unknown,
+    });
+    expect(await readProfile(db.asPool(), "web")).toBeUndefined();
+  });
 });
 
 describe("repoSkills", () => {

@@ -670,3 +670,98 @@ describe("admin egress explain and status", () => {
     });
   });
 });
+
+describe("the derived MCP rule set (ADR 0040)", () => {
+  async function withSystemSet() {
+    const started = await start();
+    const now = new Date().toISOString();
+    started.db.ruleSets.push({
+      name: "mcp-catalog",
+      description: "derived",
+      applies_to_all: false,
+      system: true,
+      revision: 1,
+      created_at: now,
+      created_by: "mcp-catalog",
+      updated_at: now,
+      updated_by: "mcp-catalog",
+    });
+    started.db.revisions.push({ revision: 1, changed_by: "migration 029" });
+    started.db.rules.push({
+      id: 1,
+      rule_set: "mcp-catalog",
+      session_id: null,
+      effect: "allow",
+      host: "mcp.example.com",
+      ports: [443],
+      route: "onecli",
+      allows_private: false,
+      expires_at: null,
+      note: "MCP server demo",
+      revision: 1,
+      created_at: now,
+      created_by: "mcp-catalog",
+      updated_at: now,
+      updated_by: "mcp-catalog",
+    });
+    return started;
+  }
+
+  it("is listed as a system set, and every hand edit of it or its rules is a 409 that changes nothing", async () => {
+    const { base, db } = await withSystemSet();
+    const list = (await (await call(base, "alice", "GET", `${BASE}/rule-sets`)).json()) as {
+      ruleSets: { name: string; system: boolean; ruleCount: number }[];
+    };
+    expect(list.ruleSets).toMatchObject([{ name: "mcp-catalog", system: true, ruleCount: 1 }]);
+    const before = JSON.stringify([db.ruleSets, db.rules, db.revisions]);
+    for (const [method, path, body] of [
+      ["PUT", `${BASE}/rule-sets/mcp-catalog`, { appliesToAll: true }],
+      ["DELETE", `${BASE}/rule-sets/mcp-catalog?expectedRevision=1`],
+      ["POST", `${BASE}/rule-sets/mcp-catalog/rules`, { effect: "allow", host: "x.example.com" }],
+      ["PUT", `${BASE}/rules/1`, { host: "y.example.com" }],
+      ["DELETE", `${BASE}/rules/1?expectedRevision=1`],
+    ] as [string, string, unknown?][]) {
+      const res = await call(base, "alice", method, path, body);
+      expect(res.status, `${method} ${path}`).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toMatch(/MCP server catalog/);
+    }
+    expect(JSON.stringify([db.ruleSets, db.rules, db.revisions])).toBe(before);
+  });
+
+  it("explain names the catalog's servers on the host and whether the profile names them", async () => {
+    const { base, db } = await withSystemSet();
+    db.mcpRows = [
+      {
+        name: "demo",
+        url: "https://mcp.example.com/mcp",
+        transport: "streamable-http",
+        enabled: true,
+        read_only: true,
+        timeout_ms: 60_000,
+        max_output_bytes: 24_576,
+        onecli_secret: "demo-key",
+        revision: 1,
+        source: null,
+        created_at: new Date(),
+        created_by: "alice",
+        updated_at: new Date(),
+        updated_by: "alice",
+      },
+    ];
+    const asked = await json(
+      await call(base, "alice", "POST", `${BASE}/explain`, { host: "mcp.example.com" }),
+    );
+    // No set applies to a sandbox: the host is not reachable by its own connection.
+    expect(asked).toMatchObject({
+      decision: "deny",
+      mcp: {
+        ruleSet: "mcp-catalog",
+        servers: [{ name: "demo", enabled: true, credentialed: true, route: "onecli" }],
+      },
+    });
+    const other = await json(
+      await call(base, "alice", "POST", `${BASE}/explain`, { host: "other.example.com" }),
+    );
+    expect(other.mcp).toEqual({ ruleSet: "mcp-catalog", servers: [] });
+  });
+});

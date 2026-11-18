@@ -180,3 +180,20 @@ describe("migration 027_egress_bindings.sql", () => {
     expect(sql).toMatch(/after insert or update or delete on egress\.bindings/);
   });
 });
+
+describe("migration 029_egress_system_sets.sql", () => {
+  const SQL029 = readFile(
+    new URL("../migrations/029_egress_system_sets.sql", import.meta.url),
+    "utf8",
+  );
+
+  it("is idempotent, adds the system flag and seeds the derived set once, never applying to all", async () => {
+    const sql = (await SQL029).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/add column if not exists system boolean not null default false/);
+    expect(sql).toMatch(/not exists \(\s*select 1 from pg_constraint/);
+    expect(sql).toMatch(/if exists \(select 1 from egress\.rule_sets where name = 'mcp-catalog'\)/);
+    expect(sql).toMatch(/check \(not \(system and applies_to_all\)\)/);
+    expect(sql).not.toMatch(/create table (?!if not exists)|\bdrop\b/);
+    expect(sql).not.toMatch(/\binbox\./);
+  });
+});

@@ -57,6 +57,8 @@ export class FakeEgressDb {
   /** The `revision` of each row of egress.revisions, with who wrote it. */
   revisions: { revision: number; changed_by: string }[] = [];
   history: HistoryRow[] = [];
+  /** `inbox.mcp_servers` rows as `readMcpServers` selects them (explain looks at the catalog); empty by default. */
+  mcpRows: Record<string, unknown>[] = [];
   /** Pretend another process holds the session-level advisory lock. */
   lockedElsewhere = false;
   /** Payloads of the notifications on `egress_rules` that committed. */
@@ -567,6 +569,9 @@ export class FakeEgressDb {
       );
     }
     if (text.startsWith("select network_mode from inbox.sessions")) return done([]);
+    if (text.startsWith("select name, url, transport") && text.includes("from inbox.mcp_servers")) {
+      return done(this.mcpRows);
+    }
     return Promise.reject(new Error(`FakeEgressDb: unexpected statement ${text.slice(0, 60)}`));
   }
 }

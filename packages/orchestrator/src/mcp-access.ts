@@ -168,7 +168,7 @@ export class McpAccess {
       stable: (input, init) =>
         identity.revoked
           ? Promise.reject(new McpNotGrantedError("the MCP identity was revoked"))
-          : identity.fetch(input as never, init as never),
+          : identity.fetch(input, init),
     };
     cache.set(key, identity);
     log("mcp-identity-ready", { agent: identifier, servers: servers.map((s) => s.name), created });
