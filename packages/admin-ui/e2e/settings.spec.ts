@@ -163,30 +163,35 @@ test.describe("model pickers", () => {
     ]);
     await shot(page, "cleanup-profiles-settings-scripted");
 
-    await page.getByLabel("Provider", { exact: true }).selectOption("openai");
-    const model = page.getByLabel("Default model", { exact: true });
-    await expect(model).toHaveValue("GPT Fast");
-    await model.click();
-    await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
-      /GPT Fast/,
-      /GPT Think\s*reasoning/,
-    ]);
-    await page.getByRole("option", { name: /GPT Think/ }).click();
-    await expect(model).toHaveValue("GPT Think");
-    await expect(page.getByLabel("Default reasoning")).toBeVisible();
-    // Never offered: the unconfigured provider and the test provider's models.
-    await expect(page.getByText("Claude X")).toHaveCount(0);
-
+    // While only scripted models are allowed they are listed, with their note, and can be removed.
     const allowed = page.getByRole("group", { name: "Allowed models" });
     await expect(allowed.getByText("default")).toBeVisible();
     await expect(
       allowed.getByText("Test model — replays the message as a script, no LLM."),
     ).toHaveCount(1);
+    await allowed.getByRole("button", { name: "Remove scripted-2 (scripted)" }).click();
+
+    await page.getByLabel("Provider", { exact: true }).selectOption("openai");
+    const model = page.getByLabel("Default model", { exact: true });
+    await expect(model).toHaveValue("GPT Fast");
+    await model.click();
+    // A row is the model's key alone.
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+      "openai/gpt-fast",
+      "openai/gpt-think",
+    ]);
+    await page.getByRole("option", { name: "openai/gpt-think" }).click();
+    await expect(model).toHaveValue("GPT Think");
+    await expect(page.getByLabel("Default reasoning")).toBeVisible();
+    // Never offered: the unconfigured provider and the test provider's models.
+    await expect(page.getByText("Claude X")).toHaveCount(0);
+
     await allowed.getByLabel("Provider to add from").selectOption("openai");
     await allowed.getByLabel("Add a model").fill("fast");
-    await allowed.getByRole("option", { name: /GPT Fast/ }).click();
+    await allowed.getByRole("option", { name: "openai/gpt-fast" }).click();
     await expect(allowed.getByRole("list").getByText("GPT Fast")).toBeVisible();
-    await allowed.getByRole("button", { name: "Remove scripted-2 (scripted)" }).click();
+    // A real model is allowed now: scripted-1 drops out of the list, but stays in the saved allowlist (below).
+    await expect(allowed.getByRole("list").getByText("scripted-1")).toHaveCount(0);
     await shot(page, "cleanup-profiles-settings-pickers");
 
     await page.getByRole("button", { name: "Save settings" }).click();
@@ -236,7 +241,7 @@ test.describe("model pickers", () => {
     await add.fill("Bulk Model 150");
     await allowed
       .getByRole("listbox")
-      .getByRole("option", { name: /Bulk Model 150/ })
+      .getByRole("option", { name: /\/model-150$/ })
       .click();
     await expect(allowed.getByRole("list").getByText("Bulk Model 150")).toBeVisible();
     await shot(page, "picker-scale-allowed-added");

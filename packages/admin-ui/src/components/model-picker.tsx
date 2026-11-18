@@ -13,6 +13,7 @@ import {
   modelLabel,
   providerOf,
   SCRIPTED_NOTE,
+  shownAllowlist,
 } from "@/lib/models";
 import type { ModelView, PickOption } from "@/lib/models";
 import type { CatalogModel } from "@/lib/api/models";
@@ -24,7 +25,6 @@ const optionOf = (model: CatalogModel): PickOption => ({
   key: keyOf(model),
   label: model.name ?? model.id,
   search: model.id,
-  reasoning: model.reasoning,
 });
 
 const providersOf = (view: ModelView): string[] => [
@@ -166,14 +166,14 @@ export function AllowedModelSelect({
   onChange: (key: string) => void;
 }) {
   const stale = value !== "" && !allowed.includes(value);
-  if (allowed.length > COMBOBOX_ABOVE) {
+  const shown = shownAllowlist(allowed, value);
+  if (shown.length > COMBOBOX_ABOVE) {
     const options: PickOption[] = [
       { key: "", label: inheritLabel },
-      ...allowed.map((key) => ({
+      ...shown.map((key) => ({
         key,
         label: modelLabel(view.models, key),
         search: key,
-        reasoning: view.models.find((model) => keyOf(model) === key)?.reasoning === true,
       })),
     ];
     return (
@@ -199,7 +199,7 @@ export function AllowedModelSelect({
     >
       <option value="">{inheritLabel}</option>
       {stale && <option value={value}>{value} (not allowed)</option>}
-      {groupKeys(allowed, view.models).map((group) => (
+      {groupKeys(shown, view.models).map((group) => (
         <optgroup key={group.provider} label={group.provider}>
           {group.options.map((option) => (
             <option key={option.key} value={option.key}>
@@ -237,10 +237,13 @@ export function AllowedModels({
   const [picked, setPicked] = useState("");
   const [all, setAll] = useState(false);
   const provider = providers.includes(picked) ? picked : (providers[0] ?? "");
-  const entries = [
-    ...(defaultModel === "" ? [] : [defaultModel]),
-    ...value.filter((key) => key !== defaultModel),
-  ];
+  const entries = shownAllowlist(
+    [
+      ...(defaultModel === "" ? [] : [defaultModel]),
+      ...value.filter((key) => key !== defaultModel),
+    ],
+    defaultModel,
+  );
   const visible = all ? entries : entries.slice(0, COMBOBOX_ABOVE);
   const options = view.models
     .filter(
