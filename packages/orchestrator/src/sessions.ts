@@ -408,19 +408,25 @@ export class SessionService {
    * The per-session turn budget, checked before every input: a session that used all its turns fails for good, and
    * otherwise the conversation's `maxTurns` is set to what is left, so a single long run cannot overshoot it.
    * Turns are model responses, counted from the stored transcript, so a restart does not reset the count.
+   *
+   * Pi compares `maxTurns` with the running run's own rounds (`pi.live.run.turns`, from 0 per run), and an input can
+   * arrive mid-run (a steer, or a follow-up admitted while busy). So the limit is the budget minus the turns used before
+   * that run started, never minus all turns: the running run's rounds would count twice and end it early (#177).
    */
   async #withinBudget(session: SessionRow, conversationId: number): Promise<void> {
     const definition = definitionOf(session);
     // Before every input, like the budget: a coding tool installed by a later release must not reach this session.
     await this.#host.applyProfileTools(conversationId, definition);
+    const budget = definition.turnBudget ?? this.#options.turnBudget();
+    // The run's rounds before the transcript: a round committed in between only makes the limit one lower, never higher.
+    const running = await this.#host.runTurns(conversationId);
     const used = await this.#host.turnsUsed(conversationId);
-    const left = (definition.turnBudget ?? this.#options.turnBudget()) - used;
-    if (left <= 0) {
+    if (budget - used <= 0) {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");
       throw new PermanentError("turn budget exhausted");
     }
-    await this.#host.limitTurns(conversationId, left);
+    await this.#host.limitTurns(conversationId, budget - Math.max(0, used - running));
   }
 
   /**

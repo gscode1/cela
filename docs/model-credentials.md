@@ -206,7 +206,9 @@ model.
   orchestrator installs every builtin provider (when the OneCLI token is set) and the scripted ones at start, and why removing a model from the
   allowlist stops new sessions only: existing conversations keep it, even when it was the provider's last allowed model.
 - The turn limit is `maxTurns` (tool rounds per run, `configure({ maxTurns })`). Pi has no per-session total, so the
-  budget below counts assistant entries in the stored transcript and sets `maxTurns` to what is left.
+  budget below counts assistant entries in the stored transcript. Pi compares `maxTurns` with the running run's own
+  rounds (`pi.live.run.turns`, from 0 per run), so it is set to the budget minus the turns used **before** the running
+  run started. An input that arrives mid-run (a steer) must not count that run's rounds twice and cut it short.
 
 ## Failures and spend limits
 
