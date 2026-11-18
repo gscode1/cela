@@ -20,7 +20,7 @@ export {
   THINKING_LEVELS,
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
-export { AdminConflictError, parseExpectedRevision } from "./revision.js";
+export { AdminConflictError, CREATE_ONLY_REVISION, parseExpectedRevision } from "./revision.js";
 export { AdminBlockedError, CATALOG_LOCK } from "./deletion.js";
 export type { BlockedBy } from "./deletion.js";
 export { sourceFromColumn, validateSource } from "./source.js";

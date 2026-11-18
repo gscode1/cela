@@ -31,6 +31,12 @@ needs to detect that. The console also needs a few reads and reserved fields tha
   `409`. Omitted, nothing is checked (last writer wins, as before), except on a DELETE, where it is required
   ([0027](0027-admin-delete.md)). It must be a positive integer (`400`), and ingest takes
   it out of the body before the validators that refuse unknown keys, which stay `400`.
+- **Create only.** A profile or MCP server `PUT` also accepts `expectedRevision: 0` (`CREATE_ONLY_REVISION`): the name
+  must not exist. Stored revisions start at 1, so `checkRevision` treats a missing row as revision 0 and answers any
+  existing row with `409`, under the same per-name lock as every other write. Without it a create form could not tell
+  "create" from "update": a name typed on "Register a server", or a profile created by another admin after the list
+  loaded, silently became an update (issue #210). The console's create forms always send it. Settings (one row, never
+  created by an admin) and DELETE (which names the revision it saw) still require a positive integer.
 - **Not covered.** A deleted MCP server created again under the same name restarts at revision 1, so a stale draft can
   still overwrite it. *Closed by [0027](0027-admin-delete.md):* a deleted name is never created again. The console ships in the ingest image, so a reload after an upgrade is enough for contract changes.
 - **Reads and downloads for the console.** `GET /admin/tools` returns the names profile writes are checked against (the

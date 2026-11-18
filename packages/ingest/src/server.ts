@@ -256,12 +256,16 @@ function requiredRevisionParam(url: URL): number | string {
   return parsed ?? "expectedRevision must be a positive integer";
 }
 
-/** `expectedRevision` taken out of a body, so the rest can go to a validator that refuses unknown keys. */
+/**
+ * `expectedRevision` taken out of a body, so the rest can go to a validator that refuses unknown keys. `create`: the
+ * write can create, so 0 ("must not exist yet") is allowed.
+ */
 function takeExpectedRevision(
   body: Record<string, unknown>,
+  options: { create?: boolean } = {},
 ): { expectedRevision: number | undefined; rest: Record<string, unknown> } | string {
   const { expectedRevision, ...rest } = body;
-  const parsed = parseExpectedRevision(expectedRevision);
+  const parsed = parseExpectedRevision(expectedRevision, options);
   return typeof parsed === "string" ? parsed : { expectedRevision: parsed, rest };
 }
 
@@ -800,7 +804,7 @@ async function handleAdminProfiles(
         return;
       }
     }
-    const taken = takeExpectedRevision(body);
+    const taken = takeExpectedRevision(body, { create: true });
     if (typeof taken === "string") {
       sendJson(res, 400, { error: taken });
       return;
@@ -938,7 +942,7 @@ async function handleAdminMcpServers(
       }
       throw error;
     }
-    const taken = takeExpectedRevision(body);
+    const taken = takeExpectedRevision(body, { create: true });
     if (typeof taken === "string") {
       sendJson(res, 400, { error: taken });
       return;

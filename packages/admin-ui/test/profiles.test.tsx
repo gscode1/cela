@@ -413,7 +413,7 @@ describe("versions", () => {
 });
 
 describe("create", () => {
-  it("creates a profile without expectedRevision and refuses an existing name", async () => {
+  it("creates a profile with the create-only expectedRevision and refuses an existing name", async () => {
     const admin = createFakeAdmin();
     renderApp("/profiles/new");
     await signIn("alice-token");
@@ -434,7 +434,32 @@ describe("create", () => {
     await screen.findByText("Published version 1 of review.");
     expect(admin.writes[0]).toEqual({
       path: "/admin/profiles/review",
-      body: { definition: { instructions: "Review code." } },
+      body: { definition: { instructions: "Review code." }, expectedRevision: 0 },
+    });
+  });
+
+  it("does not overwrite a profile another admin created after the list loaded", async () => {
+    const admin = createFakeAdmin();
+    renderApp("/profiles/new");
+    await signIn("alice-token");
+    const name = await screen.findByLabelText("Name");
+    await userEvent.type(name, "review");
+    await userEvent.type(screen.getByLabelText("Instructions"), "Mine.");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create profile" })).toBeEnabled();
+    });
+    // Created elsewhere: the list this form checked the name against does not have it.
+    addProfile(admin, "review", { instructions: "Theirs." });
+    await userEvent.click(screen.getByRole("button", { name: "Create profile" }));
+    expect(
+      await screen.findByText(/Not created: profile review already exists: choose another name/),
+    ).toBeInTheDocument();
+    expect(admin.profiles.find((p) => p.name === "review")?.versions).toEqual([
+      { version: 1, definition: { instructions: "Theirs." }, createdBy: "alice" },
+    ]);
+    // The list is reloaded, so the name check now says so too.
+    await waitFor(() => {
+      expect(screen.getByText(/saving would publish a new version of it/)).toBeInTheDocument();
     });
   });
 });

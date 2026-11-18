@@ -233,14 +233,20 @@ export function createFakeAdmin() {
       }
       const { expectedRevision, ...rest } = body;
       if (expectedRevision !== undefined) {
-        if (!Number.isInteger(expectedRevision) || expectedRevision < 1)
-          return json(res, 400, { error: "expectedRevision must be a positive integer" });
-        if (stored === undefined)
+        if (!Number.isInteger(expectedRevision) || expectedRevision < 0)
+          return json(res, 400, {
+            error: "expectedRevision must be 0 (create only) or a positive integer",
+          });
+        // 0 is a create: it matches only a name that does not exist (ADR 0023).
+        if (expectedRevision === 0) {
+          if (stored !== undefined)
+            return conflict(res, `MCP server ${name} already exists: choose another name`);
+        } else if (stored === undefined)
           return conflict(
             res,
             `server does not exist, so expectedRevision ${String(expectedRevision)} cannot match`,
           );
-        if (stored.revision !== expectedRevision)
+        else if (stored.revision !== expectedRevision)
           return conflict(
             res,
             `server is at revision ${String(stored.revision)}, not the expected ${String(expectedRevision)}: reload and retry`,

@@ -178,12 +178,15 @@ export function createFakeAdmin(): FakeAdmin {
       }
       const expected =
         typeof body.expectedRevision === "number" ? body.expectedRevision : undefined;
-      if (expected !== undefined && expected !== profile?.revision)
+      // 0 is a create: it matches only a name that does not exist (ADR 0023).
+      if (expected !== undefined && expected !== (profile?.revision ?? 0))
         return reply(409, {
           error:
-            profile === undefined
-              ? `profile ${name} does not exist, so expectedRevision ${String(expected)} cannot match`
-              : `profile ${name} is at revision ${String(profile.revision)}, not the expected ${String(expected)}: reload and retry`,
+            expected === 0
+              ? `profile ${name} already exists: choose another name`
+              : profile === undefined
+                ? `profile ${name} does not exist, so expectedRevision ${String(expected)} cannot match`
+                : `profile ${name} is at revision ${String(profile.revision)}, not the expected ${String(expected)}: reload and retry`,
         });
       const definition = body.definition as ProfileDefinition | undefined;
       if (profile === undefined) {

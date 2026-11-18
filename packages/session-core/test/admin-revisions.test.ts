@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AdminConflictError,
+  CREATE_ONLY_REVISION,
   DEFAULT_PROFILE_LOCK,
   deleteMcpServer,
   parseExpectedRevision,
@@ -42,6 +43,14 @@ describe("parseExpectedRevision", () => {
         "expectedRevision must be a positive integer",
       );
     }
+  });
+
+  it("takes 0 (create only) for a write that can create", () => {
+    expect(parseExpectedRevision(0, { create: true })).toBe(CREATE_ONLY_REVISION);
+    expect(parseExpectedRevision(2, { create: true })).toBe(2);
+    expect(parseExpectedRevision(-1, { create: true })).toBe(
+      "expectedRevision must be 0 (create only) or a positive integer",
+    );
   });
 });
 
@@ -113,6 +122,18 @@ describe("profile revision", () => {
     ).rejects.toThrow(/does not exist/);
     expect(db.profiles.has("ghost")).toBe(false);
   });
+
+  it("creates only with CREATE_ONLY_REVISION, and refuses a name that exists", async () => {
+    const db = await seeded();
+    const pool = db.asPool();
+    const create = { definition: {}, expectedRevision: CREATE_ONLY_REVISION };
+    const created = await putProfile(pool, "research", create, "alice", KNOWN);
+    expect(created).toMatchObject({ ok: true, created: true });
+    await expect(
+      putProfile(pool, "research", { ...create, definition: { turnBudget: 2 } }, "bob", KNOWN),
+    ).rejects.toThrow("profile research already exists: choose another name");
+    expect(await readProfile(pool, "research")).toMatchObject({ revision: 1, currentVersion: 1 });
+  });
 });
 
 describe("MCP server revision", () => {
@@ -141,6 +162,19 @@ describe("MCP server revision", () => {
     expect(await deleteMcpServer(pool, "demo", "bob", 2)).toBe(true);
     // A missing server is still "not found", not a conflict.
     expect(await deleteMcpServer(pool, "demo", "bob", 2)).toBe(false);
+  });
+
+  it("creates only with CREATE_ONLY_REVISION, and leaves a server that exists as it was", async () => {
+    const db = await seeded();
+    const pool = db.asPool();
+    const created = await putMcpServer(pool, "demo", SERVER, "alice", CREATE_ONLY_REVISION);
+    expect(typeof created === "string" ? created : created.created).toBe(true);
+    await putMcpServer(pool, "demo", { enabled: false }, "alice");
+    await expect(
+      putMcpServer(pool, "demo", { ...SERVER, enabled: true }, "bob", CREATE_ONLY_REVISION),
+    ).rejects.toThrow("MCP server demo already exists: choose another name");
+    const catalog = await readMcpServers(pool);
+    expect(catalog.servers.map((s) => [s.server.enabled, s.revision])).toEqual([[false, 2]]);
   });
 
   it("stores `source` beside the server, keeps it on a partial update and clears it with null", async () => {

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
+import { CREATE_ONLY_REVISION } from "@/lib/conflict";
 import { Time } from "@/components/time";
 import {
   fromTyped,
@@ -154,7 +155,7 @@ export function McpForm({
               timeoutMs,
               maxOutputBytes,
             },
-        editing ? baseRevision : undefined,
+        editing ? baseRevision : CREATE_ONLY_REVISION,
       ),
     onSuccess: async (result) => {
       setSaved(result);
@@ -276,10 +277,12 @@ export function McpForm({
           )}
           {save.isError && (
             <Alert variant="destructive">
-              {conflict
-                ? "Someone else changed or removed this server since you opened it."
-                : save.error.message}
-              {conflict && (
+              {!conflict
+                ? save.error.message
+                : editing
+                  ? "Someone else changed or removed this server since you opened it."
+                  : `Not registered: ${save.error.message}. Nothing was written.`}
+              {conflict && editing && (
                 <span className="mt-2 flex flex-col gap-2">
                   <span>Your draft is kept.</span>
                   <Button
