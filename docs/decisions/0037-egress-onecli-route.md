@@ -124,8 +124,8 @@ repo clone (no GitHub App on a throwaway cluster, and the maintainer's credentia
   bar): the OneCLI token is only in the OneCLI database, the orchestrator's memory and, sealed, in the bindings table.
 - A repo session needs the proxy, the binding key and the gateway to be up for git to work. A proxy outage now stops a repo
   session's network, where before only the gateway did.
-- Tunnels already open keep working when a binding is deleted until they end (slice 7 closes them on a rule change; the
-  `close-tunnels` admin endpoint exists and is not reachable from outside the pod).
+- A tunnel that is already open when a binding is deleted or rotated is closed on the next snapshot, so the next
+  connection carries the new token or is denied ([0039](0039-egress-revocation.md)).
 - The unit tests: the Go chain tests with a fake upstream and origin (the session's own token, client headers stripped, no
   binding, a foreign or tampered binding, a different key, no key, and a direct decision never dials the gateway), the
   cross-language ciphertext vector, the TypeScript round trip, session rule lifecycle, the repo-session env switch and the

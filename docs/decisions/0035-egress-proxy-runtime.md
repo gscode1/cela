@@ -23,8 +23,8 @@ per-session principals are slice 4, the OneCLI route 5, the network cutover 6, t
   the platform addresses; until then the pod is not Ready (`/readyz` on :3130) and connections are refused.
 - **Fail closed.** After `egressProxy.rules.staleAfter` (default **2 min**) without a successful read every connection is
   denied with a reason that says the rules are unavailable. The pod stays Ready (a refusal at the TCP level would hide
-  why). Tunnels that are already open are not closed by this (slice 7 owns revocation); they end at idle time or the
-  maximum age. A read that hangs is cut after 4 s so the poll goes on.
+  why). Open tunnels are closed too, when the snapshot goes stale
+  ([0039](0039-egress-revocation.md)). A read that hangs is cut after 4 s so the poll goes on.
 - **Evaluator parity.** `evaluateEgress` (TypeScript) and `Evaluate` (Go) return the same decision, route, matched rule and
   a `reasonKind` word, pinned by `packages/session-core/test/egress-vectors.json`; both test suites run all vectors. A change
   to the rules of evaluation changes the vectors first.
@@ -107,7 +107,7 @@ is accepted only from its sandbox's Pod address; unknown or revoked is 407; no h
 
 ## Consequences
 
-- A stale proxy denies new connections but does not cut open tunnels.
+- A stale proxy denies new connections and closes the open ones ([0039](0039-egress-revocation.md)).
 - Pods of the platform are protected by the private tier, the network layer and `platform.cidrs`, not by exact lookup.
 - Operators create one database role; the bundled Postgres does it for them.
 - The proxy image joins `images/build.sh` and the images workflow; `hack/kind-up.sh --egress-proxy` and
