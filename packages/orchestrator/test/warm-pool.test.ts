@@ -19,4 +19,26 @@ describe("warmPoolFor", () => {
       warmPoolFor("pi-env-pool", "direct-s", "proxied"),
     );
   });
+
+  // The browser flavour (docs/decisions/0041-browser-sandbox.md) adds a name per flavour, size and mode.
+  it("picks the browser pool of the session's size and mode", () => {
+    expect(warmPoolFor("pi-env-pool", "m", "proxied", "browser")).toBe("pi-env-browser-pool-m");
+    expect(warmPoolFor("pi-env-pool", null, "proxied", "browser")).toBe("pi-env-browser-pool");
+    expect(warmPoolFor("pi-env-pool", "m", "direct", "browser")).toBe(
+      "pi-env-browser-direct-pool-m",
+    );
+  });
+
+  it("keeps the default flavour's names, and no size can reach the browser pools", () => {
+    expect(warmPoolFor("pi-env-pool", "m", "proxied", "default")).toBe("pi-env-pool-m");
+    const browser = new Set(
+      ["s", "m", "l", "xl"].flatMap((size) => [
+        warmPoolFor("pi-env-pool", size, "proxied", "browser"),
+        warmPoolFor("pi-env-pool", size, "direct", "browser"),
+      ]),
+    );
+    for (const size of ["browser-s", "browser-direct-s", "direct-s", "pool-s"]) {
+      expect(browser.has(warmPoolFor("pi-env-pool", size, "proxied"))).toBe(false);
+    }
+  });
 });

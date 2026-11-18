@@ -35,12 +35,23 @@ export function directModeConflict(
   definition: ProfileDefinition,
   state: { mcpServers: readonly StoredMcpServer[]; egress: EgressData },
 ): string | undefined {
+  const source = credentialSource(definition, state);
+  return source === undefined ? undefined : `networkMode direct cannot be combined with ${source}`;
+}
+
+/**
+ * What in a profile would need a credential injected by the platform (a credentialed MCP server, a `route=onecli`
+ * allow rule of an applying rule set), described for an error message, or undefined. Shared by the direct network mode
+ * and the browser flavour (ADR 0041): neither can carry one.
+ */
+export function credentialSource(
+  definition: ProfileDefinition,
+  state: { mcpServers: readonly StoredMcpServer[]; egress: EgressData },
+): string | undefined {
   const credentialed = (definition.mcpServers ?? []).find((name) =>
     state.mcpServers.some((s) => s.server.name === name && s.server.onecliSecret !== null),
   );
-  if (credentialed !== undefined) {
-    return `networkMode direct cannot be combined with the credentialed MCP server "${credentialed}"`;
-  }
+  if (credentialed !== undefined) return `the credentialed MCP server "${credentialed}"`;
   const applying = new Set([
     ...state.egress.ruleSets.filter((s) => s.appliesToAll).map((s) => s.name),
     ...(definition.egressRuleSets ?? []),
@@ -50,7 +61,7 @@ export function directModeConflict(
       r.ruleSet !== null && applying.has(r.ruleSet) && r.effect === "allow" && r.route === "onecli",
   );
   if (route !== undefined) {
-    return `networkMode direct cannot be combined with the route onecli rule for "${route.host}" in rule set "${String(route.ruleSet)}"`;
+    return `the route onecli rule for "${route.host}" in rule set "${String(route.ruleSet)}"`;
   }
   return undefined;
 }

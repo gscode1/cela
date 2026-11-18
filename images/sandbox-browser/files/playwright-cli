@@ -1,0 +1,5 @@
+#!/bin/sh
+# Playwright CLI (pinned by the image). The platform gives tool commands no writable HOME, so the CLI's state goes under /tmp.
+export HOME="${PI_BROWSER_STATE:-/tmp/pi-browser}/tools-home"
+mkdir -p "$HOME"
+exec node /opt/browser-tools/node_modules/@playwright/cli/playwright-cli.js "$@"

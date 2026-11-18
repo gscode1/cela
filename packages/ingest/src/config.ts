@@ -42,6 +42,8 @@ export interface IngestConfig {
    * use `networkMode: direct` (docs/decisions/0038-network-modes.md). Default false: the API refuses it.
    */
   allowDirectSandboxEgress: boolean;
+  /** `PI_SANDBOX_FLAVOURS` names `browser` (the chart's `sandbox.flavours.browser.enabled`, ADR 0041). */
+  browserFlavourEnabled: boolean;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -94,5 +96,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     consoleCatalogs: parseConsoleCatalogs(env.PI_CONSOLE_CATALOGS),
     sandboxSizes: parseSandboxSizes(env),
     allowDirectSandboxEgress: env.PI_ALLOW_DIRECT_SANDBOX_EGRESS?.trim() === "true",
+    browserFlavourEnabled: (env.PI_SANDBOX_FLAVOURS ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .includes("browser"),
   };
 }

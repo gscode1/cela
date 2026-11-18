@@ -4,6 +4,7 @@ import { lockCatalog } from "./deletion.js";
 import { THINKING_LEVELS } from "./models.js";
 import type { ModelChoice } from "./models.js";
 import type { NetworkMode } from "./network-mode.js";
+import type { SandboxFlavour } from "./sandbox-flavour.js";
 import type { ProfileSnapshot } from "./profiles.js";
 import type { RepoSpec } from "./repo.js";
 
@@ -60,6 +61,8 @@ export interface SessionRow {
   sandboxSize: string | null;
   /** How its sandbox reaches the network, fixed at creation (docs/decisions/0038-network-modes.md); `proxied` before modes. */
   networkMode: NetworkMode;
+  /** Which sandbox image it got, fixed at creation (docs/decisions/0041-browser-sandbox.md); `default` before flavours. */
+  sandboxFlavour: SandboxFlavour;
   createdAt: Date;
   lastActivityAt: Date;
 }
@@ -104,6 +107,8 @@ interface SessionDbRow {
   sandbox_size?: string | null;
   /** Absent in rows read before migration 028 was applied, and in test fakes. */
   network_mode?: string | null;
+  /** Absent in rows read before migration 031 was applied, and in test fakes. */
+  sandbox_flavour?: string | null;
   created_at: Date;
   last_activity_at: Date;
 }
@@ -158,6 +163,7 @@ const toSession = (row: SessionDbRow): SessionRow => ({
   usage: row.usage ?? null,
   sandboxSize: row.sandbox_size ?? null,
   networkMode: row.network_mode === "direct" ? "direct" : "proxied",
+  sandboxFlavour: row.sandbox_flavour === "browser" ? "browser" : "default",
   createdAt: row.created_at,
   lastActivityAt: row.last_activity_at,
 });
@@ -202,6 +208,7 @@ export async function createSession(
   shardCount = 1,
   sandboxSize: string | null = null,
   networkMode: NetworkMode = "proxied",
+  sandboxFlavour: SandboxFlavour = "default",
 ): Promise<string> {
   const id = randomUUID();
   const client = await pool.connect();
@@ -210,13 +217,13 @@ export async function createSession(
     await lockCatalog(client, "shared");
     const { rows } = await client.query(
       `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
-         profile_name, profile_version, profile_snapshot, shard, sandbox_size, network_mode)
+         profile_name, profile_version, profile_snapshot, shard, sandbox_size, network_mode, sandbox_flavour)
        select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
          coalesce((select c.shard from generate_series(0, $12::int - 1) as c(shard)
                     left join (select shard, count(*) as n from inbox.sessions where status = 'active' group by shard) a
                       on a.shard = c.shard
                     order by coalesce(a.n, 0), c.shard limit 1), 0),
-         $13, $14
+         $13, $14, $15
         where $9::text is null
            or exists (select 1 from inbox.profiles p
                        where p.name = $9 and p.current_version = $10 and p.enabled_for_new)
@@ -236,6 +243,7 @@ export async function createSession(
         shardCount,
         sandboxSize,
         networkMode,
+        sandboxFlavour,
       ],
     );
     if (rows.length === 0) {

@@ -206,6 +206,16 @@ export {
   networkModeOf,
 } from "./network-mode.js";
 export type { NetworkMode } from "./network-mode.js";
+export {
+  BROWSER_NOT_ENABLED,
+  BROWSER_WITH_REPO,
+  DEFAULT_SANDBOX_FLAVOUR,
+  SANDBOX_FLAVOURS,
+  browserFlavourConflict,
+  isSandboxFlavour,
+  sandboxFlavourOf,
+} from "./sandbox-flavour.js";
+export type { SandboxFlavour } from "./sandbox-flavour.js";
 export { SANDBOX_SIZE_NAME, chooseSandboxSize, parseSandboxSizes } from "./sandbox-sizes.js";
 export type { SandboxSize, SandboxSizes } from "./sandbox-sizes.js";
 export {

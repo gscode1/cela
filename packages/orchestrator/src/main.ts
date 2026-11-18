@@ -200,7 +200,7 @@ async function main(): Promise<void> {
     warmPoolOf: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);
       if (session === undefined) return undefined;
-      return warmPoolFor(config.warmPool, session.sandboxSize, session.networkMode);
+      return warmPoolFor(config.warmPool, session.sandboxSize, session.networkMode, session.sandboxFlavour);
     },
     // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {

@@ -52,6 +52,10 @@ import {
   directModeConflict,
   DIRECT_NOT_ALLOWED,
   networkModeOf,
+  sandboxFlavourOf,
+  browserFlavourConflict,
+  BROWSER_NOT_ENABLED,
+  BROWSER_WITH_REPO,
   readProfile,
   readProfiles,
   readJsonObject,
@@ -109,6 +113,8 @@ export interface IngestDeps {
   sandboxSizes?: SandboxSizes | undefined;
   /** `networkMode: direct` is allowed (`PI_ALLOW_DIRECT_SANDBOX_EGRESS`, ADR 0038); default: refused with a 400. */
   allowDirectSandboxEgress?: boolean | undefined;
+  /** Browser sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `browser`, ADR 0041); default: refused with a 400. */
+  browserFlavourEnabled?: boolean | undefined;
 }
 
 export interface SettingsView {
@@ -205,6 +211,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       ...(session.usage === null ? {} : { usage: session.usage }),
       ...(session.sandboxSize === null ? {} : { sandboxSize: session.sandboxSize }),
       networkMode: session.networkMode,
+      sandboxFlavour: session.sandboxFlavour,
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,
@@ -409,6 +416,19 @@ async function handleAdminRoutes(
       modes: directAllowed ? ["proxied", "direct"] : ["proxied"],
       defaultMode: "proxied",
       directAllowed,
+    });
+    return;
+  }
+  if (parts[1] === "sandbox-flavours" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    const browser = deps.browserFlavourEnabled === true;
+    sendJson(res, 200, {
+      flavours: browser ? ["default", "browser"] : ["default"],
+      defaultFlavour: "default",
+      browserEnabled: browser,
     });
     return;
   }
@@ -864,6 +884,8 @@ async function handleAdminProfiles(
         sandboxSizes: (deps.sandboxSizes?.sizes ?? []).map((size) => size.name),
         allowDirectEgress: deps.allowDirectSandboxEgress === true,
         directConflict: directConflictOf(catalog.servers, await readEgress(deps.pool)),
+        browserFlavourEnabled: deps.browserFlavourEnabled === true,
+        browserConflict: browserConflictOf(catalog.servers, await readEgress(deps.pool)),
       },
     );
     if (!result.ok) {
@@ -1099,6 +1121,16 @@ async function postSession(
       return;
     }
   }
+  const sandboxFlavour = sandboxFlavourOf(snapshot.definition);
+  if (sandboxFlavour === "browser") {
+    const refusal = await browserRefusal(deps, snapshot.definition, repo !== undefined);
+    if (refusal !== undefined) {
+      sendJson(res, 400, {
+        error: `profile "${snapshot.name}" v${String(snapshot.version)}: ${refusal}`,
+      });
+      return;
+    }
+  }
   let sessionId: string;
   try {
     sessionId = await createSession(
@@ -1110,6 +1142,7 @@ async function postSession(
       deps.shards ?? 1,
       sized.size,
       networkMode,
+      sandboxFlavour,
     );
   } catch (error) {
     // The profile got a new version, was closed or deleted since it was read: nothing was stored.
@@ -1125,6 +1158,7 @@ async function postSession(
     ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
     ...(sized.size === null ? {} : { sandboxSize: sized.size }),
     networkMode,
+    sandboxFlavour,
     ...(repo === undefined
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),
@@ -1137,6 +1171,30 @@ function directConflictOf(
   egress: Parameters<typeof directModeConflict>[1]["egress"],
 ): (definition: ProfileDefinition) => string | undefined {
   return (definition) => directModeConflict(definition, { mcpServers, egress });
+}
+
+/** `browserFlavourConflict` over the catalog and the rules as they are now, for `checkProfileNames`. */
+function browserConflictOf(
+  mcpServers: Parameters<typeof browserFlavourConflict>[1]["mcpServers"],
+  egress: Parameters<typeof browserFlavourConflict>[1]["egress"],
+): (definition: ProfileDefinition) => string | undefined {
+  return (definition) => browserFlavourConflict(definition, { mcpServers, egress });
+}
+
+/**
+ * Why a new session of a `browser` profile is refused, or undefined (ADR 0041): the deployment does not render browser
+ * sandboxes, the request names a repo, or the profile now has a credentialed MCP server or a `onecli` rule that
+ * applies to it (the catalog and the rules may have changed since the profile was written).
+ */
+async function browserRefusal(
+  deps: IngestDeps,
+  definition: ProfileDefinition,
+  hasRepo: boolean,
+): Promise<string | undefined> {
+  if (deps.browserFlavourEnabled !== true) return BROWSER_NOT_ENABLED;
+  if (hasRepo) return BROWSER_WITH_REPO;
+  const [catalog, egress] = await Promise.all([readMcpServers(deps.pool), readEgress(deps.pool)]);
+  return browserFlavourConflict(definition, { mcpServers: catalog.servers, egress });
 }
 
 /**

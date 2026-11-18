@@ -1,0 +1,5 @@
+#!/bin/sh
+# agent-browser (pinned by the image), always attached to the sandbox's Chromium over CDP. No HOME is given to tool commands.
+export HOME="${PI_BROWSER_STATE:-/tmp/pi-browser}/tools-home"
+mkdir -p "$HOME"
+exec /opt/agent-browser/agent-browser --cdp "${PI_BROWSER_CDP_PORT:-9222}" "$@"
