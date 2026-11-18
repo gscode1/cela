@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { inspect } from "node:util";
+import { openBinding } from "@pi-durable-k8s/session-core";
 import type { SessionRow } from "@pi-durable-k8s/session-core";
 import { buildShellEnv } from "../src/workspace.ts";
 import {
   buildEgressEnv,
   EgressPrincipals,
   POD_IP_RECHECK_MS,
-  usesEgressProxy,
+  PROPAGATION_WAIT_MS,
 } from "../src/egress.ts";
 import { Redacted } from "../src/onecli.ts";
 import { FakeEgressDb } from "../../session-core/test/fake-egress-db.ts";
@@ -30,13 +31,18 @@ function session(id: string, over: Partial<SessionRow> = {}): SessionRow {
   } as SessionRow;
 }
 
-function setup(now: () => number = () => 0) {
+const BINDING_KEY = Buffer.alloc(32, 9);
+const repoSession = (id: string) => session(id, { repo: { repo: "o/r" } });
+
+function setup(now: () => number = () => 0, bindingKey: Buffer | null = BINDING_KEY) {
   const db = new FakeEgressDb();
   const egress = new EgressPrincipals({
     pool: db.asPool(),
     proxyUrl: PROXY,
+    bindingKey: bindingKey ?? undefined,
     master: () => MASTER,
     now,
+    sleep: () => Promise.resolve(),
   });
   return { db, egress };
 }
@@ -70,14 +76,13 @@ describe("buildEgressEnv", () => {
 });
 
 describe("EgressPrincipals", () => {
-  it("serves plain sessions only: a repo session keeps the OneCLI environment until slice 5", async () => {
+  it("serves repo sessions too: a principal and the proxy environment, no OneCLI variable", async () => {
     const { egress, db } = setup();
-    expect(usesEgressProxy({ repo: null })).toBe(true);
-    expect(usesEgressProxy({ repo: { repo: "o/r" } })).toBe(false);
-    const repo = session(A, { repo: { repo: "o/r" } });
-    expect(await egress.shellEnv(repo)).toBeUndefined();
+    const repo = repoSession(A);
     await egress.attached(repo, "10.244.0.9");
-    expect(db.principals).toHaveLength(0);
+    expect(db.principals).toHaveLength(1);
+    const env = await egress.shellEnv(repo);
+    expect(env?.HTTPS_PROXY).toContain("@pi-egress-proxy.ns.svc:3128");
   });
 
   it("creates the principal on attach with the profile's rule sets and the Pod address, then hands out the env", async () => {
@@ -156,6 +161,138 @@ describe("EgressPrincipals", () => {
     now += POD_IP_RECHECK_MS;
     await egress.beforeUse(session(A), read);
     expect(db.principals[0]?.pod_ip).toBe("10.244.1.1");
+  });
+
+  it("seals the repo session's OneCLI token, then creates the onecli rules, and writes neither twice", async () => {
+    const { egress, db } = setup();
+    await egress.bindOneCli(repoSession(A), new Redacted("aoc_a"), [
+      "github.com",
+      "api.github.com",
+    ]);
+    expect(db.bindings).toHaveLength(1);
+    const row = db.bindings[0];
+    expect(JSON.stringify(db.bindings)).not.toContain("aoc_a");
+    expect(
+      openBinding(BINDING_KEY, A, {
+        keyId: row?.key_id ?? "",
+        nonce: row?.nonce ?? Buffer.alloc(0),
+        ciphertext: row?.ciphertext ?? Buffer.alloc(0),
+      }),
+    ).toBe("aoc_a");
+    expect(db.rules.map((r) => [r.session_id, r.host, r.route])).toEqual([
+      [A, "github.com", "onecli"],
+      [A, "api.github.com", "onecli"],
+    ]);
+    const writes = db.notifications.length;
+    await egress.bindOneCli(repoSession(A), new Redacted("aoc_a"), [
+      "github.com",
+      "api.github.com",
+    ]);
+    expect(db.notifications.length).toBe(writes);
+    // A replaced agent has a new token: the binding is rewritten, the rules stay.
+    await egress.bindOneCli(repoSession(A), new Redacted("aoc_a2"), [
+      "github.com",
+      "api.github.com",
+    ]);
+    expect(db.bindings).toHaveLength(1);
+    expect(db.rules).toHaveLength(2);
+    expect(db.notifications.length).toBe(writes + 1);
+  });
+
+  it("refuses to bind without a key, and says so up front", async () => {
+    const { egress, db } = setup(() => 0, null);
+    expect(egress.canBind()).toBe(false);
+    await expect(
+      egress.bindOneCli(repoSession(A), new Redacted("aoc_a"), ["github.com"]),
+    ).rejects.toThrow(/binding key/);
+    expect(db.bindings).toHaveLength(0);
+    expect(db.rules).toHaveLength(0);
+  });
+
+  it("waits for every serving proxy to read the rule's revision, and for nobody else", async () => {
+    let now = 0;
+    const { db } = setup(() => now);
+    const status = (replica: string, revision: number | null, state: string, silent = 1) =>
+      db.proxyStatus.push({
+        replica,
+        revision,
+        state,
+        last_read_at: null,
+        started_at: new Date(0),
+        version: "t",
+        updated_at: new Date(0),
+        silent_seconds: silent,
+      });
+    status("up-to-date", 1, "serving");
+    status("behind", 0, "serving");
+    status("stale", 0, "stale");
+    status("gone", 0, "serving", 600);
+    const sleeps: number[] = [];
+    const slow = new EgressPrincipals({
+      pool: db.asPool(),
+      proxyUrl: PROXY,
+      bindingKey: BINDING_KEY,
+      master: () => MASTER,
+      now: () => now,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        now += ms;
+        if (sleeps.length === 3) {
+          const behind = db.proxyStatus.find((r) => r.replica === "behind");
+          if (behind !== undefined) behind.revision = db.revision;
+        }
+        return Promise.resolve();
+      },
+    });
+    await slow.bindOneCli(repoSession(A), new Redacted("aoc_a"), ["github.com"]);
+    expect(sleeps).toHaveLength(3);
+    // A replica that never catches up does not hold the session forever.
+    const stuck = setup(() => now);
+    stuck.db.proxyStatus.push({
+      replica: "behind",
+      revision: 0,
+      state: "serving",
+      silent_seconds: 1,
+    } as never);
+    const before = now;
+    const waiting = new EgressPrincipals({
+      pool: stuck.db.asPool(),
+      proxyUrl: PROXY,
+      bindingKey: BINDING_KEY,
+      master: () => MASTER,
+      now: () => now,
+      sleep: (ms) => {
+        now += ms;
+        return Promise.resolve();
+      },
+    });
+    await waiting.bindOneCli(repoSession(B), new Redacted("aoc_b"), ["github.com"]);
+    expect(now - before).toBeGreaterThanOrEqual(PROPAGATION_WAIT_MS);
+    expect(stuck.db.bindings).toHaveLength(1);
+  });
+
+  it("revokes principal, binding and session rules together, idempotently, and lists what is left for the sweep", async () => {
+    const { egress, db } = setup();
+    await egress.attached(repoSession(A), "10.244.0.9");
+    await egress.bindOneCli(repoSession(A), new Redacted("aoc_a"), ["github.com"]);
+    await egress.attached(repoSession(B), "10.244.0.10");
+    await egress.bindOneCli(repoSession(B), new Redacted("aoc_b"), ["github.com"]);
+    expect(await egress.live()).toEqual([A, B]);
+    await egress.revoke(A);
+    await egress.revoke(A);
+    expect(db.principals.find((p) => p.session_id === A)?.revoked_at).not.toBeNull();
+    expect(db.bindings.map((b) => b.session_id)).toEqual([B]);
+    expect(db.rules.map((r) => r.session_id)).toEqual([B]);
+    expect(await egress.live()).toEqual([B]);
+    // A binding or rule left behind without a live principal is still listed for the sweep.
+    await egress.revoke(B);
+    db.bindings.push({
+      session_id: A,
+      key_id: "0".repeat(16),
+      nonce: Buffer.alloc(12),
+      ciphertext: Buffer.alloc(20),
+    });
+    expect(await egress.live()).toEqual([A]);
   });
 
   it("never prints the token: not in JSON, inspect or a thrown error of the env builder", () => {

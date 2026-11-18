@@ -91,6 +91,29 @@ spec:
         {{- range $e.publicPorts }}
         - { protocol: TCP, port: {{ . }} }
         {{- end }}
+{{- if include "pi-durable.egressOnecliRoute" . }}
+---
+# Egress to the OneCLI gateway port only, the proxy's one upstream for route=onecli (ADR 0037). The management API is
+# another port of the same pod and stays unreachable. The gateway has to admit the proxy on its side: the bundled release
+# does (charts/pi-onecli clients.egressProxy); for an external OneCLI see docs/network-policy.md. This is the proxy's own
+# dial, not a destination a sandbox may ask for: the platform block list still denies every request that names OneCLI.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-onecli-egress
+  labels:
+    {{- include "pi-durable.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-egress-proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- include "pi-durable.onecliTo" . | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ include "pi-durable.urlPort" (include "pi-durable.onecli" . | fromJson).gatewayUrl }} }
+{{- end }}
 {{- range $i, $p := $e.privateEgress }}
 ---
 # Operator-approved private destination {{ $i }} (egressProxy.privateEgress): reachable by the proxy on these ports. A

@@ -14,7 +14,8 @@ import {
 } from "./onecli-names.js";
 import { OneCliError } from "./onecli-admin.js";
 import type { OneCliAdmin, OneCliGrant } from "./onecli-admin.js";
-import { buildShellEnv, prepareWorkspace } from "./workspace.js";
+import { buildShellEnv, buildWorkspaceEnv, prepareWorkspace } from "./workspace.js";
+import type { EgressPrincipals } from "./egress.js";
 import type { WorkspaceEnv } from "./workspace.js";
 
 // Re-exported: the names are built here and in the sweep from the same module.
@@ -40,8 +41,15 @@ export interface RepoAccessDeps {
   repoAllowed: (repo: string) => boolean;
   /** Directory of the mounted GitHub App secret. */
   githubAppDir: string;
-  /** Proxy URL of the gateway, without credentials. */
+  /** Proxy URL of the gateway, without credentials. Used by sessions only when the egress proxy is off. */
   gateway: string;
+  /**
+   * The egress proxy side (docs/decisions/0037-egress-onecli-route.md). Set when the proxy is enabled: a repo session's
+   * commands then use the egress proxy environment, its OneCLI token is sealed for the proxy (`egress.bindings`) and
+   * it gets session rules that route its credentialed hosts through OneCLI. The sandbox never holds the OneCLI token.
+   * Undefined: the session talks to the OneCLI gateway itself, as before the proxy existed.
+   */
+  egress?: Pick<EgressPrincipals, "bindOneCli" | "canBind" | "shellEnv"> | undefined;
   /** File holding the OneCLI CA PEM (the mounted ConfigMap). */
   caFile: string;
   fetch: FetchLike;
@@ -67,6 +75,9 @@ const SECRET_SUFFIXES = [
   { suffix: "git", host: "github.com", header: "Authorization", format: "Basic {value}" },
   { suffix: "api", host: "api.github.com", header: "Authorization", format: "Bearer {value}" },
 ] as const;
+
+/** Hosts where OneCLI injects the session's GitHub token: the session rules send exactly these through OneCLI. */
+const ONECLI_HOSTS: readonly string[] = SECRET_SUFFIXES.map((spec) => spec.host);
 
 /**
  * Everything a repo session needs from GitHub and OneCLI, kept per session and rebuilt from OneCLI after a restart:
@@ -106,6 +117,13 @@ export class RepoAccess {
     if (session.repo === null) return undefined;
     this.#byConversation.set(conversationId, session);
     const access = await this.ensureAccess(session);
+    const { egress } = this.#deps;
+    if (egress !== undefined) {
+      // Behind the egress proxy the sandbox holds the egress token only. Its OneCLI token is in egress.bindings, sealed
+      // for the proxy, so a replaced agent changes nothing in the env (no stale-token check).
+      const proxyEnv = await egress.shellEnv(session);
+      return proxyEnv === undefined ? undefined : { ...proxyEnv, ...buildWorkspaceEnv() };
+    }
     this.#envToken.set(conversationId, access.proxyToken.reveal());
     return buildShellEnv({ gateway: this.#deps.gateway, token: access.proxyToken });
   }
@@ -146,6 +164,11 @@ export class RepoAccess {
     if (onecli === undefined) {
       throw new RepoUnavailableError(
         "repository workspaces are not configured: ONECLI_API_KEY is not set",
+      );
+    }
+    if (this.#deps.egress?.canBind() === false) {
+      throw new RepoUnavailableError(
+        "repository workspaces need the egress binding key: PI_EGRESS_BINDING_KEY_FILE is not set",
       );
     }
     const warm = this.#access.get(session.id);
@@ -199,6 +222,8 @@ export class RepoAccess {
     if (stored?.agentId !== agent.id || stored.secretIds.join() !== secretIds.join()) {
       await setOneCliObjects(this.#deps.pool, session.id, agent.id, secretIds);
     }
+    // After the grants are proven narrow: only an agent that holds exactly this session's secrets is bound.
+    await this.#deps.egress?.bindOneCli(session, agent.accessToken, ONECLI_HOSTS);
     const access: Access = {
       agentId: agent.id,
       secretIds,

@@ -1253,4 +1253,79 @@ describe("egressProxy (ADR 0035)", () => {
     expect(run([...on, "--set", "images.egressProxy.tag="])).toContain("images.egressProxy");
     expect(run([...on, "--set", "egressProxy.privateEgress[0].cidr=10.0.0.0/8"])).toMatch(/ports/);
   });
+
+  describe("the OneCLI route (ADR 0037)", () => {
+    const onecli = [
+      "--set",
+      "onecli.mode=bundled",
+      "--set",
+      "egressProxy.binding.existingSecret=pi-egress-binding",
+    ];
+    const all = docs([...on, ...onecli]);
+    const volumesOf = (d: Obj): Obj[] => d.spec.template.spec.volumes ?? [];
+    const mountsOf = (d: Obj): Obj[] =>
+      d.spec.template.spec.containers.flatMap((c: Obj) => c.volumeMounts ?? []);
+    const orchestrators = (list: Obj[]) =>
+      list.filter((d) => d.kind === "Deployment" && d.metadata.name.startsWith("pi-orchestrator"));
+
+    it("chains to the OneCLI gateway only: one upstream address, one egress policy on the gateway port", () => {
+      const env = envOf(named(all, "Deployment", "pi-egress-proxy"));
+      expect(env.EGRESS_UPSTREAM_ADDR?.value).toBe("onecli-gateway.ns.svc:10255");
+      expect(env.EGRESS_BINDING_KEY_FILE?.value).toBe("/etc/pi-egress-binding/key");
+      const policy = named(all, "NetworkPolicy", "egress-proxy-allow-onecli-egress").spec;
+      expect(policy.policyTypes).toEqual(["Egress"]);
+      expect(policy.egress).toHaveLength(1);
+      expect(policy.egress[0].ports).toEqual([{ protocol: "TCP", port: 10255 }]);
+      expect(policy.egress[0].to[0].podSelector.matchLabels).toMatchObject({
+        "app.kubernetes.io/name": "onecli",
+      });
+    });
+
+    it("mounts the binding key into the proxy and every orchestrator, never into a sandbox, and holds no key value", () => {
+      for (const d of [named(all, "Deployment", "pi-egress-proxy"), ...orchestrators(all)]) {
+        expect(
+          volumesOf(d).find((v) => v.name === "egress-binding")?.secret,
+          d.metadata.name,
+        ).toEqual({
+          secretName: "pi-egress-binding",
+          items: [{ key: "key", path: "key" }],
+        });
+        expect(mountsOf(d).find((m) => m.name === "egress-binding")).toEqual({
+          name: "egress-binding",
+          mountPath: "/etc/pi-egress-binding",
+          readOnly: true,
+        });
+      }
+      expect(orchestrators(all).length).toBeGreaterThan(0);
+      expect(envOf(orchestrators(all)[0] ?? {}).PI_EGRESS_BINDING_KEY_FILE?.value).toBe(
+        "/etc/pi-egress-binding/key",
+      );
+      // The sandbox side of the chart (templates, claims, pools) never mentions the key.
+      const sandboxish = all.filter((d) => /sandbox/i.test(d.metadata?.name ?? ""));
+      expect(sandboxish.length).toBeGreaterThan(0);
+      expect(JSON.stringify(sandboxish)).not.toMatch(/egress-binding|pi-egress-binding/);
+    });
+
+    it("renders no upstream, key or OneCLI policy without OneCLI or without the proxy", () => {
+      const noOnecli = docs(on);
+      expect(envOf(named(noOnecli, "Deployment", "pi-egress-proxy")).EGRESS_UPSTREAM_ADDR).toBe(
+        undefined,
+      );
+      expect(JSON.stringify(noOnecli)).not.toMatch(/egress-binding|BINDING_KEY/);
+      expect(
+        proxyPolicies(noOnecli).some((p) => p.metadata.name === "egress-proxy-allow-onecli-egress"),
+      ).toBe(false);
+      expect(JSON.stringify(docs(onecli))).not.toMatch(/egress-binding|EGRESS_UPSTREAM/);
+    });
+
+    it("refuses the proxy with OneCLI and no binding Secret", () => {
+      let error = "";
+      try {
+        helmTemplate(chart, [...on, "--set", "onecli.mode=bundled"]);
+      } catch (e) {
+        error = String((e as { stderr?: string }).stderr ?? e);
+      }
+      expect(error).toContain("egressProxy.binding.existingSecret");
+    });
+  });
 });

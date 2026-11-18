@@ -91,6 +91,11 @@ export interface OrchestratorConfig {
    */
   egressProxyUrl: string | undefined;
   /**
+   * File holding the key that seals the OneCLI tokens in `egress.bindings` (`PI_EGRESS_BINDING_KEY_FILE`, the Secret the
+   * proxy mounts too; ADR 0037). Needed for repo sessions behind the proxy; undefined refuses them.
+   */
+  egressBindingKeyFile: string | undefined;
+  /**
    * Optional repository workspaces (Phase 4c). Both secrets reach the orchestrator only: the OneCLI admin API key
    * from Secret `pi-onecli-admin` (env), the GitHub App key from Secret `pi-github-app` (mounted files).
    */
@@ -243,6 +248,7 @@ export function loadConfig(
       codexAccountId: env.PI_CODEX_ACCOUNT_ID ?? PLACEHOLDER_API_KEY,
     },
     egressProxyUrl: egressProxyUrl(env.PI_EGRESS_PROXY_URL),
+    egressBindingKeyFile: env.PI_EGRESS_BINDING_KEY_FILE?.trim() || undefined,
     repos: {
       onecliApi,
       onecliApiKey: env.ONECLI_API_KEY ? new Redacted(env.ONECLI_API_KEY) : undefined,

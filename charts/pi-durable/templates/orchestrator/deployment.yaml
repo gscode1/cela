@@ -86,9 +86,12 @@ spec:
             - { name: PI_ONECLI_GATEWAY, value: "http://onecli-disabled.invalid:10255" }
             {{- end }}
             {{- if $root.Values.egressProxy.enabled }}
-            # Plain sessions' tool commands go through the egress proxy with a per-session token (ADR 0036). Repo sessions
-            # keep the OneCLI gateway until slice 5.
+            # Every session's tool commands go through the egress proxy with a per-session token (ADR 0036); a repo
+            # session's OneCLI token is sealed for the proxy with the binding key and never reaches the sandbox (ADR 0037).
             - { name: PI_EGRESS_PROXY_URL, value: "http://pi-egress-proxy.{{ $root.Release.Namespace }}.svc:3128" }
+            {{- if include "pi-durable.egressOnecliRoute" $root }}
+            - { name: PI_EGRESS_BINDING_KEY_FILE, value: /etc/pi-egress-binding/key }
+            {{- end }}
             {{- end }}
             - { name: PI_ONECLI_NAME_PREFIX, value: {{ $root.Values.onecli.namePrefix | quote }} }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
@@ -128,7 +131,10 @@ spec:
             {{- if $root.Values.github.app.existingSecret }}
             - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
             {{- end }}
-      {{- if or (and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) }}
+            {{- if include "pi-durable.egressOnecliRoute" $root }}
+            - { name: egress-binding, mountPath: /etc/pi-egress-binding, readOnly: true }
+            {{- end }}
+      {{- if or (and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) (include "pi-durable.egressOnecliRoute" $root) }}
       volumes:
         {{- if include "pi-durable.databaseTlsEnabled" $root }}
         {{- include "pi-durable.databaseTlsVolume" $root | nindent 8 }}
@@ -142,6 +148,12 @@ spec:
         {{- if $root.Values.github.app.existingSecret }}
         - name: github-app
           secret: { secretName: {{ $root.Values.github.app.existingSecret }}, optional: true }
+        {{- end }}
+        {{- if include "pi-durable.egressOnecliRoute" $root }}
+        - name: egress-binding
+          secret:
+            secretName: {{ $root.Values.egressProxy.binding.existingSecret }}
+            items: [{ key: {{ $root.Values.egressProxy.binding.key }}, path: key }]
         {{- end }}
       {{- end }}
 {{- end }}

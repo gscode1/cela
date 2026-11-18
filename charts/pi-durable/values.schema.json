@@ -713,6 +713,7 @@
         "replicas",
         "resources",
         "database",
+        "binding",
         "requireAuth",
         "rules",
         "platform",
@@ -740,6 +741,20 @@
               "type": "string"
             },
             "uriKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingSecret", "key"],
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "key": {
               "type": "string",
               "minLength": 1
             }

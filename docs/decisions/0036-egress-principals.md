@@ -53,7 +53,7 @@ sends plain HTTP to a proxy would otherwise be one more thing to judge.)
 The orchestrator creates the principal when the sandbox attaches (`attached` hook of `Sandboxes.#open`), **before** the env is
 returned to the first tool call, and writes the Pod's IP in the same step.
 
-### Repo sessions keep OneCLI until slice 5
+### Repo sessions keep OneCLI until slice 5 (superseded by [0037](0037-egress-onecli-route.md): `usesEgressProxy` is gone, repo sessions use the proxy)
 
 A repo session sends HTTPS through the OneCLI gateway with its OneCLI agent token (`buildShellEnv`, unchanged), because
 the gateway is where the repo-scoped GitHub token is injected. Putting such a session on the proxy before the proxy chains

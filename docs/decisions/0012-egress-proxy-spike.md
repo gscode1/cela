@@ -1,7 +1,7 @@
 # 0012: Egress proxy spike, Smokescreen chained to OneCLI
 
-Status: proposed, 2026-11-16 (issue #51, slice 1 of epic #50). The local part is done and tested; the live cluster test
-is **pending** (see "Not yet proven").
+Status: accepted, 2026-11-16 (issue #51, slice 1 of epic #50). The local part is done and tested; the live cluster test ran in
+slice 5 (see "Live results"), except the two-repository clone, which needs a GitHub App.
 
 ## Context
 
@@ -120,13 +120,37 @@ private address is refused on both routes.
    design, so the proxy needs DNS to kube-dns or the world for that lookup).
 7. Go integration tests with a fake upstream proxy and a fake origin cover all of the above without a cluster.
 
-### Not yet proven (pending live test)
+### Live results (slice 5, 2026-11-18, [0037](0037-egress-onecli-route.md))
 
-The cluster test is **not run**; this slice did no cluster work. Pending: `git clone` of repo A through the proxy chained
-to OneCLI succeeds, and the same clone of repo B fails, with a per-session GitHub App token in OneCLI and
-`http.proxyAuthMethod=basic` on the client side. Also pending: dialling the real OneCLI ClusterIP `:10255` from a pod
-behind the planned NetworkPolicy, that OneCLI's MITM on the chained CONNECT works (the origin sees OneCLI's CA, the
-sandbox trusts it), and tunnel kill on the live path. The issue stays open until they are done.
+Run with `hack/egress-onecli-smoke.sh` on a throwaway kind cluster (`hack/kind-up.sh --name pi-egress --no-expose --cni
+cilium --build --onecli --egress-proxy`: Cilium, bundled OneCLI, the proxy, the NetworkPolicies of the charts; deleted
+afterwards). Proven live:
+
+- **Dialling the real OneCLI ClusterIP `:10255` from the proxy's pod label works through the NetworkPolicy**, and the
+  management API `:10256` and the orchestrator from the same label do not (`egress-proxy-allow-onecli-egress`, OneCLI's gateway
+  ingress admitting `pi-egress-proxy`).
+- **OneCLI's MITM on the chained CONNECT works.** The gateway log shows `CONNECT api.github.com:443`, lane `Mitm`, agent
+  `pi-session-<uuid>`, peer the proxy's pod. The sandbox trusts it only with OneCLI's CA: without the CA the request fails
+  TLS certificate verification, with it GitHub answers `401 Bad credentials`, which GitHub
+  sends only when an `Authorization` header arrived, that is, the dummy GitHub token the session's OneCLI secret injects. A
+  header-echo origin (`httpbingo.org`) shows the injected `X-Smoke-Credential`, and no egress token, no OneCLI token and no
+  `Proxy-Authorization` header.
+- **Per-session identity**: the chained CONNECT carried the session's own OneCLI token (the log names the session's agent);
+  session B with the same rule and no binding is denied, A's sealed row copied onto B does not open, A's egress token from
+  B's Pod is refused.
+- **Tunnel kill on the live path**: closing the session's tunnels (`POST /admin/sessions/<id>/close-tunnels`) ended a 10 s
+  response through OneCLI after 4 s (`UND_ERR_SOCKET`).
+- **No binding, no route, and never a direct fallback**: deleting the binding row made the proxy deny in 1 to 2 s, and
+  `api.github.com` was not reached directly (an unauthenticated direct call would have answered 200).
+
+**Not proven: `git clone` of repo A succeeds and the same clone of repo B fails.** A throwaway cluster has no GitHub App,
+so a real repo session cannot be made, and the credentials of the maintainer's own App were not searched for or used. What
+stood in for it: the orchestrator's own `RepoAccess` (real OneCLI agent, secrets, grant narrowing, sealed binding, session
+rules) run with a fake GitHub minting a dummy token, and a real HTTPS request to `api.github.com` through the whole chain.
+Repository scope itself is GitHub's installation token (unchanged, ADR 0032 and `docs/repo-workspace.md`); the
+`proxyAuthMethod=basic` handshake of `git` against the proxy is covered by `hack/egress-session-smoke.sh` (a real `git
+ls-remote` through the proxy). The issue's "repo A / repo B" check stays with `tests/e2e/run.sh phase4c`, which needs `REPO_A`
+and `REPO_B`,.
 
 ## Comparison with Agent Substrate's `atenet-egress`
 

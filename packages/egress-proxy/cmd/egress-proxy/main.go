@@ -124,15 +124,31 @@ func run() error {
 	}
 	go platform.Run(ctx, func(err error) { log.Warn("platform addresses not refreshed", "err", err.Error()) })
 
+	// The key that opens the OneCLI tokens in egress.bindings (ADR 0037), read from a mounted file, never from the
+	// environment. The route needs both the upstream address and the key.
+	upstream := os.Getenv("EGRESS_UPSTREAM_ADDR")
+	var bindingKey []byte
+	if f := os.Getenv("EGRESS_BINDING_KEY_FILE"); f != "" {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return errors.New("EGRESS_BINDING_KEY_FILE: cannot read the file")
+		}
+		if bindingKey, err = egress.ParseBindingKey(string(raw)); err != nil {
+			return fmt.Errorf("EGRESS_BINDING_KEY_FILE: %w", err)
+		}
+	}
+	if (upstream == "") != (bindingKey == nil) {
+		return errors.New("EGRESS_UPSTREAM_ADDR and EGRESS_BINDING_KEY_FILE must be set together")
+	}
 	rules := &egress.Rules{Source: loader, Platform: platform}
 	p, err := egress.Build(egress.Options{
 		Authorizer: rules,
 		// The sandboxes' egress tokens, from the same snapshot as the rules (ADR 0036). A request with no token is
 		// anonymous unless EGRESS_REQUIRE_AUTH is true; a token that is unknown, revoked or used from another Pod is 407.
-		Principals:        egress.SnapshotPrincipals{Source: loader},
+		Principals:        egress.SnapshotPrincipals{Source: loader, BindingKey: bindingKey},
 		RequireAuth:       os.Getenv("EGRESS_REQUIRE_AUTH") == "true",
 		OpenPrivateRanges: true,
-		UpstreamAddr:      os.Getenv("EGRESS_UPSTREAM_ADDR"), // empty until slice 5: onecli matches are denied
+		UpstreamAddr:      upstream, // the OneCLI gateway; empty: onecli matches are denied
 		MaxTunnelAge:      maxAge,
 		IdleTimeout:       idle,
 		Log:               log,

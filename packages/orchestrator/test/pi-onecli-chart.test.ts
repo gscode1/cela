@@ -61,6 +61,16 @@ describe("charts/pi-onecli", () => {
       expect(JSON.stringify(p.spec.ingress)).not.toContain("pi-sandbox");
   });
 
+  it("admits the egress proxy to the gateway port only (ADR 0037)", () => {
+    const gateway = named(list, "onecli-gateway-allow-ingress");
+    expect(peers(gateway)).toContain("pi-egress-proxy");
+    expect(gateway.spec.ingress.map((r: Obj) => r.ports)).toEqual([
+      [{ protocol: "TCP", port: 10255 }],
+    ]);
+    for (const p of list.filter((d) => d.spec.ingress && d !== gateway))
+      expect(JSON.stringify(p.spec.ingress)).not.toContain("pi-egress-proxy");
+  });
+
   it("has no ingress to the dashboard by default, and only what web.allowFrom lists otherwise", () => {
     expect(list.find((d) => d.metadata.name === "onecli-web-allow-ingress")).toBeUndefined();
     const exposed = docs([

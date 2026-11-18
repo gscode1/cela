@@ -139,3 +139,44 @@ describe("migration 026_egress_principals.sql", () => {
     expect(sql).toMatch(/after insert or update or delete on egress\.principals/);
   });
 });
+
+const SQL_027 = readFile(new URL("../migrations/027_egress_bindings.sql", import.meta.url), "utf8");
+
+/** The bindings (ADR 0037): sealed tokens, readable by the proxy, written by nobody but the orchestrator. */
+describe("migration 027_egress_bindings.sql", () => {
+  it("keeps the table in the egress schema, idempotent, with no reference into inbox", async () => {
+    const sql = (await SQL_027).replace(/--.*$/gm, "");
+    expect([...sql.matchAll(/create table if not exists ([\w.]+)/g)].map((m) => m[1])).toEqual([
+      "egress.bindings",
+    ]);
+    expect(sql).not.toMatch(/\binbox\./);
+    expect(sql).not.toMatch(/\bdrop\b/);
+    expect(sql).not.toMatch(/create role|alter role/i);
+  });
+
+  it("stores bytes of ciphertext and a nonce, never a plaintext token column", async () => {
+    const sql = (await SQL_027).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/nonce\s+bytea not null/);
+    expect(sql).toMatch(/ciphertext\s+bytea not null/);
+    expect(sql).not.toMatch(/\b(token|secret|password)\s+(text|bytea)/);
+  });
+
+  it("lets the proxy role read the bindings and write only its status", async () => {
+    const sql = (await SQL_027).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/grant select on [^']*egress\.bindings/);
+    const column = /grant select \(([^)]*)\) on egress\.principals/.exec(sql);
+    expect(column?.[1]).not.toMatch(/token_salt/);
+    const writes = [
+      ...sql.matchAll(
+        /grant\s+(?:[^']*?\b(?:insert|update|delete|all|truncate)\b[^']*?)\s+on\s+([\w., ]+?)\s+to/gi,
+      ),
+    ];
+    expect(writes.map((m) => m[1])).toEqual(["egress.proxy_status"]);
+  });
+
+  it("notifies the channel the proxy listens on after every write", async () => {
+    const sql = (await SQL_027).replace(/--.*$/gm, "");
+    expect(sql).toMatch(/pg_notify\('egress_rules'/);
+    expect(sql).toMatch(/after insert or update or delete on egress\.bindings/);
+  });
+});

@@ -259,3 +259,22 @@ export {
   setPrincipalPodIp,
 } from "./egress-principals.js";
 export type { PrincipalCounts, PrincipalSpec } from "./egress-principals.js";
+export {
+  BINDING_KEY_BYTES,
+  bindingCounts,
+  bindingKeyId,
+  boundSessions,
+  deleteBinding,
+  hasBinding,
+  openBinding,
+  parseBindingKey,
+  putBinding,
+  sealBinding,
+} from "./egress-bindings.js";
+export type { BindingCounts, SealedBinding } from "./egress-bindings.js";
+export {
+  ensureSessionOneCliRules,
+  removeSessionRules,
+  SESSION_RULES_AUTHOR,
+  sessionsWithRules,
+} from "./egress-session-rules.js";

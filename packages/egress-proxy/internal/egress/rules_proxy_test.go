@@ -73,6 +73,9 @@ type rulesEnvOpts struct {
 	logs        io.Writer
 	// live, when set, replaces snap as the snapshot in use (a test swaps it, like the loader does).
 	live *atomic.Pointer[Snapshot]
+	// upstream is the OneCLI stand-in's address (host:port); bindingKey opens the snapshot's bindings.
+	upstream   string
+	bindingKey []byte
 }
 
 // newRulesEnv serves the production wiring (Rules, anonymous principals, private ranges opened to the evaluator). The
@@ -94,7 +97,7 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 	dns := &sequenceResolver{calls: map[string]int{}, data: o.dns}
 	var principals Principals
 	if o.principals {
-		principals = SnapshotPrincipals{Source: src}
+		principals = SnapshotPrincipals{Source: src, BindingKey: o.bindingKey}
 	}
 	logs := o.logs
 	if logs == nil {
@@ -104,6 +107,7 @@ func newRulesEnv(t *testing.T, o rulesEnvOpts) *rulesEnv {
 		Authorizer:        &Rules{Source: src, Platform: o.platform, Now: time.Now},
 		Principals:        principals,
 		RequireAuth:       o.requireAuth,
+		UpstreamAddr:      o.upstream,
 		OpenPrivateRanges: true,
 		Log:               slog.New(slog.NewTextHandler(logs, nil)),
 		Tweak: func(c *smokescreen.Config) {

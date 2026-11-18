@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openBinding } from "@pi-durable-k8s/session-core";
 import type { SessionRow } from "@pi-durable-k8s/session-core";
+import { EgressPrincipals } from "../src/egress.ts";
+import { FakeEgressDb } from "../../session-core/test/fake-egress-db.ts";
 import type { FetchLike } from "../src/github-app.ts";
 import { OneCliAdmin, parseGrants } from "../src/onecli-admin.ts";
 import { Redacted } from "../src/onecli.ts";
@@ -71,6 +74,7 @@ function access(
     onecli?: OneCliAdmin | undefined;
     namePrefix?: string | undefined;
     repoAllowed?: (repo: string) => boolean;
+    egress?: EgressPrincipals;
   } = {},
 ): RepoAccess {
   return new RepoAccess({
@@ -85,6 +89,7 @@ function access(
     caFile: join(dir, "ca.pem"),
     fetch: githubApi(),
     namePrefix: over.namePrefix,
+    egress: over.egress,
     now: () => clock,
   });
 }
@@ -393,5 +398,111 @@ describe("admin client errors", () => {
     const error = await bad.listAgents().catch((e: unknown) => e as Error);
     expect((error as Error).message).toBe("OneCLI GET /v1/agents answered HTTP 401");
     expect((error as Error).message).not.toContain("oc_");
+  });
+});
+
+describe("behind the egress proxy (ADR 0037)", () => {
+  const KEY = Buffer.alloc(32, 3);
+  const proxied = (key: Buffer | null = KEY) => {
+    const db = new FakeEgressDb();
+    const egress = new EgressPrincipals({
+      pool: db.asPool(),
+      proxyUrl: "http://pi-egress-proxy.ns.svc:3128",
+      bindingKey: key ?? undefined,
+      master: () => "master-key-for-tests",
+      sleep: () => Promise.resolve(),
+    });
+    return { db, egress, repos: access({ egress }) };
+  };
+
+  it("gives the sandbox the egress token and the CA, and no OneCLI token or gateway", async () => {
+    const { repos, db } = proxied();
+    const env = await repos.shellEnv(session(), 7);
+    const [agent] = [...onecli.agents.values()];
+    const everything = JSON.stringify(env);
+    expect(env?.HTTPS_PROXY).toMatch(
+      /^http:\/\/x:[A-Za-z0-9_-]{43}@pi-egress-proxy\.ns\.svc:3128$/,
+    );
+    expect(env?.HTTP_PROXY).toBe(env?.HTTPS_PROXY);
+    expect(everything).not.toContain(agent?.accessToken ?? "unreachable");
+    expect(everything).not.toContain("onecli.onecli");
+    expect(env).toMatchObject({
+      SSL_CERT_FILE: "/workspace/.onecli/bundle.pem",
+      GIT_SSL_CAINFO: "/workspace/.onecli/bundle.pem",
+      NODE_EXTRA_CA_CERTS: "/workspace/.onecli/ca.pem",
+      GIT_TERMINAL_PROMPT: "0",
+    });
+    expect(db.principals).toHaveLength(1);
+  });
+
+  it("seals the agent's token for the proxy and routes github.com and api.github.com through OneCLI", async () => {
+    const { repos, db } = proxied();
+    await repos.shellEnv(session(), 7);
+    const [agent] = [...onecli.agents.values()];
+    const row = db.bindings[0];
+    expect(db.bindings).toHaveLength(1);
+    expect(
+      openBinding(KEY, SESSION, {
+        keyId: row?.key_id ?? "",
+        nonce: row?.nonce ?? Buffer.alloc(0),
+        ciphertext: row?.ciphertext ?? Buffer.alloc(0),
+      }),
+    ).toBe(agent?.accessToken);
+    expect(JSON.stringify(db.bindings)).not.toContain(agent?.accessToken ?? "unreachable");
+    expect(db.rules.map((r) => [r.session_id, r.host, r.route, r.effect])).toEqual([
+      [SESSION, "github.com", "onecli", "allow"],
+      [SESSION, "api.github.com", "onecli", "allow"],
+    ]);
+  });
+
+  it("does not bind an agent that failed the narrow-grants check", async () => {
+    const { repos, db } = proxied();
+    onecli.ignoreRevokes = true;
+    await expect(repos.shellEnv(session(), 7)).rejects.toThrow();
+    expect(db.bindings).toHaveLength(0);
+    expect(db.rules).toHaveLength(0);
+  });
+
+  it("refuses a repo session when no binding key is configured, before anything is created", async () => {
+    const { repos, db } = proxied(null);
+    await expect(repos.shellEnv(session(), 7)).rejects.toThrow(RepoUnavailableError);
+    expect(onecli.agents.size).toBe(0);
+    expect(minted).toHaveLength(0);
+    expect(db.bindings).toHaveLength(0);
+  });
+
+  it("keeps the env when the agent is replaced: the sandbox never held its token", async () => {
+    const { repos } = proxied();
+    const first = await repos.shellEnv(session(), 7);
+    onecli.agents.clear();
+    clock += 2 * 60 * 60 * 1000;
+    await repos.beforeUse(7);
+    expect(repos.envStale(7)).toBe(false);
+    expect((await repos.shellEnv(session(), 7))?.HTTPS_PROXY).toBe(first?.HTTPS_PROXY);
+  });
+
+  it("rewrites the binding when the agent is replaced", async () => {
+    const { repos, db } = proxied();
+    await repos.shellEnv(session(), 7);
+    const before = db.bindings[0]?.ciphertext.toString("hex");
+    onecli.agents.clear();
+    clock += 2 * 60 * 60 * 1000;
+    await repos.beforeUse(7);
+    const [agent] = [...onecli.agents.values()];
+    const row = db.bindings[0];
+    expect(row?.ciphertext.toString("hex")).not.toBe(before);
+    expect(
+      openBinding(KEY, SESSION, {
+        keyId: row?.key_id ?? "",
+        nonce: row?.nonce ?? Buffer.alloc(0),
+        ciphertext: row?.ciphertext ?? Buffer.alloc(0),
+      }),
+    ).toBe(agent?.accessToken);
+  });
+
+  it("is unchanged with the proxy off: the OneCLI gateway URL and token", async () => {
+    const env = await access().shellEnv(session(), 7);
+    const [agent] = [...onecli.agents.values()];
+    expect(env?.HTTPS_PROXY).toBe(`http://x:${agent?.accessToken ?? ""}@onecli.onecli:10255`);
   });
 });

@@ -80,6 +80,16 @@ export function ExplainResultView({ result }: { result: ExplainResult }) {
           {result.profileRuleSets.length > 0 && `, and ${result.profileRuleSets.join(", ")}`}
           {result.profileSource === "principal" && " (the sets stored for that session)"}
         </dd>
+        {result.binding != null && (
+          <>
+            <dt className="text-muted-foreground">OneCLI binding</dt>
+            <dd data-testid="explain-binding">
+              {result.binding
+                ? "the session has one"
+                : "the session has none: a route onecli connection is denied"}
+            </dd>
+          </>
+        )}
         <dt className="text-muted-foreground">Addresses</dt>
         <dd>
           {result.addressesChecked

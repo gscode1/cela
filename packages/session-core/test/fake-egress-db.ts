@@ -81,6 +81,8 @@ export class FakeEgressDb {
     pod_ip: string | null;
     revoked_at: Date | null;
   }[] = [];
+  /** egress.bindings (ADR 0037); the table's trigger notifies `bindings` on every write. */
+  bindings: { session_id: string; key_id: string; nonce: Buffer; ciphertext: Buffer }[] = [];
   #nextRule = 1;
   #pending: string[] = [];
   #snapshot:
@@ -138,6 +140,38 @@ export class FakeEgressDb {
       updated_by: "hand",
       ...row,
     });
+  }
+
+  #bindingQuery(text: string, params: unknown[]): Result {
+    const done = (rows: unknown[] = [], rowCount = rows.length): Result =>
+      Promise.resolve({ rows, rowCount });
+    if (text.startsWith("insert into egress.bindings")) {
+      const [session_id, key_id, nonce, ciphertext] = params as [string, string, Buffer, Buffer];
+      const row = this.bindings.find((b) => b.session_id === session_id);
+      if (row === undefined) this.bindings.push({ session_id, key_id, nonce, ciphertext });
+      else Object.assign(row, { key_id, nonce, ciphertext });
+      this.notifications.push("bindings");
+      return done([], 1);
+    }
+    if (text.startsWith("delete from egress.bindings")) {
+      const before = this.bindings.length;
+      this.bindings = this.bindings.filter((b) => b.session_id !== params[0]);
+      const n = before - this.bindings.length;
+      if (n > 0) this.notifications.push("bindings");
+      return done([], n);
+    }
+    if (text.startsWith("select session_id from egress.bindings")) {
+      return done(this.bindings.map((b) => ({ session_id: b.session_id })));
+    }
+    if (text.startsWith("select 1 from egress.bindings")) {
+      return done(
+        this.bindings.filter((b) => b.session_id === params[0]).map(() => ({ "?column?": 1 })),
+      );
+    }
+    if (text.startsWith("select count(*) as total from egress.bindings")) {
+      return done([{ total: String(this.bindings.length) }]);
+    }
+    throw new Error(`FakeEgressDb: unhandled bindings statement: ${text.slice(0, 80)}`);
   }
 
   #principalQuery(text: string, params: unknown[]): Result {
@@ -241,6 +275,16 @@ export class FakeEgressDb {
       return done([...this.proxyStatus].sort((a, b) => a.replica.localeCompare(b.replica)));
     }
     if (text.includes("egress.principals")) return this.#principalQuery(text, params);
+    if (text.includes("egress.bindings")) return this.#bindingQuery(text, params);
+    if (text.startsWith("select id from egress.rules where session_id = $1")) {
+      return done(this.rules.filter((r) => r.session_id === params[0]).map((r) => ({ id: r.id })));
+    }
+    if (text.startsWith("select distinct session_id from egress.rules")) {
+      const ids = [
+        ...new Set(this.rules.flatMap((r) => (r.session_id === null ? [] : [r.session_id]))),
+      ];
+      return done(ids.sort().map((session_id) => ({ session_id })));
+    }
     if (text.startsWith("select pg_advisory_xact_lock")) return done();
     if (text.startsWith("select pg_notify")) {
       if (params[0] === "egress_rules") this.#pending.push(String(params[1]));

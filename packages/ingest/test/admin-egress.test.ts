@@ -551,6 +551,33 @@ describe("admin egress explain and status", () => {
     });
   });
 
+  it("explain says whether the session has a OneCLI binding, and status counts bindings without their bytes", async () => {
+    const { base, db } = await seeded();
+    await call(base, "alice", "POST", `${BASE}/sessions/${SESSION}/rules`, {
+      effect: "allow",
+      host: "gh.example.com",
+      route: "onecli",
+    });
+    const asked = { host: "gh.example.com", sessionId: SESSION, addresses: ["93.184.216.34"] };
+    expect(await explain(base, asked)).toMatchObject({
+      decision: "allow",
+      route: "onecli",
+      binding: false,
+    });
+    db.bindings.push({
+      session_id: SESSION,
+      key_id: "0".repeat(16),
+      nonce: Buffer.from("n".repeat(12)),
+      ciphertext: Buffer.from("secret-ciphertext-bytes"),
+    });
+    expect(await explain(base, asked)).toMatchObject({ route: "onecli", binding: true });
+    // No session asked about: nothing to say.
+    expect(await explain(base, { host: "gh.example.com" })).toMatchObject({ binding: null });
+    const status = await json(await call(base, "alice", "GET", `${BASE}/status`));
+    expect(status.bindings).toEqual({ total: 1 });
+    expect(JSON.stringify(status)).not.toContain("secret-ciphertext-bytes");
+  });
+
   it("applies a session's own rules, and answers 400 for a bad request", async () => {
     const { base } = await seeded();
     await call(base, "alice", "POST", `${BASE}/sessions/${SESSION}/rules`, {

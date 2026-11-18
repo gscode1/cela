@@ -54,13 +54,24 @@ export function buildShellEnv(input: { gateway: string; token: Redacted }): Reco
     https_proxy: proxyUrl,
     NO_PROXY: "localhost,127.0.0.1,::1",
     no_proxy: "localhost,127.0.0.1,::1",
-    SSL_CERT_FILE: CA_BUNDLE,
-    GIT_SSL_CAINFO: CA_BUNDLE,
-    NODE_EXTRA_CA_CERTS: CA_FILE,
     NODE_USE_ENV_PROXY: "1",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "http.proxyAuthMethod",
     GIT_CONFIG_VALUE_0: "basic",
+    ...buildWorkspaceEnv(),
+  };
+}
+
+/**
+ * What a repo session's commands need besides a proxy: the OneCLI CA (it MITMs the credentialed hosts, whichever proxy
+ * the traffic enters through), git's non-interactive switches and the commit identity. No proxy variable and no
+ * credential: the egress proxy environment (`buildEgressEnv`) adds the proxy, with the egress token only.
+ */
+export function buildWorkspaceEnv(): Record<string, string> {
+  return {
+    SSL_CERT_FILE: CA_BUNDLE,
+    GIT_SSL_CAINFO: CA_BUNDLE,
+    NODE_EXTRA_CA_CERTS: CA_FILE,
     GIT_TERMINAL_PROMPT: "0",
     GIT_AUTHOR_NAME: "pi agent",
     GIT_AUTHOR_EMAIL: "pi-agent@users.noreply.github.com",
