@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--timeout 10m] [--verbose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-expose] [--cni kindnet|cilium]
+#                   [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
 # only when a step fails (its last lines and the log's path). --verbose, or CI set in the environment, streams all of it.
@@ -27,6 +28,13 @@
 #      the URLs and whether each is ready, how to sign in (commands that read the Secrets; no secret is printed), the
 #      warnings and the next steps. An endpoint that does not answer fails the run after the summary
 #
+# --cni cilium (issue #139) creates the cluster without kindnet (networking.disableDefaultCNI), installs Cilium (chart
+# version pinned below, from helm.cilium.io) and installs pi-durable with networkPolicy.provider=cilium. kindnet does not
+# filter traffic to hostNetwork Pods (API server, kubelet), so the isolation probe reports not-enforced there; Cilium does,
+# so on this lane the probe must report enforced: NETPOL_ENFORCED defaults to 1 and hack/kind-smoke.sh fails a sandbox
+# that reaches the node. Slower to start (Cilium's images, about two minutes) and the node needs the images from quay.io.
+# kindnet stays the fast default. The CNI is fixed when the cluster is created: a reused cluster must match --cni.
+#
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
 # which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
@@ -47,11 +55,14 @@ onecli=0
 expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
 min_kind=0.24.0
+cni=kindnet
+# Upgrade on purpose, with a kind run of this lane (hack/kind-up.sh --cni cilium, then hack/kind-smoke.sh).
+cilium_version=1.20.5
 verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--timeout 10m] [--verbose]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-expose] [--cni kindnet|cilium] [--timeout 10m] [--verbose]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
@@ -69,6 +80,7 @@ while [[ $# -gt 0 ]]; do
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
   --no-expose) expose=0; shift ;;
+  --cni) [[ $# -ge 2 ]] || usage; cni=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -76,6 +88,9 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
+[[ $cni == kindnet || $cni == cilium ]] || die "bad --cni '$cni' (kindnet or cilium)"
+# On Cilium the probe must say enforced; kind-smoke.sh reads the same variable.
+[[ $cni == kindnet ]] || export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}
 
 # ------------------------------------------------------------------ output
 # Quiet mode moves stdout and stderr to the log for the length of a step (the terminal is kept on fds 3 and 4), so a
@@ -170,6 +185,7 @@ ref_sandbox=${SANDBOX_IMAGE:-$repo/pi-sandbox:$tag}
 set_args=()
 extra_args=()
 [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
+[[ $cni == kindnet ]] || extra_args+=(--set networkPolicy.provider=cilium)
 add_image_sets() { # key ref: --set images.<key>.repository/tag/digest from a "repo:tag" or "repo@sha256:..." reference
   local key=$1 ref=$2 repository tag="" digest=""
   case $ref in
@@ -212,12 +228,19 @@ if kind get clusters 2>/dev/null | grep -qx -- "$name"; then
       die "cluster $name exists without the localhost port mappings (8080, 10254, 10256), and kind cannot add them later. Run hack/kind-down.sh --name $name and start again, or pass --no-expose to keep this cluster and use port-forward."
   fi
 else
-  config=$root/hack/kind-config.yaml
+  config=$(mktemp -d)/kind-config.yaml
   if [[ $expose -eq 0 ]]; then
-    config=$(mktemp -d)/kind-config.yaml
     sed '/# expose:begin/,/# expose:end/d' "$root/hack/kind-config.yaml" >"$config"
+  else
+    cp "$root/hack/kind-config.yaml" "$config"
   fi
-  kind create cluster --name "$name" --config "$config" --wait 180s
+  if [[ $cni == kindnet ]]; then
+    kind create cluster --name "$name" --config "$config" --wait 180s
+  else
+    # No CNI yet, so the node stays NotReady until Cilium runs: waiting here would only time out.
+    printf 'networking:\n  disableDefaultCNI: true\n' >>"$config"
+    kind create cluster --name "$name" --config "$config"
+  fi
 fi
 expose_cidr=""
 if [[ $expose -eq 1 ]]; then
@@ -236,6 +259,31 @@ if [[ $expose -eq 1 ]]; then
 fi
 # Everything below names its context. The current context of the user's kubeconfig is never used.
 k get nodes >/dev/null || die "cannot reach the cluster through context $ctx"
+has_cilium=0
+[[ -z $(k -n kube-system get daemonset cilium --ignore-not-found -o name) ]] || has_cilium=1
+has_kindnet=0
+[[ -z $(k -n kube-system get daemonset kindnet --ignore-not-found -o name) ]] || has_kindnet=1
+if [[ $cni == cilium && $has_kindnet -eq 1 ]]; then
+  die "cluster $name runs kindnet, and the CNI cannot be changed later. Run hack/kind-down.sh --name $name and start again with --cni cilium, or use another --name."
+fi
+if [[ $cni == kindnet && $has_cilium -eq 1 ]]; then
+  die "cluster $name runs Cilium: pass --cni cilium to reuse it (the chart needs networkPolicy.provider=cilium there)."
+fi
+
+# ------------------------------------------------------------------ 2b. Cilium
+if [[ $cni == cilium ]]; then
+  step "Cilium $cilium_version"
+  # Defaults otherwise: kube-proxy stays (kind runs it), cluster-pool IPAM, VXLAN. Cilium's CIDR rules do not select the
+  # node or other nodes (policy-cidr-match-mode is empty), so the sandbox policy's internet ipBlock cannot open the node.
+  # Its own empty repository config and cache: --repo still reads the user's repositories, and a stale entry there fails it.
+  helm_home=$(mktemp -d)
+  HELM_REPOSITORY_CONFIG=$helm_home/repositories.yaml HELM_REPOSITORY_CACHE=$helm_home/cache \
+    helm --kube-context "$ctx" upgrade --install cilium cilium --repo https://helm.cilium.io --version "$cilium_version" \
+    --namespace kube-system --set image.pullPolicy=IfNotPresent --set operator.replicas=1 --wait --timeout "$timeout"
+  rm -rf "$helm_home"
+  k -n kube-system rollout status daemonset/cilium --timeout "$timeout"
+  k wait --for=condition=Ready nodes --all --timeout "$timeout"
+fi
 
 # ------------------------------------------------------------------ 3. images
 if [[ $build -eq 1 ]]; then
@@ -311,7 +359,7 @@ unset DATABASE_URL pi_password
 step "isolation probe (GET /admin/status)"
 probe=$("$root/hack/kind-smoke.sh" --name "$name" --namespace "$namespace" --status 2>&1) || {
   printf '%s\n' "$probe"
-  die "the isolation probe check failed (hack/kind-smoke.sh --status)"
+  die "the isolation probe check failed (hack/kind-smoke.sh --status)$([[ $cni == kindnet ]] || echo '; on Cilium it must report enforced')"
 }
 printf '%s\n' "$probe"
 probe_state=$(sed -n 's/^isolation-probe state=\([^ ]*\).*/\1/p' <<<"$probe" | head -1)
@@ -383,8 +431,8 @@ if [[ $expose -eq 1 ]]; then
 else
   where="through kubectl port-forward, see below"
 fi
-printf '\n%spi-durable is up%s on kind cluster %s (context %s, namespace %s) in %sm%ss, %s\n\n' \
-  "$bold" "$off" "$name" "$ctx" "$namespace" "$((total / 60))" "$((total % 60))" "$where"
+printf '\n%spi-durable is up%s on kind cluster %s (context %s, namespace %s, CNI %s) in %sm%ss, %s\n\n' \
+  "$bold" "$off" "$name" "$ctx" "$namespace" "$cni" "$((total / 60))" "$((total % 60))" "$where"
 row "Admin console" "http://localhost:8080/console/" "$console_state"
 row "Session API" "http://localhost:8080" "$api_state"
 if [[ $onecli -eq 1 ]]; then
@@ -418,7 +466,7 @@ fi
 heading "Heads-up"
 printf '  %s!%s sandboxes run under runc, not gVisor: a trial for the scripted model, never for untrusted code\n' "$yellow" "$off"
 if [[ $probe_state != enforced ]]; then
-  if [[ $probe_reached == kube-api ]]; then
+  if [[ $cni == kindnet && $probe_reached == kube-api ]]; then
     printf '  %s!%s network policy %s: a sandbox reached only the Kubernetes API, which kindnet does not filter (expected on kind)\n' \
       "$yellow" "$off" "${probe_state:-unknown}"
   else
