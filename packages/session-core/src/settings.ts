@@ -168,7 +168,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
     listText.length > MAX_INPUT_ALLOWLIST ||
     !listText.every((entry): entry is string => typeof entry === "string")
   ) {
-    return `allowlist must be an array of at most ${String(MAX_ALLOWLIST)} provider/model strings`;
+    return `allowlist must be an array of at most ${String(MAX_INPUT_ALLOWLIST)} provider/model strings`;
   }
   const reasoning = pickLevel("reasoning");
   if (reasoning === "invalid")
@@ -209,7 +209,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
     repoText.length > MAX_INPUT_ALLOWLIST ||
     !repoText.every((entry): entry is string => typeof entry === "string")
   ) {
-    return `repoAllowlist must be an array of at most ${String(MAX_REPO_ALLOWLIST)} strings`;
+    return `repoAllowlist must be an array of at most ${String(MAX_INPUT_ALLOWLIST)} strings`;
   }
   for (const entry of repoText) {
     const problem = repoPatternError(entry);

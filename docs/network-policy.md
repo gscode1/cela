@@ -10,8 +10,10 @@ The Helm chart [`charts/pi-durable`](../charts/pi-durable/README.md) renders the
 `kube-apiserver` entity with an orchestrator egress rule to the API server, `networkPolicy.kubeApiCidrs` or TCP 443/6443 to any;
 the database and OneCLI selectors are values; `packages/orchestrator/test/pi-durable-chart.test.ts` checks the invariants below on the rendered
 output). The kustomize form in `deploy/` that this document first described is gone (install slice 11b).
-The rows and sections about CloudNativePG (`pi-pg`, `postgres-allow-*`) describe the Postgres of that older stack; the
-bundled `charts/pi-postgres` has its own policy and CNPG is no longer part of the install.
+The Postgres is the bundled `charts/pi-postgres` (or a database you run): CNPG is no longer part of the install
+([install-plan D3](install-plan.md)) and no CNPG policy is rendered. The bundled database has one policy, named after its
+release (the Helm fullname): ingress to TCP 5432 only from the pods in `networkPolicy.clientSelectors` of its own namespace,
+and no egress rule (it needs none).
 
 Files:
 
@@ -30,9 +32,8 @@ Files:
 | orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `charts/pi-durable/templates/orchestrator/`, `tests/e2e/runner-pod.yaml` |
 | ingest | `app.kubernetes.io/name=pi-ingest` | `charts/pi-durable/templates/ingest/` |
 | sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `charts/pi-durable/templates/sandbox/template.yaml` |
-| Postgres pi-pg | `cnpg.io/cluster=pi-pg` | set by CNPG on instance and job pods |
+| Postgres (bundled) | `app.kubernetes.io/name=pi-postgres` (the chart's selector labels) | `charts/pi-postgres/templates/` |
 | e2e driver Job | `app.kubernetes.io/name=e2e-driver` | `tests/e2e/job.yaml.tpl` |
-| CNPG operator | ns `postgres-system`, `app.kubernetes.io/name=cloudnative-pg` | example selector; verify locally |
 | OneCLI | ns `onecli`, `app=onecli` (one pod: web 10254, gateway 10255, api 10256) | example selector; verify locally |
 | Envoy Gateway data plane | ns `envoy-gateway-system`, `app.kubernetes.io/name=envoy` + `app.kubernetes.io/component=proxy` | example selector; verify locally |
 | CoreDNS | ns `kube-system`, `k8s-app=kube-dns` | example selector; verify locally |
@@ -50,23 +51,21 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | Source | Destination | Port | Why | Policy |
 |---|---|---|---|---|
 | clients via Envoy Gateway (and the e2e driver) | ingest | 8080 | session API; optional ingress-controller example, no HTTPRoute supplied | S ingest-allow-clients-ingress |
-| ingest | Postgres (-rw) | 5432 | session and inbox state | S ingest-allow-egress |
+| ingest | Postgres | 5432 | session and inbox state | S ingest-allow-egress |
 | ingest | orchestrator | 8081 | stream proxy | S ingest-allow-egress |
 | ingest, e2e driver | orchestrator | 8081 | only these two may call it | S orchestrator-allow-ingress |
-| orchestrator | Postgres (-rw) | 5432 | durable state, advisory lock | S orchestrator-allow-egress |
+| orchestrator | Postgres | 5432 | durable state, advisory lock | S orchestrator-allow-egress |
 | orchestrator | sandbox pods | 8080, 9090 | sandboxd REST and gRPC | S orchestrator-allow-egress |
 | orchestrator | OneCLI | 10255, 10256 | model calls and remote MCP calls through the gateway; agent and secret management | S orchestrator-allow-egress |
-| orchestrator, e2e driver, Postgres | kube-apiserver | 443, 6443 | claims, pods, PVCs; suites; CNPG instance manager | C orchestrator/e2e-driver/postgres-egress-kube-apiserver |
+| orchestrator, e2e driver | kube-apiserver | 443, 6443 | claims, pods, PVCs; suites | C orchestrator-egress-kube-apiserver (chart), e2e-driver-egress-kube-apiserver (`tests/e2e/deploy/cilium`) |
 | orchestrator | `api.github.com` | 443 (+ DNS lookup of that name) | direct call that mints the repo-scoped GitHub App installation token (the App key never leaves the orchestrator); the only public host it may reach | C orchestrator-egress-github-api |
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
 | sandbox | OneCLI gateway | 10255 | credentialed traffic (repo sessions): credentials injected | S sandbox-allow-onecli-egress |
 | sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
-| orchestrator, ingest, Postgres in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
+| orchestrator, ingest, sandboxes in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | orchestrator, ingest, sandboxes, e2e driver | CoreDNS | 53 | same, for every pod | same |
-| orchestrator, ingest | Postgres | 5432 | (ingress side) | S postgres-allow-ingress |
-| CNPG operator (`postgres-system`) | Postgres | 5432, 8000 | status polling (8000, HTTPS) and SQL | S postgres-allow-ingress |
-| Postgres instances | each other | 5432, 8000 | replication and status; unused at `instances: 1` | S postgres-allow-* |
+| `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |
 | pi-durable-poc orchestrator | OneCLI gateway, API | 10255, 10256 | (ingress side, `onecli` ns) | C onecli-ingress |
 | pi-durable-poc sandboxes | OneCLI gateway | 10255 only | (ingress side) | C onecli-ingress |
 | Envoy Gateway proxies | OneCLI web, gateway, API | 10254, 10255, 10256 | optional ingress-controller example; replace selectors or use port-forward | C onecli-ingress |
@@ -76,18 +75,13 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | OneCLI pod | 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 | any | explicit deny: a public name resolving to a private address | C onecli-egress (egressDeny) |
 | kubelet, `kubectl port-forward` | any pod | any | host traffic; Cilium admits the local node by default, so probes keep working | (default) |
 
-Rows marked "(ingress side)" repeat a flow from the receiving end and add no rules. Postgres has no egress except to its own
-instances, DNS and the Kubernetes API.
+Rows marked "(ingress side)" repeat a flow from the receiving end and add no rules. The bundled Postgres has no egress rule of its own; in the same namespace `default-deny-all` also covers it.
 
 ## Assumptions to check before applying
 
-- **CNPG operator reachability.** CNPG's operator talks to each instance on 8000 (instance manager status, HTTPS) and
-  also opens SQL connections on 5432; both are allowed from `postgres-system/cloudnative-pg`. The operator pod labels are
-  examples to check locally; the port list follows CNPG's documented networking requirements (UNVERIFIED against the installed operator
-  version: if the Cluster shows `Not ready` after enforcement, `hubble observe --to-pod pi-durable-poc/pi-pg-1` shows
-  the missing port). The instance manager also calls the Kubernetes API (covered by `postgres-egress-kube-apiserver`), and
-  initdb/join job pods carry the same `cnpg.io/cluster` label, so they get the same policy.
-- **Postgres -rw**: the Service selects the primary; the policy selects all pi-pg instance pods (it must survive a failover).
+- **Postgres client selectors.** `charts/pi-postgres` admits only the pods named in its `networkPolicy.clientSelectors`
+  (the pi-durable pods and, for the bundled OneCLI, `app.kubernetes.io/name=onecli`); a client that is missing there is
+  refused at the database, not by a pi-durable policy.
 - **Ingest clients.** The example allows Envoy Gateway proxies; replace selectors for your ingress controller. If clients will come from the LAN directly (a LoadBalancer
   Service) or another namespace, add a `from` entry to `ingest-allow-clients-ingress`.
 - **Kube API.** Both 443 (the Service port) and 6443 (the node endpoint) are allowed; which one Cilium evaluates depends on
@@ -103,8 +97,8 @@ instances, DNS and the Kubernetes API.
 
 Enforcement starts per pod the moment any policy selects it, so the safe route is audit mode, then everything, then enforce.
 
-1. Preconditions: Cilium is the CNI on every node, `kubectl get crd ciliumnetworkpolicies.cilium.io` works, DNS and the
-   CNPG cluster are healthy, and a baseline `tests/e2e/run.sh phase3` passes (isolation KNOWN-FAIL on flannel).
+1. Preconditions: Cilium is the CNI on every node, `kubectl get crd ciliumnetworkpolicies.cilium.io` works, DNS and
+   the database are healthy, and a baseline `tests/e2e/run.sh phase3` passes (isolation KNOWN-FAIL on flannel).
 2. Put the pi-durable-poc endpoints in policy audit mode (Cilium agent: `cilium-dbg endpoint config <id>
    PolicyAuditMode=Enabled`, for each pod in the namespace, or Cilium's cluster-wide `policy-audit-mode` during the window).
 3. `hack/install.sh` with `networkPolicy.provider: cilium` (the chart applies the Cilium policies with the rest). Dry check:
@@ -136,7 +130,7 @@ Fast, per layer, in reverse order:
   the per-workload policies still select their pods and keep them default-deny.
 - One workload only (for example Postgres misbehaving): deleting its own policies does not help, because
   `default-deny-all` and the DNS-only policies (`allow-dns-egress`, `dns-egress-kube-dns-only`) select every pod. Policies
-  only add, so apply a temporary allow-all for that workload instead (for Postgres: `podSelector` `cnpg.io/cluster: pi-pg`,
+  only add, so apply a temporary allow-all for that workload instead (for Postgres: `podSelector` `app.kubernetes.io/name: pi-postgres`,
   `policyTypes: [Ingress, Egress]`, `ingress: [{}]`, `egress: [{}]`), and delete it once the policy is fixed. Audit mode on
   that pod's endpoint is the other option.
 - Revert the commits to restore the previous sandbox-only policy set.
@@ -149,7 +143,7 @@ delete it from the cluster (no prune), it is harmless and can be deleted.
 - `helm template` and `kubectl apply --dry-run=client` pass for the standard policies; the render tests check the invariants.
 - The CiliumNetworkPolicies were checked against the upstream CRD schema (cilium v1.17.0
   `ciliumnetworkpolicies.yaml`) with a field-and-enum validator: no unknown fields, `kube-apiserver` is a valid entity. Client dry-run on your cluster requires the Cilium CRDs.
-- Enforcement itself is verified (plan.md, "Enforcement result": the sandbox isolation test passes and phases 1, 3, 4, 4b are green). UNVERIFIED here: FQDN behaviour, the `egressDeny` and endpoint-identity interaction, the CNPG port list,
+- Enforcement itself is verified (plan.md, "Enforcement result": the sandbox isolation test passes and phases 1, 3, 4, 4b are green). UNVERIFIED here: FQDN behaviour, the `egressDeny` and endpoint-identity interaction, 
   the host-rule API's delete and list shapes, and rule evaluation order in OneCLI.
 
 ### Honest e2e verdicts

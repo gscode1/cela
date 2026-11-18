@@ -194,6 +194,11 @@ describe("allowlist size", () => {
   const many = Array.from({ length: 100 }, (_, i) => `p/m${String(i)}`);
   const full: Settings = { ...base, defaultModel: "p/m0", allowlist: many };
 
+  it("names the input bound, not the distinct-entry limit, when the list is far too long", () => {
+    const huge = Array.from({ length: 1001 }, (_, i) => `p/m${String(i)}`);
+    expect(validateSettings({ allowlist: huge }, full)).toMatch(/at most 1000 provider\/model/);
+  });
+
   it("counts the default: a default outside a full list is a 400, not a row the reader rejects", async () => {
     expect(validateSettings({ defaultModel: "x/y" }, full)).toMatch(/at most 100 distinct/);
     expect(validateSettings({ defaultModel: "p/m5" }, full)).toMatchObject({
