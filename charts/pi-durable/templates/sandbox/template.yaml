@@ -5,20 +5,31 @@ size for claims made before sizes existed (they reference pi-env-pool) and for t
 pi-env-direct-template[-<size>] (docs/decisions/0038-network-modes.md): the same Pod but for the label
 pi-durable.dev/network-mode, which the NetworkPolicies select on. The label is baked into the template because Pods
 cannot be relabelled without RBAC the orchestrator must not have; choosing the warm pool chooses the network position.
+With sandbox.flavours.browser.enabled every one of them also has a `browser` twin, pi-env-browser[-direct]-template[-<size>]
+(docs/decisions/0041-browser-sandbox.md): the browser image, its own resources and a memory-backed /dev/shm.
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
 {{- if .Values.security.allowDirectSandboxEgress }}{{- $modes = append $modes "direct" -}}{{- end -}}
+{{- $browser := $root.Values.sandbox.flavours.browser -}}
+{{- $flavours := list "default" -}}
+{{- if $browser.enabled }}{{- $flavours = append $flavours "browser" -}}{{- end -}}
 {{- $templates := list -}}
+{{- range $flavour := $flavours -}}
 {{- range $mode := $modes -}}
 {{- $prefix := ternary "pi-env-direct-template" "pi-env-template" (eq $mode "direct") -}}
-{{- $templates = append $templates (dict "name" $prefix "size" $root.Values.sandbox.defaultSize "mode" $mode) -}}
+{{- if eq $flavour "browser" }}{{- $prefix = replace "pi-env-" "pi-env-browser-" $prefix -}}{{- end -}}
+{{- $templates = append $templates (dict "name" $prefix "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour) -}}
 {{- range $name := keys $root.Values.sandbox.sizes | sortAlpha -}}
-{{- $templates = append $templates (dict "name" (printf "%s-%s" $prefix $name) "size" $name "mode" $mode) -}}
+{{- $templates = append $templates (dict "name" (printf "%s-%s" $prefix $name) "size" $name "mode" $mode "flavour" $flavour) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- range $i, $t := $templates -}}
 {{- $size := index $root.Values.sandbox.sizes $t.size -}}
+{{- $isBrowser := eq $t.flavour "browser" -}}
+{{- $resources := ternary $browser.resources $size.resources $isBrowser -}}
+{{- $ephemeral := ternary $browser.ephemeralStorage $size.ephemeralStorage $isBrowser -}}
 {{- if $i }}
 ---
 {{ end -}}
@@ -30,6 +41,7 @@ metadata:
     {{- include "pi-durable.labels" $root | nindent 4 }}
     pi-durable.dev/sandbox-size: {{ $t.size }}
     pi-durable.dev/network-mode: {{ $t.mode }}
+    pi-durable.dev/sandbox-flavour: {{ $t.flavour }}
 spec:
   # Each SandboxClaim carries its own SANDBOXD_AUTH_TOKEN_SHA256 (the hash of HMAC(master, claimName), set by the
   # orchestrator). Allowed lets a claim ADD that variable; the template must not define it, because Allowed rejects an
@@ -55,6 +67,7 @@ spec:
         app.kubernetes.io/name: pi-sandbox
         # The policies select on it (ADR 0038); absent or unknown means proxied, never direct.
         pi-durable.dev/network-mode: {{ $t.mode }}
+        pi-durable.dev/sandbox-flavour: {{ $t.flavour }}
     spec:
       {{- if $root.Values.sandbox.runtimeClassName }}
       runtimeClassName: {{ $root.Values.sandbox.runtimeClassName }}
@@ -69,8 +82,13 @@ spec:
       {{- end }}
       containers:
         - name: sandboxd
+          {{- if $isBrowser }}
+          image: {{ include "pi-durable.image" (dict "name" "sandboxBrowser" "image" $root.Values.images.sandboxBrowser) }}
+          imagePullPolicy: {{ $root.Values.images.sandboxBrowser.pullPolicy }}
+          {{- else }}
           image: {{ include "pi-durable.image" (dict "name" "sandbox" "image" $root.Values.images.sandbox) }}
           imagePullPolicy: {{ $root.Values.images.sandbox.pullPolicy }}
+          {{- end }}
           args:
             - --auth-token-sha256=$(SANDBOXD_AUTH_TOKEN_SHA256)
           ports:
@@ -79,11 +97,24 @@ spec:
           readinessProbe:
             httpGet: { path: /v1/health, port: 8080 }
           resources:
-            {{- $limits := merge (dict "ephemeral-storage" $size.ephemeralStorage) ($size.resources.limits | default dict) }}
-            {{- toYaml (dict "requests" $size.resources.requests "limits" $limits) | nindent 12 }}
+            {{- $limits := merge (dict "ephemeral-storage" $ephemeral) ($resources.limits | default dict) }}
+            {{- toYaml (dict "requests" $resources.requests "limits" $limits) | nindent 12 }}
           securityContext:
             {{- include "pi-durable.containerSecurityContext" $root | nindent 12 }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            {{- if $isBrowser }}
+            - name: dshm
+              mountPath: /dev/shm
+            {{- end }}
+      {{- if $isBrowser }}
+      volumes:
+        # Chromium keeps shared memory for its renderers here; the 64Mi default of a Pod crashes tabs. It counts against
+        # the container's memory limit.
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $browser.shmSize }}
+      {{- end }}
 {{ end -}}

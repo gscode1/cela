@@ -1535,3 +1535,116 @@ describe("network cutover and network modes (ADR 0038)", () => {
     expect(execNotes([...on, ...external])).not.toMatch(/cutover is off/);
   });
 });
+
+describe("browser flavour (ADR 0041)", () => {
+  const browser = ["--set", "sandbox.flavours.browser.enabled=true"];
+  const on = [
+    "--set",
+    "egressProxy.enabled=true",
+    "--set",
+    "egressProxy.database.existingSecret=pi-egress-database",
+    "--set",
+    "egressProxy.binding.existingSecret=pi-egress-binding",
+  ];
+  const gate = ["--set", "security.allowDirectSandboxEgress=true"];
+  const sandboxd = (template: Obj): Obj => template.spec.podTemplate.spec.containers[0];
+  const names = (list: Obj[], kind: string): string[] =>
+    ofKind(list, kind).map((d) => d.metadata.name);
+
+  it("renders no browser template or pool by default, and tells ingest so", () => {
+    const list = docs(external);
+    expect(names(list, "SandboxTemplate").filter((n) => n.includes("browser"))).toEqual([]);
+    expect(names(list, "SandboxWarmPool").filter((n) => n.includes("browser"))).toEqual([]);
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe("");
+  });
+
+  it("renders a browser template and pool per size, plus the unsized pair, when enabled", () => {
+    const list = docs([...external, ...browser]);
+    const expected = [
+      "pi-env-browser-template",
+      ...["l", "m", "s", "xl"].map((s) => `pi-env-browser-template-${s}`),
+    ];
+    expect(names(list, "SandboxTemplate").filter((n) => n.includes("browser"))).toEqual(expected);
+    expect(names(list, "SandboxWarmPool").filter((n) => n.includes("browser"))).toEqual(
+      expected.map((n) => n.replace("template", "pool")),
+    );
+    // The default flavour is unchanged.
+    expect(names(list, "SandboxTemplate").filter((n) => !n.includes("browser"))).toHaveLength(5);
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe(
+      "browser",
+    );
+    for (const size of ["l", "m", "s", "xl"]) {
+      expect(
+        named(list, "SandboxWarmPool", `pi-env-browser-pool-${size}`).spec.sandboxTemplateRef.name,
+      ).toBe(`pi-env-browser-template-${size}`);
+    }
+  });
+
+  it("gives the browser pods their own image, resources and a memory-backed /dev/shm", () => {
+    const list = docs([...external, ...browser]);
+    const template = named(list, "SandboxTemplate", "pi-env-browser-template-m");
+    const container = sandboxd(template);
+    expect(container.image).toBe("ghcr.io/gscode1/pi-sandbox-browser:test");
+    expect(container.resources).toEqual({
+      requests: { cpu: "500m", memory: "768Mi" },
+      limits: { cpu: "1", memory: "1536Mi", "ephemeral-storage": "2Gi" },
+    });
+    expect(container.volumeMounts).toContainEqual({ name: "dshm", mountPath: "/dev/shm" });
+    expect(template.spec.podTemplate.spec.volumes).toEqual([
+      { name: "dshm", emptyDir: { medium: "Memory", sizeLimit: "256Mi" } },
+    ]);
+    // The size still sets the workspace.
+    expect(template.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("5Gi");
+    // Not a browser: no /dev/shm volume, the sandbox image.
+    const plain = named(list, "SandboxTemplate", "pi-env-template-m");
+    expect(sandboxd(plain).image).toBe("ghcr.io/gscode1/pi-sandbox:test");
+    expect(plain.spec.podTemplate.spec.volumes).toBeUndefined();
+    // Same Pod security as every sandbox.
+    expect(template.spec.podTemplate.spec.runtimeClassName).toBe("gvisor");
+    expect(template.spec.podTemplate.spec.automountServiceAccountToken).toBe(false);
+    expect(container.securityContext.capabilities).toEqual({ drop: ["ALL"] });
+  });
+
+  it("labels the Pods so the sandbox network policies still select them", () => {
+    const list = docs([...external, ...browser]);
+    const labels = named(list, "SandboxTemplate", "pi-env-browser-template-s").spec.podTemplate
+      .metadata.labels;
+    expect(labels).toMatchObject({
+      "app.kubernetes.io/name": "pi-sandbox",
+      "pi-durable.dev/network-mode": "proxied",
+      "pi-durable.dev/sandbox-flavour": "browser",
+    });
+  });
+
+  it("renders the direct twins with the gate, per flavour, size and mode", () => {
+    const list = docs([...on, ...gate, ...browser, ...external]);
+    const templates = names(list, "SandboxTemplate");
+    expect(templates).toContain("pi-env-browser-direct-template");
+    expect(templates).toContain("pi-env-browser-direct-template-xl");
+    expect(templates).toHaveLength(20);
+    expect(
+      named(list, "SandboxTemplate", "pi-env-browser-direct-template-s").spec.podTemplate.metadata
+        .labels["pi-durable.dev/network-mode"],
+    ).toBe("direct");
+    // Direct pools keep no warm Pods, for either flavour.
+    expect(named(list, "SandboxWarmPool", "pi-env-browser-direct-pool-m").spec.replicas).toBe(0);
+  });
+
+  it("keeps warm Pods only where the operator asks, in the sized proxied browser pools", () => {
+    const list = docs([
+      ...external,
+      ...browser,
+      "--set",
+      "sandbox.flavours.browser.warmPoolReplicas=1",
+    ]);
+    expect(named(list, "SandboxWarmPool", "pi-env-browser-pool-m").spec.replicas).toBe(1);
+    expect(named(list, "SandboxWarmPool", "pi-env-browser-pool").spec.replicas).toBe(0);
+    expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(0);
+  });
+
+  it("needs the browser image once enabled", () => {
+    expect(() => docs([...external, ...browser, "--set", "images.sandboxBrowser.tag="])).toThrow(
+      /images\.sandboxBrowser/,
+    );
+  });
+});
