@@ -15,6 +15,7 @@ export function profileNameProblem(name: string): string | undefined {
 }
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MCP_SERVER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+const RULE_SET_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** `SANDBOX_SIZE_NAME` (packages/session-core/src/sandbox-sizes.ts). */
 const SANDBOX_SIZE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
 const MAX_LIST = 32;
@@ -40,6 +41,7 @@ export interface ProfileForm {
   turnBudget: string;
   tokenBudget: string;
   mcpServers: string[];
+  egressRuleSets: string[];
   skills: SkillPin[];
   repoSkills: boolean;
   repoContext: boolean;
@@ -60,6 +62,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     turnBudget: definition.turnBudget === undefined ? "" : String(definition.turnBudget),
     tokenBudget: definition.tokenBudget === undefined ? "" : String(definition.tokenBudget),
     mcpServers: definition.mcpServers ?? [],
+    egressRuleSets: definition.egressRuleSets ?? [],
     skills: definition.skills ?? [],
     repoSkills: definition.repoSkills ?? false,
     repoContext: definition.repoContext ?? false,
@@ -88,6 +91,8 @@ export function definitionFromForm(
   if (form.tokenBudget.trim() !== "") definition.tokenBudget = Number(form.tokenBudget.trim());
   if (form.mcpServers.length > 0 || original.mcpServers !== undefined)
     definition.mcpServers = form.mcpServers;
+  if (form.egressRuleSets.length > 0 || original.egressRuleSets !== undefined)
+    definition.egressRuleSets = form.egressRuleSets;
   // The API drops an empty `skills`, so it is never sent.
   if (form.skills.length > 0) definition.skills = form.skills;
   if (form.repoSkills || original.repoSkills !== undefined) definition.repoSkills = form.repoSkills;
@@ -152,6 +157,12 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
     (servers.length > MAX_LIST || !servers.every((name) => MCP_SERVER_NAME.test(name)))
   )
     problems.push("mcpServers must be an array of MCP server names");
+  const ruleSets = definition.egressRuleSets;
+  if (
+    ruleSets !== undefined &&
+    (ruleSets.length > MAX_LIST || !ruleSets.every((name) => RULE_SET_NAME.test(name)))
+  )
+    problems.push("egressRuleSets must be an array of rule set names");
   if (definition.sandboxSize !== undefined && !SANDBOX_SIZE_NAME.test(definition.sandboxSize))
     problems.push("sandboxSize must be a size name");
   const sizes = definition.sandboxSizes;
@@ -192,6 +203,8 @@ export function readProblems(definition: ProfileDefinition): string[] {
 export interface Catalog {
   tools: readonly string[];
   mcpServers: readonly { name: string; enabled: boolean }[];
+  /** Undefined while the rule sets are loading: nothing is reported then. */
+  egressRuleSets?: readonly string[];
 }
 
 export interface ReferenceProblems {
@@ -201,6 +214,8 @@ export interface ReferenceProblems {
   missingServers: string[];
   /** MCP servers that exist but are disabled: they save, and their tools are unavailable until enabled. */
   disabledServers: string[];
+  /** Egress rule sets that do not exist (deleted); the API refuses a new version with them. */
+  missingRuleSets: string[];
 }
 
 /** `checkProfileNames` (packages/session-core/src/profiles.ts), listing every problem instead of the first. */
@@ -219,7 +234,11 @@ export function referenceProblems(
     if (server === undefined) missingServers.push(name);
     else if (!server.enabled) disabledServers.push(name);
   }
-  return { unknownTools, missingServers, disabledServers };
+  const missingRuleSets =
+    known.egressRuleSets === undefined
+      ? []
+      : (definition.egressRuleSets ?? []).filter((name) => !known.egressRuleSets?.includes(name));
+  return { unknownTools, missingServers, disabledServers, missingRuleSets };
 }
 
 /** Removes the references the API would refuse, so the operator can accept the offer in one click. */
@@ -238,6 +257,7 @@ export function withoutBrokenReferences(
     tools: form.tools.filter((name) => !unknownTools.has(name)),
     modelTools: form.modelTools.filter((name) => !unknownModelTools.has(name)),
     mcpServers: form.mcpServers.filter((name) => !problems.missingServers.includes(name)),
+    egressRuleSets: form.egressRuleSets.filter((name) => !problems.missingRuleSets.includes(name)),
   };
 }
 
@@ -271,6 +291,7 @@ export function isEmptyForm(form: ProfileForm): boolean {
     form.turnBudget.trim() === "" &&
     form.tokenBudget.trim() === "" &&
     form.mcpServers.length === 0 &&
+    form.egressRuleSets.length === 0 &&
     form.skills.length === 0 &&
     !form.repoSkills &&
     !form.repoContext &&

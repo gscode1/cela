@@ -7,6 +7,7 @@ import {
   definitionProblems,
   executableSkillsWithoutBash,
   formFromDefinition,
+  isEmptyForm,
   profileNameProblem,
   readProblems,
   referenceProblems,
@@ -189,7 +190,37 @@ describe("references to removed things", () => {
       ],
       missingServers: ["deleted"],
       disabledServers: ["off"],
+      missingRuleSets: [],
     });
+  });
+
+  it("finds deleted egress rule sets only once the sets are known", () => {
+    const definition: ProfileDefinition = { egressRuleSets: ["npm", "gone"] };
+    expect(referenceProblems(definition, known).missingRuleSets).toEqual([]);
+    const problems = referenceProblems(definition, { ...known, egressRuleSets: ["npm"] });
+    expect(problems.missingRuleSets).toEqual(["gone"]);
+    const form = formFromDefinition(definition);
+    expect(withoutBrokenReferences(form, problems).egressRuleSets).toEqual(["npm"]);
+  });
+
+  it("round-trips egressRuleSets, keeping an explicit empty list the profile had", () => {
+    const stored: ProfileDefinition = { egressRuleSets: ["npm", "pypi"] };
+    expect(definitionFromForm(formFromDefinition(stored), stored)).toEqual(stored);
+    expect(definitionFromForm(formFromDefinition({}))).toEqual({});
+    const cleared = definitionFromForm(
+      { ...formFromDefinition(stored), egressRuleSets: [] },
+      stored,
+    );
+    expect(cleared).toEqual({ egressRuleSets: [] });
+    expect(definitionFromForm({ ...formFromDefinition(stored), egressRuleSets: [] })).toEqual({});
+    expect(isEmptyForm(formFromDefinition(stored))).toBe(false);
+  });
+
+  it("checks the names of egressRuleSets like the API", () => {
+    expect(definitionProblems({ egressRuleSets: ["npm", "open-web"] })).toEqual([]);
+    expect(definitionProblems({ egressRuleSets: ["Bad Name"] })).toEqual([
+      "egressRuleSets must be an array of rule set names",
+    ]);
   });
 
   it("removes what the API would refuse and keeps the rest", () => {
@@ -273,6 +304,12 @@ describe("diffs", () => {
       { field: "sandboxSize", before: "global default", after: "l" },
       { field: "sandboxSizes", before: "only the default", after: "m, xl" },
     ]);
+    expect(diffDefinitions({}, { egressRuleSets: ["pypi", "npm"] })).toEqual([
+      { field: "egressRuleSets", before: "only the sets that apply to all", after: "npm, pypi" },
+    ]);
+    expect(
+      diffDefinitions({ egressRuleSets: ["npm", "pypi"] }, { egressRuleSets: ["pypi", "npm"] }),
+    ).toEqual([]);
     expect(diffDefinitions({ sandboxSizes: ["m", "xl"] }, { sandboxSizes: ["xl", "m"] })).toEqual(
       [],
     );

@@ -38,6 +38,7 @@ import type { ProfileForm } from "@/lib/profile-form";
 import {
   keys,
   useMcpPickerQuery,
+  useRuleSetsQuery,
   useSandboxSizesQuery,
   useProfilesQuery,
   useSettingsQuery,
@@ -46,6 +47,7 @@ import {
 } from "@/lib/queries";
 import {
   Fieldset,
+  EgressRuleSetPicker,
   McpPicker,
   SandboxSizePicker,
   SkillPicker,
@@ -86,6 +88,7 @@ export function ProfileEditor({
   const profiles = useProfilesQuery();
   const tools = useToolsQuery();
   const mcp = useMcpPickerQuery();
+  const ruleSets = useRuleSetsQuery();
   const sandboxSizes = useSandboxSizesQuery();
   const skills = useSkillPickerQuery();
   const models = useModelView();
@@ -107,9 +110,18 @@ export function ProfileEditor({
   const refs =
     tools.data === undefined || mcp.data === undefined
       ? undefined
-      : referenceProblems(definition, { tools: tools.data.tools, mcpServers: mcp.data });
+      : referenceProblems(definition, {
+          tools: tools.data.tools,
+          mcpServers: mcp.data,
+          ...(ruleSets.data === undefined
+            ? {}
+            : { egressRuleSets: ruleSets.data.ruleSets.map((set) => set.name) }),
+        });
   const broken =
-    refs !== undefined && (refs.unknownTools.length > 0 || refs.missingServers.length > 0);
+    refs !== undefined &&
+    (refs.unknownTools.length > 0 ||
+      refs.missingServers.length > 0 ||
+      refs.missingRuleSets.length > 0);
   const needRead = readProblems(definition);
   const otherProblems = problems.filter((problem) => !needRead.includes(problem));
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -380,6 +392,13 @@ export function ProfileEditor({
             catalog={mcp.data}
             onChange={(selected) => {
               edit({ mcpServers: selected });
+            }}
+          />
+          <EgressRuleSetPicker
+            selected={form.egressRuleSets}
+            catalog={ruleSets.data?.ruleSets}
+            onChange={(selected) => {
+              edit({ egressRuleSets: selected });
             }}
           />
           <SkillPicker
