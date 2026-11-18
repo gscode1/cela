@@ -176,3 +176,5 @@ export {
   claimNetworkProbeRequest,
 } from "./shard-status.js";
 export type { NetworkPolicyState, ProbeRequest, ShardStatus } from "./shard-status.js";
+export { SANDBOX_SIZE_NAME, chooseSandboxSize, parseSandboxSizes } from "./sandbox-sizes.js";
+export type { SandboxSize, SandboxSizes } from "./sandbox-sizes.js";

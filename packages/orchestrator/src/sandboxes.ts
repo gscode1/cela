@@ -53,6 +53,11 @@ export interface SandboxHooks {
    * call fails and the next one tries again; a session never runs on a half-prepared sandbox.
    */
   prepareEnv?: (conversationId: number, env: ExecutionEnv) => Promise<void>;
+  /**
+   * The SandboxWarmPool a new claim for this conversation references: its session's size (`pi-env-pool-<size>`,
+   * docs/decisions/0030-sandbox-sizes.md). Undefined: the configured unsized pool. Only read when the claim is made.
+   */
+  warmPoolOf?: (conversationId: number) => Promise<string | undefined>;
 }
 
 /** Per open env: calls in flight, when one last ended, and whether the in-flight record is set. */
@@ -541,7 +546,8 @@ export class Sandboxes {
 
   async #open(conversationId: number): Promise<SandboxEnv> {
     const claimName = claimNameFor(this.#config.shard, conversationId);
-    const { namespace, warmPool } = this.#config;
+    const { namespace } = this.#config;
+    const warmPool = (await this.#hooks.warmPoolOf?.(conversationId)) ?? this.#config.warmPool;
     // Required: a sandbox with no token would be unauthenticated or unreachable. Only the hash goes into the claim.
     const master = process.env[ENV.masterKey];
     if (master === undefined || master === "") throw new Error(`${ENV.masterKey} is not set`);

@@ -101,6 +101,7 @@ const session = (definition: ProfileDefinition): SessionRow => ({
   workspaceReadyAt: new Date(),
   profile: { name: "coding", version: 2, snapshot: definition },
   usage: null,
+  sandboxSize: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

@@ -63,6 +63,7 @@ const session = (profile: SessionRow["profile"], conversationId: number | null):
   workspaceReadyAt: null,
   profile,
   usage: null,
+  sandboxSize: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

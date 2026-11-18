@@ -37,12 +37,19 @@ import type { ProfileForm } from "@/lib/profile-form";
 import {
   keys,
   useMcpPickerQuery,
+  useSandboxSizesQuery,
   useProfilesQuery,
   useSettingsQuery,
   useSkillPickerQuery,
   useToolsQuery,
 } from "@/lib/queries";
-import { Fieldset, McpPicker, SkillPicker, ToolList } from "@/pages/profiles/pickers";
+import {
+  Fieldset,
+  McpPicker,
+  SandboxSizePicker,
+  SkillPicker,
+  ToolList,
+} from "@/pages/profiles/pickers";
 import { AdmissionPreview } from "@/pages/profiles/preview";
 
 /**
@@ -78,6 +85,7 @@ export function ProfileEditor({
   const profiles = useProfilesQuery();
   const tools = useToolsQuery();
   const mcp = useMcpPickerQuery();
+  const sandboxSizes = useSandboxSizesQuery();
   const skills = useSkillPickerQuery();
   const models = useModelView();
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
@@ -356,6 +364,14 @@ export function ProfileEditor({
               }}
             />
           </div>
+          <SandboxSizePicker
+            size={form.sandboxSize}
+            allowed={form.sandboxSizes}
+            catalog={sandboxSizes.data}
+            onChange={(change) => {
+              edit(change);
+            }}
+          />
           <McpPicker
             selected={form.mcpServers}
             catalog={mcp.data}

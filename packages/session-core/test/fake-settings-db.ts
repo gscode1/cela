@@ -644,6 +644,7 @@ export class FakeSettingsDb {
     if (text.startsWith("insert into inbox.sessions (")) {
       const [id, owner, subject, provider, model, reasoning, repo, branch, pName, pVersion, pSnap] =
         params as (string | null)[];
+      const sandboxSize = (params[12] ?? null) as string | null;
       if (pName !== null) {
         // Only while the profile is still at the snapshot's version and open to new sessions (store.ts).
         const current = this.profiles.get(String(pName));
@@ -674,6 +675,7 @@ export class FakeSettingsDb {
         profile_name: pName,
         profile_version: pVersion,
         profile_snapshot: pSnap === null ? null : (JSON.parse(String(pSnap)) as unknown),
+        sandbox_size: sandboxSize,
         created_at: new Date(),
         last_activity_at: new Date(),
       });

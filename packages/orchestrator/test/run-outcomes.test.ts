@@ -133,6 +133,7 @@ describe("SessionService after a run answered", () => {
     workspaceReadyAt: null,
     profile: null,
     usage: null,
+    sandboxSize: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };
@@ -235,6 +236,7 @@ describe("usage on the session row (#185)", () => {
       workspaceReadyAt: null,
       profile: null,
       usage: null,
+      sandboxSize: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),
     };

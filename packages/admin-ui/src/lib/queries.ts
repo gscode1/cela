@@ -7,6 +7,7 @@ import {
   getProfile,
   listMcpServerRefs,
   listProfiles,
+  listSandboxSizes,
   listSkillInfos,
   listTools,
 } from "@/lib/api/profiles";
@@ -14,6 +15,7 @@ import type {
   McpServerRef,
   ProfileDetail,
   ProfileList,
+  SandboxSizeCatalog,
   SkillInfo,
   ToolCatalog,
 } from "@/lib/api/profiles";
@@ -31,6 +33,7 @@ export const keys = {
   profiles: ["profiles"] as const,
   profile: (name: string) => ["profiles", name] as const,
   tools: ["tools"] as const,
+  sandboxSizes: ["sandbox-sizes"] as const,
   pickerMcp: ["profile-editor", "mcp-servers"] as const,
   pickerSkills: ["profile-editor", "skills"] as const,
 };
@@ -72,6 +75,14 @@ export function useToolsQuery(): UseQueryResult<ToolCatalog> {
   return useQuery({
     queryKey: keys.tools,
     queryFn: ({ signal }) => listTools(token ?? "", signal),
+  });
+}
+
+export function useSandboxSizesQuery(): UseQueryResult<SandboxSizeCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.sandboxSizes,
+    queryFn: ({ signal }) => listSandboxSizes(token ?? "", signal),
   });
 }
 

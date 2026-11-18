@@ -24,6 +24,8 @@ export interface ProfileDefinition {
   skills?: SkillPin[];
   repoSkills?: boolean;
   repoContext?: boolean;
+  sandboxSize?: string;
+  sandboxSizes?: string[];
 }
 
 export interface StoredProfile {
@@ -85,6 +87,25 @@ export function getProfile(
     `/admin/profiles/${encodeURIComponent(name)}`,
     signal ? { signal } : {},
   );
+}
+
+/** One operator-defined sandbox size (`GET /admin/sandbox-sizes`, docs/decisions/0030-sandbox-sizes.md). */
+export interface SandboxSize {
+  name: string;
+  requests: { cpu?: string; memory?: string };
+  limits: { cpu?: string; memory?: string };
+  workspaceSize: string;
+  ephemeralStorage: string;
+}
+
+/** `defaultSize` is null when the deployment defines no sizes. */
+export interface SandboxSizeCatalog {
+  sizes: SandboxSize[];
+  defaultSize: string | null;
+}
+
+export function listSandboxSizes(token: string, signal?: AbortSignal): Promise<SandboxSizeCatalog> {
+  return adminFetch<SandboxSizeCatalog>(token, "/admin/sandbox-sizes", signal ? { signal } : {});
 }
 
 export function listTools(token: string, signal?: AbortSignal): Promise<ToolCatalog> {

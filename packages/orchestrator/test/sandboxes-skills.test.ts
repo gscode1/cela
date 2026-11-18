@@ -170,3 +170,29 @@ describe("isOpen (repo skills rescan only while the sandbox is open)", () => {
     sandboxes.stop();
   });
 });
+
+describe("the claim's warm pool (sandbox sizes, docs/decisions/0030-sandbox-sizes.md)", () => {
+  it("references the pool the warmPoolOf hook names for the session's size", async () => {
+    const sandboxes = new Sandboxes(config, () => Promise.resolve("session-key"), {
+      warmPoolOf: (id) => Promise.resolve(id === 5 ? "test-pool-l" : undefined),
+    });
+    await call(sandboxes, "readFile", 5);
+    await call(sandboxes, "readFile", 6);
+    expect(kube.ensureLabeledClaim.mock.calls.map((args) => args[2] as unknown)).toEqual([
+      "test-pool-l",
+      "test-pool",
+    ]);
+    expect(
+      sandboxEnv.ensureClaim.mock.calls.map((args) => (args[0] as { warmPool: string }).warmPool),
+    ).toEqual(["test-pool-l", "test-pool"]);
+  });
+
+  it("uses the configured unsized pool without the hook", async () => {
+    await call(
+      make(() => Promise.resolve()),
+      "readFile",
+      7,
+    );
+    expect(kube.ensureLabeledClaim.mock.calls[0]?.[2]).toBe("test-pool");
+  });
+});

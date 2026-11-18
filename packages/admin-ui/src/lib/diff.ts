@@ -26,6 +26,11 @@ function showProfile(
     }
     case "mcpServers":
       return list(definition.mcpServers ?? [], "none");
+    case "sandboxSize":
+      return definition.sandboxSize ?? "global default";
+    case "sandboxSizes":
+      // Order carries no meaning, so a reordering is not a change.
+      return list([...(definition.sandboxSizes ?? [])].sort(), "only the default");
     case "skills":
       return list(
         (definition.skills ?? []).map((pin) => `${pin.name}@v${String(pin.version)}`),
@@ -56,6 +61,8 @@ const DEFINITION_FIELDS = [
   "skills",
   "repoSkills",
   "repoContext",
+  "sandboxSize",
+  "sandboxSizes",
 ] as const;
 
 /** The fields that differ between two stored definitions, in the order of the editor. A change of spelling alone is none. */
