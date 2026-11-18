@@ -258,3 +258,23 @@ probe's `kube-api` target shows. It has no credentials for them (`automountServi
 is unauthenticated endpoints. `hack/kind-up.sh --cni cilium` (issue #139) closes it: Cilium's CIDR rules do not select the
 node, so the sandbox policy's internet `ipBlock` does not open it, the probe reports `enforced`, and `hack/kind-smoke.sh`
 fails if a sandbox reaches the node's :6443 or :10250. The `kind-cilium` CI job runs that lane.
+
+## Egress proxy (`egressProxy.enabled`)
+
+ADR [0035](decisions/0035-egress-proxy-runtime.md). Off by default; no sandbox policy changes in this slice. With it on,
+the pods `app.kubernetes.io/name=pi-egress-proxy` get these policies on top of `default-deny-all` and the DNS rule:
+
+| Policy | Direction | Allows |
+| --- | --- | --- |
+| `egress-proxy-allow-clients-ingress` | ingress | TCP 3128 from sandboxes (`app.kubernetes.io/name=pi-sandbox`) and `egressProxy.clients` |
+| `egress-proxy-allow-database-egress` | egress | the database of `database.external.egress`, TCP 5432 (the read-only role) |
+| `egress-proxy-allow-internet-egress` | egress | `0.0.0.0/0` and `::/0` on `egressProxy.publicPorts` (80, 443), minus private, CGNAT, link-local, loopback and `networkPolicy.sandbox.extraEgressExcept` |
+| `egress-proxy-allow-private-egress-<i>` | egress | one per `egressProxy.privateEgress` entry: its cidr or namespace/pod selector, on its ports |
+
+Two layers decide a private destination: the **network** (`privateEgress`, operator, chart) and the **proxy** (a `private: true`
+rule in the database, admin). Either alone connects nothing. The platform itself (Postgres, ingest, the orchestrators, the
+OneCLI API, the Kubernetes API) is blocked by the proxy whatever the rules say. Kubelet probes use :3130 from the node. Cilium
+does not match Pod or Service addresses with a `cidr` rule, so use selectors for in-cluster destinations there.
+
+Live check: `hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --egress-proxy`, then
+`hack/egress-smoke.sh --name pi-egress`.

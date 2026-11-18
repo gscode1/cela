@@ -187,7 +187,7 @@ describe("chart pi-postgres", () => {
     const names = policy?.spec.ingress.map(
       (r: Obj) => r._from[0].podSelector.matchLabels["app.kubernetes.io/name"],
     );
-    expect(names).toEqual(["pi-orchestrator", "pi-ingest", "onecli"]);
+    expect(names).toEqual(["pi-orchestrator", "pi-ingest", "onecli", "pi-egress-proxy"]);
     const custom = docs([
       "--set-json",
       'networkPolicy.clientSelectors=[{"pi-durable-e2e":"true"}]',

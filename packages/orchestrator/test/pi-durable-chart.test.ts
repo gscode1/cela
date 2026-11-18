@@ -1131,3 +1131,86 @@ describe("ingest.httpRoute and ingest.ingress (ADR 0026)", () => {
     ).toThrow(/paths|pattern/);
   });
 });
+
+describe("egressProxy (ADR 0035)", () => {
+  const on = [
+    "--set",
+    "egressProxy.enabled=true",
+    "--set",
+    "egressProxy.database.existingSecret=pi-egress-database",
+  ];
+  const proxyPolicies = (list: Obj[]): Obj[] =>
+    ofKind(list, "NetworkPolicy").filter(
+      (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-egress-proxy",
+    );
+
+  it("renders nothing by default", () => {
+    const all = docs();
+    expect(JSON.stringify(all)).not.toContain("pi-egress-proxy");
+  });
+
+  it("renders two replicas, a PDB, a Service and a ServiceAccount without a token", () => {
+    const all = docs(on);
+    const deployment = named(all, "Deployment", "pi-egress-proxy");
+    expect(deployment.spec.replicas).toBe(2);
+    expect(deployment.spec.template.spec.automountServiceAccountToken).toBe(false);
+    expect(deployment.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem).toBe(
+      true,
+    );
+    expect(named(all, "PodDisruptionBudget", "pi-egress-proxy").spec.minAvailable).toBe(1);
+    expect(named(all, "Service", "pi-egress-proxy").spec.ports[0].port).toBe(3128);
+    expect(named(all, "ServiceAccount", "pi-egress-proxy").automountServiceAccountToken).toBe(
+      false,
+    );
+  });
+
+  it("references the database Secret and holds no value", () => {
+    const env = envOf(named(docs(on), "Deployment", "pi-egress-proxy"));
+    expect(env.EGRESS_DATABASE_URL?.valueFrom.secretKeyRef).toEqual({
+      name: "pi-egress-database",
+      key: "uri",
+    });
+    expect(env.EGRESS_STALE_AFTER?.value).toBe("2m");
+    expect(env.EGRESS_PLATFORM_HOSTS?.value).toContain("pi-ingest.ns.svc");
+    expect(env.EGRESS_PLATFORM_HOSTS?.value).toContain("kubernetes.default.svc");
+  });
+
+  it("opens the internet minus private ranges, the database and only the listed private destinations", () => {
+    const list = proxyPolicies(
+      docs([
+        ...on,
+        "--set",
+        "egressProxy.privateEgress[0].cidr=10.20.0.0/16",
+        "--set",
+        "egressProxy.privateEgress[0].ports[0]=5432",
+      ]),
+    );
+    const names = list.map((p) => p.metadata.name).sort();
+    expect(names).toEqual([
+      "egress-proxy-allow-clients-ingress",
+      "egress-proxy-allow-database-egress",
+      "egress-proxy-allow-internet-egress",
+      "egress-proxy-allow-private-egress-0",
+    ]);
+    const internet = list.find((p) => p.metadata.name.endsWith("internet-egress"));
+    const except = internet?.spec.egress[0].to[0].ipBlock.except;
+    expect(except).toEqual(expect.arrayContaining(["10.0.0.0/8", "169.254.0.0/16", "127.0.0.0/8"]));
+    expect(internet?.spec.egress[0].ports.map((p: Obj) => p.port)).toEqual([80, 443]);
+    const priv = list.find((p) => p.metadata.name.endsWith("private-egress-0"));
+    expect(priv?.spec.egress[0].to).toEqual([{ ipBlock: { cidr: "10.20.0.0/16" } }]);
+  });
+
+  it("refuses a missing Secret, a missing image and a private entry without ports", () => {
+    const run = (args: string[]): string => {
+      try {
+        helmTemplate(chart, args);
+        return "";
+      } catch (e) {
+        return String((e as { stderr?: string }).stderr ?? e);
+      }
+    };
+    expect(run(["--set", "egressProxy.enabled=true"])).toContain("existingSecret");
+    expect(run([...on, "--set", "images.egressProxy.tag="])).toContain("images.egressProxy");
+    expect(run([...on, "--set", "egressProxy.privateEgress[0].cidr=10.0.0.0/8"])).toMatch(/ports/);
+  });
+});
