@@ -124,7 +124,9 @@ no secret: the operator's token goes from the browser to `/admin/*` only. Other 
      ([ADR 0029](decisions/0029-run-outcomes-from-wait.md)).
    - `steer`: `whenBusy: "steer"`. The input joins the running turn after its current tool round. On an idle session
      it starts a turn like a message (it is not rejected).
-   - `cancel`: `Conversation.abort()`: withdraws queued inputs, aborts the running turn, resolves when idle.
+   - `cancel`: `Conversation.abort()`: withdraws queued inputs, aborts the running turn, resolves when idle. The wait
+     for idle is bounded (30 s): a tool that ignores its abort signal makes the row fail and retry, so it never holds
+     the claim transaction; the abort itself is already committed.
    - `delete`: see Deletion.
 4. Only then is the row marked `submitted` (`submitted_at`, `attempts`) and the transaction committed.
 
@@ -277,7 +279,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 `DELETE /sessions/{id}` answers `202` and queues a `delete` row. From that moment new events get `409` (`410` once deleted). Admission is one conditional insert (`session is active`), so an event whose body was still being read when the session was deleted is refused too, and the session is marked `deleting` before the delete row is written, so every accepted event sorts before it; events
 accepted earlier are still processed first, in order. Then the orchestrator:
 
-1. aborts the conversation (withdraws queued input, stops the running turn),
+1. aborts the conversation (withdraws queued input, stops the running turn). If the run is not idle within 30 s, the
+   delete goes on: deleting the sandbox in step 3 ends a tool that ignored the abort,
 2. ends the session's open streams (`deleted`),
 3. stops the bridge and deletes the SandboxClaim, then the workspace PVC, and waits until both are gone,
 4. marks the session `deleted` (`410` from then on).

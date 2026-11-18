@@ -18,6 +18,7 @@ import type {
 import { terminalFailure, TOKEN_BUDGET_EXHAUSTED } from "./failure.js";
 import type { RunOutcome } from "./failure.js";
 import { GithubDeniedError } from "./github-app.js";
+import { AbortWaitTimeoutError } from "./host.js";
 import type { Host } from "./host.js";
 import { log } from "./log.js";
 import { RepoUnavailableError } from "./repo-access.js";
@@ -90,6 +91,11 @@ export interface SessionServiceOptions {
    * it for that profile's sessions. A session that reaches it is `failed`.
    */
   turnBudget: () => number;
+  /**
+   * How long an abort waits for the conversation to go idle before it gives up (the abort itself is committed). Aborts
+   * run inside the inbox claim transaction; default 30 s.
+   */
+  abortWaitMs?: number;
   /** Tokens one session may use in total; null or absent: no limit (docs/decisions/0028-token-budget.md). */
   tokenBudget?: () => number | null;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
@@ -101,6 +107,8 @@ export interface SessionServiceOptions {
   /** Starts the timing clock of each input (docs/metrics.md). Without it nothing is timed. */
   timings?: TurnTimings;
 }
+
+const DEFAULT_ABORT_WAIT_MS = 30_000;
 
 /**
  * Maps API sessions onto Pi Durable and applies inbox events. One session = one conversation = one
@@ -114,11 +122,13 @@ export class SessionService {
   readonly streams = new StreamRegistry();
   readonly #creating = new Map<string, Promise<number>>();
   readonly #watcher: RunWatcher;
+  readonly #abortWaitMs: number;
 
   constructor(pool: pg.Pool, host: Host, options: SessionServiceOptions) {
     this.#pool = pool;
     this.#host = host;
     this.#options = options;
+    this.#abortWaitMs = options.abortWaitMs ?? DEFAULT_ABORT_WAIT_MS;
     this.#watcher = new RunWatcher({
       settle: (conversationId, requestId) => host.settlement(conversationId, requestId),
       onUnanswered: (watched, outcome) => this.#runEnded(watched, outcome),
@@ -177,7 +187,7 @@ export class SessionService {
     );
     for (const row of rows) {
       try {
-        await this.#host.abort(Number(row.conversation_id));
+        await this.#host.abort(Number(row.conversation_id), this.#abortWaitMs);
       } catch (error) {
         log("failed-session-abort-failed", { session: row.id, message: errorMessage(error) });
       }
@@ -208,7 +218,7 @@ export class SessionService {
     // Withdraw whatever queued behind the failed run, so nothing more is sent to the provider. Also when the session
     // was failed already: the status commits before the abort, so a caller whose abort died (or whose process did)
     // retries here and must not find "nothing changed" and stop. A deleting or deleted session is not ours to abort.
-    if (conversationId !== null) await this.#host.abort(conversationId);
+    if (conversationId !== null) await this.#host.abort(conversationId, this.#abortWaitMs);
   }
 
   /**
@@ -330,7 +340,8 @@ export class SessionService {
         if (session.status === "failed") {
           // Retries an abort that failed when the session was failed (see #failSession); throws, and so retries the
           // row, if the abort fails again.
-          if (session.conversationId !== null) await this.#host.abort(session.conversationId);
+          if (session.conversationId !== null)
+            await this.#host.abort(session.conversationId, this.#abortWaitMs);
           throw new PermanentError("session has failed");
         }
         // The invariant behind prepare (ADR 0005): never run the agent in a repo session whose clone was not made. The
@@ -371,7 +382,8 @@ export class SessionService {
       }
       case "cancel": {
         if (session.conversationId !== null) this.#options.timings?.clear(session.conversationId);
-        if (session.conversationId !== null) await this.#host.abort(session.conversationId);
+        if (session.conversationId !== null)
+          await this.#host.abort(session.conversationId, this.#abortWaitMs);
         return;
       }
       case "delete": {
@@ -473,7 +485,14 @@ export class SessionService {
     await this.#options.repos?.teardown(session);
     const conversationId = session.conversationId;
     if (conversationId !== null) {
-      await this.#host.abort(conversationId);
+      try {
+        await this.#host.abort(conversationId, this.#abortWaitMs);
+      } catch (error) {
+        // A tool that ignores its abort keeps the run alive; deleting the sandbox below ends it. Waiting longer here
+        // would hold the inbox transaction and keep the delete from ever finishing.
+        if (!(error instanceof AbortWaitTimeoutError)) throw error;
+        log("delete-abort-wait-timeout", { session: session.id, message: error.message });
+      }
       this.streams.closeSession(session.id, "deleted");
       await this.#host.destroySandbox(conversationId);
     }

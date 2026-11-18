@@ -41,3 +41,11 @@ The in-memory backoff above (`#notBefore` in `InboxLoop`) is now also applied in
 or waiting out a backoff are excluded from the `limit 100` page and the oldest pending event is served first
 (`InboxLoop.#tick`), so many deleting sessions cannot starve the others. The retry rule is unchanged. The loop is per
 shard since [0017](0017-schema-sharding.md) (the query filters on `s.shard`).
+
+## Addendum: a delete does not wait forever for the abort (issue #180)
+
+`Conversation.abort()` resolves only once the conversation is idle, and it runs inside the inbox claim transaction. A
+tool that ignores its abort signal would hold that transaction, a pool client and the row locks, and every retry would
+hit the same wait. Every abort from the session service now waits at most 30 s (`abortWaitMs`); the abort mark and the
+withdrawal of queued inputs are committed before the wait either way. A `delete` whose wait times out goes on to delete
+the sandbox, which ends the stuck tool. A `cancel` or a failed session's abort fails the row, which the inbox retries.
