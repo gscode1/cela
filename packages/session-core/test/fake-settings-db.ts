@@ -9,6 +9,7 @@ interface Row {
   default_profile: string | null;
   turn_budget: number;
   token_budget: string | null;
+  repo_allowlist: unknown;
   revision: number;
   updated_at: Date;
   updated_by: string;
@@ -187,6 +188,7 @@ export class FakeSettingsDb {
       default_profile: null,
       turn_budget: 100,
       token_budget: null,
+      repo_allowlist: [],
       revision: 1,
       updated_at: new Date(0),
       updated_by: "seed",
@@ -272,16 +274,18 @@ export class FakeSettingsDb {
       return done(this.row === undefined ? [] : [{ ...this.row }]);
     }
     if (text.startsWith("insert into inbox.settings (")) {
-      const [model, list, reasoning, maxReasoning, defaultProfile, budget, tokens, by] = params as [
-        string,
-        string,
-        string | null,
-        string | null,
-        string | null,
-        number,
-        number | null,
-        string | undefined,
-      ];
+      const [model, list, reasoning, maxReasoning, defaultProfile, budget, tokens, repos, by] =
+        params as [
+          string,
+          string,
+          string | null,
+          string | null,
+          string | null,
+          number,
+          number | null,
+          string,
+          string | undefined,
+        ];
       const next: Row = {
         default_model: model,
         allowlist: JSON.parse(list) as unknown,
@@ -291,6 +295,7 @@ export class FakeSettingsDb {
         turn_budget: budget,
         // node-postgres returns a bigint as a string.
         token_budget: tokens === null ? null : String(tokens),
+        repo_allowlist: JSON.parse(repos) as unknown,
         revision: text.includes("do nothing") ? 1 : (this.row?.revision ?? 0) + 1,
         updated_at: new Date(),
         updated_by: by ?? "seed",

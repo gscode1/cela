@@ -52,7 +52,7 @@ async function main(): Promise<void> {
         if (stored !== undefined && !settingsEqual(stored.settings, config.seed)) {
           log("settings-env-ignored", {
             message:
-              "PI_MODEL_* and PI_SESSION_*_BUDGET differ from the settings table; the table wins",
+              "PI_MODEL_*, PI_SESSION_*_BUDGET and PI_REPO_ALLOWLIST differ from the settings table; the table wins",
           });
         }
         await settings.start();

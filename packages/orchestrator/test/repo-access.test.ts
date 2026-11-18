@@ -8,7 +8,7 @@ import type { SessionRow } from "@pi-durable-k8s/session-core";
 import type { FetchLike } from "../src/github-app.ts";
 import { OneCliAdmin, parseGrants } from "../src/onecli-admin.ts";
 import { Redacted } from "../src/onecli.ts";
-import { agentIdentifier, RepoAccess } from "../src/repo-access.ts";
+import { agentIdentifier, RepoAccess, RepoUnavailableError } from "../src/repo-access.ts";
 import { FakeOneCli } from "./fake-onecli.ts";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -66,10 +66,15 @@ function githubApi(): FetchLike {
 }
 
 function access(
-  over: { onecli?: OneCliAdmin | undefined; namePrefix?: string | undefined } = {},
+  over: {
+    onecli?: OneCliAdmin | undefined;
+    namePrefix?: string | undefined;
+    repoAllowed?: (repo: string) => boolean;
+  } = {},
 ): RepoAccess {
   return new RepoAccess({
     pool,
+    repoAllowed: over.repoAllowed ?? (() => true),
     onecli:
       "onecli" in over
         ? over.onecli
@@ -272,6 +277,25 @@ describe("misconfiguration", () => {
     await rm(join(dir, "private-key.pem"));
     await expect(access().shellEnv(session(), 7)).rejects.toThrow(/private-key.pem is missing/);
     expect(onecli.agents.size).toBe(0);
+  });
+
+  it("mints nothing and creates nothing for a repo off the allowlist", async () => {
+    await expect(access({ repoAllowed: () => false }).shellEnv(session(), 7)).rejects.toThrow(
+      RepoUnavailableError,
+    );
+    expect(minted).toEqual([]);
+    expect(onecli.calls).toEqual([]);
+  });
+
+  it("stops renewing the token once the repo leaves the allowlist", async () => {
+    let allowed = true;
+    const repos = access({ repoAllowed: () => allowed });
+    await repos.shellEnv(session(), 7);
+    expect(minted).toHaveLength(1);
+    allowed = false;
+    clock += 55 * 60 * 1000;
+    await expect(repos.beforeUse(7)).rejects.toThrow(/not on the repo allowlist/);
+    expect(minted).toHaveLength(1);
   });
 
   it("creates nothing in OneCLI when GitHub refuses the token", async () => {

@@ -129,7 +129,14 @@ export {
   validateSettings,
 } from "./settings.js";
 export type { Settings, SettingsHistoryEntry, StoredSettings } from "./settings.js";
-export { branchError, chooseRepo, cloneUrl, repoError } from "./repo.js";
+export {
+  branchError,
+  chooseRepo,
+  cloneUrl,
+  repoAllowed,
+  repoError,
+  repoPatternError,
+} from "./repo.js";
 export type { RepoSpec } from "./repo.js";
 export {
   completeTombstone,

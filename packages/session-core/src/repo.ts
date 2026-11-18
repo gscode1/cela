@@ -62,6 +62,28 @@ export function chooseRepo(body: Record<string, unknown>): RepoSpec | string | u
   return { repo, branch };
 }
 
+/**
+ * Returns an error message, or undefined when `pattern` is a repo allowlist entry: `*` (every repository the GitHub App
+ * can reach), `owner/*` (every repository of that owner) or an exact `owner/name` (docs/decisions/0030-repo-allowlist.md).
+ */
+export function repoPatternError(pattern: string): string | undefined {
+  if (pattern === "*") return undefined;
+  const probe = pattern.endsWith("/*") ? `${pattern.slice(0, -2)}/x` : pattern;
+  return repoError(probe) === undefined
+    ? undefined
+    : `repo allowlist entry "${pattern.slice(0, 80)}" is not *, owner/* or owner/name`;
+}
+
+/** Whether a validated `repo` matches a validated allowlist. GitHub names are case-insensitive, so the match is too. */
+export function repoAllowed(repo: string, allowlist: readonly string[]): boolean {
+  const wanted = repo.toLowerCase();
+  const owner = wanted.slice(0, wanted.indexOf("/"));
+  return allowlist.some((entry) => {
+    const pattern = entry.toLowerCase();
+    return pattern === "*" || pattern === wanted || pattern === `${owner}/*`;
+  });
+}
+
 /** The https clone URL of a validated repo. Credentials never appear in it: the OneCLI gateway injects them. */
 export function cloneUrl(repo: string, base = "https://github.com"): string {
   return `${base}/${repo}.git`;

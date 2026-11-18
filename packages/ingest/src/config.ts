@@ -20,7 +20,7 @@ export interface IngestConfig {
   port: number;
   instance: string;
   /**
-   * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`, `PI_SESSION_TOKEN_BUDGET`). Seed only: ingest writes them to
+   * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_*_BUDGET`, `PI_REPO_ALLOWLIST`). Seed only: ingest writes them to
    * Postgres once, when the settings row is absent, and the table wins from then on.
    */
   seed: Settings;

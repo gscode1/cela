@@ -15,6 +15,7 @@ import {
   profileNameError,
   readProfile,
 } from "./profiles.js";
+import { repoPatternError } from "./repo.js";
 import { checkRevision } from "./revision.js";
 
 /** Notification channel a writer signals on, in the same transaction as the write. */
@@ -42,6 +43,11 @@ export interface Settings {
    * model, failed attempts and compaction included); null for no limit (docs/decisions/0028-token-budget.md).
    */
   tokenBudget: number | null;
+  /**
+   * The repositories a session may clone: `*`, `owner/*` or `owner/name`, lowercase. Empty refuses every repo session
+   * (docs/decisions/0030-repo-allowlist.md).
+   */
+  repoAllowlist: string[];
 }
 
 export interface StoredSettings {
@@ -68,6 +74,7 @@ const KEYS = [
   "defaultProfile",
   "turnBudget",
   "tokenBudget",
+  "repoAllowlist",
 ] as const;
 const MAX_ALLOWLIST = 100;
 const MAX_ENTRY = 200;
@@ -76,10 +83,11 @@ const MAX_INPUT_ALLOWLIST = 1_000;
 const MAX_TURN_BUDGET = 1_000_000;
 const DEFAULT_TURN_BUDGET = 100;
 const MAX_TOKEN_BUDGET = 1_000_000_000_000;
+const MAX_REPO_ALLOWLIST = 200;
 
 /**
- * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`, `PI_SESSION_TOKEN_BUDGET`): the seed,
- * never read again after.
+ * The settings the environment describes (`PI_MODEL_*`, `PI_SESSION_TURN_BUDGET`, `PI_SESSION_TOKEN_BUDGET`,
+ * `PI_REPO_ALLOWLIST`): the seed, never read again after.
  */
 export function settingsFromEnv(env: Readonly<Record<string, string | undefined>>): Settings {
   const policy = loadModelPolicy(env);
@@ -89,6 +97,10 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
   }
   const tokenText = env.PI_SESSION_TOKEN_BUDGET;
   const tokenBudget = tokenText === undefined || tokenText === "" ? null : Number(tokenText);
+  const repoAllowlist = (env.PI_REPO_ALLOWLIST ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
   // The same rules as stored settings, so an env that would never be readable back fails at start, before anything
   // is written.
   const settings = validateSettings({
@@ -99,6 +111,7 @@ export function settingsFromEnv(env: Readonly<Record<string, string | undefined>
     defaultProfile: DEFAULT_PROFILE_NAME,
     turnBudget,
     tokenBudget,
+    repoAllowlist,
   });
   if (typeof settings === "string")
     throw new Error(`invalid model settings in the environment: ${settings}`);
@@ -130,12 +143,13 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   for (const key of Object.keys(body)) {
     if (!(KEYS as readonly string[]).includes(key)) return `unknown setting "${key.slice(0, 50)}"`;
   }
-  // A missing cap or token budget is none and a missing default profile is `coding`: older clients and rows predate
-  // the fields.
+  // A missing cap or token budget is none, a missing repo allowlist is empty and a missing default profile is `coding`:
+  // older clients and rows predate the fields.
   const pick = (key: (typeof KEYS)[number]): unknown => {
     const value = key in body ? body[key] : current?.[key];
     if (value !== undefined) return value;
     if (key === "maxReasoning" || key === "tokenBudget") return null;
+    if (key === "repoAllowlist") return [];
     return key === "defaultProfile" ? DEFAULT_PROFILE_NAME : undefined;
   };
   const pickLevel = (key: "reasoning" | "maxReasoning"): ThinkingLevel | null | "invalid" => {
@@ -189,6 +203,22 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
   ) {
     return `tokenBudget must be null or an integer from 1 to ${String(MAX_TOKEN_BUDGET)}`;
   }
+  const repoText = pick("repoAllowlist");
+  if (
+    !Array.isArray(repoText) ||
+    repoText.length > MAX_INPUT_ALLOWLIST ||
+    !repoText.every((entry): entry is string => typeof entry === "string")
+  ) {
+    return `repoAllowlist must be an array of at most ${String(MAX_REPO_ALLOWLIST)} strings`;
+  }
+  for (const entry of repoText) {
+    const problem = repoPatternError(entry);
+    if (problem !== undefined) return problem;
+  }
+  const repoAllowlist = [...new Set(repoText.map((entry) => entry.toLowerCase()))];
+  if (repoAllowlist.length > MAX_REPO_ALLOWLIST) {
+    return `repoAllowlist must have at most ${String(MAX_REPO_ALLOWLIST)} distinct entries`;
+  }
 
   const keys: string[] = [];
   for (const entry of [defaultText, ...listText]) {
@@ -211,6 +241,7 @@ export function validateSettings(input: unknown, current?: Settings): Settings |
     defaultProfile,
     turnBudget,
     tokenBudget,
+    repoAllowlist,
   };
 }
 
@@ -227,6 +258,7 @@ interface SettingsRow {
   turn_budget: number;
   /** bigint, so node-postgres returns a string. */
   token_budget: string | number | null;
+  repo_allowlist: unknown;
   revision: number;
   updated_at: Date;
   updated_by: string;
@@ -242,13 +274,14 @@ function fromRow(row: SettingsRow): StoredSettings {
     defaultProfile: row.default_profile ?? undefined,
     turnBudget: row.turn_budget,
     tokenBudget: row.token_budget === null ? null : Number(row.token_budget),
+    repoAllowlist: row.repo_allowlist,
   });
   if (typeof settings === "string") throw new Error(`stored settings are invalid: ${settings}`);
   return { settings, revision: row.revision, updatedAt: row.updated_at, updatedBy: row.updated_by };
 }
 
 const COLUMNS =
-  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, revision, updated_at, updated_by";
+  "default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, repo_allowlist, revision, updated_at, updated_by";
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -299,8 +332,8 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
   if (typeof seed === "string") throw new Error(`invalid seed settings: ${seed}`);
   return inTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, updated_by)
-       values ($1, $2, $3, $4, $5, $6, $7, 'seed')
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, repo_allowlist, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, 'seed')
        on conflict (id) do nothing
        returning default_model`,
       [
@@ -311,6 +344,7 @@ export async function seedSettings(pool: pg.Pool, input: Settings): Promise<bool
         seed.defaultProfile,
         seed.turnBudget,
         seed.tokenBudget,
+        JSON.stringify(seed.repoAllowlist),
       ],
     );
     if (rows.length === 0) return false;
@@ -367,13 +401,13 @@ export async function updateSettings(
     }
     if (current !== undefined && settingsEqual(current.settings, next)) return current;
     const { rows: written } = await client.query<SettingsRow>(
-      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, updated_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)
+      `insert into inbox.settings (default_model, allowlist, default_reasoning, max_reasoning, default_profile, turn_budget, token_budget, repo_allowlist, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        on conflict (id) do update set
          default_model = excluded.default_model, allowlist = excluded.allowlist,
          default_reasoning = excluded.default_reasoning, max_reasoning = excluded.max_reasoning,
          default_profile = excluded.default_profile, turn_budget = excluded.turn_budget,
-         token_budget = excluded.token_budget,
+         token_budget = excluded.token_budget, repo_allowlist = excluded.repo_allowlist,
          revision = inbox.settings.revision + 1,
          updated_at = clock_timestamp(), updated_by = excluded.updated_by
        returning ${COLUMNS}`,
@@ -385,6 +419,7 @@ export async function updateSettings(
         next.defaultProfile,
         next.turnBudget,
         next.tokenBudget,
+        JSON.stringify(next.repoAllowlist),
         by,
       ],
     );

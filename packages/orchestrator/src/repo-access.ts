@@ -33,6 +33,11 @@ export interface RepoAccessDeps {
   pool: Pick<pg.Pool, "query">;
   /** Undefined when `ONECLI_API_KEY` is not set: repo sessions are then refused. */
   onecli: OneCliAdmin | undefined;
+  /**
+   * Whether the live repo allowlist still lists the repository (docs/decisions/0030-repo-allowlist.md). Asked before
+   * every mint, so a repository an admin removes gets no new token and its session's access ends with the current one.
+   */
+  repoAllowed: (repo: string) => boolean;
   /** Directory of the mounted GitHub App secret. */
   githubAppDir: string;
   /** Proxy URL of the gateway, without credentials. */
@@ -145,6 +150,9 @@ export class RepoAccess {
     }
     const warm = this.#access.get(session.id);
     if (warm !== undefined && warm.expiresAt - this.#now() > REMINT_BEFORE_MS) return warm;
+    if (!this.#deps.repoAllowed(session.repo.repo)) {
+      throw new RepoUnavailableError(`repo "${session.repo.repo}" is not on the repo allowlist`);
+    }
 
     const minted = await this.#mint(session.repo.repo);
     const gitValue = Buffer.from(`x-access-token:${minted.token.reveal()}`).toString("base64");
