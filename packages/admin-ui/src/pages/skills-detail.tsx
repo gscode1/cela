@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { useAuth } from "@/auth";
+import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { Time } from "@/components/time";
@@ -10,9 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
-import { listProfileRefs, profilesPinning } from "@/lib/api/profile-refs";
+import { listProfileRefs, profilesPinning, profilesPinningSkill } from "@/lib/api/profile-refs";
 import type { ProfileRef } from "@/lib/api/profile-refs";
-import { downloadSkillZip, getSkill, getSkillVersionContent } from "@/lib/api/skills";
+import { deleteSkill, downloadSkillZip, getSkill, getSkillVersionContent } from "@/lib/api/skills";
 import type { SkillVersion } from "@/lib/api/skills";
 import { decodeText, formatBytes, fromBase64 } from "@/lib/skills/bundle";
 import { useCatalogMode } from "@/lib/use-catalog-mode";
@@ -198,6 +199,9 @@ export function SkillDetail() {
   const { mode } = useCatalogMode();
   const name = useParams().name ?? "";
   const [older, setOlder] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const skill = useQuery({
     queryKey: ["skill", name],
     queryFn: ({ signal }) => getSkill(token ?? "", name, signal),
@@ -211,6 +215,7 @@ export function SkillDetail() {
     (version) => older || version.version === skill.data?.currentVersion,
   );
   const hidden = versions.length - shown.length;
+  const pinning = profiles.data === undefined ? [] : profilesPinningSkill(profiles.data, name);
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -225,11 +230,51 @@ export function SkillDetail() {
         <CardContent className="flex flex-col gap-3">
           {mode === "readOnly" && <ReadOnlyNote what="Skills" />}
           {mode === "manage" && (
-            <div>
+            <div className="flex flex-wrap gap-2">
               <Link to={`/skills/${encodeURIComponent(name)}/publish`}>
                 <Button size="sm">Publish a new version</Button>
               </Link>
+              {skill.isSuccess && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={deleting}
+                  onClick={() => {
+                    setDeleting(true);
+                  }}
+                >
+                  Delete skill
+                </Button>
+              )}
             </div>
+          )}
+          {mode === "manage" && deleting && skill.isSuccess && (
+            <DeleteConfirm
+              kind="skill"
+              name={name}
+              contents="all its versions and files"
+              blocked={pinning.length > 0}
+              note={
+                pinning.length > 0 ? (
+                  <Alert variant="destructive">
+                    Pinned by <ProfileLinks profiles={pinning} />: publish a version of each without
+                    it first. Sessions that still use it also keep it until they are deleted.
+                  </Alert>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Sessions that are not deleted and still use it keep it from being deleted.
+                  </p>
+                )
+              }
+              run={() => deleteSkill(token ?? "", name, skill.data.currentVersion)}
+              onDeleted={() => {
+                void queryClient.invalidateQueries({ queryKey: ["skills"] });
+                void navigate("/skills");
+              }}
+              onCancel={() => {
+                setDeleting(false);
+              }}
+            />
           )}
           {skill.isError && <Alert variant="destructive">{skill.error.message}</Alert>}
           {profiles.isError && (

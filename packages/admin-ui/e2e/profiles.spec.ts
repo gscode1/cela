@@ -141,6 +141,27 @@ test.describe("session profiles", () => {
     expect(stored.definition.skills).toMatchObject([{ name: skill, version: 1 }]);
   });
 
+  test("deletes a disabled profile after its name is typed, and the name cannot come back", async ({
+    page,
+    request,
+  }) => {
+    const name = unique("old");
+    await api(request, "PUT", `/admin/profiles/${name}`, { definition: { instructions: "x" } });
+    await signIn(page, `/console/profiles/${name}`);
+    await expect(page.getByRole("button", { name: "Delete profile" })).toBeDisabled();
+    await page.getByRole("button", { name: "Disable for new sessions" }).click();
+    await expect(page.getByTestId("saved")).toHaveText(`${name} is disabled for new sessions.`);
+    await page.getByRole("button", { name: "Delete profile" }).click();
+    await page.getByLabel(`Type ${name} to confirm`).fill(name);
+    await page
+      .getByLabel(`Delete ${name}`)
+      .getByRole("button", { name: `Delete ${name}` })
+      .click();
+    await expect(page.getByRole("table", { name: "Profiles" })).toBeVisible();
+    await api(request, "GET", `/admin/profiles/${name}`, undefined, 404);
+    await api(request, "PUT", `/admin/profiles/${name}`, { definition: {} }, 409);
+  });
+
   test("refuses to delete an MCP server a profile names, and never creates the name again", async ({
     request,
   }) => {

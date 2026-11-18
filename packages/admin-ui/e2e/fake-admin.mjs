@@ -35,6 +35,15 @@ export function createFakeAdmin() {
   const mcpHistory = [];
   let historyId = 0;
   const profiles = new Map([["coding", { name: "coding", enabledForNew: true, definition: {} }]]);
+  /** The profiles (all at version 1 here) whose definition names `name` under `field` (`skills` or `mcpServers`). */
+  const usersOf = (field, name) =>
+    [...profiles.values()]
+      .filter((p) =>
+        (p.definition[field] ?? []).some(
+          (entry) => (typeof entry === "string" ? entry : entry.name) === name,
+        ),
+      )
+      .map((p) => ({ name: p.name, version: 1 }));
   let shards = [];
   const now = () => new Date().toISOString();
 
@@ -79,6 +88,22 @@ export function createFakeAdmin() {
     const nameError = skillNameError(name);
     if (nameError !== undefined) return json(res, 400, { error: nameError });
     const versions = skills.get(name);
+    if (parts.length === 3 && req.method === "DELETE") {
+      const asked = url.searchParams.get("expectedRevision");
+      if (asked === null || !/^[0-9]{1,10}$/.test(asked))
+        return json(res, 400, { error: "expectedRevision must be a positive integer" });
+      if (versions === undefined) return json(res, 404, { error: "skill not found" });
+      if (Number(asked) !== versions.at(-1).version)
+        return json(res, 409, { error: "the skill has a newer version: reload and retry" });
+      const using = usersOf("skills", name);
+      if (using.length > 0)
+        return json(res, 409, {
+          error: `skill "${name}" cannot be deleted`,
+          blockedBy: { profiles: using },
+        });
+      skills.delete(name);
+      return json(res, 200, { name, deleted: true, lastVersion: versions.at(-1).version });
+    }
     if (parts.length === 3) {
       if (versions === undefined) return json(res, 404, { error: "skill not found" });
       return json(res, 200, {
@@ -239,15 +264,22 @@ export function createFakeAdmin() {
       return json(res, stored === undefined ? 201 : 200, mcpJson(next));
     }
     if (method === "DELETE") {
+      // The API's rules (ADR 0027): the revision is required, and a server a profile names is not deleted.
       const asked = url.searchParams.get("expectedRevision");
-      if (asked !== null && !/^[0-9]{1,10}$/.test(asked))
+      if (asked === null || !/^[0-9]{1,10}$/.test(asked))
         return json(res, 400, { error: "expectedRevision must be a positive integer" });
       if (stored === undefined) return json(res, 404, { error: "server not found" });
-      if (asked !== null && Number(asked) !== stored.revision)
+      if (Number(asked) !== stored.revision)
         return conflict(
           res,
           `server is at revision ${String(stored.revision)}, not the expected ${asked}: reload and retry`,
         );
+      const using = usersOf("mcpServers", name);
+      if (using.length > 0)
+        return json(res, 409, {
+          error: `MCP server "${name}" cannot be deleted`,
+          blockedBy: { profiles: using },
+        });
       mcp.delete(name);
       record("delete", stored.server, null);
       return json(res, 200, { name, deleted: true });

@@ -495,7 +495,7 @@ test.describe("MCP servers", () => {
     await expect(rwRow.getByText("enabled", { exact: true })).toBeVisible();
   });
 
-  test("delete names the profiles that use the server and suggests disabling; unused ones get no such alert", async ({
+  test("delete is off while a profile names the server and offers to disable it; a free one is deleted after typing its name", async ({
     page,
     request,
   }) => {
@@ -510,28 +510,63 @@ test.describe("MCP servers", () => {
     await expect(row.getByRole("link", { name: profile })).toBeVisible();
     await row.getByRole("button", { name: "Delete" }).click();
     const panel = page.getByLabel(`Delete ${name}`);
-    await expect(panel).toContainText(`Still used by ${profile}`);
-    await expect(panel).toContainText("Disable it instead");
-    await expect(panel).not.toContainText("removes the row");
+    await expect(panel).toContainText(`Used by ${profile}`);
+    await expect(panel).toContainText("cannot be undone");
+    await expect(panel.getByRole("button", { name: `Delete ${name}` })).toBeDisabled();
     await shot(page, "mcp-delete-confirmation.png");
 
     await panel.getByRole("button", { name: "Disable instead" }).click();
     await expect(panel).toHaveCount(0);
     await expect(row.getByText("disabled", { exact: true })).toBeVisible();
 
-    // Free the server: no profile names it any more, so the panel has no alert and no positive-only line.
+    // Free the server: no profile names it any more, so typing its name deletes it.
     await request.put(`/__fake/profiles/${profile}`, { data: { definition: {} } });
     await signInAndGo(page, "/console/mcp-servers");
     await row.getByRole("button", { name: "Delete" }).click();
     const free = page.getByLabel(`Delete ${name}`);
-    await expect(free.getByRole("button", { name: `Delete ${name}` })).toBeEnabled();
-    await expect(free).not.toContainText("Still used by");
-    await expect(free).not.toContainText("No profile");
-    await free.getByRole("button", { name: `Delete ${name}` }).click();
+    await expect(free).not.toContainText("Used by");
+    const confirm = free.getByRole("button", { name: `Delete ${name}` });
+    await expect(confirm).toBeDisabled();
+    await free.getByLabel(`Type ${name} to confirm`).fill(name);
+    await confirm.click();
     await expect(row).toHaveCount(0);
     expect((await request.get(`/admin/mcp-servers/${name}`, { headers: bearer })).status()).toBe(
       404,
     );
+  });
+
+  test("a skill a profile pins cannot be deleted; a free one is, after typing its name", async ({
+    page,
+    request,
+  }) => {
+    const name = unique("tmp");
+    const profile = unique("pin");
+    const publish = await request.post(`/admin/skills/${name}/versions`, {
+      headers: bearer,
+      data: {
+        files: [{ path: "SKILL.md", content: '---\ndescription: "Temporary"\n---\n# T\n' }],
+      },
+    });
+    expect(publish.status()).toBe(201);
+    await request.put(`/__fake/profiles/${profile}`, {
+      data: { definition: { skills: [{ name, version: 1 }] } },
+    });
+    await signInAndGo(page, `/console/skills/${name}`);
+    await page.getByRole("button", { name: "Delete skill" }).click();
+    const panel = page.getByLabel(`Delete ${name}`);
+    await expect(panel).toContainText(`Pinned by ${profile}`);
+    await expect(panel.getByRole("button", { name: `Delete ${name}` })).toBeDisabled();
+
+    await request.put(`/__fake/profiles/${profile}`, { data: { definition: {} } });
+    await signInAndGo(page, `/console/skills/${name}`);
+    await page.getByRole("button", { name: "Delete skill" }).click();
+    await page.getByLabel(`Type ${name} to confirm`).fill(name);
+    await page
+      .getByLabel(`Delete ${name}`)
+      .getByRole("button", { name: `Delete ${name}` })
+      .click();
+    await expect(page).toHaveURL(/\/console\/skills$/);
+    expect((await request.get(`/admin/skills/${name}`, { headers: bearer })).status()).toBe(404);
   });
 
   test("recent changes are collapsed, show five lines and then more on request", async ({
