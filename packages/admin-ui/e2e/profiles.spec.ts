@@ -141,33 +141,27 @@ test.describe("session profiles", () => {
     expect(stored.definition.skills).toMatchObject([{ name: skill, version: 1 }]);
   });
 
-  test("marks a reference to a deleted MCP server and offers to remove it", async ({
-    page,
+  test("refuses to delete an MCP server a profile names, and never creates the name again", async ({
     request,
   }) => {
+    // A profile can no longer point at a deleted server (ADR 0027); the editor's marking of such a reference, left by
+    // older data, is covered by the unit tests.
     const server = unique("docs");
     const name = unique("mcp");
-    await api(
-      request,
-      "PUT",
-      `/admin/mcp-servers/${server}`,
-      { url: "https://mcp.example.com/mcp", readOnly: true },
-      201,
-    );
+    const body = { url: "https://mcp.example.com/mcp", readOnly: true };
+    await api(request, "PUT", `/admin/mcp-servers/${server}`, body, 201);
     await api(request, "PUT", `/admin/profiles/${name}`, { definition: { mcpServers: [server] } });
-    await api(request, "DELETE", `/admin/mcp-servers/${server}`);
-
-    await signIn(page, `/console/profiles/${name}`);
-    await expect(page.getByTestId("missing-server")).toContainText(server);
-    await page.getByLabel("Instructions", { exact: true }).fill("Edited while the server is gone.");
-    await expect(publish(page)).toBeDisabled();
-    await page.getByRole("button", { name: "Remove all broken references" }).click();
-    await publish(page).click();
-    await expect(page.getByTestId("saved")).toContainText("Published version 2");
-    expect((await getProfile(page, name)).definition).toEqual({
-      instructions: "Edited while the server is gone.",
-      mcpServers: [],
-    });
+    const refused = await api<{ blockedBy: unknown }>(
+      request,
+      "DELETE",
+      `/admin/mcp-servers/${server}?expectedRevision=1`,
+      undefined,
+      409,
+    );
+    expect(refused.blockedBy).toEqual({ profiles: [{ name, version: 1 }] });
+    await api(request, "PUT", `/admin/profiles/${name}`, { definition: {} });
+    await api(request, "DELETE", `/admin/mcp-servers/${server}?expectedRevision=1`);
+    await api(request, "PUT", `/admin/mcp-servers/${server}`, body, 409);
   });
 
   test("blocks the default profile when it would be refused, and warns for another", async ({

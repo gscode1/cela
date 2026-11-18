@@ -113,6 +113,8 @@ export class FakeSettingsDb {
   mcp = new Map<string, McpRow>();
   /** Advisory transaction locks by key, and the client that holds each. */
   readonly locks = new Map<string, FakeListener>();
+  /** Shared advisory transaction locks by key, and the clients that hold each. */
+  readonly sharedLocks = new Map<string, Set<FakeListener>>();
   readonly mcpHistory: McpHistoryRow[] = [];
   /** inbox.profiles and inbox.profile_versions; `coding` version 1 is what migration 008 seeds. */
   profiles = new Map<string, ProfileRowF>([
@@ -149,6 +151,11 @@ export class FakeSettingsDb {
     | undefined;
   /** inbox.sessions rows by id, as the columns the profile code writes and reads. */
   sessions = new Map<string, Record<string, unknown>>();
+  /** inbox.deleted_names (migration 019). */
+  deletedNames: { kind: string; name: string; last_version: number | null; deleted_by: string }[] =
+    [];
+  /** `set local pi.allow_delete = 'on'` ran in the open transaction: the version triggers allow a delete. */
+  #allowDelete = false;
   #pending: string[] = [];
   #snapshot:
     | {
@@ -161,6 +168,7 @@ export class FakeSettingsDb {
         skills: Map<string, SkillRowF>;
         skillVersions: SkillVersionRowF[];
         skillFiles: SkillFileRowF[];
+        deletedNames: FakeSettingsDb["deletedNames"];
       }
     | undefined;
 
@@ -210,11 +218,13 @@ export class FakeSettingsDb {
         skills: new Map([...this.skills].map(([name, row]) => [name, { ...row }])),
         skillVersions: this.skillVersions.map((row) => ({ ...row })),
         skillFiles: [...this.skillFiles],
+        deletedNames: [...this.deletedNames],
       };
       return done();
     }
     if (text === "commit") {
       this.#snapshot = undefined;
+      this.#allowDelete = false;
       const sent = this.#pending;
       this.#pending = [];
       for (const channel of new Set(sent)) this.notify(channel);
@@ -231,11 +241,21 @@ export class FakeSettingsDb {
         this.skills = this.#snapshot.skills;
         this.skillVersions = this.#snapshot.skillVersions;
         this.skillFiles = this.#snapshot.skillFiles;
+        this.deletedNames = this.#snapshot.deletedNames;
       }
+      this.#allowDelete = false;
       this.#snapshot = undefined;
       this.#pending = [];
       return done();
     }
+    // A refused statement rejects, as node-postgres does; it never throws synchronously.
+    let deletion: Promise<{ rows: unknown[]; rowCount: number }> | undefined;
+    try {
+      deletion = this.#deletionQuery(text, params, done);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (deletion !== undefined) return deletion;
     if (text.includes("from inbox.events where session_id")) return done([]);
     if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
     if (/inbox\.skill/.test(text)) return this.#skillQuery(text, params, done);
@@ -407,6 +427,128 @@ export class FakeSettingsDb {
     throw new Error(`FakeSettingsDb: unexpected skill statement ${text.slice(0, 60)}`);
   }
 
+  /** The statements of deletion.ts and the three deletes (ADR 0027); undefined for any other statement. */
+  #deletionQuery(
+    text: string,
+    params: unknown[],
+    done: (rows?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>,
+  ): Promise<{ rows: unknown[]; rowCount: number }> | undefined {
+    const versionDelete = (table: string) => {
+      // The immutability triggers of migrations 008 and 010, as amended by 019.
+      if (!this.#allowDelete) throw new Error(`${table} rows are immutable`);
+    };
+    if (text === "set local pi.allow_delete = 'on'") {
+      this.#allowDelete = true;
+      return done();
+    }
+    if (text.startsWith("select 1 from inbox.deleted_names")) {
+      const [kind, name] = params as [string, string];
+      return done(
+        this.deletedNames.filter((d) => d.kind === kind && d.name === name).map(() => ({})),
+      );
+    }
+    if (text.startsWith("select name from inbox.deleted_names")) {
+      const [kind, names] = params as [string, string[]];
+      return done(
+        this.deletedNames
+          .filter((d) => d.kind === kind && names.includes(d.name))
+          .map((d) => ({ name: d.name }))
+          .sort((a, b) => (a.name < b.name ? -1 : 1)),
+      );
+    }
+    if (text.startsWith("insert into inbox.deleted_names")) {
+      const [kind, name, lastVersion, by] = params as [string, string, number | null, string];
+      if (this.deletedNames.some((d) => d.kind === kind && d.name === name)) {
+        throw new Error("duplicate key value (deleted_names)");
+      }
+      this.deletedNames.push({ kind, name, last_version: lastVersion, deleted_by: by });
+      return done();
+    }
+    if (text.startsWith("select p.name, p.current_version as version from inbox.profiles p")) {
+      const [name] = params as [string];
+      const bySkill = text.includes("'skills'");
+      return done(
+        [...this.profiles.values()]
+          .filter((p) => {
+            const v = this.versions.find(
+              (row) => row.name === p.name && row.version === p.current_version,
+            );
+            const definition = (v?.definition ?? {}) as {
+              skills?: { name: string }[];
+              mcpServers?: string[];
+            };
+            return bySkill
+              ? (definition.skills ?? []).some((ref) => ref.name === name)
+              : (definition.mcpServers ?? []).includes(name);
+          })
+          .sort((a, b) => (a.name < b.name ? -1 : 1))
+          .map((p) => ({ name: p.name, version: p.current_version })),
+      );
+    }
+    if (text.startsWith("select id, count(*) over () as total from inbox.sessions")) {
+      const [name] = params as [string];
+      const pinning = [...this.sessions.values()]
+        .filter((row) => row.status !== "deleted")
+        .filter((row) => {
+          const snapshot = row.profile_snapshot as { skills?: { name: string }[] } | null;
+          return (snapshot?.skills ?? []).some((ref) => ref.name === name);
+        })
+        .sort((a, b) => (a.created_at as Date).getTime() - (b.created_at as Date).getTime());
+      return done(pinning.slice(0, 5).map((row) => ({ id: row.id, total: pinning.length })));
+    }
+    if (text.startsWith("select current_version, revision, enabled_for_new from inbox.profiles")) {
+      const row = this.profiles.get(String(params[0]));
+      return done(
+        row === undefined
+          ? []
+          : [
+              {
+                current_version: row.current_version,
+                revision: row.revision ?? 1,
+                enabled_for_new: row.enabled_for_new,
+              },
+            ],
+      );
+    }
+    if (text.startsWith("select current_version from inbox.skills where name = $1")) {
+      const row = this.skills.get(String(params[0]));
+      return done(row === undefined ? [] : [{ current_version: row.current_version }]);
+    }
+    if (text === "delete from inbox.profile_versions where name = $1") {
+      versionDelete("inbox.profile_versions");
+      this.versions = this.versions.filter((v) => v.name !== params[0]);
+      return done();
+    }
+    if (text === "delete from inbox.profiles where name = $1") {
+      if (this.versions.some((v) => v.name === params[0])) {
+        throw new Error("foreign key violation (profile_versions)");
+      }
+      this.profiles.delete(String(params[0]));
+      return done();
+    }
+    if (text === "delete from inbox.skill_version_files where name = $1") {
+      versionDelete("skill_version_files");
+      this.skillFiles = this.skillFiles.filter((f) => f.name !== params[0]);
+      return done();
+    }
+    if (text === "delete from inbox.skill_versions where name = $1") {
+      versionDelete("skill_versions");
+      if (this.skillFiles.some((f) => f.name === params[0])) {
+        throw new Error("foreign key violation (skill_version_files)");
+      }
+      this.skillVersions = this.skillVersions.filter((v) => v.name !== params[0]);
+      return done();
+    }
+    if (text === "delete from inbox.skills where name = $1") {
+      if (this.skillVersions.some((v) => v.name === params[0])) {
+        throw new Error("foreign key violation (skill_versions)");
+      }
+      this.skills.delete(String(params[0]));
+      return done();
+    }
+    return undefined;
+  }
+
   /** The statements of profiles.ts and the session insert and select that carry the profile snapshot. */
   #profileQuery(
     text: string,
@@ -497,6 +639,17 @@ export class FakeSettingsDb {
     if (text.startsWith("insert into inbox.sessions (")) {
       const [id, owner, subject, provider, model, reasoning, repo, branch, pName, pVersion, pSnap] =
         params as (string | null)[];
+      if (pName !== null) {
+        // Only while the profile is still at the snapshot's version and open to new sessions (store.ts).
+        const current = this.profiles.get(String(pName));
+        if (
+          current === undefined ||
+          current.current_version !== Number(pVersion) ||
+          !current.enabled_for_new
+        ) {
+          return done([]);
+        }
+      }
       this.sessions.set(String(id), {
         id,
         owner,
@@ -519,7 +672,7 @@ export class FakeSettingsDb {
         created_at: new Date(),
         last_activity_at: new Date(),
       });
-      return done();
+      return done([{ id }]);
     }
     if (text.startsWith("select * from inbox.sessions where shard = $1 and conversation_id = $2")) {
       return done(
@@ -638,10 +791,24 @@ export class FakeListener extends EventEmitter {
   }
 
   async query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number }> {
-    if (sql.startsWith("select pg_advisory_xact_lock")) {
-      // Held until this client commits or rolls back; a second client asking for the same key waits.
+    if (sql.startsWith("select pg_advisory_xact_lock_shared")) {
+      // Held until commit or rollback; waits only for another client's exclusive lock on the key.
       const key = String(params?.[0]);
       while (this.#db.locks.has(key) && this.#db.locks.get(key) !== this) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      const holders = this.#db.sharedLocks.get(key) ?? new Set<FakeListener>();
+      holders.add(this);
+      this.#db.sharedLocks.set(key, holders);
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("select pg_advisory_xact_lock")) {
+      // Held until this client commits or rolls back; a second client asking for the same key waits, and so does a
+      // client asking while others hold it shared.
+      const key = String(params?.[0]);
+      const sharedByOthers = () =>
+        [...(this.#db.sharedLocks.get(key) ?? [])].some((holder) => holder !== this);
+      while ((this.#db.locks.has(key) && this.#db.locks.get(key) !== this) || sharedByOthers()) {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
       this.#db.locks.set(key, this);
@@ -650,6 +817,7 @@ export class FakeListener extends EventEmitter {
     if (sql === "commit" || sql === "rollback") {
       const result = await this.#db.query(sql, params);
       for (const [key, holder] of this.#db.locks) if (holder === this) this.#db.locks.delete(key);
+      for (const holders of this.#db.sharedLocks.values()) holders.delete(this);
       return result;
     }
     if (sql.startsWith("listen ")) {

@@ -224,8 +224,9 @@ sync is a thin client of the admin API.
 3. The skill and MCP screens have a read-only mode from the start.
 4. Skill versions and MCP servers reserve an optional `source` (repository and commit), kept out of the digest (done in the
    API, ADR 0023; identical files with another `source` create no version).
-5. Retiring a skill is defined before the repository lands: versions cannot be deleted and skills have no disable flag
-   today, so a skill removed from the repository would stay published and pinnable.
+5. Retiring a skill is defined before the repository lands: a skill removed from the repository is deleted with
+   `DELETE /admin/skills/{name}` once nothing pins it ([ADR 0027](decisions/0027-admin-delete.md)); the console's
+   delete buttons come in a later change.
 6. A publish never moves profile pins. Pinning in the console stays the gate for what sessions get.
 7. A sync sends complete MCP bodies, because `PUT` lays the body over the stored row.
 

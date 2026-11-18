@@ -19,6 +19,8 @@ the conversation and so survives restarts unchanged) and the sandbox env for the
   `inbox.skill_version_files` (`name`, `version`, `path`, `content` bytea). Migrations `010_skills.sql` and `011_skill_model_invocation.sql`, idempotent.
   Triggers refuse update and delete on the two version tables, so a version that a profile or session refers to never
   changes or goes away; there is no delete at all. The versions are the history (who, when, what), as for profiles.
+  *Amended by [0027](0027-admin-delete.md):* a whole skill can be deleted while no profile's current version and no
+  session that is not deleted pins it; the triggers allow that delete only under `pi.allow_delete`.
 - **Digest.** SHA-256 of a canonical JSON of name, description and the files sorted by path (path, content hash,
   executable bit). Name and description are in it because the model sees them. Publishing content with the current
   version's digest writes nothing (`200`, `versionCreated: false`); anything else is the next number, under an advisory

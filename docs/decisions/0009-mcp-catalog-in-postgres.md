@@ -28,7 +28,8 @@ a history table and `LISTEN/NOTIFY`; the MCP catalog needs the same properties.
   so one bad row never takes the others down. The name `history` is reserved for the history route.
 - **Admin API** (ingest, same admin check as `/admin/settings`): `GET /admin/mcp-servers`, `GET/PUT/DELETE
   /admin/mcp-servers/{name}`, `GET /admin/mcp-servers/history`. PUT creates (`201`) or updates (`200`, partial: omitted
-  fields keep their value); a no-op PUT writes nothing. DELETE removes the row for real; "disable" is `PUT {"enabled":
+  fields keep their value); a no-op PUT writes nothing. DELETE removes the row for real (refused while a profile's
+  current version names it, and the name is never created again, [0027](0027-admin-delete.md)); "disable" is `PUT {"enabled":
   false}`, which keeps the row and its settings. Every write is one transaction: row, history entry and
   `pg_notify('pi_mcp_servers', name)`, so a rolled-back write notifies nobody.
 - **Reload.** `McpCatalogCache` (session-core) is `SettingsCache`'s sibling: loads at start, refreshes on the

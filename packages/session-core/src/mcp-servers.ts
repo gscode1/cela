@@ -1,4 +1,12 @@
 import type pg from "pg";
+import {
+  AdminBlockedError,
+  blockedMessage,
+  lockCatalog,
+  profilesReferring,
+  recordDeletion,
+  refuseDeletedName,
+} from "./deletion.js";
 import { checkRevision } from "./revision.js";
 import { sourceFromColumn, sourcesEqual, validateSource } from "./source.js";
 import type { CatalogSource } from "./source.js";
@@ -323,6 +331,7 @@ export async function putMcpServer(
     }
   }
   return inTransaction(pool, async (client) => {
+    await lockCatalog(client, "exclusive");
     // `for update` locks nothing while the row does not exist, so two creates of one name would both see "no row", and
     // the second would overwrite the first with create defaults. The advisory lock serialises writers per name.
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`mcp:${name}`]);
@@ -331,6 +340,8 @@ export async function putMcpServer(
       [name],
     );
     checkRevision(`MCP server ${name}`, expectedRevision, rows[0]?.revision);
+    // A deleted name is never created again: old conversations stored it and would pick up the new server.
+    if (rows[0] === undefined) await refuseDeletedName(client, "mcp-server", name);
     // A stored row that no longer validates is replaced by the body alone, which must then be complete.
     let current: StoredMcpServer | undefined;
     try {
@@ -404,17 +415,20 @@ function fromStored(
 }
 
 /**
- * Removes the row (a real delete: the history keeps what it was). False if there was none; throws
- * `AdminConflictError` when `expectedRevision` is not the stored one.
+ * Removes the row (a real delete: the history keeps what it was, ADR 0027). Refused while a profile's current version
+ * names the server; sessions do not block it, their calls settle `tool_unavailable`. The name is never used again, so
+ * no old conversation picks up another server under it. False if there was none; throws `AdminConflictError` when
+ * `expectedRevision` is not the stored one, `AdminBlockedError` when a profile names it.
  */
 export async function deleteMcpServer(
   pool: pg.Pool,
   name: string,
   by: string,
-  expectedRevision?: number,
+  expectedRevision: number,
 ): Promise<boolean> {
   if (mcpServerNameError(name) !== undefined) return false;
   return inTransaction(pool, async (client) => {
+    await lockCatalog(client, "exclusive");
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`mcp:${name}`]);
     const { rows: found } = await client.query<McpRow>(
       `select ${COLUMNS} from inbox.mcp_servers where name = $1 for update`,
@@ -422,6 +436,11 @@ export async function deleteMcpServer(
     );
     if (found[0] === undefined) return false;
     checkRevision(`MCP server ${name}`, expectedRevision, found[0].revision);
+    const profiles = await profilesReferring(client, "mcp-server", name);
+    if (profiles.length > 0) {
+      throw new AdminBlockedError(blockedMessage("mcp-server", name, { profiles }), { profiles });
+    }
+    await recordDeletion(client, "mcp-server", name, by, null);
     const { rows } = await client.query<McpRow>(
       `delete from inbox.mcp_servers where name = $1 returning ${COLUMNS}`,
       [name],

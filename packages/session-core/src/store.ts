@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
+import { lockCatalog } from "./deletion.js";
 import { THINKING_LEVELS } from "./models.js";
 import type { ModelChoice } from "./models.js";
 import type { ProfileSnapshot } from "./profiles.js";
@@ -148,10 +149,17 @@ export const toEvent = (row: EventDbRow): InboxEvent => ({
   error: row.error,
 });
 
+/** The profile changed (a new version, closed or deleted) between reading it and storing the session: retry. */
+export class StaleProfileError extends Error {}
+
 /**
  * Session ids are random UUIDs (v4), never sequential: an id cannot be guessed from another. The session goes to the
  * shard (of `shardCount`) with the fewest active sessions, the lowest on a tie. The count and the insert are not
  * atomic: two racing creates may pick the same shard, which only affects balance.
+ *
+ * The insert holds the catalog lock shared and happens only if the profile is still at the snapshot's version and open
+ * to new sessions (ADR 0027): a skill delete then sees every session that may pin its files, and a session never pins
+ * a skill that a newer profile version dropped and a delete removed. Otherwise it throws `StaleProfileError`.
  */
 export async function createSession(
   pool: pg.Pool,
@@ -162,30 +170,50 @@ export async function createSession(
   shardCount = 1,
 ): Promise<string> {
   const id = randomUUID();
-  await pool.query(
-    `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
-       profile_name, profile_version, profile_snapshot, shard)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-       coalesce((select c.shard from generate_series(0, $12::int - 1) as c(shard)
-                  left join (select shard, count(*) as n from inbox.sessions where status = 'active' group by shard) a
-                    on a.shard = c.shard
-                  order by coalesce(a.n, 0), c.shard limit 1), 0))`,
-    [
-      id,
-      principal.owner,
-      principal.subject,
-      model.provider,
-      model.model,
-      model.reasoning ?? null,
-      repo?.repo ?? null,
-      repo?.branch ?? null,
-      profile?.name ?? null,
-      profile?.version ?? null,
-      profile === undefined ? null : JSON.stringify(profile.definition),
-      shardCount,
-    ],
-  );
-  return id;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await lockCatalog(client, "shared");
+    const { rows } = await client.query(
+      `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
+         profile_name, profile_version, profile_snapshot, shard)
+       select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+         coalesce((select c.shard from generate_series(0, $12::int - 1) as c(shard)
+                    left join (select shard, count(*) as n from inbox.sessions where status = 'active' group by shard) a
+                      on a.shard = c.shard
+                    order by coalesce(a.n, 0), c.shard limit 1), 0)
+        where $9::text is null
+           or exists (select 1 from inbox.profiles p
+                       where p.name = $9 and p.current_version = $10 and p.enabled_for_new)
+       returning id`,
+      [
+        id,
+        principal.owner,
+        principal.subject,
+        model.provider,
+        model.model,
+        model.reasoning ?? null,
+        repo?.repo ?? null,
+        repo?.branch ?? null,
+        profile?.name ?? null,
+        profile?.version ?? null,
+        profile === undefined ? null : JSON.stringify(profile.definition),
+        shardCount,
+      ],
+    );
+    if (rows.length === 0) {
+      throw new StaleProfileError(
+        `profile "${String(profile?.name)}" changed while the session was created: retry`,
+      );
+    }
+    await client.query("commit");
+    return id;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Moves an active session to the terminal `failed` state. False if it was not active (failed already, deleting, deleted). */

@@ -205,19 +205,44 @@ describe("admin skills", () => {
     expect([...db.skills.keys()].sort()).toEqual(["pdf", "quiet"]);
   });
 
-  it("has no delete and no update of a version", async () => {
+  it("deletes a whole skill with its version as the revision, but never one version or its update", async () => {
     const { base } = await start();
     await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF);
-    expect((await call(base, "alice", "DELETE", "/admin/skills/pdf")).status).toBe(405);
     expect((await call(base, "alice", "PUT", "/admin/skills/pdf/versions/1", PDF)).status).toBe(
       405,
     );
     expect((await call(base, "alice", "DELETE", "/admin/skills/pdf/versions/1")).status).toBe(405);
     expect((await call(base, "alice", "GET", "/admin/skills/pdf/files")).status).toBe(404);
+    expect((await call(base, "alice", "DELETE", "/admin/skills/pdf")).status).toBe(400);
+    expect(
+      (await call(base, "alice", "DELETE", "/admin/skills/pdf?expectedRevision=2")).status,
+    ).toBe(409);
+    const gone = await call(base, "alice", "DELETE", "/admin/skills/pdf?expectedRevision=1");
+    expect(await gone.json()).toEqual({ name: "pdf", deleted: true, lastVersion: 1 });
+    expect((await call(base, "alice", "GET", "/admin/skills/pdf")).status).toBe(404);
+    expect((await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF)).status).toBe(409);
   });
 });
 
 describe("profiles with skills and sessions", () => {
+  it("a skill a profile pins or a live session uses is not deleted; the 409 names them", async () => {
+    const { base, db } = await start();
+    await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF);
+    await call(base, "alice", "PUT", "/admin/profiles/docs", {
+      definition: { skills: [{ name: "pdf", version: 1 }] },
+    });
+    const created = await json(await call(base, "bob", "POST", "/sessions", { profile: "docs" }));
+    const pinned = await call(base, "alice", "DELETE", "/admin/skills/pdf?expectedRevision=1");
+    expect(pinned.status).toBe(409);
+    expect(await json(pinned)).toMatchObject({
+      blockedBy: {
+        profiles: [{ name: "docs", version: 1 }],
+        sessions: { count: 1, sample: [created.sessionId] },
+      },
+    });
+    expect(db.skills.size).toBe(1);
+  });
+
   it("a profile pins the version and digest, a session snapshots them, and v2 leaves the session on v1", async () => {
     const { base, db } = await start();
     await call(base, "alice", "POST", "/admin/skills/pdf/versions", PDF);

@@ -3,6 +3,15 @@ import { MCP_SERVER_NAME } from "./mcp-servers.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
 import { isSkillDigest, pinSkillRefs, SKILL_LIMITS, SKILL_NAME } from "./skills.js";
+import {
+  AdminBlockedError,
+  blockedMessage,
+  deletedAmong,
+  lockCatalog,
+  recordDeletion,
+  refuseDeletedName,
+} from "./deletion.js";
+import type { BlockedBy } from "./deletion.js";
 import type { SkillRef } from "./skills.js";
 import { AdminConflictError, checkRevision } from "./revision.js";
 
@@ -470,8 +479,15 @@ export async function putProfile(
     definition = checked;
   }
   return inTransaction(pool, async (client): Promise<PutProfileResult> => {
+    // First, like every write that changes references (ADR 0027): a skill or MCP server cannot be deleted under us.
+    await lockCatalog(client, "exclusive");
     // Serialises writers per name, also for a create (no row to lock yet).
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`profile:${name}`]);
+    // `known.mcpServers` was read before the lock; a server deleted since is in deleted_names by now.
+    const goneServers = await deletedAmong(client, "mcp-server", definition?.mcpServers ?? []);
+    if (goneServers.length > 0) {
+      return { ok: false, message: `MCP server ${goneServers.join(", ")} was deleted` };
+    }
     // Always in this order (profile, then default), and `updateSettings` takes only the second: no cycle.
     if (input.enabledForNew === false) {
       await client.query("select pg_advisory_xact_lock(hashtext($1))", [DEFAULT_PROFILE_LOCK]);
@@ -497,6 +513,7 @@ export async function putProfile(
     const exists = rows[0] !== undefined;
     if (!exists) {
       if (definition === undefined) return { ok: false, message: "definition is required" };
+      await refuseDeletedName(client, "profile", name);
       const unknown = checkProfileNames(definition, known);
       if (unknown !== undefined) return { ok: false, message: unknown };
       const enabled = input.enabledForNew ?? true;
@@ -554,6 +571,52 @@ export async function putProfile(
       created: false,
       versionCreated,
     };
+  });
+}
+
+/**
+ * Deletes a profile and all its versions (ADR 0027). Sessions keep their snapshot, so they never block it; the profile
+ * must be closed to new sessions and must not be the default. The name is never used again. Undefined when there is no
+ * such profile; a stale `expectedRevision` throws `AdminConflictError`, a refusal `AdminBlockedError`.
+ */
+export async function deleteProfile(
+  pool: pg.Pool,
+  name: string,
+  expectedRevision: number,
+  by: string,
+): Promise<{ lastVersion: number } | undefined> {
+  if (profileNameError(name) !== undefined) return undefined;
+  return inTransaction(pool, async (client) => {
+    await lockCatalog(client, "exclusive");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`profile:${name}`]);
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [DEFAULT_PROFILE_LOCK]);
+    const { rows } = await client.query<{
+      current_version: number;
+      revision: number;
+      enabled_for_new: boolean;
+    }>("select current_version, revision, enabled_for_new from inbox.profiles where name = $1", [
+      name,
+    ]);
+    const row = rows[0];
+    if (row === undefined) return undefined;
+    checkRevision(`profile ${name}`, expectedRevision, row.revision);
+    const { rows: chosen } = await client.query<{ default_profile: string | null }>(
+      "select default_profile from inbox.settings",
+    );
+    const defaultName =
+      chosen[0] === undefined ? undefined : (chosen[0].default_profile ?? DEFAULT_PROFILE_NAME);
+    const blockedBy: BlockedBy = {
+      ...(defaultName === name ? { defaultProfile: true as const } : {}),
+      ...(row.enabled_for_new ? { enabledForNew: true as const } : {}),
+    };
+    if (Object.keys(blockedBy).length > 0) {
+      throw new AdminBlockedError(blockedMessage("profile", name, blockedBy), blockedBy);
+    }
+    const lastVersion = row.current_version;
+    await recordDeletion(client, "profile", name, by, lastVersion);
+    await client.query("delete from inbox.profile_versions where name = $1", [name]);
+    await client.query("delete from inbox.profiles where name = $1", [name]);
+    return { lastVersion };
   });
 }
 

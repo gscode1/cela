@@ -6,6 +6,7 @@ import { orchestratorUrlFor } from "./config.js";
 import { isConsolePath, serveConsole, setConsoleHeaders } from "./console.js";
 import type { ConsoleCatalogs } from "./console.js";
 import {
+  AdminBlockedError,
   AdminConflictError,
   BodyError,
   BUILTIN_TOOL_NAMES,
@@ -17,6 +18,9 @@ import {
   errorMessage,
   getSession,
   deleteMcpServer,
+  deleteProfile,
+  deleteSkill,
+  StaleProfileError,
   isAdmin,
   LEGACY_PROFILE,
   listMcpServerHistory,
@@ -227,8 +231,23 @@ async function handleAdmin(
     await handleAdminRoutes(req, res, deps, principal, url, parts);
   } catch (error) {
     if (!(error instanceof AdminConflictError)) throw error;
-    sendJson(res, 409, { error: error.message });
+    sendJson(res, 409, {
+      error: error.message,
+      ...(error instanceof AdminBlockedError ? { blockedBy: error.blockedBy } : {}),
+    });
   }
+}
+
+/**
+ * The `?expectedRevision=N` of a DELETE, which a delete must carry (ADR 0027): the caller proves it saw the current
+ * state. The number, or the message for a 400.
+ */
+function requiredRevisionParam(url: URL): number | string {
+  const asked = url.searchParams.get("expectedRevision");
+  if (asked === null)
+    return "expectedRevision is required: DELETE ...?expectedRevision=<current revision>";
+  const parsed = parseExpectedRevision(/^[0-9]{1,10}$/.test(asked) ? Number(asked) : asked);
+  return parsed ?? "expectedRevision must be a positive integer";
 }
 
 /** `expectedRevision` taken out of a body, so the rest can go to a validator that refuses unknown keys. */
@@ -383,7 +402,7 @@ async function handleAdminRoutes(
     return;
   }
   if (parts[1] === "profiles") {
-    await handleAdminProfiles(req, res, deps, principal, parts);
+    await handleAdminProfiles(req, res, deps, principal, url, parts);
     return;
   }
   if (parts[1] === "skills") {
@@ -542,6 +561,21 @@ async function handleAdminSkills(
     sendJson(res, 400, { error: nameError });
     return;
   }
+  if (parts.length === 3 && method === "DELETE") {
+    // Versions never change, so a skill's revision is its current version.
+    const expected = requiredRevisionParam(url);
+    if (typeof expected === "string") {
+      sendJson(res, 400, { error: expected });
+      return;
+    }
+    const deleted = await deleteSkill(deps.pool, name, expected, principal.owner);
+    if (deleted === undefined) {
+      sendJson(res, 404, { error: "skill not found" });
+      return;
+    }
+    sendJson(res, 200, { name, deleted: true, lastVersion: deleted.lastVersion });
+    return;
+  }
   if (parts.length === 3) {
     if (method !== "GET") {
       sendJson(res, 405, { error: "method not allowed" });
@@ -685,6 +719,7 @@ async function handleAdminProfiles(
   res: ServerResponse,
   deps: IngestDeps,
   principal: Principal,
+  url: URL,
   parts: string[],
 ): Promise<void> {
   const method = req.method ?? "GET";
@@ -783,6 +818,20 @@ async function handleAdminProfiles(
       ...profileJson(result.stored),
       versionCreated: result.versionCreated,
     });
+    return;
+  }
+  if (method === "DELETE") {
+    const expected = requiredRevisionParam(url);
+    if (typeof expected === "string") {
+      sendJson(res, 400, { error: expected });
+      return;
+    }
+    const deleted = await deleteProfile(deps.pool, name, expected, principal.owner);
+    if (deleted === undefined) {
+      sendJson(res, 404, { error: "profile not found" });
+      return;
+    }
+    sendJson(res, 200, { name, deleted: true, lastVersion: deleted.lastVersion });
     return;
   }
   sendJson(res, 405, { error: "method not allowed" });
@@ -895,10 +944,7 @@ async function handleAdminMcpServers(
   }
   if (method === "DELETE") {
     // A DELETE has no body to speak of: the revision is a query parameter, `?expectedRevision=3`.
-    const asked = url.searchParams.get("expectedRevision");
-    const expected = parseExpectedRevision(
-      asked === null ? undefined : /^[0-9]{1,10}$/.test(asked) ? Number(asked) : asked,
-    );
+    const expected = requiredRevisionParam(url);
     if (typeof expected === "string") {
       sendJson(res, 400, { error: expected });
       return;
@@ -967,14 +1013,15 @@ async function postSession(
     sendJson(res, 400, { error: repo });
     return;
   }
-  const sessionId = await createSession(
-    deps.pool,
-    principal,
-    model,
-    repo,
-    snapshot,
-    deps.shards ?? 1,
-  );
+  let sessionId: string;
+  try {
+    sessionId = await createSession(deps.pool, principal, model, repo, snapshot, deps.shards ?? 1);
+  } catch (error) {
+    // The profile got a new version, was closed or deleted since it was read: nothing was stored.
+    if (!(error instanceof StaleProfileError)) throw error;
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
   sendJson(res, 201, {
     sessionId,
     profile: profileRef(snapshot),

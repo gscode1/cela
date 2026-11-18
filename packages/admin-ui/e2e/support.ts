@@ -33,7 +33,7 @@ export async function api<T = Record<string, unknown>>(
   return (await response.json()) as T;
 }
 
-/** A name that no other test uses: profiles, skills and servers cannot be deleted from the shared fake. */
+/** A name that no other test uses: the fake is shared, and a deleted name is never used again (ADR 0027). */
 export function unique(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }

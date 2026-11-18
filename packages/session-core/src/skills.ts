@@ -3,6 +3,17 @@ import type pg from "pg";
 import { parseFrontmatter } from "./frontmatter.js";
 import { sourceFromColumn, validateSource } from "./source.js";
 import type { CatalogSource } from "./source.js";
+import {
+  AdminBlockedError,
+  blockedMessage,
+  lockCatalog,
+  profilesReferring,
+  recordDeletion,
+  refuseDeletedName,
+  sessionsPinningSkill,
+} from "./deletion.js";
+import type { BlockedBy } from "./deletion.js";
+import { checkRevision } from "./revision.js";
 
 /**
  * Skills (docs/decisions/0011-skills-in-postgres.md): immutable, numbered versions of a SKILL.md (whose frontmatter
@@ -530,6 +541,46 @@ async function inTransaction<T>(
   }
 }
 
+/**
+ * Deletes a skill with every version and file (ADR 0027). Refused while a profile's current version pins it or a
+ * session that is not deleted does: the orchestrator reads a session's skill files at every attach. Versions never
+ * change, so the current version is the revision to expect. The name is never used again. Undefined when there is no
+ * such skill; a stale version throws `AdminConflictError`, a refusal `AdminBlockedError`.
+ */
+export async function deleteSkill(
+  pool: pg.Pool,
+  name: string,
+  expectedVersion: number,
+  by: string,
+): Promise<{ lastVersion: number } | undefined> {
+  if (skillNameError(name) !== undefined) return undefined;
+  return inTransaction(pool, async (client) => {
+    await lockCatalog(client, "exclusive");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`skill:${name}`]);
+    const { rows } = await client.query<{ current_version: number }>(
+      "select current_version from inbox.skills where name = $1",
+      [name],
+    );
+    if (rows[0] === undefined) return undefined;
+    const lastVersion = rows[0].current_version;
+    checkRevision(`skill ${name}`, expectedVersion, lastVersion);
+    const profiles = await profilesReferring(client, "skill", name);
+    const sessions = await sessionsPinningSkill(client, name);
+    if (profiles.length > 0 || sessions.count > 0) {
+      const blockedBy: BlockedBy = {
+        ...(profiles.length > 0 ? { profiles } : {}),
+        ...(sessions.count > 0 ? { sessions } : {}),
+      };
+      throw new AdminBlockedError(blockedMessage("skill", name, blockedBy), blockedBy);
+    }
+    await recordDeletion(client, "skill", name, by, lastVersion);
+    await client.query("delete from inbox.skill_version_files where name = $1", [name]);
+    await client.query("delete from inbox.skill_versions where name = $1", [name]);
+    await client.query("delete from inbox.skills where name = $1", [name]);
+    return { lastVersion };
+  });
+}
+
 export type PutSkillResult =
   | { ok: true; version: SkillVersionMeta; created: boolean; skillCreated: boolean }
   | { ok: false; message: string };
@@ -553,8 +604,10 @@ export async function putSkillVersion(
   const digest = skillDigest(name, content.description, files);
   const size = files.reduce((sum, file) => sum + file.size, 0);
   return inTransaction(pool, async (client): Promise<PutSkillResult> => {
+    await lockCatalog(client, "exclusive");
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`skill:${name}`]);
     const current = await readSkill(client, name);
+    if (current === undefined) await refuseDeletedName(client, "skill", name);
     if (current?.digest === digest) {
       const same = await readSkillVersion(client, name, current.currentVersion);
       if (same !== undefined)
