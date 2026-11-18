@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useAuth } from "@/auth";
 import { LastChanged } from "@/components/changed";
+import { DeleteConfirm } from "@/components/delete-confirm";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { isConflict } from "@/lib/api";
-import { putProfile } from "@/lib/api/profiles";
+import { deleteProfile, putProfile } from "@/lib/api/profiles";
 import type { ProfileDefinition, ProfileDetail as ProfileDetailData } from "@/lib/api/profiles";
 import { conflictKind } from "@/lib/conflict";
 import { applyIntent, describeIntent, hasIntent, intentFromSearch } from "@/lib/profile-links";
@@ -76,6 +77,8 @@ function ProfileScreenFor({ name }: { name: string }) {
   const profile = useProfileQuery(name);
   const list = useProfilesQuery();
   const [draft, setDraft] = useDraft<ProfileDraft>(`profile:${name}`);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
   const [tab, setTab] = useState<"edit" | "versions">("edit");
   const [saved, setSaved] = useState<string | undefined>(savedFromState(location.state));
   const stored = profile.data;
@@ -163,23 +166,58 @@ function ProfileScreenFor({ name }: { name: string }) {
               <LastChanged by={stored.updatedBy} at={stored.updatedAt} />
             </CardDescription>
           </div>
-          <Button
-            variant="outline"
-            disabled={toggle.isPending || (isDefault && stored.enabledForNew)}
-            {...(isDefault && stored.enabledForNew
-              ? {
-                  title:
-                    "This is the default profile. Select another default in Global settings first.",
-                }
-              : {})}
-            onClick={() => {
-              toggle.mutate({ enabled: !stored.enabledForNew, revision: stored.revision });
-            }}
-          >
-            {stored.enabledForNew ? "Disable for new sessions" : "Enable for new sessions"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={toggle.isPending || (isDefault && stored.enabledForNew)}
+              {...(isDefault && stored.enabledForNew
+                ? {
+                    title:
+                      "This is the default profile. Select another default in Global settings first.",
+                  }
+                : {})}
+              onClick={() => {
+                toggle.mutate({ enabled: !stored.enabledForNew, revision: stored.revision });
+              }}
+            >
+              {stored.enabledForNew ? "Disable for new sessions" : "Enable for new sessions"}
+            </Button>
+            {/* Only a disabled profile that is not the default can go (ADR 0027); the API checks again. */}
+            <Button
+              variant="outline"
+              disabled={stored.enabledForNew || isDefault || deleting}
+              title={
+                isDefault
+                  ? "The default profile cannot be deleted. Select another default in Global settings first."
+                  : stored.enabledForNew
+                    ? "Disable it for new sessions first."
+                    : "Delete this profile and all its versions"
+              }
+              onClick={() => {
+                setDeleting(true);
+              }}
+            >
+              Delete profile
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {deleting && (
+            <DeleteConfirm
+              kind="profile"
+              name={name}
+              contents="all its versions (sessions keep the copy they started with)"
+              run={() => deleteProfile(token ?? "", name, stored.revision)}
+              onDeleted={() => {
+                setDraft(undefined);
+                void queryClient.invalidateQueries({ queryKey: keys.profiles });
+                void navigate("/profiles");
+              }}
+              onCancel={() => {
+                setDeleting(false);
+              }}
+            />
+          )}
           {toggleConflict !== undefined && conflictKind(toggleConflict) === "default-profile" && (
             <Alert variant="warning" data-testid="toggle-conflict">
               <p className="break-words">{toggleConflict.message}</p>
