@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { branchError, chooseRepo, cloneUrl, repoError } from "../src/repo.ts";
+import {
+  branchError,
+  chooseRepo,
+  cloneUrl,
+  repoAllowed,
+  repoError,
+  repoPatternError,
+} from "../src/repo.ts";
 
 describe("repoError", () => {
   it("accepts owner/name", () => {
@@ -99,5 +106,47 @@ describe("chooseRepo", () => {
 describe("cloneUrl", () => {
   it("is https on github.com and carries no credentials", () => {
     expect(cloneUrl("octo/hello")).toBe("https://github.com/octo/hello.git");
+  });
+});
+
+describe("repoPatternError", () => {
+  it("accepts *, owner/* and owner/name", () => {
+    for (const pattern of ["*", "octo/*", "Octo/Hello", "my-org/my.repo_1"]) {
+      expect(repoPatternError(pattern), pattern).toBeUndefined();
+    }
+  });
+
+  it("rejects partial wildcards, URLs and anything repoError refuses", () => {
+    for (const pattern of [
+      "",
+      "*/*",
+      "*/hello",
+      "octo/hel*",
+      "octo/**",
+      "octo",
+      "-octo/*",
+      "https://github.com/octo/*",
+    ]) {
+      expect(repoPatternError(pattern), pattern).toMatch(/not \*, owner\/\* or owner\/name/);
+    }
+  });
+});
+
+describe("repoAllowed", () => {
+  it("refuses everything with an empty list", () => {
+    expect(repoAllowed("octo/hello", [])).toBe(false);
+  });
+
+  it("matches *, the owner's wildcard and the exact name, ignoring case", () => {
+    expect(repoAllowed("octo/hello", ["*"])).toBe(true);
+    expect(repoAllowed("Octo/Hello", ["octo/*"])).toBe(true);
+    expect(repoAllowed("octo/hello", ["OCTO/HELLO"])).toBe(true);
+  });
+
+  it("does not match another owner, a prefix of the owner or another repository", () => {
+    expect(repoAllowed("octo/hello", ["octo/hell"])).toBe(false);
+    expect(repoAllowed("octo/hello", ["oct/*"])).toBe(false);
+    expect(repoAllowed("octocat/hello", ["octo/*"])).toBe(false);
+    expect(repoAllowed("other/hello", ["octo/hello", "octo/*"])).toBe(false);
   });
 });

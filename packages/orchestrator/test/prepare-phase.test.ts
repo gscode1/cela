@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EventDbRow, InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
 import { InboxLoop } from "../src/inbox.ts";
 import { GithubDeniedError } from "../src/github-app.ts";
@@ -143,8 +143,15 @@ describe("the prepare phase of the inbox drain", () => {
     await flush();
     expect(row.status).toBe("pending");
     expect(row.attempts).toBe(1);
-    loop.wake();
-    await flush();
+    // The retry waits out the backoff.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 2_000);
+      loop.wake();
+      await flush();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(row.status).toBe("submitted");
     expect(prepares).toBe(2);
   });
@@ -258,7 +265,7 @@ describe("the prepare phase of the inbox drain", () => {
     expect(trace).toEqual(["apply cancel", "prepare message", "apply message"]);
   });
 
-  it("gives up on a repeatedly failing prepare after five attempts like any other event", async () => {
+  it("gives up on a repeatedly failing prepare after its attempts like any other event", async () => {
     const db = new FakePool();
     const row = db.add("message");
     const loop = new InboxLoop(
@@ -267,11 +274,17 @@ describe("the prepare phase of the inbox drain", () => {
       () => Promise.resolve(),
       () => Promise.reject(new Error("boom")),
     );
-    for (let i = 0; i < 6; i++) {
-      loop.wake();
-      await flush();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      for (let i = 0; i < 10; i++) {
+        vi.setSystemTime(Date.now() + 61_000);
+        loop.wake();
+        await flush();
+      }
+    } finally {
+      vi.useRealTimers();
     }
-    expect([row.status, row.attempts]).toEqual(["failed", 5]);
+    expect([row.status, row.attempts]).toEqual(["failed", 8]);
   });
 
   it("does not prepare in front of a delete, only for what follows it", async () => {
@@ -416,6 +429,17 @@ describe("SessionService.prepare", () => {
       await expect(svc.prepare(message, sessionRow())).rejects.toBeInstanceOf(PermanentError);
       expect(calls.failed).toBe(1);
     }
+  });
+
+  it("neither prepares nor runs an input queued in front of a delete (session deleting)", async () => {
+    const { svc, calls } = service(() => Promise.resolve());
+    for (const kind of ["message", "steer"] as const) {
+      const input = { ...message, kind };
+      const deleting = sessionRow({ status: "deleting", workspaceReadyAt: new Date() });
+      await svc.prepare(input, deleting);
+      await expect(svc.apply(input, deleting)).rejects.toBeInstanceOf(PermanentError);
+    }
+    expect(calls).toMatchObject({ prepare: 0, submit: 0 });
   });
 
   it("lets a transient error through as is, to be retried", async () => {

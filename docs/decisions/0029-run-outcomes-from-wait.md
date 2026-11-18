@@ -28,7 +28,10 @@ then starts its own run, the stale limit lets that run overshoot the session's t
   the rule that a failure must not turn into retried spend.
 - **The turn limit is set again when a run answers.** The watcher's `onDone` recomputes `maxTurns` as the budget minus
   the turns used before the run in progress. Pi reads `maxTurns` at the end of every round, so a queued run is bounded
-  from its first round.
+  from its first round. Admission and `onDone` both write `maxTurns`; the writes of one conversation run one after
+  another, each reading the counts afresh, so a limit computed before a run answered never lands after the one
+  computed once it had (#203). The run's rounds are read again after the transcript until both reads agree: a round
+  committed between them would make the limit one too low, and `turn_limit` fails the session.
 
 ## Consequences
 

@@ -322,6 +322,52 @@ describe("putProfile versioning", () => {
     expect(again).toMatchObject({ ok: true, versionCreated: false });
   });
 
+  it("checks defaultModel against the catalog only when it changes (ADR 0025)", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    const old = { ...research, defaultModel: "old/m1" };
+    await putProfile(pool, "research", { definition: old }, "alice", {
+      ...KNOWN,
+      models: ["old/m1"],
+    });
+    // old/m1 has left the catalog: another field can still change, keeping it.
+    const gone = { ...KNOWN, models: ["new/m2"] };
+    const kept = await putProfile(
+      pool,
+      "research",
+      { definition: { ...old, instructions: "be nice" } },
+      "alice",
+      gone,
+    );
+    expect(kept).toMatchObject({ ok: true, versionCreated: true });
+    expect(await readProfile(pool, "research")).toMatchObject({
+      definition: { defaultModel: "old/m1", instructions: "be nice" },
+    });
+    // A changed model is checked.
+    const changed = await putProfile(
+      pool,
+      "research",
+      { definition: { ...old, defaultModel: "other/m3" } },
+      "alice",
+      gone,
+    );
+    expect(changed).toEqual({
+      ok: false,
+      message: 'defaultModel "other/m3" is not in the model catalog',
+    });
+    const accepted = await putProfile(
+      pool,
+      "research",
+      { definition: { ...old, defaultModel: "new/m2" } },
+      "alice",
+      gone,
+    );
+    expect(accepted).toMatchObject({ ok: true, versionCreated: true });
+    // Setting the old model back is a change, so it is checked.
+    const back = await putProfile(pool, "research", { definition: old }, "alice", gone);
+    expect(back.ok).toBe(false);
+  });
+
   it("readProfiles skips and reports a row edited by hand into something invalid", async () => {
     const db = new FakeSettingsDb();
     const pool = db.asPool();

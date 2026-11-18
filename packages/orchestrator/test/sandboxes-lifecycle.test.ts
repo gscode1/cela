@@ -478,3 +478,39 @@ describe("bridge cap", () => {
     sandboxes.stop();
   });
 });
+
+describe("the exec-in-flight record", () => {
+  it("is not left cleared by a slow clear that lands after the next command recorded itself", async () => {
+    // The row as Postgres would hold it. The two writes run on different pool connections: the clear is slow, the
+    // set is fast, so without ordering the clear lands last.
+    let row = false;
+    let finishClear: () => void = () => undefined;
+    const sandboxes = new Sandboxes(config(), () => Promise.resolve("session-key"), {
+      execInFlight: (_id, on) => {
+        if (on) {
+          row = true;
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+          finishClear = () => {
+            row = false;
+            resolve();
+          };
+        });
+      },
+    });
+    await exec(sandboxes);
+    // The first burst settled and its clear is in flight. The next command starts now.
+    let endCommand: (result: unknown) => void = () => undefined;
+    execResults.push(new Promise((resolve) => (endCommand = resolve)));
+    const second = exec(sandboxes);
+    await flush();
+    finishClear();
+    await flush();
+    // The second command is still running: the record must say so.
+    expect(row).toBe(true);
+    endCommand({ ok: true, value: { exitCode: 0 } });
+    await second;
+    sandboxes.stop();
+  });
+});

@@ -17,3 +17,4 @@ data:
   {{- with .Values.models.tokenBudget }}
   PI_SESSION_TOKEN_BUDGET: {{ . | quote }}
   {{- end }}
+  PI_REPO_ALLOWLIST: {{ join "," .Values.github.repoAllowlist | quote }}
