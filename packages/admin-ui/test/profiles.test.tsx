@@ -61,12 +61,25 @@ describe("profile list", () => {
         .getAllByRole("columnheader")
         .map((h) => h.textContent),
     ).toEqual(["Name", "Last changed"]);
+    // Disabled profiles fold away until asked for.
+    expect(within(table).queryByRole("link", { name: "review" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show 1 disabled" }));
     expect(within(table).getByRole("link", { name: "review" }).closest("tr")).toHaveTextContent(
       "disabled",
     );
+    await userEvent.click(screen.getByRole("button", { name: "Hide disabled" }));
+    expect(within(table).queryByRole("link", { name: "review" })).not.toBeInTheDocument();
     expect(screen.getByTestId("invalid-profile")).toHaveTextContent(
       "This profile's stored definition is invalid; publish a corrected version.",
     );
+  });
+
+  it("offers no fold button while every profile is enabled", async () => {
+    createFakeAdmin();
+    renderApp("/profiles");
+    await signIn("alice-token");
+    await screen.findByRole("table", { name: "Profiles" });
+    expect(screen.queryByRole("button", { name: /disabled/ })).not.toBeInTheDocument();
   });
 });
 
