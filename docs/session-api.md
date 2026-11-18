@@ -4,6 +4,8 @@ The session API lets a remote client create sessions, send messages, steer a run
 reconnect, and delete. It is inbox-shaped: the API writes an event to Postgres and returns; the orchestrator
 consumes it. Terms follow `plan.md`: one session = one Pi conversation = one named SandboxClaim = one PVC.
 
+Coding agents can use it through MCP instead of HTTP: see the [MCP adapter](mcp-adapter.md).
+
 ## Processes
 
 | Process | Replicas | Role |
