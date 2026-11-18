@@ -597,6 +597,7 @@ test.describe("isolation", () => {
     networkPolicy: "enforced",
     networkPolicyCheckedAt: new Date().toISOString(),
     networkPolicyDetail: null,
+    probeRequestedAt: null,
     updatedAt: new Date().toISOString(),
     ...over,
   });

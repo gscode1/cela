@@ -53,6 +53,7 @@ async function start(
             networkPolicy: "unknown",
             networkPolicyCheckedAt: null,
             networkPolicyDetail: null,
+            probeRequestedAt: new Date(7),
             updatedAt: new Date(0),
           },
         ],
@@ -330,10 +331,17 @@ describe("admin shard status", () => {
           networkPolicy: "unknown",
           networkPolicyCheckedAt: null,
           networkPolicyDetail: null,
+          probeRequestedAt: "1970-01-01T00:00:00.007Z",
           updatedAt: "1970-01-01T00:00:00.000Z",
         },
       ],
-      networkPolicy: { state: "unknown", checkedAt: null, detail: null },
+      // A request shard 0 has not taken yet: the console polls until it is gone.
+      networkPolicy: {
+        state: "unknown",
+        checkedAt: null,
+        detail: null,
+        requestedAt: "1970-01-01T00:00:00.007Z",
+      },
     });
     expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
     expect((await call(base, "alice", "GET", "/admin/status/extra")).status).toBe(404);

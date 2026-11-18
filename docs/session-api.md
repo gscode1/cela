@@ -516,13 +516,15 @@ writes nothing; a failure keeps the instructions), and needs no `read` tool.
           { "name": "postgres", "address": "10.0.0.5:5432", "verdict": "blocked", "outcome": "timeout" }
         ]
       },
+      "probeRequestedAt": null,
       "updatedAt": "2026-11-17T00:00:00.000Z"
     }
   ],
   "networkPolicy": {
     "state": "enforced",
     "checkedAt": "2026-11-17T00:00:05.000Z",
-    "detail": { "state": "enforced", "reason": "..." }
+    "detail": { "state": "enforced", "reason": "..." },
+    "requestedAt": null
   }
 }
 ```
@@ -541,8 +543,10 @@ configured runtime; template changes do not update existing sandboxes (ADR 0019)
 `networkPolicy` is `unknown` until the isolation probe has run, `running` while it does, then `enforced`,
 `not-enforced` or `inconclusive` ([network policy](network-policy.md#isolation-probe)). Only shard 0's orchestrator
 measures it (the policies are namespace-wide), so every shard row shows shard 0's value, and `networkPolicyCheckedAt`
-and `networkPolicyDetail` (what it tried, why) are set on shard 0's row only. The top-level `networkPolicy` object is
-the same state, time and detail in one place. A restart resets it to `unknown` until the next run. Neither a configured
+and `networkPolicyDetail` (what it tried, why) are set on shard 0's row only. `probeRequestedAt` (shard 0's row only)
+is when a `POST /admin/status/probe` was recorded that the orchestrator has not taken yet, null otherwise: until it is
+taken the state is still the previous verdict, so a client that follows a re-check polls while it is set. The top-level
+`networkPolicy` object is the same state, time, detail and `requestedAt` in one place. A restart resets it to `unknown` until the next run. Neither a configured
 runtime nor an unknown or `inconclusive` policy proves network isolation; `not-enforced` means a sandbox can reach cluster
 services. The probe only reports: nothing is blocked. `updatedAt`
 is the last start/attach write, not a heartbeat; rows persist through downtime and may be stale.

@@ -12,12 +12,30 @@ export interface ShardStatus {
   networkPolicy: NetworkPolicyState;
   networkPolicyCheckedAt: string | null;
   networkPolicyDetail: { state: string; reason: string } | null;
+  /** A probe an admin asked for that shard 0 has not taken yet; null on the other rows. */
+  probeRequestedAt: string | null;
   updatedAt: string;
 }
 
 export interface StatusReport {
   shards: ShardStatus[];
-  networkPolicy: { state: NetworkPolicyState; checkedAt: string | null } | null;
+  networkPolicy: {
+    state: NetworkPolicyState;
+    checkedAt: string | null;
+    requestedAt: string | null;
+  } | null;
+}
+
+/**
+ * A probe takes seconds to a minute; follow it while it runs, and while a request waits for shard 0 to take it (the
+ * state is still the old verdict until then).
+ */
+export function statusPollInterval(shards: readonly ShardStatus[] | undefined): number | false {
+  return shards?.some(
+    (shard) => shard.networkPolicy === "running" || shard.probeRequestedAt !== null,
+  ) === true
+    ? 3_000
+    : false;
 }
 
 export function getStatus(token: string, signal?: AbortSignal): Promise<StatusReport> {
@@ -72,7 +90,7 @@ export interface IsolationSummary {
   problems: string[];
   /** Normal states worth a muted line: no sandbox has started yet, so the runtime is not confirmed. */
   notes: string[];
-  /** A probe is running: not a problem, but not healthy yet either. */
+  /** A probe is running or asked for: not a problem, but not healthy yet either. */
   checking: boolean;
   /** The runtimes the sandboxes run under, for the healthy sentence. */
   runtimes: string[];
@@ -97,7 +115,9 @@ export function summarizeIsolation(shards: readonly ShardStatus[]): IsolationSum
     else if (shard.networkPolicy === "inconclusive")
       problems.push(`${who}the network isolation check was inconclusive.`);
   }
-  const checking = shards.some((shard) => shard.networkPolicy === "running");
+  const checking = shards.some(
+    (shard) => shard.networkPolicy === "running" || shard.probeRequestedAt !== null,
+  );
   const runtimes = [
     ...new Set(
       shards.flatMap((shard) => (shard.observedRuntime === null ? [] : [shard.observedRuntime])),

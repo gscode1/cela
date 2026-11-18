@@ -34,6 +34,7 @@ describe("shard status store", () => {
         networkPolicy: "unknown",
         networkPolicyCheckedAt: null,
         networkPolicyDetail: null,
+        probeRequestedAt: null,
         updatedAt: new Date(0),
       },
       {
@@ -43,12 +44,14 @@ describe("shard status store", () => {
         networkPolicy: "unknown",
         networkPolicyCheckedAt: null,
         networkPolicyDetail: null,
+        probeRequestedAt: null,
         updatedAt: new Date(0),
       },
     ];
     const query = vi.fn().mockResolvedValue({ rows });
     expect(await readShardStatus({ query } as unknown as pg.Pool)).toEqual(rows);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("order by shard"));
+    expect(query.mock.calls[0]?.[0]).toContain('probe_requested_at as "probeRequestedAt"');
   }, 1000);
 
   it("shows shard 0's isolation verdict on every row, with the detail on shard 0 only", async () => {
@@ -61,6 +64,7 @@ describe("shard status store", () => {
         networkPolicy: "enforced",
         networkPolicyCheckedAt: checked,
         networkPolicyDetail: { reason: "r" },
+        probeRequestedAt: new Date(9),
       },
       {
         ...base,
@@ -68,6 +72,7 @@ describe("shard status store", () => {
         networkPolicy: "unknown",
         networkPolicyCheckedAt: null,
         networkPolicyDetail: null,
+        probeRequestedAt: new Date(9),
       },
     ];
     const out = await readShardStatus({
@@ -76,6 +81,7 @@ describe("shard status store", () => {
     expect(out.map((r) => r.networkPolicy)).toEqual(["enforced", "enforced"]);
     expect(out[0]?.networkPolicyDetail).toEqual({ reason: "r" });
     expect(out[1]?.networkPolicyDetail).toBeNull();
+    expect(out.map((r) => r.probeRequestedAt)).toEqual([new Date(9), null]);
   }, 1000);
 
   it("records a probe result with its time and detail on the named shard", async () => {
