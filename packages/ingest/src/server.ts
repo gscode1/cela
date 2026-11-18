@@ -46,6 +46,11 @@ import {
   catalogKeys,
   readCapabilities,
   readMcpServers,
+  readEgress,
+  countDirectSessions,
+  directModeConflict,
+  DIRECT_NOT_ALLOWED,
+  networkModeOf,
   readProfile,
   readProfiles,
   readJsonObject,
@@ -69,6 +74,7 @@ import type {
   ModelChoice,
   ModelPolicy,
   Principal,
+  ProfileDefinition,
   ProfileSnapshot,
   SandboxSizes,
   SessionRow,
@@ -100,6 +106,8 @@ export interface IngestDeps {
   schemaReady: () => boolean;
   /** The deployment's sandbox sizes (`PI_SANDBOX_SIZES`); undefined: none, sessions get the unsized pool. */
   sandboxSizes?: SandboxSizes | undefined;
+  /** `networkMode: direct` is allowed (`PI_ALLOW_DIRECT_SANDBOX_EGRESS`, ADR 0038); default: refused with a 400. */
+  allowDirectSandboxEgress?: boolean | undefined;
 }
 
 export interface SettingsView {
@@ -195,6 +203,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       ...(session.failure === null ? {} : { failure: session.failure }),
       ...(session.usage === null ? {} : { usage: session.usage }),
       ...(session.sandboxSize === null ? {} : { sandboxSize: session.sandboxSize }),
+      networkMode: session.networkMode,
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,
@@ -358,6 +367,8 @@ async function handleAdminRoutes(
         detail: probed?.networkPolicyDetail ?? null,
         requestedAt: probed?.probeRequestedAt ?? null,
       },
+      // Unfiltered, unaudited sandboxes (ADR 0038); always 0 unless the chart allows direct egress.
+      directSessions: await countDirectSessions(deps.pool),
     });
     return;
   }
@@ -384,6 +395,20 @@ async function handleAdminRoutes(
       return;
     }
     sendJson(res, 200, deps.sandboxSizes ?? { sizes: [], defaultSize: null });
+    return;
+  }
+  if (parts[1] === "network-modes" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    // `direct` has no proxy, rules or audit: the console labels it unfiltered and unaudited (ADR 0038).
+    const directAllowed = deps.allowDirectSandboxEgress === true;
+    sendJson(res, 200, {
+      modes: directAllowed ? ["proxied", "direct"] : ["proxied"],
+      defaultMode: "proxied",
+      directAllowed,
+    });
     return;
   }
   if (parts[1] === "tools" && parts.length === 2) {
@@ -836,6 +861,8 @@ async function handleAdminProfiles(
         mcpServers: catalog.servers.map((stored) => stored.server.name),
         ...(models === undefined ? {} : { models }),
         sandboxSizes: (deps.sandboxSizes?.sizes ?? []).map((size) => size.name),
+        allowDirectEgress: deps.allowDirectSandboxEgress === true,
+        directConflict: directConflictOf(catalog.servers, await readEgress(deps.pool)),
       },
     );
     if (!result.ok) {
@@ -1056,6 +1083,16 @@ async function postSession(
     });
     return;
   }
+  const networkMode = networkModeOf(snapshot.definition);
+  if (networkMode === "direct") {
+    const refusal = await directRefusal(deps, snapshot.definition, repo !== undefined);
+    if (refusal !== undefined) {
+      sendJson(res, 400, {
+        error: `profile "${snapshot.name}" v${String(snapshot.version)}: ${refusal}`,
+      });
+      return;
+    }
+  }
   let sessionId: string;
   try {
     sessionId = await createSession(
@@ -1066,6 +1103,7 @@ async function postSession(
       snapshot,
       deps.shards ?? 1,
       sized.size,
+      networkMode,
     );
   } catch (error) {
     // The profile got a new version, was closed or deleted since it was read: nothing was stored.
@@ -1080,10 +1118,36 @@ async function postSession(
     model: model.model,
     ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
     ...(sized.size === null ? {} : { sandboxSize: sized.size }),
+    networkMode,
     ...(repo === undefined
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),
   });
+}
+
+/** `directModeConflict` over the catalog and the rules as they are now, for `checkProfileNames`. */
+function directConflictOf(
+  mcpServers: Parameters<typeof directModeConflict>[1]["mcpServers"],
+  egress: Parameters<typeof directModeConflict>[1]["egress"],
+): (definition: ProfileDefinition) => string | undefined {
+  return (definition) => directModeConflict(definition, { mcpServers, egress });
+}
+
+/**
+ * Why a new session of a `direct` profile is refused, or undefined (ADR 0038): the deployment does not allow it, the
+ * request names a repo (its credential would need the proxy), or the profile now has a credentialed MCP server or a
+ * `onecli` rule that applies to it (the catalog and the rules may have changed since the profile was written).
+ */
+async function directRefusal(
+  deps: IngestDeps,
+  definition: ProfileDefinition,
+  hasRepo: boolean,
+): Promise<string | undefined> {
+  if (deps.allowDirectSandboxEgress !== true) return DIRECT_NOT_ALLOWED;
+  if (hasRepo)
+    return "networkMode direct cannot be combined with a repo (its credential needs the egress proxy)";
+  const [catalog, egress] = await Promise.all([readMcpServers(deps.pool), readEgress(deps.pool)]);
+  return directModeConflict(definition, { mcpServers: catalog.servers, egress });
 }
 
 function parseProfileModel(key: string): { provider: string; model: string } {

@@ -364,6 +364,7 @@ describe("admin shard status", () => {
         detail: null,
         requestedAt: "1970-01-01T00:00:00.007Z",
       },
+      directSessions: 0,
     });
     expect((await call(base, "alice", "POST", "/admin/status")).status).toBe(405);
     expect((await call(base, "alice", "GET", "/admin/status/extra")).status).toBe(404);
