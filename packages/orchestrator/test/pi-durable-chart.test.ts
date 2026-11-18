@@ -934,17 +934,48 @@ describe("ingest.httpRoute and ingest.ingress (ADR 0026)", () => {
     expect(r.metadata.namespace ?? "ns").toBe("ns");
     expect(r.spec.parentRefs).toEqual([{ name: "main", namespace: "envoy-gateway-system" }]);
     expect(r.spec.hostnames).toEqual(["pi.example.lan"]);
+    const backendRefs = [{ kind: "Service", name: "pi-ingest", port: 8080 }];
     expect(r.spec.rules).toEqual([
       {
-        matches: [{ path: { type: "PathPrefix", value: "/" } }],
-        backendRefs: [{ kind: "Service", name: "pi-ingest", port: 8080 }],
+        matches: [{ path: { type: "RegularExpression", value: "/sessions/[^/]+/stream" } }],
+        timeouts: { request: "0s" },
+        backendRefs,
       },
+      { matches: [{ path: { type: "PathPrefix", value: "/" } }], backendRefs },
     ]);
+  });
+
+  it("gives the session stream no total limit and the other paths the configured timeout", () => {
+    const r = named(
+      docs([...external, ...envoy, ...route, ...sets("ingest.httpRoute.timeouts.request=30s")]),
+      "HTTPRoute",
+      "pi-ingest",
+    );
+    expect(r.spec.rules.map((rule: Obj) => rule.timeouts)).toEqual([
+      { request: "0s" },
+      { request: "30s" },
+    ]);
+    const unset = named(
+      docs([...external, ...envoy, ...route, ...sets("ingest.httpRoute.timeouts.stream=")]),
+      "HTTPRoute",
+      "pi-ingest",
+    );
+    expect(unset.spec.rules[0].timeouts).toBeUndefined();
+    expect(() =>
+      helmTemplate(chart, [
+        ...external,
+        ...envoy,
+        ...route,
+        ...sets("ingest.httpRoute.timeouts.stream=forever"),
+      ]),
+    ).toThrow(/stream|pattern|anyOf/);
   });
 
   it("routes only the operator paths when asked", () => {
     const only = sets("ingest.httpRoute.paths={/console,/admin}");
     const r = named(docs([...external, ...envoy, ...route, ...only]), "HTTPRoute", "pi-ingest");
+    // No stream rule: the paths do not reach /sessions/.
+    expect(r.spec.rules).toHaveLength(1);
     expect(r.spec.rules[0].matches.map((m: Obj) => m.path.value)).toEqual(["/console", "/admin"]);
   });
 

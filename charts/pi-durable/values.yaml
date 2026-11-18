@@ -161,7 +161,14 @@ ingest:
     hostnames: []
     paths: ["/"]
     annotations: {}
-  # networking.k8s.io/v1 Ingress. `tls` is the Ingress `spec.tls` list as is, for example
+    # Gateway API durations. `stream` is GET /sessions/{id}/stream (server-sent events, rendered as its own rule when
+    # `paths` cover /sessions/): "0s" means no total limit, because a session may run for days; a client resumes with
+    # Last-Event-ID. `request` is every other path; "" keeps the gateway's default (Envoy Gateway: 15s).
+    timeouts:
+      request: ""
+      stream: "0s"
+  # networking.k8s.io/v1 Ingress. Set stream timeouts with your controller's annotations (for example ingress-nginx
+  # nginx.ingress.kubernetes.io/proxy-read-timeout), since the session stream is long-lived. `tls` is the Ingress `spec.tls` list as is, for example
   #   [{ hosts: [pi.example.lan], secretName: pi-tls }]
   ingress:
     enabled: false
