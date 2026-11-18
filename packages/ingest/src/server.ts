@@ -350,6 +350,7 @@ async function handleAdminRoutes(
         state: probed?.networkPolicy ?? "unknown",
         checkedAt: probed?.networkPolicyCheckedAt ?? null,
         detail: probed?.networkPolicyDetail ?? null,
+        requestedAt: probed?.probeRequestedAt ?? null,
       },
     });
     return;
