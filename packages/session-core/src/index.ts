@@ -5,7 +5,17 @@ export { connectionOptions, DATABASE_TLS_MODES, loadDatabaseTls } from "./db-tls
 export type { DatabaseConnection, DatabaseTls, DatabaseTlsMode } from "./db-tls.js";
 export { FRONTMATTER_LIMITS, parseFrontmatter } from "./frontmatter.js";
 export type { FrontmatterResult } from "./frontmatter.js";
-export { BodyError, errorMessage, readJsonObject, sendJson, UUID } from "./http.js";
+export {
+  BODY_TIMEOUT_MS,
+  BodyError,
+  BodyTimeoutError,
+  errorMessage,
+  readBodyText,
+  readJsonObject,
+  sendBodyError,
+  sendJson,
+  UUID,
+} from "./http.js";
 export { applyMigrations } from "./migrate.js";
 export {
   chooseModel,

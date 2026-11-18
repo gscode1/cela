@@ -322,7 +322,7 @@
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "kubeApiCidrs", "dns", "ingest", "orchestrator"],
+      "required": ["provider", "kubeApiCidrs", "dns", "ingest", "orchestrator", "sandbox"],
       "properties": {
         "provider": {
           "enum": ["cilium", "standard"]
@@ -370,6 +370,27 @@
               "type": "array",
               "items": {
                 "type": "object"
+              }
+            }
+          }
+        },
+        "sandbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extraEgressExcept"],
+          "properties": {
+            "extraEgressExcept": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "anyOf": [
+                  {
+                    "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$"
+                  },
+                  {
+                    "pattern": "^[0-9a-fA-F:]*:[0-9a-fA-F:.]*/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$"
+                  }
+                ]
               }
             }
           }

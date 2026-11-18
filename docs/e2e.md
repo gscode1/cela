@@ -62,7 +62,9 @@ The operator machine does not build or ship code during a run. Node is used only
 ## What a run does
 
 1. **Sweep.** `tests/e2e/sweep.sh` deletes e2e namespaces older than 6 h (killed runs, forgotten `KEEP_NS=1`). It selects
-   by name prefix `pi-e2e-`, by the label `pi-durable-e2e=true` and by age, so `pi-durable-poc` cannot match.
+   by name prefix `pi-e2e-`, by the label `pi-durable-e2e=true` and by age, so `pi-durable-poc` cannot match. `run.sh` sets
+   `SWEEP_EXCLUDE=<its own namespace>`, so re-running a kept namespace (`RUN_ID=<id>`) after more than 6 h reuses it instead
+   of the sweep deleting it. `sweep.sh` alone honours the same variable.
 2. **Namespace.** Creates `pi-e2e-<id>` with the label `pi-durable-e2e=true` (the OneCLI ingress policy and the sweeper
    select on it) and the annotations `pi-durable-e2e/branch` and `/suite`. The label exists before the first Pod does,
    because Cilium takes a Pod's identity from its namespace labels when the Pod starts. The same `apply` (also on a reused

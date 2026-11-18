@@ -40,7 +40,7 @@ Files:
 
 These selectors are configuration, not required installation names. Set them in your values file
 (see the [chart README](../charts/pi-durable/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
-not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment.
+not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment with `networkPolicy.sandbox.extraEgressExcept` (IPv4 and IPv6 CIDRs, appended to the `except` lists of `sandbox-allow-internet-egress`): a public Kubernetes API endpoint, global IPv6 node and pod ranges, an external Postgres or OneCLI on a public IP, NAT64 `64:ff9b::/96`.
 
 Namespaces are matched with `kubernetes.io/metadata.name`.
 
@@ -62,7 +62,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | e2e driver | orchestrator, ingest | 8081, 8080 | direct calls, if a suite makes any | S e2e-driver-allow-egress |
 | orchestrator | sandboxes | (ingress side) | only the orchestrator may reach sandboxd | S sandbox-allow-orchestrator-ingress |
 | sandbox | OneCLI gateway | 10255 | credentialed traffic (repo sessions): credentials injected | S sandbox-allow-onecli-egress |
-| sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
+| sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs for every session (decision 2026-11-15) | S sandbox-allow-internet-egress |
 | orchestrator, ingest, sandboxes in this ns | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | orchestrator, ingest, sandboxes, e2e driver | CoreDNS | 53 | same, for every pod | same |
 | `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |

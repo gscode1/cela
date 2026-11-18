@@ -1,6 +1,13 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import { errorMessage, getSession, sendJson, UUID } from "@pi-durable-k8s/session-core";
+import {
+  errorMessage,
+  getSession,
+  readBodyText,
+  sendBodyError,
+  sendJson,
+  UUID,
+} from "@pi-durable-k8s/session-core";
 import type { Authenticator } from "@pi-durable-k8s/session-core";
 import type pg from "pg";
 import type { Host } from "./host.js";
@@ -28,17 +35,7 @@ export interface ServerDeps {
   control: boolean;
 }
 
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const buffer = chunk as Buffer;
-    size += buffer.length;
-    if (size > 64 * 1024) throw new Error("body too large");
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
+const readBody = (req: IncomingMessage): Promise<string> => readBodyText(req, 64 * 1024);
 
 /**
  * The orchestrator's HTTP surface.
@@ -143,7 +140,7 @@ async function handleControl(
     try {
       script = parseScript(await readBody(req));
     } catch (error) {
-      sendJson(res, 400, { error: errorMessage(error) });
+      sendBodyError(res, req, error);
       return;
     }
     sendJson(res, 201, await host.startSession(script));
@@ -155,7 +152,7 @@ async function handleControl(
     try {
       script = parseScript(await readBody(req));
     } catch (error) {
-      sendJson(res, 400, { error: errorMessage(error) });
+      sendBodyError(res, req, error);
       return;
     }
     const known = Number.isInteger(id) && (await host.sendInput(id, script));

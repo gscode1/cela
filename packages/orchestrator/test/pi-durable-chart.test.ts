@@ -470,6 +470,37 @@ describe("network policy invariants", () => {
         expect(dns.spec.egress[0].ports.map((p: Obj) => p.port)).toEqual([53, 53]);
       });
 
+      it("appends networkPolicy.sandbox.extraEgressExcept to the except list of its address family", () => {
+        const internet = named(
+          docs([
+            ...external,
+            ...insecure,
+            "--set-json",
+            'networkPolicy.sandbox.extraEgressExcept=["203.0.113.0/24","2001:db8::/32","64:ff9b::/96"]',
+          ]),
+          "NetworkPolicy",
+          "sandbox-allow-internet-egress",
+        );
+        const [v4, v6] = internet.spec.egress[0].to.map((t: Obj) => t.ipBlock.except as string[]);
+        expect(v4).toContain("10.0.0.0/8");
+        expect(v4).toContain("203.0.113.0/24");
+        expect(v4).not.toContain("2001:db8::/32");
+        expect(v6).toContain("fc00::/7");
+        expect(v6).toEqual(expect.arrayContaining(["2001:db8::/32", "64:ff9b::/96"]));
+        expect(v6).not.toContain("203.0.113.0/24");
+      });
+
+      it("rejects an extraEgressExcept entry that is not a CIDR", () => {
+        expect(() =>
+          docs([
+            ...external,
+            ...insecure,
+            "--set-json",
+            'networkPolicy.sandbox.extraEgressExcept=["10.0.0.1"]',
+          ]),
+        ).toThrow();
+      });
+
       it("lets a sandbox reach only DNS, the OneCLI gateway port and the public internet", () => {
         const egress = policies.filter(selectsSandbox).flatMap((p) => p.spec.egress ?? []);
         expect(egress.length).toBeGreaterThan(0);

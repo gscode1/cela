@@ -48,6 +48,7 @@ import {
   readProfile,
   readProfiles,
   readJsonObject,
+  sendBodyError,
   repoAllowed,
   readSettings,
   PROBE_SHARD,
@@ -462,7 +463,7 @@ async function handleAdminRoutes(
       body = await readJsonObject(req);
     } catch (error) {
       if (error instanceof BodyError) {
-        sendJson(res, 400, { error: error.message });
+        sendBodyError(res, req, error);
         return;
       }
       throw error;
@@ -632,7 +633,7 @@ async function handleAdminSkills(
       body = await readJsonObject(req, SKILL_BODY_LIMIT);
     } catch (error) {
       if (error instanceof BodyError) {
-        sendJson(res, 400, { error: error.message });
+        sendBodyError(res, req, error);
         return;
       }
       throw error;
@@ -796,7 +797,7 @@ async function handleAdminProfiles(
       body = await readJsonObject(req);
     } catch (error) {
       if (error instanceof BodyError) {
-        sendJson(res, 400, { error: error.message });
+        sendBodyError(res, req, error);
         return;
       }
       throw error;
@@ -940,7 +941,7 @@ async function handleAdminMcpServers(
       body = await readJsonObject(req);
     } catch (error) {
       if (error instanceof BodyError) {
-        sendJson(res, 400, { error: error.message });
+        sendBodyError(res, req, error);
         return;
       }
       throw error;
@@ -997,7 +998,7 @@ async function postSession(
     body = await readJsonObject(req);
   } catch (error) {
     if (error instanceof BodyError) {
-      sendJson(res, 400, { error: error.message });
+      sendBodyError(res, req, error);
       return;
     }
     throw error;
@@ -1140,7 +1141,7 @@ async function postEvent(
     parsed = parseEventBody(await readJsonObject(req));
   } catch (error) {
     if (error instanceof BodyError) {
-      sendJson(res, 400, { error: error.message });
+      sendBodyError(res, req, error);
       return;
     }
     throw error;

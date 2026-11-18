@@ -26,7 +26,7 @@ client <- ingest <--proxy SSE--------------------- orchestrator <--Conversation.
 
 ## Endpoints
 
-All routes except the probes and the console (below) need `Authorization: Bearer <token>`. Errors are JSON `{ "error": "..." }`.
+All routes except the probes and the console (below) need `Authorization: Bearer <token>`. Errors are JSON `{ "error": "..." }`. A request body must arrive within 30 s, else `408 { "error": "body not received in time" }` and the connection is closed (the server has no overall request timeout, so streams stay open).
 
 | Call | Success | Notes |
 |---|---|---|

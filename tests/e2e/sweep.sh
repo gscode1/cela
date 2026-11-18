@@ -5,6 +5,7 @@
 #   - its name starts with pi-e2e-
 #   - it carries the label pi-durable-e2e=true (set by run.sh when it creates the namespace)
 #   - it was created more than max-age hours ago (a run is bounded to 1 h per suite by the Job's activeDeadlineSeconds)
+# SWEEP_EXCLUDE=<namespace> never deletes that namespace (run.sh sets it to its own, so re-running a kept one works).
 # DRY_RUN=1 only lists them. KUBE_CONTEXT picks the cluster (default: the current context).
 set -euo pipefail
 
@@ -13,11 +14,13 @@ hours=${1:-${SWEEP_MAX_AGE_HOURS:-6}}
 [[ $hours =~ ^[0-9]+$ ]] || { echo "usage: tests/e2e/sweep.sh [max-age-hours]  (a whole number)" >&2; exit 64; }
 kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 
+exclude=${SWEEP_EXCLUDE:-}
 cutoff=$(($(date +%s) - hours * 3600))
 list=$(kc get namespaces -l pi-durable-e2e=true -o json)
-old=$(jq -r --argjson cutoff "$cutoff" '
+old=$(jq -r --argjson cutoff "$cutoff" --arg exclude "$exclude" '
   .items[]
   | select(.metadata.name | startswith("pi-e2e-"))
+  | select(.metadata.name != $exclude)
   | select((.metadata.creationTimestamp | fromdateiso8601) < $cutoff)
   | .metadata.name' <<<"$list")
 

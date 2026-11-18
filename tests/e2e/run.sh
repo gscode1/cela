@@ -136,8 +136,9 @@ trap cleanup EXIT
 kubectl config get-contexts ${ctx:-"$(kubectl config current-context)"} >/dev/null
 
 # ------------------------------------------------------------------ 0. the run namespace and its stack
-# Orphans of killed runs go first (this run's namespace does not exist yet). Never fails the run.
-[[ ${SKIP_SWEEP:-0} == 1 ]] || "$here/sweep.sh" || echo "sweep failed (ignored)" >&2
+# Orphans of killed runs go first. This run's own namespace is excluded: a kept one older than the age limit is
+# about to be reused, not orphaned. Never fails the run.
+[[ ${SKIP_SWEEP:-0} == 1 ]] || SWEEP_EXCLUDE=$ns "$here/sweep.sh" || echo "sweep failed (ignored)" >&2
 
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null | tr -c 'A-Za-z0-9._/\n-' '_' || true)
 if kc get namespace "$ns" >/dev/null 2>&1; then
