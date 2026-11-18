@@ -110,6 +110,8 @@ export interface SessionServiceOptions {
 }
 
 const DEFAULT_ABORT_WAIT_MS = 30_000;
+/** Reads of a run's rounds around the transcript read before the turn limit settles for what it has (`#turnLimit`). */
+const TURN_READ_TRIES = 5;
 
 /**
  * Maps API sessions onto Pi Durable and applies inbox events. One session = one conversation = one
@@ -122,6 +124,8 @@ export class SessionService {
   readonly #options: SessionServiceOptions;
   readonly streams = new StreamRegistry();
   readonly #creating = new Map<string, Promise<number>>();
+  /** Per conversation, the last queued `maxTurns` write (`#serialLimit`). */
+  readonly #limiting = new Map<number, Promise<void>>();
   readonly #watcher: RunWatcher;
   readonly #abortWaitMs: number;
 
@@ -455,19 +459,47 @@ export class SessionService {
     const definition = definitionOf(session);
     // Before every input, like the budget: a coding tool installed by a later release must not reach this session.
     await this.#host.applyProfileTools(conversationId, definition);
-    const { budget, used, limit } = await this.#turnLimit(session, conversationId);
-    if (budget - used <= 0) {
+    const exhausted = await this.#serialLimit(conversationId, async () => {
+      const { budget, used, limit } = await this.#turnLimit(session, conversationId);
+      if (budget - used <= 0) return "turns";
+      // Checked at admission only: one run may overshoot it, by at most what that run spends (ADR 0028).
+      const tokenBudget = definition.tokenBudget ?? this.#options.tokenBudget?.() ?? null;
+      if (tokenBudget !== null && (await this.#host.tokensUsed(conversationId)) >= tokenBudget) {
+        return "tokens";
+      }
+      await this.#host.limitTurns(conversationId, limit);
+      return undefined;
+    });
+    // Failing the session aborts the run and waits for it, so it happens outside the limit's queue.
+    if (exhausted === "turns") {
       const failure = terminalFailure({ reason: "turn_limit" });
       await this.#failSession(session.id, conversationId, failure ?? "turn budget exhausted");
       throw new PermanentError("turn budget exhausted");
     }
-    // Checked at admission only: one run may overshoot it, by at most what that run spends (ADR 0028).
-    const tokenBudget = definition.tokenBudget ?? this.#options.tokenBudget?.() ?? null;
-    if (tokenBudget !== null && (await this.#host.tokensUsed(conversationId)) >= tokenBudget) {
+    if (exhausted === "tokens") {
       await this.#failSession(session.id, conversationId, TOKEN_BUDGET_EXHAUSTED);
       throw new PermanentError("token budget exhausted");
     }
-    await this.#host.limitTurns(conversationId, limit);
+  }
+
+  /**
+   * Runs one read-compute-write of a conversation's `maxTurns` after the ones before it (#203). Admission and
+   * `#relimit` both write it; unordered, a limit computed before a run answered could land after the one computed once
+   * it had, and the next run would get more turns than are left. One orchestrator owns a conversation (its shard), so
+   * an in-process queue is enough.
+   */
+  async #serialLimit<T>(conversationId: number, work: () => Promise<T>): Promise<T> {
+    const previous = this.#limiting.get(conversationId) ?? Promise.resolve();
+    const result = previous.then(work);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#limiting.set(conversationId, tail);
+    void tail.then(() => {
+      if (this.#limiting.get(conversationId) === tail) this.#limiting.delete(conversationId);
+    });
+    return result;
   }
 
   /** The turn budget, the turns used, and the `maxTurns` the run in progress (or the next one) may have. */
@@ -476,9 +508,17 @@ export class SessionService {
     conversationId: number,
   ): Promise<{ budget: number; used: number; limit: number }> {
     const budget = definitionOf(session).turnBudget ?? this.#options.turnBudget();
-    // The run's rounds before the transcript: a round committed in between only makes the limit one lower, never higher.
-    const running = await this.#host.runTurns(conversationId);
-    const used = await this.#host.turnsUsed(conversationId);
+    // The run's rounds and the transcript are two reads. A round committed between them counts in `used` and not in
+    // `running`, and the limit comes out one too low; `turn_limit` is terminal, so the session would fail with a turn
+    // left. Read the rounds again after the transcript and start over until both reads agree.
+    let running = await this.#host.runTurns(conversationId);
+    let used = await this.#host.turnsUsed(conversationId);
+    for (let tries = 1; tries < TURN_READ_TRIES; tries += 1) {
+      const after = await this.#host.runTurns(conversationId);
+      if (after === running) break;
+      running = after;
+      used = await this.#host.turnsUsed(conversationId);
+    }
     return { budget, used, limit: Math.max(1, budget - Math.max(0, used - running)) };
   }
 
@@ -490,10 +530,10 @@ export class SessionService {
   async #relimit(watched: Watched): Promise<void> {
     const session = await getSession(this.#pool, watched.sessionId);
     if (session?.status !== "active" || session.conversationId !== watched.conversationId) return;
-    await this.#host.limitTurns(
-      watched.conversationId,
-      (await this.#turnLimit(session, watched.conversationId)).limit,
-    );
+    await this.#serialLimit(watched.conversationId, async () => {
+      const { limit } = await this.#turnLimit(session, watched.conversationId);
+      await this.#host.limitTurns(watched.conversationId, limit);
+    });
   }
 
   /**
