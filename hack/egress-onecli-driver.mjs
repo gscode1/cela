@@ -1,4 +1,4 @@
-/* global process, console, fetch */
+/* global process, console, fetch, URL */
 // Driver of hack/egress-onecli-smoke.sh (epic #50, slice 5, docs/decisions/0037-egress-onecli-route.md). It runs INSIDE the
 // orchestrator pod (`kubectl exec -i deploy/pi-orchestrator -- node --input-type=module -e "$(cat this file)" <command> ...`, cwd /app), so the
 // OneCLI admin key, the binding key and the database URL stay in the cluster, and it uses the orchestrator's own compiled
@@ -24,7 +24,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "/app/dist/config.js";
 import { OneCliAdmin } from "/app/dist/onecli-admin.js";
-import { Redacted } from "/app/dist/onecli.js";
 import { agentIdentifier, secretName } from "/app/dist/onecli-names.js";
 import { RepoAccess } from "/app/dist/repo-access.js";
 import { EgressPrincipals } from "/app/dist/egress.js";
