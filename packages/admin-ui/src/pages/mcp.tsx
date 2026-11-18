@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { useAuth } from "@/auth";
+import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { Alert } from "@/components/ui/alert";
@@ -9,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
 import { Time } from "@/components/time";
-import { ApiError } from "@/lib/api";
 import {
   deleteMcpServer,
   hostOf,
@@ -46,13 +46,7 @@ function DeletePanel({
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const referencing = profiles === undefined ? [] : profilesWithMcp(profiles, server.name);
-  const remove = useMutation({
-    mutationFn: () => deleteMcpServer(token ?? "", server.name, server.revision),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["mcp"] });
-      onClose();
-    },
-  });
+  const loading = profiles === undefined && profilesError === undefined;
   const disable = useMutation({
     mutationFn: () => putMcpServer(token ?? "", server.name, { enabled: false }, server.revision),
     onSuccess: async () => {
@@ -60,56 +54,44 @@ function DeletePanel({
       onClose();
     },
   });
-  const conflict = remove.error instanceof ApiError && remove.error.status === 409;
   return (
-    <Card aria-label={`Delete ${server.name}`}>
-      <CardHeader>
-        <CardTitle>Delete {server.name}?</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {profilesError !== undefined && (
-          <Alert variant="destructive">
-            Could not load the profiles that may use it: {profilesError}
-          </Alert>
-        )}
-        {profiles === undefined && profilesError === undefined && (
-          <p className="text-sm">Loading...</p>
-        )}
-        {referencing.length > 0 && (
-          <Alert variant="destructive">
-            Still used by <ProfileLinks profiles={referencing} />. Those profiles cannot be changed
-            until they drop it, and their sessions lose its tools. Disable it instead unless you
-            mean to remove it.
-          </Alert>
-        )}
-        {remove.isError && (
-          <Alert variant="destructive">
-            {conflict
-              ? "The server changed since this page loaded; close this and reload the list."
-              : remove.error.message}
-          </Alert>
-        )}
-        {disable.isError && <Alert variant="destructive">{disable.error.message}</Alert>}
-        <div className="flex flex-wrap gap-2">
-          {server.enabled && referencing.length > 0 && (
-            <Button size="sm" onClick={() => disable.mutate()} disabled={disable.isPending}>
-              Disable instead
-            </Button>
+    <DeleteConfirm
+      kind="MCP server"
+      name={server.name}
+      contents="its settings (the history keeps them)"
+      // A profile that names it keeps it from being deleted (ADR 0027): the API refuses, so the page does too.
+      blocked={referencing.length > 0 || loading}
+      note={
+        <>
+          {profilesError !== undefined && (
+            <Alert variant="destructive">
+              Could not load the profiles that may use it: {profilesError}
+            </Alert>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => remove.mutate()}
-            disabled={remove.isPending || (profiles === undefined && profilesError === undefined)}
-          >
-            Delete {server.name}
+          {loading && <p className="text-sm">Loading...</p>}
+          {referencing.length > 0 && (
+            <Alert variant="destructive">
+              Used by <ProfileLinks profiles={referencing} />: publish a version of each without it
+              first. To stop its tools now, disable it instead.
+            </Alert>
+          )}
+          {disable.isError && <Alert variant="destructive">{disable.error.message}</Alert>}
+        </>
+      }
+      actions={
+        server.enabled && referencing.length > 0 ? (
+          <Button size="sm" onClick={() => disable.mutate()} disabled={disable.isPending}>
+            Disable instead
           </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        ) : undefined
+      }
+      run={() => deleteMcpServer(token ?? "", server.name, server.revision)}
+      onDeleted={() => {
+        void queryClient.invalidateQueries({ queryKey: ["mcp"] });
+        onClose();
+      }}
+      onCancel={onClose}
+    />
   );
 }
 

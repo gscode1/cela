@@ -159,6 +159,21 @@ export function createFakeAdmin(): FakeAdmin {
             .map((version) => ({ ...version, createdAt: NOW })),
         });
       }
+      if (method === "DELETE") {
+        // The API's rules (ADR 0027): revision required, not the default, closed to new sessions.
+        admin.writes.push({ path: `DELETE ${route}`, body: {} });
+        const asked = Number(url.searchParams.get("expectedRevision"));
+        if (profile === undefined) return reply(404, { error: "profile not found" });
+        if (asked !== profile.revision) return reply(409, { error: "stale revision" });
+        const blockedBy = {
+          ...(admin.settings.defaultProfile === name ? { defaultProfile: true } : {}),
+          ...(profile.enabledForNew ? { enabledForNew: true } : {}),
+        };
+        if (Object.keys(blockedBy).length > 0)
+          return reply(409, { error: `profile "${name}" cannot be deleted`, blockedBy });
+        admin.profiles.splice(admin.profiles.indexOf(profile), 1);
+        return reply(200, { name, deleted: true, lastVersion: profile.currentVersion });
+      }
       const expected =
         typeof body.expectedRevision === "number" ? body.expectedRevision : undefined;
       if (expected !== undefined && expected !== profile?.revision)
