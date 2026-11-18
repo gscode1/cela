@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve } from "node:path";
@@ -152,39 +153,60 @@ describe("broker socket", () => {
   });
 });
 
+function spawnRelay(socketPath: string, nonce: string): ChildProcessWithoutNullStreams {
+  return spawn(
+    process.execPath,
+    [
+      relay[1] ?? "",
+      "--socket",
+      socketPath,
+      "--nonce",
+      nonce,
+      "--claim",
+      "c",
+      "serve",
+      "--token",
+      "x",
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+}
+
+function exitOf(child: ChildProcessWithoutNullStreams): Promise<number | null | "hung"> {
+  return Promise.race([
+    // `close`, not `exit`: only then has the relay's stdout been read to the end.
+    new Promise<number | null>((done) => child.once("close", (c) => done(c))),
+    new Promise<"hung">((done) => setTimeout(() => done("hung"), 8_000)),
+  ]);
+}
+
 describe("relay", () => {
-  it("exits when the broker ends the connection while stdin is still open", async () => {
+  it("exits non-zero when the broker ends the connection while stdin is still open", async () => {
     const broker = startBroker({
       start: () => Promise.reject(new Error("sandbox unreachable")),
       command: "unused",
     });
     await broker.ready;
-    const child = spawn(
-      process.execPath,
-      [
-        relay[1] ?? "",
-        "--socket",
-        broker.socketPath,
-        "--nonce",
-        broker.issueNonce(),
-        "--claim",
-        "c",
-        "serve",
-        "--token",
-        "x",
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    const child = spawnRelay(broker.socketPath, broker.issueNonce());
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     try {
-      // stdin stays open: only the broker's EOF can end the relay.
-      const code = await Promise.race([
-        new Promise<number | null>((done) => child.once("exit", (c) => done(c))),
-        new Promise<string>((done) => setTimeout(() => done("hung"), 8_000)),
-      ]);
-      expect(code).not.toBe("hung");
+      // stdin stays open: only the broker's EOF can end the relay, and that is a failure, not a clean shutdown.
+      expect(await exitOf(child)).toBe(1);
       expect(stderr).toContain("bridge: cannot start");
+    } finally {
+      child.kill("SIGKILL");
+      broker.close();
+    }
+  }, 15_000);
+
+  it("exits 0 when its stdin ends and the remote process exits cleanly", async () => {
+    const broker = startBroker({ start: localStart({ command: "cat", args: [] }), command: "cat" });
+    await broker.ready;
+    const child = spawnRelay(broker.socketPath, broker.issueNonce());
+    try {
+      child.stdin.end("hello\n");
+      expect(await exitOf(child)).toBe(0);
     } finally {
       child.kill("SIGKILL");
       broker.close();
