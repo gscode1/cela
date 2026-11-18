@@ -56,6 +56,8 @@ describe("admit (what POST /sessions does with no caller overrides)", () => {
       reasoningFrom: "settings",
       turnBudget: 100,
       turnBudgetFrom: "settings",
+      tokenBudget: null,
+      tokenBudgetFrom: "settings",
     });
   });
 
@@ -67,6 +69,7 @@ describe("admit (what POST /sessions does with no caller overrides)", () => {
           defaultModel: "scripted/scripted-2",
           reasoning: "off",
           turnBudget: 5,
+          tokenBudget: 40_000,
         }),
         version: 2,
       },
@@ -79,6 +82,8 @@ describe("admit (what POST /sessions does with no caller overrides)", () => {
       reasoningFrom: "profile",
       turnBudget: 5,
       turnBudgetFrom: "profile",
+      tokenBudget: 40_000,
+      tokenBudgetFrom: "profile",
     });
   });
 

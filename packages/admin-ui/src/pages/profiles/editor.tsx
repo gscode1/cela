@@ -340,6 +340,22 @@ export function ProfileEditor({
               }}
             />
           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="profile-token-budget">{fieldLabel("tokenBudget")}</Label>
+            <Input
+              id="profile-token-budget"
+              inputMode="numeric"
+              placeholder={
+                settingsValues === undefined
+                  ? ""
+                  : `Inherit (global: ${String(settingsValues.tokenBudget ?? "no limit")})`
+              }
+              value={form.tokenBudget}
+              onChange={(event) => {
+                edit({ tokenBudget: event.target.value });
+              }}
+            />
+          </div>
           <McpPicker
             selected={form.mcpServers}
             catalog={mcp.data}

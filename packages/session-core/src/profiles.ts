@@ -38,6 +38,8 @@ const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_LIST = 32;
 const MAX_INSTRUCTIONS = 8_000;
 const MAX_TURN_BUDGET = 1_000_000;
+/** Same bound as the settings' tokenBudget (settings.ts). */
+const MAX_TOKEN_BUDGET = 1_000_000_000_000;
 const MAX_MODEL = 200;
 /** Postgres text and jsonb reject NUL, and jsonb the `\udXXX` escape JSON.stringify emits for a lone surrogate. */
 const unstorable = (text: string): boolean => text.includes("\u0000") || !text.isWellFormed();
@@ -49,6 +51,7 @@ const KEYS = [
   "defaultModel",
   "reasoning",
   "turnBudget",
+  "tokenBudget",
   "mcpServers",
   "skills",
   "repoSkills",
@@ -57,7 +60,7 @@ const KEYS = [
 
 /**
  * What a profile decides. Every field is optional; an absent field means "as without profiles": all coding tools, all
- * of them offered, no extra instructions, the settings' model, reasoning and turn budget, no MCP. This is also the wire
+ * of them offered, no extra instructions, the settings' model, reasoning, turn and token budgets, no MCP. This is also the wire
  * shape of the admin API.
  */
 export interface ProfileDefinition {
@@ -73,6 +76,8 @@ export interface ProfileDefinition {
   reasoning?: ThinkingLevel;
   /** Model turns the session may use in total; replaces the settings' budget. */
   turnBudget?: number;
+  /** Tokens the session may use in total (ADR 0028); replaces the settings' budget, including its "no limit". */
+  tokenBudget?: number;
   /** Names of MCP catalog servers the session gets (`mcp-<name>` extensions plus `tool_search`); absent: none. */
   mcpServers?: string[];
   /**
@@ -188,6 +193,18 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
       return `turnBudget must be an integer from 1 to ${String(MAX_TURN_BUDGET)}`;
     }
     definition.turnBudget = budget;
+  }
+  if (body.tokenBudget !== undefined) {
+    const budget = body.tokenBudget;
+    if (
+      typeof budget !== "number" ||
+      !Number.isInteger(budget) ||
+      budget < 1 ||
+      budget > MAX_TOKEN_BUDGET
+    ) {
+      return `tokenBudget must be an integer from 1 to ${String(MAX_TOKEN_BUDGET)}`;
+    }
+    definition.tokenBudget = budget;
   }
   if (body.mcpServers !== undefined) {
     const servers = nameList("mcpServers", body.mcpServers, MCP_SERVER_NAME, "MCP server");

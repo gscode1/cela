@@ -32,6 +32,10 @@ export function AdmissionPreview({ admission }: { admission: Admission }) {
               <dd>
                 {admission.turnBudget} ({SOURCE[admission.turnBudgetFrom]})
               </dd>
+              <dt className="text-muted-foreground">Token budget</dt>
+              <dd>
+                {admission.tokenBudget ?? "no limit"} ({SOURCE[admission.tokenBudgetFrom]})
+              </dd>
             </dl>
           ) : (
             <Alert variant="warning" data-testid="refusal">

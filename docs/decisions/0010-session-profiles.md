@@ -23,7 +23,7 @@ restart, and that never alter a session that already runs.
   optional, and absent means "as without profiles":
   `tools` (enabled coding tools; absent: all), `modelTools` (offered to the model, a subset of `tools`; absent: all
   enabled), `instructions` (at most 8000 characters), `defaultModel` (`provider/model`), `reasoning`, `turnBudget` (1 to
-  1000000), `mcpServers` (catalog names; absent: none).
+  1000000), `tokenBudget` (1 to 1000000000000; [0028](0028-token-budget.md)), `mcpServers` (catalog names; absent: none).
   Shape is validated everywhere; names are checked against what exists only when an admin writes a new version
   (`checkProfileNames`): tools against `inbox.orchestrator_capabilities`, MCP servers against the catalog (enabled or
   not). A read never fails because a name stopped resolving: that would turn a removed tool into a lost profile.
@@ -65,7 +65,8 @@ restart, and that never alter a session that already runs.
   `mcp-<name>` extension per server, through `extensions: { add }`: the host default stays pinned to `coding`, so no
   extension reaches a session that did not select it. Both creation paths (the inbox and the stream) go through
   `SessionService.ensureConversation`, so both use the snapshot. The turn budget is `snapshot.turnBudget` when set, else
-  the settings' value (read per input as before); it replaces the global one for that session.
+  the settings' value (read per input as before); it replaces the global one for that session. The token budget works
+  the same way: `snapshot.tokenBudget` when set, else the `tokenBudget` setting (#184).
 - **Names against reality.** At its start the orchestrator publishes its installed coding tool and extension names to
   `inbox.orchestrator_capabilities` (one row) and logs `profile-unresolved` for any stored profile whose tools no longer
   resolve (a warning: such a session has fewer tools, never more). Ingest checks admin writes against that row; before

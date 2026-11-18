@@ -25,10 +25,16 @@ Pi Durable already keeps the ledger: each conversation's `pi.usage` document hol
   need a generation hook that ends the run, which Pi Durable 1.5.2 offers no clean way to do (`beforeRequest` can only
   replace the messages). We revisit it if the overshoot matters in practice.
 - **Not in this decision:**
-  - a per-profile `tokenBudget` (#184). The console's profile editor rebuilds the definition from its form, so a field it does
-    not know would be dropped on the next save; it needs editor support first.
   - showing usage on the session API (#185). Ingest has no Harness, so the orchestrator would have to publish usage.
   - a cost budget in money. Costs come from pi-ai's catalog and are not known for every provider; tokens are.
+
+## Addendum: per-profile budget (#184)
+
+A profile may set `tokenBudget` (1 to 1000000000000). It replaces the setting for that profile's sessions, also when the
+setting is `null` (no limit): `definition.tokenBudget ?? settings.tokenBudget`, from the session's profile snapshot like
+`turnBudget`. A profile cannot say "no limit" under a global budget; leaving the field out inherits the setting. The
+console's editor, diff, preview and admission check carry the field, so a save from the console keeps a value set
+through the API.
 
 ## Consequences
 

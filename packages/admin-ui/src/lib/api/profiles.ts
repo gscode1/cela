@@ -19,6 +19,7 @@ export interface ProfileDefinition {
   defaultModel?: string;
   reasoning?: ReasoningLevel;
   turnBudget?: number;
+  tokenBudget?: number;
   mcpServers?: string[];
   skills?: SkillPin[];
   repoSkills?: boolean;

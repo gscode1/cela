@@ -225,7 +225,7 @@ model.
   the turn limit again for a run queued behind it ([ADR 0029](decisions/0029-run-outcomes-from-wait.md)).
 - **Turn budget.** The budget is checked before each input: the session profile's `turnBudget` if it has one, else the live `turnBudget` setting in Postgres (`PI_SESSION_TURN_BUDGET` only seeds that setting). A session that used all its turns becomes
   `failed` with "turn budget exhausted".
-- **Token budget.** The `tokenBudget` setting (null: no limit) is checked before each input against the tokens the
+- **Token budget.** The session profile's `tokenBudget` if it has one, else the `tokenBudget` setting (null: no limit), is checked before each input against the tokens the
   conversation's `pi.usage` records, every model and attempt included. A session at or over it becomes `failed` with
   "token budget exhausted". It is checked between inputs, so one run can go past it
   ([ADR 0028](decisions/0028-token-budget.md)). A concurrency cap comes later.

@@ -15,7 +15,8 @@ import type { ReasoningLevel, SettingsValues } from "@/lib/api/settings";
  *   again, because `validateSettings` (settings.ts) already refuses one above `maxReasoning`.
  * - `policyOf` and `validateSettings` (packages/session-core/src/settings.ts): the allowlist has the default model first
  *   and always, so a session without a model cannot be refused.
- * - The turn budget is `definition.turnBudget ?? settings.turnBudget` (packages/orchestrator/src/sessions.ts).
+ * - The turn budget is `definition.turnBudget ?? settings.turnBudget`, the token budget `definition.tokenBudget ??
+ *   settings.tokenBudget` (packages/orchestrator/src/sessions.ts).
  *
  * Provider availability, credentials and whether the model supports reasoning are only known at the first turn, so the
  * preview cannot show them.
@@ -37,6 +38,9 @@ export interface Admitted {
   reasoningFrom: "profile" | "settings" | "none";
   turnBudget: number;
   turnBudgetFrom: "profile" | "settings";
+  /** Null: no limit. */
+  tokenBudget: number | null;
+  tokenBudgetFrom: "profile" | "settings";
 }
 
 export type RefusalKind = "missing" | "invalid" | "disabled" | "model" | "reasoning";
@@ -109,6 +113,8 @@ export function admit(settings: SettingsValues, profile: ProfileSubject): Admiss
           : "settings",
     turnBudget: definition.turnBudget ?? settings.turnBudget,
     turnBudgetFrom: definition.turnBudget === undefined ? "settings" : "profile",
+    tokenBudget: definition.tokenBudget ?? settings.tokenBudget ?? null,
+    tokenBudgetFrom: definition.tokenBudget === undefined ? "settings" : "profile",
   };
 }
 

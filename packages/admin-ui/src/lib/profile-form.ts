@@ -10,6 +10,7 @@ const MAX_LIST = 32;
 const MAX_SKILLS = 20;
 const MAX_INSTRUCTIONS = 8_000;
 const MAX_TURN_BUDGET = 1_000_000;
+const MAX_TOKEN_BUDGET = 1_000_000_000_000;
 const MAX_MODEL = 200;
 
 /**
@@ -26,6 +27,7 @@ export interface ProfileForm {
   /** Empty for no override; `off` is an override. */
   reasoning: ReasoningLevel | "";
   turnBudget: string;
+  tokenBudget: string;
   mcpServers: string[];
   skills: SkillPin[];
   repoSkills: boolean;
@@ -42,6 +44,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     defaultModel: definition.defaultModel ?? "",
     reasoning: definition.reasoning ?? "",
     turnBudget: definition.turnBudget === undefined ? "" : String(definition.turnBudget),
+    tokenBudget: definition.tokenBudget === undefined ? "" : String(definition.tokenBudget),
     mcpServers: definition.mcpServers ?? [],
     skills: definition.skills ?? [],
     repoSkills: definition.repoSkills ?? false,
@@ -50,7 +53,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
 }
 
 /**
- * The definition a form stands for. A cleared override (model, reasoning, turn budget, instructions) is left out, never
+ * The definition a form stands for. A cleared override (model, reasoning, turn or token budget, instructions) is left out, never
  * sent as an empty value. `original` is the definition the form started from: where the form says "none" and the original
  * said it with an explicit empty list or `false`, that spelling is kept, so an edit elsewhere does not create a version
  * through a mere change of spelling.
@@ -66,6 +69,7 @@ export function definitionFromForm(
   if (form.defaultModel.trim() !== "") definition.defaultModel = form.defaultModel.trim();
   if (form.reasoning !== "") definition.reasoning = form.reasoning;
   if (form.turnBudget.trim() !== "") definition.turnBudget = Number(form.turnBudget.trim());
+  if (form.tokenBudget.trim() !== "") definition.tokenBudget = Number(form.tokenBudget.trim());
   if (form.mcpServers.length > 0 || original.mcpServers !== undefined)
     definition.mcpServers = form.mcpServers;
   // The API drops an empty `skills`, so it is never sent.
@@ -117,6 +121,12 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
   const budget = definition.turnBudget;
   if (budget !== undefined && (!Number.isInteger(budget) || budget < 1 || budget > MAX_TURN_BUDGET))
     problems.push(`turnBudget must be an integer from 1 to ${String(MAX_TURN_BUDGET)}`);
+  const tokens = definition.tokenBudget;
+  if (
+    tokens !== undefined &&
+    (!Number.isInteger(tokens) || tokens < 1 || tokens > MAX_TOKEN_BUDGET)
+  )
+    problems.push(`tokenBudget must be an integer from 1 to ${String(MAX_TOKEN_BUDGET)}`);
   const servers = definition.mcpServers;
   if (
     servers !== undefined &&
@@ -232,6 +242,7 @@ export function isEmptyForm(form: ProfileForm): boolean {
     form.defaultModel.trim() === "" &&
     form.reasoning === "" &&
     form.turnBudget.trim() === "" &&
+    form.tokenBudget.trim() === "" &&
     form.mcpServers.length === 0 &&
     form.skills.length === 0 &&
     !form.repoSkills &&

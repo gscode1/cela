@@ -439,7 +439,7 @@ export class SessionService {
       throw new PermanentError("turn budget exhausted");
     }
     // Checked at admission only: one run may overshoot it, by at most what that run spends (ADR 0028).
-    const tokenBudget = this.#options.tokenBudget?.() ?? null;
+    const tokenBudget = definition.tokenBudget ?? this.#options.tokenBudget?.() ?? null;
     if (tokenBudget !== null && (await this.#host.tokensUsed(conversationId)) >= tokenBudget) {
       await this.#failSession(session.id, conversationId, TOKEN_BUDGET_EXHAUSTED);
       throw new PermanentError("token budget exhausted");

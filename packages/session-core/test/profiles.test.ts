@@ -23,6 +23,7 @@ describe("validateProfileDefinition", () => {
     const full = validateProfileDefinition({
       mcpServers: ["demo", "demo", "other"],
       turnBudget: 12,
+      tokenBudget: 250_000,
       reasoning: "low",
       defaultModel: "openrouter/openai/gpt-4.1-nano",
       instructions: "Only read.",
@@ -36,6 +37,7 @@ describe("validateProfileDefinition", () => {
       defaultModel: "openrouter/openai/gpt-4.1-nano",
       reasoning: "low",
       turnBudget: 12,
+      tokenBudget: 250_000,
       mcpServers: ["demo", "other"],
     });
     expect(Object.keys(full as object)).toEqual([
@@ -45,6 +47,7 @@ describe("validateProfileDefinition", () => {
       "defaultModel",
       "reasoning",
       "turnBudget",
+      "tokenBudget",
       "mcpServers",
     ]);
   });
@@ -71,6 +74,11 @@ describe("validateProfileDefinition", () => {
     [{ turnBudget: 1.5 }, "turnBudget"],
     [{ turnBudget: 1_000_001 }, "turnBudget"],
     [{ turnBudget: "5" }, "turnBudget"],
+    [{ tokenBudget: 0 }, "tokenBudget"],
+    [{ tokenBudget: 1.5 }, "tokenBudget"],
+    [{ tokenBudget: 1_000_000_000_001 }, "tokenBudget"],
+    [{ tokenBudget: null }, "tokenBudget"],
+    [{ tokenBudget: "5" }, "tokenBudget"],
     [{ mcpServers: ["Bad Name"] }, "mcpServers must contain only MCP server names"],
     [{ mcpServers: "demo" }, "mcpServers must be an array"],
   ])("rejects %j", (input, message) => {

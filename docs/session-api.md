@@ -227,7 +227,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   layer). For a model without reasoning the provider layer ignores or clamps the level (`docs/model-credentials.md`), so
   the stored value is the request, not a guarantee of effect. Revisit if an operator needs that refused at the API.
 - **`failed` is terminal.** A model error that reads as rejected credentials (401, 403 or 407 from the provider or
-  the OneCLI gateway), or a session that used up its turn budget (the `turnBudget` setting, model turns in total, read before every input) or its token budget (the `tokenBudget` setting, tokens in total from Pi Durable's `pi.usage`, read before every input; ADR 0028),
+  the OneCLI gateway), or a session that used up its turn budget (the profile's or else the `turnBudget` setting, model turns in total, read before every input) or its token budget (the profile's or else the `tokenBudget` setting, tokens in total from Pi Durable's `pi.usage`, read before every input; ADR 0028),
   sets `status: "failed"` and `failure` to a fixed message such as "model credentials were rejected (401/403): the
   OneCLI agent token or its grant for this provider is missing or revoked". From then on `POST .../events` returns
   `409 session is failed`, queued events end `failed`, and nothing more is sent to the provider. The transcript and
@@ -389,6 +389,7 @@ with `profile` on `POST /sessions`. A definition is a JSON object whose fields a
 | `instructions` | text added to the system prompt (at most 8000 characters) | none |
 | `defaultModel`, `reasoning` | the model and effort when the request names none; checked against the allowlist and `maxReasoning` at creation | the settings' |
 | `turnBudget` | model turns the session may use in total; replaces the settings' budget for it | the settings' |
+| `tokenBudget` | tokens the session may use in total (1 to 1000000000000, ADR 0028); replaces the settings' budget for it, also when that is `null` (no limit) | the settings' |
 | `mcpServers` | names of MCP catalog servers; the session gets `tool_search` and their tools | no MCP |
 | `skills` | `[{ name, version }]`: exact skill versions (at most 20); see Skills | none |
 | `repoContext` | `true`: add the repo's `AGENTS.md` / `CLAUDE.md` to the session's instructions as project instructions; see Repo context (ignored without a repo) | off |
