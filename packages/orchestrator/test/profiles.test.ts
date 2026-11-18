@@ -244,6 +244,68 @@ describe("SessionService with profiles", () => {
     expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
     svc.stop();
   });
+
+  it("a steer sent mid-run does not count the running run's turns twice (#177)", async () => {
+    // `hold` blocks until released, so the steer arrives while round 3 of the run is in progress.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const hold = defineTool<object>({
+      name: "hold",
+      description: "returns at once twice, then waits to be released",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        calls += 1;
+        if (calls === 3) await held;
+        return { output: [{ type: "text", text: "ok" }] };
+      },
+    });
+    const host = await Host.open(
+      new MemoryStorage(),
+      config,
+      (error) => {
+        throw error;
+      },
+      () => Promise.resolve("session"),
+      {},
+      [],
+      { codingExtension: defineExtension({ name: "coding", tools: [hold] }) },
+    );
+    hosts.push(host);
+    const { service: svc, queries } = service(host);
+    const conversationId = await host.createConversation(MODEL, { turnBudget: 6 });
+    const profiled = session(
+      { name: "six", version: 1, snapshot: { turnBudget: 6 } },
+      conversationId,
+    );
+    const script = (steps: number) =>
+      JSON.stringify({
+        steps: Array.from({ length: steps }, () => ({ tool: "hold", args: {} })),
+        final: "finished",
+      });
+
+    await svc.apply(message(script(3), "1"), profiled);
+    for (let i = 0; i < 200 && (await host.runTurns(conversationId)) < 3; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await host.runTurns(conversationId)).toBe(3);
+
+    // 3 of 6 used, all by the running run: it may take 3 more rounds. Counting them twice left it 0 and ended it.
+    await svc.apply({ ...message(script(2), "2"), kind: "steer" }, profiled);
+    release();
+    let state = await host.submissionState(conversationId, "2");
+    for (let i = 0; i < 400 && state?.status !== "done" && state?.status !== "unanswered"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      state = await host.submissionState(conversationId, "2");
+    }
+    expect(state?.status).toBe("done");
+    expect((await host.status(conversationId))?.answer).toBe("finished");
+    expect(await host.turnsUsed(conversationId)).toBe(6); // 5 rounds and the answer, within the budget of 6
+    expect(queries.some((q) => q.sql.includes("status = 'failed'"))).toBe(false);
+    svc.stop();
+  });
 });
 
 describe("publishAndCheckProfiles", () => {
@@ -386,6 +448,7 @@ describe("a coding tool installed by a later release", () => {
         applied.push(definition);
         return Promise.resolve();
       },
+      runTurns: () => Promise.resolve(0),
       turnsUsed: () => Promise.resolve(0),
       limitTurns: () => Promise.resolve(),
       submitInput: () => Promise.resolve(),

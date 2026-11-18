@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Message, Models } from "@earendil-works/pi-ai";
-import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, LiveDoc } from "@earendil-works/pi-durable";
 import type {
   Conversation,
   ConversationId,
@@ -439,6 +439,15 @@ export class Host {
     const filters = toolFilters(this.#coding.tools ?? [], definition);
     if (filters.tools === undefined && filters.modelTools === undefined) return;
     await (await this.#conversation(id)).configure(filters, context);
+  }
+
+  /**
+   * Tool rounds of the run in progress (`pi.live.run.turns`), 0 when idle. `maxTurns` is compared with this per-run
+   * count, not with the transcript, so the budget check needs it to know what the running run may still take.
+   */
+  async runTurns(id: number): Promise<number> {
+    const live = await this.#harness.snapshot(LiveDoc, id as ConversationId, context);
+    return live?.run?.turns ?? 0;
   }
 
   /** Caps the tool rounds of any run of this conversation, so one run cannot overshoot the session's turn budget. */

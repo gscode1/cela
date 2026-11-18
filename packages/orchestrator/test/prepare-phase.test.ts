@@ -346,6 +346,7 @@ function service(prepare: () => Promise<void>) {
     workspaceEnv: () => Promise.resolve({}),
     abort: () => Promise.resolve(),
     applyProfileTools: () => Promise.resolve(),
+    runTurns: () => Promise.resolve(0),
     turnsUsed: () => Promise.resolve(0),
     limitTurns: () => Promise.resolve(),
     hasSubmission: () => Promise.resolve(false),
