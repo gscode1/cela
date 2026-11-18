@@ -12,6 +12,7 @@ import {
   BUILTIN_TOOL_NAMES,
   buildZip,
   chooseModel,
+  chooseSandboxSize,
   chooseRepo,
   createSession,
   enqueueEvent,
@@ -66,6 +67,7 @@ import type {
   ModelPolicy,
   Principal,
   ProfileSnapshot,
+  SandboxSizes,
   SessionRow,
   Settings,
   SkillVersionMeta,
@@ -93,6 +95,8 @@ export interface IngestDeps {
   consoleCatalogs?: ConsoleCatalogs | undefined;
   /** False until the inbox schema is migrated; liveness does not wait for it, readiness and the API do. */
   schemaReady: () => boolean;
+  /** The deployment's sandbox sizes (`PI_SANDBOX_SIZES`); undefined: none, sessions get the unsized pool. */
+  sandboxSizes?: SandboxSizes | undefined;
 }
 
 export interface SettingsView {
@@ -187,6 +191,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       ...(session.repo === null ? {} : { repo: session.repo }),
       ...(session.failure === null ? {} : { failure: session.failure }),
       ...(session.usage === null ? {} : { usage: session.usage }),
+      ...(session.sandboxSize === null ? {} : { sandboxSize: session.sandboxSize }),
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,
@@ -363,6 +368,14 @@ async function handleAdminRoutes(
       requested: asked === "requested",
       state: asked === "running" ? "running" : "requested",
     });
+    return;
+  }
+  if (parts[1] === "sandbox-sizes" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    sendJson(res, 200, deps.sandboxSizes ?? { sizes: [], defaultSize: null });
     return;
   }
   if (parts[1] === "tools" && parts.length === 2) {
@@ -809,6 +822,7 @@ async function handleAdminProfiles(
         tools: installed.tools,
         mcpServers: catalog.servers.map((stored) => stored.server.name),
         ...(models === undefined ? {} : { models }),
+        sandboxSizes: (deps.sandboxSizes?.sizes ?? []).map((size) => size.name),
       },
     );
     if (!result.ok) {
@@ -1014,9 +1028,27 @@ async function postSession(
     sendJson(res, 400, { error: repo });
     return;
   }
+  const sized = chooseSandboxSize(deps.sandboxSizes, snapshot.definition, body.sandboxSize);
+  if ("error" in sized) {
+    sendJson(res, 400, {
+      error:
+        body.sandboxSize === undefined
+          ? `profile "${snapshot.name}" v${String(snapshot.version)}: ${sized.error}`
+          : sized.error,
+    });
+    return;
+  }
   let sessionId: string;
   try {
-    sessionId = await createSession(deps.pool, principal, model, repo, snapshot, deps.shards ?? 1);
+    sessionId = await createSession(
+      deps.pool,
+      principal,
+      model,
+      repo,
+      snapshot,
+      deps.shards ?? 1,
+      sized.size,
+    );
   } catch (error) {
     // The profile got a new version, was closed or deleted since it was read: nothing was stored.
     if (!(error instanceof StaleProfileError)) throw error;
@@ -1029,6 +1061,7 @@ async function postSession(
     provider: model.provider,
     model: model.model,
     ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+    ...(sized.size === null ? {} : { sandboxSize: sized.size }),
     ...(repo === undefined
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),

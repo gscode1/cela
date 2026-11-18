@@ -89,6 +89,7 @@ describe("SessionService when an abort does not go idle in time", () => {
     workspaceReadyAt: null,
     profile: null,
     usage: null,
+    sandboxSize: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

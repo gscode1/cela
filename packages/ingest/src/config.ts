@@ -1,7 +1,12 @@
-import { loadDatabaseTls, parseAdmins, settingsFromEnv } from "@pi-durable-k8s/session-core";
+import {
+  loadDatabaseTls,
+  parseAdmins,
+  parseSandboxSizes,
+  settingsFromEnv,
+} from "@pi-durable-k8s/session-core";
 import { parseConsoleCatalogs } from "./console.js";
 import type { ConsoleCatalogs } from "./console.js";
-import type { DatabaseTls, Settings } from "@pi-durable-k8s/session-core";
+import type { DatabaseTls, SandboxSizes, Settings } from "@pi-durable-k8s/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
 export interface IngestConfig {
@@ -30,6 +35,8 @@ export interface IngestConfig {
   consoleDir: string | undefined;
   /** `PI_CONSOLE_CATALOGS` (`manage` or `readOnly`, from the chart's `console.catalogs`). */
   consoleCatalogs: ConsoleCatalogs;
+  /** `PI_SANDBOX_SIZES` and `PI_SANDBOX_DEFAULT_SIZE` (docs/decisions/0030-sandbox-sizes.md); undefined: no sizes. */
+  sandboxSizes: SandboxSizes | undefined;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -80,5 +87,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     admins: parseAdmins(env.PI_API_ADMINS),
     consoleDir: env.PI_CONSOLE_DIR?.trim() || undefined,
     consoleCatalogs: parseConsoleCatalogs(env.PI_CONSOLE_CATALOGS),
+    sandboxSizes: parseSandboxSizes(env),
   };
 }

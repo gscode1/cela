@@ -122,6 +122,7 @@ async function setup(repo: SessionRow["repo"]) {
     workspaceReadyAt: null,
     profile: null,
     usage: null,
+    sandboxSize: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };

@@ -32,7 +32,10 @@ export interface OrchestratorConfig {
   /** Which shard this orchestrator is; it owns the schema of that shard and the sessions assigned to it (ADR 0017). */
   shard: number;
   namespace: string;
-  /** SandboxWarmPool every session's claim references. */
+  /**
+   * The unsized SandboxWarmPool (`PI_ORCH_WARMPOOL`): what a session without a size references, and the prefix of the
+   * sized pools (`<warmPool>-<size>`, docs/decisions/0030-sandbox-sizes.md).
+   */
   warmPool: string;
   port: number;
   /** Names this process in pg_stat_activity and logs. */

@@ -30,6 +30,7 @@ describe("sharded store functions", () => {
       undefined,
       undefined,
       3,
+      "m",
     );
     // One transaction: the catalog lock shared (ADR 0027), then the insert.
     expect(calls.map((call) => call.sql.split("(")[0]?.trim())).toEqual([
@@ -39,7 +40,10 @@ describe("sharded store functions", () => {
       "commit",
     ]);
     const insert = calls[2];
-    expect(insert?.params.at(-1)).toBe(3);
+    // $12 is the shard count, $13 the sandbox size (ADR 0030).
+    expect(insert?.params[11]).toBe(3);
+    expect(insert?.params[12]).toBe("m");
+    expect(insert?.sql).toMatch(/shard, sandbox_size\)/);
     expect(insert?.sql).toMatch(/generate_series\(0, \$12::int - 1\)/);
     expect(insert?.sql).toMatch(/status = 'active'/);
     expect(insert?.sql).toMatch(/order by coalesce\(a\.n, 0\), c\.shard limit 1/);
@@ -48,9 +52,10 @@ describe("sharded store functions", () => {
   it("createSession defaults to a single shard", async () => {
     const { calls, db } = recorder();
     await createSession(db, { owner: "a", subject: "s" }, { provider: "p", model: "m" });
-    expect(
-      calls.find((call) => call.sql.includes("insert into inbox.sessions"))?.params.at(-1),
-    ).toBe(1);
+    const params = calls.find((call) => call.sql.includes("insert into inbox.sessions"))?.params;
+    expect(params?.[11]).toBe(1);
+    // No size: the session uses the unsized pool.
+    expect(params?.[12]).toBeNull();
   });
 
   it("looks a session up by shard and conversation id together", async () => {

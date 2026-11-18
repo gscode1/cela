@@ -6,7 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import type { McpServerRef, SkillInfo, SkillPin } from "@/lib/api/profiles";
+import type {
+  McpServerRef,
+  SandboxSize,
+  SandboxSizeCatalog,
+  SkillInfo,
+  SkillPin,
+} from "@/lib/api/profiles";
 import { fieldLabel } from "@/lib/field-labels";
 import { hostOf } from "@/lib/profile-form";
 import { toolDescription } from "@/lib/tool-descriptions";
@@ -26,6 +32,110 @@ export function Fieldset({
       {hint !== undefined && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children}
     </fieldset>
+  );
+}
+
+/** CPU and memory limits and the workspace of a size, for a picker row. */
+export function sizeSummary(size: SandboxSize): string {
+  const cpu = size.limits.cpu ?? "?";
+  const memory = size.limits.memory ?? "?";
+  return `${cpu} CPU, ${memory} memory, ${size.workspaceSize} workspace`;
+}
+
+/**
+ * The profile's sandbox size and the sizes a caller may ask for (docs/decisions/0030-sandbox-sizes.md). Sizes are the
+ * deployment's (chart values); one that is no longer defined stays visible with a way to drop it, since the API refuses
+ * to store it again.
+ */
+export function SandboxSizePicker({
+  size,
+  allowed,
+  catalog,
+  onChange,
+}: {
+  size: string;
+  allowed: string[];
+  catalog: SandboxSizeCatalog | undefined;
+  onChange: (change: { sandboxSize?: string; sandboxSizes?: string[] }) => void;
+}) {
+  const sizes = catalog?.sizes ?? [];
+  const defined = (name: string): boolean => sizes.some((entry) => entry.name === name);
+  if (catalog !== undefined && sizes.length === 0 && size === "" && allowed.length === 0) {
+    return (
+      <Fieldset legend={fieldLabel("sandboxSize")}>
+        <p className="text-sm text-muted-foreground">This deployment defines no sandbox sizes.</p>
+      </Fieldset>
+    );
+  }
+  const effective = size === "" ? (catalog?.defaultSize ?? "") : size;
+  return (
+    <Fieldset
+      legend={fieldLabel("sandboxSize")}
+      hint="CPU, memory and workspace of this profile's sandboxes. Applies to new sessions only."
+    >
+      <Select
+        id="profile-sandbox-size"
+        aria-label={fieldLabel("sandboxSize")}
+        value={size}
+        onChange={(event) => {
+          onChange({ sandboxSize: event.target.value });
+        }}
+      >
+        <option value="">
+          Inherit (global default{catalog?.defaultSize ? `: ${catalog.defaultSize}` : ""})
+        </option>
+        {sizes.map((entry) => (
+          <option key={entry.name} value={entry.name}>
+            {entry.name}: {sizeSummary(entry)}
+          </option>
+        ))}
+        {size !== "" && catalog !== undefined && !defined(size) && (
+          <option value={size}>{size} (not defined)</option>
+        )}
+      </Select>
+      <p className="text-sm font-medium">{fieldLabel("sandboxSizes")}</p>
+      {sizes
+        .filter((entry) => entry.name !== effective)
+        .map((entry) => (
+          <div key={entry.name} className="flex flex-wrap items-center gap-2 text-sm">
+            <Checkbox
+              id={`size-${entry.name}`}
+              checked={allowed.includes(entry.name)}
+              onChange={(event) => {
+                onChange({
+                  sandboxSizes: event.target.checked
+                    ? [...allowed, entry.name]
+                    : allowed.filter((name) => name !== entry.name),
+                });
+              }}
+            />
+            <Label htmlFor={`size-${entry.name}`}>{entry.name}</Label>
+            <span className="text-muted-foreground">{sizeSummary(entry)}</span>
+          </div>
+        ))}
+      {catalog !== undefined &&
+        allowed
+          .filter((name) => !defined(name))
+          .map((name) => (
+            <div
+              key={name}
+              className="flex flex-wrap items-center gap-2 text-sm"
+              data-testid="missing-size"
+            >
+              <Badge variant="destructive">not defined</Badge>
+              <span className="font-mono">{name}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  onChange({ sandboxSizes: allowed.filter((entry) => entry !== name) });
+                }}
+              >
+                Remove {name}
+              </Button>
+            </div>
+          ))}
+    </Fieldset>
   );
 }
 

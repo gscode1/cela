@@ -1,9 +1,24 @@
+{{- /*
+One SandboxTemplate per size (docs/decisions/0030-sandbox-sizes.md), plus the unsized pi-env-template with the default
+size for claims made before sizes existed (they reference pi-env-pool) and for the e2e suites' own claims.
+*/ -}}
+{{- $root := . -}}
+{{- $templates := list (dict "name" "pi-env-template" "size" .Values.sandbox.defaultSize) -}}
+{{- range $name := keys .Values.sandbox.sizes | sortAlpha -}}
+{{- $templates = append $templates (dict "name" (printf "pi-env-template-%s" $name) "size" $name) -}}
+{{- end -}}
+{{- range $i, $t := $templates -}}
+{{- $size := index $root.Values.sandbox.sizes $t.size -}}
+{{- if $i }}
+---
+{{ end -}}
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
-  name: pi-env-template
+  name: {{ $t.name }}
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "pi-durable.labels" $root | nindent 4 }}
+    pi-durable.dev/sandbox-size: {{ $t.size }}
 spec:
   # Each SandboxClaim carries its own SANDBOXD_AUTH_TOKEN_SHA256 (the hash of HMAC(master, claimName), set by the
   # orchestrator). Allowed lets a claim ADD that variable; the template must not define it, because Allowed rejects an
@@ -17,32 +32,32 @@ spec:
         name: workspace
       spec:
         accessModes: [ReadWriteOnce]
-        {{- if .Values.sandbox.storageClass }}
-        storageClassName: {{ .Values.sandbox.storageClass }}
+        {{- if $root.Values.sandbox.storageClass }}
+        storageClassName: {{ $root.Values.sandbox.storageClass }}
         {{- end }}
         resources:
           requests:
-            storage: {{ .Values.sandbox.workspaceSize }}
+            storage: {{ $size.workspaceSize }}
   podTemplate:
     metadata:
       labels:
         app.kubernetes.io/name: pi-sandbox
     spec:
-      {{- if .Values.sandbox.runtimeClassName }}
-      runtimeClassName: {{ .Values.sandbox.runtimeClassName }}
+      {{- if $root.Values.sandbox.runtimeClassName }}
+      runtimeClassName: {{ $root.Values.sandbox.runtimeClassName }}
       {{- end }}
       automountServiceAccountToken: false
       restartPolicy: Always
       securityContext:
-        {{- include "pi-durable.podSecurityContext" . | nindent 8 }}
-      {{- with .Values.imagePullSecrets }}
+        {{- include "pi-durable.podSecurityContext" $root | nindent 8 }}
+      {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: sandboxd
-          image: {{ include "pi-durable.image" (dict "name" "sandbox" "image" .Values.images.sandbox) }}
-          imagePullPolicy: {{ .Values.images.sandbox.pullPolicy }}
+          image: {{ include "pi-durable.image" (dict "name" "sandbox" "image" $root.Values.images.sandbox) }}
+          imagePullPolicy: {{ $root.Values.images.sandbox.pullPolicy }}
           args:
             - --auth-token-sha256=$(SANDBOXD_AUTH_TOKEN_SHA256)
           ports:
@@ -51,9 +66,11 @@ spec:
           readinessProbe:
             httpGet: { path: /v1/health, port: 8080 }
           resources:
-            {{- toYaml .Values.sandbox.resources | nindent 12 }}
+            {{- $limits := merge (dict "ephemeral-storage" $size.ephemeralStorage) ($size.resources.limits | default dict) }}
+            {{- toYaml (dict "requests" $size.resources.requests "limits" $limits) | nindent 12 }}
           securityContext:
-            {{- include "pi-durable.containerSecurityContext" . | nindent 12 }}
+            {{- include "pi-durable.containerSecurityContext" $root | nindent 12 }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+{{ end -}}

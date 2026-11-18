@@ -149,6 +149,7 @@ describe("turn budget", () => {
     workspaceReadyAt: null,
     profile: null,
     usage: null,
+    sandboxSize: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });
