@@ -1,4 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
@@ -9,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
-import { McpTools } from "../src/mcp.ts";
+import { McpClient } from "@earendil-works/pi-mcp";
+import { httpTransportFactory, McpTools } from "../src/mcp.ts";
 import type { McpServerSpec, McpTimings, McpTransportFactory } from "../src/mcp.ts";
 import { FakeMcp } from "./fake-mcp.ts";
 
@@ -467,6 +471,41 @@ describe("McpTools follows the catalog", () => {
     tools.start();
     await until(() => toolNames(tools).length > 0, "discovery");
   });
+});
+
+describe("httpTransportFactory", () => {
+  const servers: Server[] = [];
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  async function listen(handler: (req: IncomingMessage, res: ServerResponse) => void) {
+    const server = createServer(handler);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+  }
+
+  it("fails a call answered with a redirect and does not follow it, on the shared and the session fetch", async () => {
+    let followed = 0;
+    const target = await listen((_req, res) => {
+      followed += 1;
+      res.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+    const origin = await listen((_req, res) => {
+      res.writeHead(307, { location: `${target}/mcp` }).end();
+    });
+    const factory = httpTransportFactory((input, init) => fetch(input, init));
+    const spec = { ...SPEC, url: `${origin}/mcp` };
+    for (const transport of [factory(spec), factory(spec, (input, init) => fetch(input, init))]) {
+      const client = new McpClient({ name: "test", version: "0.0.0", requestTimeoutMs: 2_000 });
+      await expect(client.connect(transport)).rejects.toThrow();
+      await client.close().catch(() => undefined);
+    }
+    expect(followed).toBe(0);
+  }, 10_000);
 });
 
 describe("Host with MCP", () => {
