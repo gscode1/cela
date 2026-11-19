@@ -106,6 +106,10 @@ def main() -> None:
         "ingest": {"replicas": 2},
         # Only the console suite turns the admin console on (tests/e2e/run.sh console).
         "console": {"enabled": os.environ.get("CONSOLE_ENABLED") == "1"},
+        # The chart turns the egress proxy on by default (ADR 0038, amendment of 2026-11-19). Only the browser suite runs
+        # with it (below); the other suites opt out, as they did before the default changed, so they keep testing what
+        # they were written for (direct sandbox egress, the OneCLI gateway reached from the sandbox).
+        "egressProxy": {"enabled": False},
     }
     if os.environ.get("BROWSER_SUITE") == "1":
         # The browser suite (run-browser.sh, ADR 0041): the egress proxy (its Secrets are made by run.sh), the browser
