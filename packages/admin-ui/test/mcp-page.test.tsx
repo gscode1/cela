@@ -71,3 +71,70 @@ describe("MCP servers page, OneCLI secret", () => {
     expect(screen.getByText(/secret names are not known here/)).toBeInTheDocument();
   });
 });
+
+describe("MCP servers page, discovery status", () => {
+  const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+
+  it("shows ok with the tool count and names, failing with the error, and unknown", async () => {
+    const admin = createFakeAdmin();
+    admin.mcp = [
+      {
+        ...stored("good", null),
+        reachability: "ok",
+        discovery: {
+          state: "ready",
+          tools: 3,
+          toolNames: ["search", "fetch"],
+          checkedAt,
+          shard: 0,
+        },
+      },
+      {
+        ...stored("bad", null),
+        reachability: "failing",
+        discovery: {
+          state: "failed",
+          tools: 0,
+          error: "mcp bad connect timed out after 15000 ms",
+          checkedAt,
+          shard: 0,
+        },
+      },
+      { ...stored("silent", null), discovery: { state: "unknown", tools: 0, checkedAt: null } },
+      {
+        ...stored("off", null),
+        enabled: false,
+        discovery: { state: "disabled", tools: 0, checkedAt: null },
+      },
+    ];
+    serve(admin);
+    renderApp("/mcp-servers");
+    await signIn("alice-token");
+    const good = await screen.findByTestId("mcp-good");
+    expect(within(good).getByText("ok, 3 tools")).toBeInTheDocument();
+    expect(within(good).getByText("5 min ago")).toBeInTheDocument();
+    await userEvent.click(within(good).getByRole("button", { name: "Details" }));
+    expect(screen.getByText("Tools")).toBeInTheDocument();
+    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText("and 1 more")).toBeInTheDocument();
+
+    const bad = screen.getByTestId("mcp-bad");
+    expect(within(bad).getByText("failing")).toBeInTheDocument();
+    expect(within(bad).getByText("mcp bad connect timed out after 15000 ms")).toBeInTheDocument();
+    expect(within(screen.getByTestId("mcp-silent")).getByText("unknown")).toBeInTheDocument();
+    const off = screen.getByTestId("mcp-off");
+    expect(within(off).queryByText("unknown")).toBeNull();
+    expect(within(off).queryByText(/tools?$/)).toBeNull();
+  });
+
+  it("treats an answer without discovery (an older ingest) as unknown", async () => {
+    const admin = createFakeAdmin();
+    admin.mcp = [stored("old", null)];
+    serve(admin);
+    renderApp("/mcp-servers");
+    await signIn("alice-token");
+    const row = await screen.findByTestId("mcp-old");
+    expect(within(row).queryByText("unknown")).toBeNull();
+    expect(within(row).queryByText("failing")).toBeNull();
+  });
+});

@@ -64,7 +64,8 @@ a history table and `LISTEN/NOTIFY`; the MCP catalog needs the same properties.
   tools stay `tool_unavailable`. The issue asked the admin API to report `unreachable`; this PR adds no network probing
   (a probe from ingest would test ingest's path, not the orchestrator's through the gateway), so the API reports
   reachability as `unknown` and the signal is the orchestrator's `mcp-discovery-failed` log. A probe through the
-  orchestrator is a possible follow-up.
+  orchestrator is a possible follow-up. (Superseded by [0044](0044-mcp-discovery-status.md): the orchestrator now
+  publishes its discovery outcome and the API reports it.)
 - **The gateway token is checked at use, not at start.** Without `ONECLI_AGENT_TOKEN` the orchestrator starts and an
   MCP call fails (`tool_unavailable` until discovery works), because the catalog can gain a server at any time.
 

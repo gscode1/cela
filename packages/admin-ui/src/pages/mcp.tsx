@@ -5,6 +5,7 @@ import { useAuth } from "@/auth";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { DiscoveryStatus, DiscoveryTools } from "@/components/mcp-discovery";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -140,7 +141,7 @@ function EnablePanel({ server, onClose }: { server: McpServer; onClose: () => vo
   );
 }
 
-const COLUMNS = 7;
+const COLUMNS = 8;
 
 function ServerRow({
   server,
@@ -163,7 +164,11 @@ function ServerRow({
   });
   const referencing = profiles === undefined ? undefined : profilesWithMcp(profiles, server.name);
   const limits = nonDefaultLimits(server);
-  const hasDetails = limits.length > 0 || server.source !== null || server.onecliSecret !== null;
+  const hasDetails =
+    limits.length > 0 ||
+    server.source !== null ||
+    server.onecliSecret !== null ||
+    (server.discovery?.toolNames?.length ?? 0) > 0;
   return (
     <Fragment>
       <tr data-testid={`mcp-${server.name}`}>
@@ -172,6 +177,9 @@ function ServerRow({
           <Badge variant={server.enabled ? "secondary" : "warning"}>
             {server.enabled ? "enabled" : "disabled"}
           </Badge>
+        </Td>
+        <Td>
+          <DiscoveryStatus server={server} />
         </Td>
         <Td className="break-all">
           <span title={server.url}>{hostOf(server.url)}</span>
@@ -267,6 +275,7 @@ function ServerRow({
                     <dd>{value}</dd>
                   </Fragment>
                 ))}
+                <DiscoveryTools server={server} />
                 {server.onecliSecret !== null && (
                   <>
                     <dt className="text-muted-foreground">OneCLI secret</dt>
@@ -404,6 +413,7 @@ export function McpServersPage() {
                 <tr>
                   <Th>Name</Th>
                   <Th>Status</Th>
+                  <Th>Connection</Th>
                   <Th>URL</Th>
                   <Th>Access</Th>
                   <Th>Used by</Th>
