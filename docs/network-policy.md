@@ -225,8 +225,11 @@ delete it from the cluster (no prune), it is harmless and can be deleted.
 phase3 now has a TCP reachability control from the driver or orchestrator before it is tested from a sandbox.
 Postgres, orchestrator, ingest and sandboxd use Service DNS and ready endpoint Pod IPs. Kubernetes and external
 OneCLI APIs use Service DNS because the driver cannot read endpoints outside its run namespace. A dead target,
-failed DNS lookup or failed control is FAIL, never a successful block or KNOWN-FAIL. Public internet is allowed,
-not a denied target. The production `/admin/status` never infers enforcement from policy objects being present: it
+failed DNS lookup or failed control is FAIL, never a successful block or KNOWN-FAIL. With the egress proxy on (the
+chart's default, and how `run.sh` installs phase3 since issue #280) the OneCLI gateway is a denied target too, direct
+public internet and DNS must be blocked, the egress proxy's :3128 is the allowed control, and the test `egress-proxy`
+checks a `CONNECT` through the proxy (allowed host `200`, host without a rule denied). `EGRESS_PROXY=0` keeps the old
+assertions (public internet and the gateway allowed). The production `/admin/status` never infers enforcement from policy objects being present: it
 reports what the isolation probe below measured. With `NETPOL_ENFORCED=1`, `tests/e2e/run-phase3.sh` also fails
 before any test when the probe says `not-enforced` (`inconclusive` and `enforced` never fail it; without the variable the
 verdict is only printed).

@@ -104,6 +104,27 @@ describe("tests/e2e/chart-values.py", () => {
     expect(text).toContain("pi-db-tls-ca");
   });
 
+  it("opts out of the egress proxy unless EGRESS_PROXY=1, which the chart then renders", () => {
+    const off = JSON.parse(readFileSync(values(1), "utf8"));
+    expect(off.egressProxy).toEqual({ enabled: false });
+    expect(off.images.egressProxy).toBeUndefined();
+    const file = values(1, {
+      EGRESS_PROXY: "1",
+      EGRESS_PROXY_IMAGE: "ghcr.io/example/pi-egress-proxy:0.1.0-abc1234",
+    });
+    const on = JSON.parse(readFileSync(file, "utf8"));
+    expect(on.egressProxy).toEqual({
+      enabled: true,
+      database: { existingSecret: "pi-egress-database", uriKey: "uri" },
+      binding: { existingSecret: "pi-egress-binding", key: "key" },
+    });
+    expect(on.sandbox.flavours).toBeUndefined();
+    const text = render(file);
+    expect(text).toContain("name: pi-egress-proxy");
+    expect(text).toContain("PI_EGRESS_PROXY_URL");
+    expect(text).not.toContain("name: sandbox-allow-internet-egress");
+  });
+
   it("refuses an image without a tag or a digest", () => {
     expect(() => values(1, { ORCH_IMAGE: "pi-orchestrator" })).toThrow();
   });

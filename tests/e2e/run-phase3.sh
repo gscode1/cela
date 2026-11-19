@@ -10,13 +10,19 @@
 #   sandbox-loss   delete the sandbox Pod; a new Pod mounts the same PVC; the next tool call works
 #   concurrency    two sessions at once, separate sandboxes and PVCs, no cross-access
 #   isolation      a sandbox cannot reach the orchestrator, Postgres, another sandbox, the Kubernetes API, the OneCLI
-#                  API or ingest, and can reach public internet and the OneCLI gateway (controls). It must PASS once the CNI
+#                  API or ingest. With the egress proxy on (the chart's default, ADR 0038; run.sh installs phase3 with it)
+#                  it cannot reach the OneCLI gateway or the public internet either and has no DNS; a TCP connection to the
+#                  egress proxy is the control. With the proxy off (EGRESS_PROXY=0 tests/e2e/run.sh phase3: direct sandbox
+#                  egress) public internet and the OneCLI gateway are reachable (controls). It must PASS once the CNI
 #                  enforces NetworkPolicy (Cilium, the chart's networkpolicy templates). It is KNOWN-FAIL
 #                  (printed, not a failure of the run) only while enforcement is absent: every denied target is
 #                  reachable, as on flannel. A mix of blocked and reachable is a FAIL. NETPOL_ENFORCED=1 turns
 #                  KNOWN-FAIL into FAIL (use it after the migration); NETPOL_ENFORCED=0 forces KNOWN-FAIL.
 #                  The orchestrator's own isolation probe (GET /admin/status networkPolicy) is printed first; with
 #                  NETPOL_ENFORCED=1 a `not-enforced` verdict fails the run before any test.
+#   egress-proxy   with the proxy on: a session (through ingest) on a profile with only the github-public rules is proxied,
+#                  its sandbox has HTTPS_PROXY with its token, and a CONNECT through the proxy to github.com (allowed) gets
+#                  200 while example.com (no rule) and the Kubernetes API's name are denied. SKIP with the proxy off.
 #
 # Touches only namespace $NAMESPACE (the run namespace pi-e2e-<id>). Needs the secret sandboxd-auth
 # (hack/gen-secret.sh). DB credentials and the sandboxd token stay in the cluster: nothing here reads or prints them.
@@ -31,6 +37,8 @@ root=$(cd "$here/../.." && pwd) # the driver image mirrors the repo layout: test
 work=$(mktemp -d)
 claims_file=$work/claims
 : >"$claims_file"
+ingest_sessions_file=$work/ingest-sessions
+: >"$ingest_sessions_file"
 holder_pid=""
 k() { kubectl ${ctx:+--context="$ctx"} -n "$ns" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
@@ -45,6 +53,9 @@ cleanup() {
   while read -r claim; do
     [[ -n "$claim" ]] && { k delete sandboxclaim "$claim" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
   done <"$claims_file"
+  while read -r id; do
+    [[ -n "$id" ]] && { ingest_api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true; }
+  done <"$ingest_sessions_file"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -178,6 +189,22 @@ render_orchestrator_b() {
     | .spec.template.spec.containers[0].resources.requests = {cpu: "50m", memory: "128Mi"}'
 }
 has_pod_for() { [[ -n $(k get pods -l "app.kubernetes.io/instance=$1" -o name) ]]; }
+
+# ---------------------------------------------------------------- the egress proxy and the session API
+# 1 when the chart runs the egress proxy (the orchestrator gives sandboxes its address); set once at setup.
+egress_proxy_on() {
+  [[ -n $(k get deployment pi-orchestrator -o jsonpath='{.spec.template.spec.containers[?(@.name=="orchestrator")].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]]
+}
+# A proxied sandbox has no DNS, so its probes use the addresses the driver resolves.
+addr_of() { getent ahostsv4 "$1" | awk 'NR==1 {print $1}'; }
+ingest_pod() {
+  k get pods -l app.kubernetes.io/name=pi-ingest -o json |
+    jq -r '[.items[] | select(.status.phase=="Running" and .metadata.deletionTimestamp==null)][0].metadata.name // empty'
+}
+# Sessions through ingest (the egress-proxy test): the /control sessions above are not in the inbox, so they get no
+# proxy token. The client runs in the ingest pod, where the API tokens are; none leaves the cluster.
+ingest_api() { k exec -i "$(ingest_pod)" -c ingest -- node - call "$@" <"$here/client-4b.mjs"; }
+ingest_results() { k exec -i "$(ingest_pod)" -c ingest -- node - results "$@" <"$here/client-4b.mjs"; }
 
 # ---------------------------------------------------------------- tests
 t_restart() {
@@ -389,9 +416,10 @@ cni_hint() {
     echo "CNI not readable with this identity"
   fi
 }
-# Count the in-cluster denied probes that answered REACHABLE / BLOCKED (not the control, and not internet-direct: a LAN
-# firewall can block that one even with no NetworkPolicy, so it only counts once enforcement is established).
-count_denied() { printf '%s\n' "$2" | grep -v -E '^(onecli-gateway|internet-direct) ' | grep -c " $1\$" || true; }
+# Count the in-cluster denied probes that answered REACHABLE / BLOCKED (not the control, named by $3, and not
+# internet-direct: a LAN firewall can block that one even with no NetworkPolicy, so it only counts once enforcement is
+# established). With the proxy on the OneCLI gateway is a denied target and the egress proxy is the control.
+count_denied() { printf '%s\n' "$2" | grep -v -E "^(${3:-onecli-gateway}|internet-direct|dns) " | grep -c " $1\$" || true; }
 # Status codes sandbox B's sandboxd (REST /v1/metadata, which needs the token) gives to: no token, A's token, the
 # hash of A's token (what A's own Pod was given), the hash of B's token, and B's token. Runs in the orchestrator pod,
 # the one place both the master and the network path to sandboxd exist; the tokens are derived there by the shared
@@ -409,7 +437,7 @@ auth_codes() { # orchestrator-pod claim-a claim-b -> JSON of status codes
       hashB: await code(sha(tb)), tokenB: await code(tb) }));' "$2" "$3"
 }
 t_isolation() {
-  local a b out probe reach blocked control hint codes source host port label service ip target
+  local a b out probe reach blocked control control_label hint codes source host port label service ip target addr
   local targets=()
   hint=$(cni_hint)
   note "CNI: $hint"
@@ -433,6 +461,8 @@ t_isolation() {
   targets+=("orchestrator pi-conv-$b.$ns.svc.cluster.local 9090 other-sandbox-grpc")
   targets+=("driver kubernetes.default.svc.cluster.local 443 kube-api")
   targets+=("orchestrator onecli.onecli.svc.cluster.local 10256 onecli-api")
+  # With the proxy on, a sandbox reaches OneCLI only through the proxy (ADR 0038): the gateway is denied too.
+  [[ $proxied != 1 ]] || targets+=("orchestrator onecli.onecli.svc.cluster.local 10255 onecli-gateway")
   for service in pi-orchestrator pi-postgres pi-ingest "pi-conv-$b"; do
     case $service in
     pi-orchestrator) source=driver; port=8081; label=orchestrator ;;
@@ -447,6 +477,12 @@ t_isolation() {
   done
   for target in "${targets[@]}"; do
     read -r source host port label <<<"$target"
+    if [[ $proxied == 1 && ! $host =~ ^[0-9.]+$ ]]; then
+      # No DNS in a proxied sandbox: a name would be BLOCKED by the missing lookup, not by policy. Its Service address is.
+      addr=$(addr_of "$host")
+      assert "$label: $host resolves (from the driver) to an address" test -n "$addr"
+      host=$addr
+    fi
     if [[ $source == driver ]]; then
       # shellcheck disable=SC2016 # The child shell, not the driver, expands positional arguments.
       assert "positive control $label ($host:$port) from driver" timeout 5 bash -c 'exec 3<>/dev/tcp/$1/$2' sh "$host" "$port"
@@ -461,26 +497,88 @@ t_isolation() {
     fi
     probe+="probe $host $port $label; "
   done
-  probe+="probe 1.1.1.1 443 internet-direct; "
-  probe+="probe onecli.onecli.svc.cluster.local 10255 onecli-gateway"
+  if [[ $proxied == 1 ]]; then
+    # The allowed control: the proxy's Service address, port 3128 (sandbox-allow-egress-proxy-egress). TCP only: a /control
+    # session has no proxy token; the egress-proxy test covers CONNECT.
+    addr=$(addr_of "pi-egress-proxy.$ns.svc.cluster.local")
+    assert "the egress proxy Service resolves (from the driver) to an address" test -n "$addr"
+    control_label=egress-proxy
+    probe+="probe $addr 3128 egress-proxy; "
+    probe+="if timeout 5 getent hosts kubernetes.default.svc.cluster.local >/dev/null 2>&1; then echo 'dns RESOLVES'; else echo 'dns NONE'; fi; "
+  else
+    control_label=onecli-gateway
+    probe+="probe onecli.onecli.svc.cluster.local 10255 onecli-gateway; "
+  fi
+  probe+="probe 1.1.1.1 443 internet-direct"
   send_input "$a" "$(mkscript -f probed "$probe")"
   wait_session "$a" '.state=="done" and (.results|length)==2' 240
   out=$(status "$a" | jq -r '.results[1].text')
   printf '%s\n' "$out" | sed 's/^/     /'
   note "EVIDENCE isolation: $(printf '%s' "$out" | tr '\n' ';')"
-  reach=$(count_denied REACHABLE "$out")
-  blocked=$(count_denied BLOCKED "$out")
-  control=$(printf '%s\n' "$out" | sed -n 's/^onecli-gateway //p')
-  # The gateway is allowed with or without enforcement, so check it before the known-fail exit: a dead gateway
+  reach=$(count_denied REACHABLE "$out" "$control_label")
+  blocked=$(count_denied BLOCKED "$out" "$control_label")
+  control=$(printf '%s\n' "$out" | sed -n "s/^$control_label //p")
+  # The control is allowed with or without enforcement, so check it before the known-fail exit: a dead control
   # must not be hidden behind "NetworkPolicy is not enforced".
-  assert "the probe works: the OneCLI gateway :10255 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
+  if [[ $proxied == 1 ]]; then
+    assert "the probe works: the egress proxy :3128 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
+  else
+    assert "the probe works: the OneCLI gateway :10255 (allowed) is reachable, so the blocks are policy, not a broken probe" test "$control" = REACHABLE
+  fi
   assert "every target produced exactly one verdict" test "$((reach + blocked))" -eq "${#targets[@]}"
   if [[ $reach -gt 0 && $blocked -eq 0 && ${NETPOL_ENFORCED:-auto} != 1 ]] || [[ ${NETPOL_ENFORCED:-auto} == 0 ]]; then
     note "no enforcement observed: all $reach denied targets reachable ($hint)"
     exit 3 # KNOWN-FAIL: NetworkPolicy is not enforced yet
   fi
   assert "every denied in-cluster target is unreachable from a sandbox ($reach reachable, $blocked blocked)" test "$reach" -eq 0
-  assert "direct public internet is reachable (sandbox-allow-internet-egress)" grep -q '^internet-direct REACHABLE' <<<"$out"
+  if [[ $proxied == 1 ]]; then
+    assert "direct public internet is blocked (proxied: the egress proxy is the only way out)" grep -q '^internet-direct BLOCKED' <<<"$out"
+    assert "the sandbox has no DNS (the proxy resolves)" grep -q '^dns NONE' <<<"$out"
+  else
+    assert "direct public internet is reachable (EGRESS_PROXY=0: sandbox-allow-internet-egress)" grep -q '^internet-direct REACHABLE' <<<"$out"
+  fi
+}
+
+# CONNECT through the egress proxy from a real session's sandbox. The session is created through ingest, so it has a
+# principal and a token (ADR 0036), on a profile whose only rules are github-public (github.com allowed, example.com not).
+# The token never leaves the sandbox: the step prints the status lines of the proxy's answers only.
+t_egress_proxy() {
+  local prof out id marker script res text pod
+  if [[ $proxied != 1 ]]; then
+    note "SKIPPED: the egress proxy is off (EGRESS_PROXY=0)"
+    exit 3
+  fi
+  prof=e2e-proxy-$(printf '%04x' "$RANDOM")
+  out=$(ingest_api alice PUT "/admin/profiles/$prof" '{"definition":{"egressRuleSets":["github-public"]}}')
+  assert_jq "a profile $prof with only the github-public rules is created" "$out" '.status==200 or .status==201'
+  out=$(ingest_api alice POST /sessions "$(jq -nc --arg p "$prof" '{provider:"scripted", model:"scripted-1", profile:$p}')")
+  id=$(jq -r '.body.sessionId // empty' <<<"$out")
+  [[ -z $id ]] || printf '%s\n' "$id" >>"$ingest_sessions_file"
+  assert_jq "a scripted session on it is created, in network mode proxied" "$out" '.status==201 and .body.networkMode=="proxied"'
+  marker=proxy-$RANDOM
+  # The proxy learns the session's token within seconds of the attach (ADR 0036), so the allowed CONNECT is retried
+  # until it answers 200; only then do the denials prove the rules, not an unknown token.
+  # shellcheck disable=SC2016 # The sandbox shell expands it.
+  script='[[ $HTTPS_PROXY == http://x:*@*:3128 ]] && echo "proxy-env set" || echo "proxy-env missing"
+ph=${HTTPS_PROXY#*@}; pp=${ph##*:}; ph=${ph%:*}; tok=${HTTPS_PROXY#http://x:}; tok=${tok%%@*}; auth=$(printf "x:%s" "$tok" | base64 -w0)
+conn() { exec 3<>/dev/tcp/$ph/$pp || { echo "$1 noconnect"; return; }; printf "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: Basic %s\r\n\r\n" "$1" "$1" "$auth" >&3; read -t 15 -r line <&3; exec 3>&-; echo "$1 ${line%$(printf "\r")}"; }
+for try in 1 2 3 4 5 6 7 8 9 10; do r=$(conn github.com); [[ $r == *" 200"* ]] && break; sleep 3; done; echo "$r"; echo "github-tries $try"
+conn example.com; conn kubernetes.default.svc.cluster.local'
+  ingest_api alice POST "/sessions/$id/events" \
+    "$(jq -nc --arg t "$(jq -nc --arg b "$script" --arg f "$marker" '{steps:[{bash:$b, timeout:120}], final:$f}')" '{kind:"message", text:$t}')" >/dev/null
+  res=$(ingest_results alice "$id" "$marker" 600)
+  assert_jq "the scripted step ran in the sandbox" "$res" '.found==true'
+  text=$(jq -r '.results[-1].text' <<<"$res")
+  printf '%s\n' "$text" | sed 's/^/     /'
+  note "EVIDENCE egress-proxy: $(printf '%s' "$text" | tr '\n' ';')"
+  assert "the sandbox has HTTPS_PROXY with its token, to the proxy's port 3128" grep -q '^proxy-env set' <<<"$text"
+  assert "CONNECT github.com:443 through the proxy succeeds (github-public allows it)" grep -Eq '^github.com HTTP/1.[01] 200' <<<"$text"
+  assert "CONNECT example.com:443 (no rule) is denied by the proxy" grep -Eq '^example.com HTTP/1.[01] 4[0-9][0-9]' <<<"$text"
+  assert "CONNECT to the Kubernetes API's name is denied by the proxy" grep -Eq '^kubernetes.default.svc.cluster.local HTTP/1.[01] 4[0-9][0-9]' <<<"$text"
+  pod=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$id" -o jsonpath='{.items[0].metadata.name}')
+  assert "the sandbox Pod is labelled network-mode proxied" test "$(k get pod "$pod" -o jsonpath='{.metadata.labels.pi-durable\.dev/network-mode}')" = proxied
+  note "EVIDENCE egress-proxy-runtime: sandbox $pod runs with runtimeClassName=$(k get pod "$pod" -o jsonpath='{.spec.runtimeClassName}')"
+  ingest_api alice PUT "/admin/profiles/$prof" '{"enabledForNew":false}' >/dev/null 2>&1 || true
 }
 
 # The isolation probe's own verdict (GET /admin/status, written by the orchestrator, docs/network-policy.md). It only
@@ -518,6 +616,9 @@ wait_owner
 fi
 
 # ---------------------------------------------------------------- run
+proxied=0
+if egress_proxy_on; then proxied=1; fi
+note "egress proxy: $([[ $proxied == 1 ]] && echo "on (proxied sandboxes)" || echo "off (EGRESS_PROXY=0: direct sandbox egress)")"
 netpol_probe_check || exit 1
 # ONLY="double-owner,restart" runs just those tests (debugging aid); the full suite runs when unset.
 isolation_status=""
@@ -527,6 +628,8 @@ record() { # name rc: like the shared one, plus isolation's KNOWN-FAIL (exit 3)
     isolation_status=known-fail
   elif [[ $2 -eq 0 ]]; then
     summary+=("PASS  $1")
+  elif [[ $2 -eq 3 ]]; then
+    summary+=("SKIP  $1")
   else
     summary+=("FAIL  $1")
     failed=1
@@ -536,7 +639,7 @@ E2E_AFTER=wait_owner
 
 # Parallel: each test has its own sessions and claims and only touches its own sandbox (sandbox-loss deletes its own
 # Pod, the orchestrator keeps running). Serial afterwards: they kill the orchestrator or hold the database lock.
-e2e_parallel sandbox-loss:t_sandbox_loss concurrency:t_concurrency isolation:t_isolation
+e2e_parallel sandbox-loss:t_sandbox_loss concurrency:t_concurrency isolation:t_isolation egress-proxy:t_egress_proxy
 e2e_serial restart t_restart
 e2e_serial double-owner t_double_owner
 e2e_serial long-command t_long_command

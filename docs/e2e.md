@@ -36,7 +36,9 @@ for `mcp.deepwiki.com`.
 | `E2E_PARALLEL`      | independent tests of a suite that run side by side (default 4; 1 = one by one). Tests that restart or kill the orchestrator run alone afterwards (`tests/e2e/fns.sh`) |
 | `ONLY`              | `ONLY="a,b"` runs just those tests of the phase                                                           |
 | `DB_TLS=1`          | the run's Postgres requires TLS and pi-durable verifies it ([Database TLS](#database-tls)); unset or `0`: plain, as before |
-| `BROWSER_SANDBOX_IMAGE`, `EGRESS_PROXY_IMAGE` | the `browser` suite only: pushed references of `pi-sandbox-browser` and `pi-egress-proxy` (required; there is no local default) |
+| `EGRESS_PROXY_IMAGE` | egress proxy image (default `pi-egress-proxy:<version>-<sha>`), for the suites that run the proxy: `phase3`, `browser` and `all` |
+| `EGRESS_PROXY=0`    | `phase3` (and `all`) without the egress proxy: the explicit opt-out, which tests the old direct sandbox egress ([Isolation](#isolation-enforcement-and-database-client)). `browser` refuses it |
+| `BROWSER_SANDBOX_IMAGE` | the `browser` suite only: a pushed reference of `pi-sandbox-browser` (required; there is no local default) |
 | `SKIP_LIVE=1`       | the `browser` suite leaves out its live-model test |
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
 | `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
@@ -48,7 +50,8 @@ the run installs the chart with `networkPolicy.provider: cilium`. Your own `loca
 `tests/e2e/chart-values.py` (the chart values of a run) or `tests/e2e/deploy/` (database, secrets, test-only policies) for
 network identities, secret stores and OneCLI endpoints. `HELM_TIMEOUT` (default `10m`) bounds the chart's rollout wait.
 
-Build and push all four images before running the suites ([build instructions](../images/README.md)).
+Build and push all four images before running the suites ([build instructions](../images/README.md)), and `pi-egress-proxy`
+for `phase3`, `browser` and `all` (`EGRESS_PROXY_IMAGE`).
 The defaults match `images/build.sh` at the current root package version and git short SHA; they are local names,
 not published images. On a remote cluster set all four variables to reachable registry references, preferably digests:
 
@@ -233,9 +236,25 @@ helm template pi-durable charts/pi-durable -n pi-e2e-test -f /tmp/values.json | 
 FAIL rather than KNOWN-FAIL. Unset preserves automatic detection; `0` explicitly requests KNOWN-FAIL when controls
 succeed. Positive-control failures always fail. The isolation test checks ingest as well as Postgres, orchestrator,
 another sandbox's sandboxd (REST and gRPC), Kubernetes API and OneCLI API. Every denied address must first accept a
-TCP connection from an allowed source. In-namespace targets use both Service DNS and a ready endpoint Pod IP;
-external OneCLI and the Kubernetes API use Service DNS (the driver has no cross-namespace endpoint permissions).
-Public internet and the OneCLI gateway remain allowed controls.
+TCP connection from an allowed source. In-namespace targets use both a Service and a ready endpoint Pod IP;
+external OneCLI and the Kubernetes API use their Service (the driver has no cross-namespace endpoint permissions).
+
+`phase3` runs with the egress proxy, the chart's default (ADR 0038 and its amendment; issue #280): `run.sh` makes the
+proxy's Secrets as for `browser` (below) and `run-phase3.sh` reads the mode from the orchestrator (`PI_EGRESS_PROXY_URL`).
+A proxied sandbox has no DNS, so the driver resolves each Service name and the sandbox probes its address.
+The OneCLI gateway (:10255) is a denied target too, with the orchestrator as its positive control; direct public internet
+(`1.1.1.1:443`) must be blocked and the sandbox must not resolve names; the allowed control is a TCP connection to the
+egress proxy's Service on :3128. The test `egress-proxy` creates a session through ingest (a `/control` session is not in
+the inbox and gets no proxy token) on a throwaway profile whose only rule set is `github-public`, and from its sandbox sends
+`CONNECT` with the session's token: `github.com:443` must answer `200`, `example.com:443` (no rule) and the Kubernetes API's
+name must be denied (`4xx`); the Pod must carry `pi-durable.dev/network-mode=proxied`. The OneCLI web port (10254) is not a
+target: no in-cluster client may reach it, so it has no positive control.
+
+`EGRESS_PROXY=0 tests/e2e/run.sh phase3` is the opt-out: the chart is installed with `egressProxy.enabled: false` and the
+isolation test asserts the sandbox egress of before the cutover (public internet and the OneCLI gateway reachable, the
+gateway as the control); `egress-proxy` is SKIP. `all` installs the chart once, so with `phase3` in it phases 1, 4 and 4b
+run with the proxy as well. `smoke`, `phase1`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards` and `console` run without it:
+they test durability, credentials and the console, not the sandbox network.
 
 All SQL suites use `e2e_db` / `e2e_db_start` in `tests/e2e/fns.sh`, not a database-server Pod name or a database operator's readiness.
 The helper creates a restricted, tokenless `e2e-psql` client Pod in the throwaway namespace, waits for `select 1`,
@@ -283,12 +302,12 @@ and exits listing missing shards instead of silently sending them to shard 0.
 
 `tests/e2e/run.sh browser` runs the browser sandbox of [ADR 0041](decisions/0041-browser-sandbox.md) on the cluster's real runtime
 (gVisor) with a live model (issue #267). It is not part of `all` and it spends model turns. The run installs the chart with
-`egressProxy.enabled` (every other suite sets `egressProxy.enabled: false`, the chart's opt-out: they test direct sandbox
-egress and the OneCLI gateway reached from the sandbox) and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `BROWSER_SUITE=1`), adds
+`egressProxy.enabled` (like `phase3`; the suites that do not test the network set `egressProxy.enabled: false`, the chart's
+opt-out) and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `EGRESS_PROXY=1` and `BROWSER_SUITE=1`), adds
 `openai-codex/gpt-6-luna` to the model allowlist and makes the proxy's Secrets in the namespace: `pi-egress-database` (the URI of
 the read-only role `pi_egress`, which the run's Postgres creates with `auth.egressReader`) and `pi-egress-binding`. It does not
-turn on `onecli.hostRules.reconcile`, so no global OneCLI rule changes. `BROWSER_SANDBOX_IMAGE` and `EGRESS_PROXY_IMAGE` are
-required next to the four usual image variables (the browser image is about 1.6 GB: the first sandbox waits for the pull).
+turn on `onecli.hostRules.reconcile`, so no global OneCLI rule changes. `BROWSER_SANDBOX_IMAGE` is required and
+`EGRESS_PROXY_IMAGE` must be a pushed reference, next to the four usual image variables (the browser image is about 1.6 GB: the first sandbox waits for the pull).
 
 `tests/e2e/run-browser.sh` (in the driver Job) checks: the seed script (`hack/seed-browser-profile.mjs`, baked into the driver
 image with the skills), a Pod with `runtimeClassName: gvisor` and the browser image, Chromium starting under gVisor, Playwright

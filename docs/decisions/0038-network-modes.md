@@ -137,7 +137,8 @@ finding a flag. Nothing else changes: the policies, the modes and the direct gat
 
 - **Opt-out.** `egressProxy.enabled: false` stays and does exactly what "Proxy disabled" above says (the sandbox policies of
   before the cutover, a notice in `NOTES.txt`, no direct gate). `hack/kind-up.sh --no-egress-proxy` passes it; the e2e
-  suites other than `browser` pass it too (`tests/e2e/chart-values.py`), because they test direct sandbox egress.
+  suites other than `browser` and `phase3` pass it too (`tests/e2e/chart-values.py`), because they test durability, not the
+  network. `phase3` runs with the proxy since issue #280 and keeps its direct assertions behind `EGRESS_PROXY=0` (docs/e2e.md).
 - **Fails closed at render.** The proxy needs `egressProxy.database.existingSecret` (the read-only role `pi_egress`, ADR 0035),
   with OneCLI `egressProxy.binding.existingSecret` (ADR 0037), and an image tag or digest, like the other images. The chart
   keeps these names empty and refuses to render without them, with a message that names the opt-out. An existing install
