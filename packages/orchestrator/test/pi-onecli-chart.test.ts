@@ -108,6 +108,63 @@ describe("charts/pi-onecli", () => {
     );
   });
 
+  describe("private HTTPS (ADR 0043)", () => {
+    const privateRule = (l: Obj[]) =>
+      l.find((d) => d.metadata.name === "onecli-gateway-allow-private-https-egress");
+
+    it("keeps the public rule as it was and adds a separate RFC 1918 rule on TCP 443 only", () => {
+      const internet = named(list, "onecli-gateway-allow-internet-egress");
+      expect(internet.spec.egress).toHaveLength(1);
+      expect(internet.spec.egress[0].ports).toBeUndefined();
+      expect(internet.spec.egress[0].to[0].ipBlock.except).toEqual([
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "169.254.0.0/16",
+        "127.0.0.0/8",
+      ]);
+      const rule = privateRule(list);
+      expect(rule?.spec.podSelector.matchLabels["app.kubernetes.io/component"]).toBe("gateway");
+      expect(rule?.spec.policyTypes).toEqual(["Egress"]);
+      expect(rule?.spec.egress).toHaveLength(1);
+      expect(rule?.spec.egress[0].ports).toEqual([{ protocol: "TCP", port: 443 }]);
+      expect(rule?.spec.egress[0].to.map((t: Obj) => t.ipBlock.cidr)).toEqual([
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+      ]);
+    });
+
+    it("never admits CGNAT, link-local, loopback or IPv6 private ranges anywhere", () => {
+      const egress = list
+        .filter((d) => d.metadata.name.startsWith("onecli-gateway-allow-"))
+        .flatMap((d) => d.spec.egress ?? []);
+      const allowed = egress.flatMap((r: Obj) => (r.to ?? []).map((t: Obj) => t.ipBlock?.cidr));
+      for (const cidr of [
+        "100.64.0.0/10",
+        "169.254.0.0/16",
+        "127.0.0.0/8",
+        "fc00::/7",
+        "fe80::/10",
+      ])
+        expect(allowed).not.toContain(cidr);
+    });
+
+    it("takes extra excepts per range, and renders nothing with privateHttps.enabled=false or no internet rule", () => {
+      const carved = docs([
+        "--set-json",
+        'gateway.privateHttps.except={"10.0.0.0/8":["10.96.0.0/12","10.244.0.0/16"],"172.16.0.0/12":[],"192.168.0.0/16":[]}',
+      ]);
+      expect(privateRule(carved)?.spec.egress[0].to[0].ipBlock).toEqual({
+        cidr: "10.0.0.0/8",
+        except: ["10.96.0.0/12", "10.244.0.0/16"],
+      });
+      expect(privateRule(docs(["--set", "gateway.privateHttps.enabled=false"]))).toBeUndefined();
+      expect(privateRule(docs(["--set", "gateway.egressInternet=false"]))).toBeUndefined();
+    });
+  });
+
   it("follows the release name, and can drop the internet rule", () => {
     const other = docs(["--set", "release=gw", "--set", "gateway.egressInternet=false"]);
     expect(named(other, "gw-default-deny").spec.podSelector.matchLabels).toMatchObject({
@@ -122,7 +179,7 @@ describe("charts/pi-onecli", () => {
     const on = ["--set", "expose.enabled=true", "--set", "expose.sourceCidr=172.20.0.1/32"];
 
     it("renders nothing for it by default", () => {
-      expect(JSON.stringify(list)).not.toMatch(/nodeport|NodePort|ipBlock":\{"cidr":"1/i);
+      expect(JSON.stringify(list)).not.toMatch(/nodeport|NodePort|ipBlock":\{"cidr":"[0-9.]+\/32/i);
       expect(list.filter((d) => d.kind !== "NetworkPolicy")).toEqual([]);
     });
 
@@ -180,6 +237,14 @@ describe("charts/pi-onecli", () => {
       ["a bad release name", ["--set", "release=Bad_Name"], /release|pattern/],
       ["an unknown key", ["--set", "bogus=1"], /bogus|additional/],
       ["a non-string label", ["--set-json", "clients.orchestrator.app=1"], /orchestrator|string/],
+      [
+        "an except that is not a CIDR",
+        [
+          "--set-json",
+          'gateway.privateHttps.except={"10.0.0.0/8":["kube-api"],"172.16.0.0/12":[],"192.168.0.0/16":[]}',
+        ],
+        /except|pattern/,
+      ],
       ["a bad database port", ["--set", "database.port=0"], /port|minimum/],
     ];
     for (const [name, args, message] of bad) {
@@ -201,7 +266,10 @@ describe("charts/pi-onecli/upstream-values.yaml", () => {
     expect(values.ingress.enabled).toBe(false);
     expect(values.httpRoute.enabled).toBe(false);
     // One replica of each, no Redis: the chart's defaults, so nothing may raise them.
-    for (const component of ["api", "web", "gateway"]) expect(values[component]).toBeUndefined();
+    for (const component of ["api", "web"]) expect(values[component]).toBeUndefined();
+    expect(values.gateway).toEqual({
+      allowPrivateDestinations: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+    });
     expect(JSON.stringify(values)).not.toMatch(/REDIS|enterpriseEnabled|password/i);
   });
 });

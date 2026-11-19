@@ -85,6 +85,40 @@ describe("hack/onecli.sh", () => {
     );
   });
 
+  describe("open defaults and the egress proxy (ADR 0043)", () => {
+    const calls = () =>
+      log()
+        .split("\n")
+        .filter((c) => c.startsWith("helm"));
+
+    it("installs the open values by default: nothing is set against the chart's and the upstream's defaults", () => {
+      run(["--namespace", "demo"]);
+      for (const c of calls()) expect(c).not.toMatch(/privateHttps|allowPrivateDestinations/);
+      const values = readFileSync(join(root, "charts/pi-onecli/upstream-values.yaml"), "utf8");
+      expect(values).toMatch(
+        /allowPrivateDestinations: "10\.0\.0\.0\/8,172\.16\.0\.0\/12,192\.168\.0\.0\/16"/,
+      );
+    });
+
+    it("installs the hardened values with --egress-proxy off: no private rule, no private destinations", () => {
+      const r = run(["--namespace", "demo", "--egress-proxy", "off"]);
+      const [policies, upstream] = calls();
+      expect(policies).toContain("--set gateway.privateHttps.enabled=false");
+      expect(upstream).toContain("--set gateway.allowPrivateDestinations= ");
+      expect(r.stderr).toContain("HARDENED");
+    });
+
+    it("keeps the open values with --egress-proxy off only when --allow-open-without-proxy says so", () => {
+      const r = run(["--namespace", "demo", "--egress-proxy", "off", "--allow-open-without-proxy"]);
+      for (const c of calls()) expect(c).not.toMatch(/privateHttps|allowPrivateDestinations/);
+      expect(r.stderr).toContain("stay OPEN");
+    });
+
+    it("rejects a bad --egress-proxy", () => {
+      expect(run(["--egress-proxy", "maybe"]).stderr).toContain("bad --egress-proxy");
+    });
+  });
+
   it("creates the database URL and the three application keys once, and never prints a value", () => {
     const r = run(["--namespace", "demo"]);
     const uri = readFileSync(join(dir, "secret-onecli-database-DATABASE_URL"), "utf8");

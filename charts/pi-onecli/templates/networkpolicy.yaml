@@ -185,6 +185,36 @@ spec:
             cidr: "::/0"
             except: ["fc00::/7", "fe80::/10", "::1/128"]
 ---
+{{- if .Values.gateway.privateHttps.enabled }}
+# A SEPARATE rule for the private ranges (docs/decisions/0043-open-onecli-defaults.md): RFC 1918 on TCP 443 only, so the
+# kubelet, Postgres, the kube API and the proxy ports stay closed where an ipBlock matches pods. 100.64/10, 169.254/16,
+# loopback and the IPv6 ULA and link-local ranges are in no rule at all. privateHttps.except carves out more per range.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-gateway-allow-private-https-egress
+  labels:
+    {{- include "pi-onecli.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $onecli | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- range $cidr, $except := .Values.gateway.privateHttps.except }}
+        - ipBlock:
+            cidr: {{ $cidr }}
+            {{- with $except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+{{- end }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
