@@ -37,6 +37,12 @@ import type {
   RuleSetDetail,
   RuleSetList,
 } from "@/lib/api/egress";
+import { listMcpServers } from "@/lib/api/mcp";
+import type { McpCatalog } from "@/lib/api/mcp";
+import { getModels } from "@/lib/api/models";
+import type { ModelCatalog } from "@/lib/api/models";
+import { getStatus, statusPollInterval } from "@/lib/api/status";
+import type { StatusReport } from "@/lib/api/status";
 import { getSettingsHistory } from "@/lib/api/settings";
 import type { SettingsHistoryEntry } from "@/lib/api/settings";
 
@@ -46,6 +52,10 @@ import type { SettingsHistoryEntry } from "@/lib/api/settings";
  * of the MCP catalog and the skills.
  */
 export const keys = {
+  /** The Status page and the navigation dot read these; the MCP page and the model pickers share `mcp` and `models`. */
+  status: ["status"] as const,
+  models: ["models"] as const,
+  mcp: ["mcp"] as const,
   settings: ["settings"] as const,
   settingsHistory: ["settings", "history"] as const,
   profiles: ["profiles"] as const,
@@ -187,5 +197,31 @@ export function useEgressHistoryQuery(): UseQueryResult<EgressHistoryEntry[]> {
   return useQuery({
     queryKey: keys.egressHistory,
     queryFn: ({ signal }) => listEgressHistory(token ?? "", signal),
+  });
+}
+
+/** The orchestrators' reports; follows a network isolation check while it runs. */
+export function useStatusQuery(): UseQueryResult<StatusReport> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.status,
+    queryFn: ({ signal }) => getStatus(token ?? "", signal),
+    refetchInterval: (query) => statusPollInterval(query.state.data?.shards),
+  });
+}
+
+export function useModelsQuery(): UseQueryResult<ModelCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.models,
+    queryFn: ({ signal }) => getModels(token ?? "", signal),
+  });
+}
+
+export function useMcpCatalogQuery(): UseQueryResult<McpCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.mcp,
+    queryFn: ({ signal }) => listMcpServers(token ?? "", signal),
   });
 }

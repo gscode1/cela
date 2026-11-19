@@ -49,14 +49,11 @@ describe("egress page: rule sets", () => {
     expect(within(all).getByText("Applies to all sessions")).toBeInTheDocument();
   });
 
-  it("shows the revision and the counts from the status endpoint", async () => {
+  it("leaves the revision and the proxy replicas to the Status page", async () => {
     setup();
     await open("/egress");
-    const status = await screen.findByTestId("egress-status");
-    await waitFor(() => {
-      expect(status).toHaveTextContent("Rules at revision 3: 2 rule sets, 2 rules.");
-    });
-    expect(status).toHaveTextContent("no egress proxy reports yet");
+    await screen.findByTestId("rule-set-npm");
+    expect(screen.queryByTestId("egress-status")).toBeNull();
   });
 
   it("creates a set with the revision it showed, warning when it applies to all sessions", async () => {
