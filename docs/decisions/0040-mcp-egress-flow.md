@@ -95,8 +95,8 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
   poll for drift (a rule deleted behind our back), and a catalog notification. After a pass changed the gateway, every MCP server
   **retries its discovery at once** (`McpTools.nudge`) instead of waiting for its backoff, so a PUT is reachable and its tools
   listed within seconds.
-- **Temporary home.** The reconciler needs OneCLI's admin key, which the orchestrator holds today for repo sessions. Epic #65
-  moves provisioning out of the orchestrator; this moves with it.
+- **Temporary home.** The reconciler needs OneCLI's admin key, which the orchestrator holds today for repo sessions. It stays
+  there for the proof of concept ([0042](0042-onecli-admin-key-in-orchestrator.md)).
 - **Not a replacement of the baseline.** The model hosts and the package hosts that `hack/onecli-host-rules.sh` or the bootstrap
   made stay hand-made (the reconciler never deletes them); the script is still the way to open a host that no egress rule names.
 

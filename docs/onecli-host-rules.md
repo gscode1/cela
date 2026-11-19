@@ -46,7 +46,7 @@ hack/onecli-host-rules.sh --apply    # needs the admin key
 ```
 
 - Admin key: Secret `secret-store/pi-onecli-admin`, key `api-key`, read with `kubectl` (or `ONECLI_API_KEY`). It goes to
-  curl on stdin and is never printed. This is the admin key the plan says must never live in the orchestrator: run the
+  curl on stdin and is never printed. The orchestrator holds this key too ([ADR 0042](decisions/0042-onecli-admin-key-in-orchestrator.md)); run the
   script from an operator machine only.
 - `ONECLI_URL` (required): the OneCLI API base, e.g. `https://onecli.example.com`. Use `http://localhost:10256` with
   `kubectl -n onecli port-forward svc/onecli 10256` if the Cilium ingress policy has closed the route.
@@ -122,5 +122,5 @@ allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final bl
 (`hack/onecli-policies/egress.yaml`). Until then the server fails to connect: the orchestrator logs `mcp-discovery-failed` with the
 retry delay, and calls to its tools settle `tool_unavailable`.
 
-The reconciler uses the OneCLI admin key the orchestrator holds for repo sessions. Epic #65 moves provisioning out of the
-orchestrator; the reconciler moves with it.
+The reconciler uses the OneCLI admin key the orchestrator holds for repo sessions; it stays there for the proof of concept
+([ADR 0042](decisions/0042-onecli-admin-key-in-orchestrator.md)).

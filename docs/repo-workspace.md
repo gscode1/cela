@@ -54,8 +54,8 @@ the gateway URL and the agent token as before. See [ADR 0037](decisions/0037-egr
   token, is then closed and reopened before its next call (`RepoAccess.envStale`).
 - Teardown (`DELETE /sessions/{id}`): tombstone row in `inbox.tombstones` first, then the OneCLI agent (its token dies at
   once), then its secrets (found by stored id and by name), then the claim and PVC. Repeatable after a crash.
-- The admin key is `ONECLI_API_KEY` (Secret `pi-onecli-admin`, key `api-key`), orchestrator only. It is account-level; the plan
-  wants a project-scoped key or a separate provisioner before real use.
+- The admin key is `ONECLI_API_KEY` (Secret `pi-onecli-admin`, key `api-key`), orchestrator only. It is account-level; keeping it
+  there is an accepted risk for the proof of concept ([ADR 0042](decisions/0042-onecli-admin-key-in-orchestrator.md)).
 
 ## How per-session env reaches only that session's commands
 
