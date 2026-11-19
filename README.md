@@ -170,7 +170,7 @@ console flags as "unfiltered, unaudited". The proxy needs a read-only database r
 explains, [network policy](docs/network-policy.md#egress-proxy-egressproxyenabled)). `egressProxy.enabled: false` opts out:
 the sandbox policies are then as before the cutover (every sandbox has direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
 
-A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, default off) runs the
+A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, on by default; set it to `false` to skip the image) runs the
 sandbox image plus Chromium, Playwright CLI and agent-browser, always through the egress proxy and without credentials.
 Seed the `browser` profile and its two skills with `hack/seed-browser-profile.mjs`; check a cluster with
 `hack/browser-smoke.sh`. See [ADR 0041](docs/decisions/0041-browser-sandbox.md).
