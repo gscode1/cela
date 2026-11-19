@@ -182,6 +182,51 @@ describe("admin MCP servers", () => {
     });
   });
 
+  it("lists the OneCLI secret names the orchestrator published, and says when they are unknown", async () => {
+    const { base, db } = await start();
+    const list = async () =>
+      (
+        (await (await call(base, "alice", "GET", "/admin/mcp-servers")).json()) as {
+          onecliSecrets: unknown;
+        }
+      ).onecliSecrets;
+    expect(await list()).toEqual({ names: [], source: "none" });
+    db.capabilities = { tools: [], extensions: [], instance: "o" };
+    expect(await list()).toEqual({ names: [], source: "none" });
+    db.capabilities = { tools: [], extensions: [], instance: "o", onecli_secret_names: [] };
+    expect(await list()).toEqual({ names: [], source: "orchestrator" });
+    db.capabilities = {
+      tools: [],
+      extensions: [],
+      instance: "o",
+      onecli_secret_names: ["github-mcp", "linear-mcp"],
+    };
+    expect(await list()).toEqual({ names: ["github-mcp", "linear-mcp"], source: "orchestrator" });
+    // Admins only: the names are not values, but they still describe the deployment.
+    const denied = await call(base, "bob", "GET", "/admin/mcp-servers");
+    expect(denied.status).toBe(403);
+    expect(JSON.stringify(await denied.json())).not.toContain("github-mcp");
+  });
+
+  it("stores, shows and clears a server's onecliSecret", async () => {
+    const { base } = await start();
+    const created = await call(base, "alice", "PUT", "/admin/mcp-servers/demo", {
+      ...DEMO,
+      onecliSecret: "github-mcp",
+    });
+    expect(await created.json()).toMatchObject({ onecliSecret: "github-mcp", revision: 1 });
+    const cleared = await call(base, "alice", "PUT", "/admin/mcp-servers/demo", {
+      onecliSecret: null,
+      expectedRevision: 1,
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({ onecliSecret: null, revision: 2 });
+    const bad = await call(base, "alice", "PUT", "/admin/mcp-servers/demo", {
+      onecliSecret: "has space",
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it("answers 400 and writes nothing for an invalid server, name or body", async () => {
     const { base, db } = await start();
     const bad: [string, unknown][] = [

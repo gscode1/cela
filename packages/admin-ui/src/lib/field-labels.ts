@@ -32,6 +32,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   timeoutMs: "Timeout",
   maxOutputBytes: "Max output",
   enabled: "Enabled",
+  onecliSecret: "OneCLI secret",
 };
 
 export function fieldLabel(key: string): string {

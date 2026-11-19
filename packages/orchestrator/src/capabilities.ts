@@ -14,6 +14,7 @@ import type {
 } from "@pi-durable-k8s/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { log } from "./log.js";
+import { mcpSecretCandidates } from "./onecli-names.js";
 import { providerCredentials } from "./providers.js";
 
 /**
@@ -80,18 +81,52 @@ export async function liveConversationProfiles(
   return found;
 }
 
+type ListSecrets = () => Promise<readonly { name: string; hostPattern?: string }[]>;
+
+/**
+ * What the start publish says about OneCLI's secrets: the per-provider credential hint (ADR 0025) and the names an MCP
+ * server could reference (ADR 0040 amendment), from one listing. Without an admin client, or when the listing fails
+ * (logged without values), every real provider is `unknown` and the names are absent, never empty. Never throws.
+ */
+export async function oneCliSecretsView(
+  models: Models,
+  config: Pick<OrchestratorConfig, "onecli">,
+  listSecrets: ListSecrets | undefined,
+): Promise<Pick<Capabilities, "modelProviders" | "onecliSecretNames">> {
+  let secrets: readonly { name: string; hostPattern?: string }[] | undefined;
+  if (listSecrets !== undefined) {
+    try {
+      secrets = await listSecrets();
+    } catch (error) {
+      log("model-credentials-unknown", { message: errorMessage(error) });
+    }
+  }
+  const listed = secrets;
+  return {
+    modelProviders: await providerCredentials(
+      models,
+      config,
+      listed === undefined ? undefined : () => Promise.resolve(listed),
+    ),
+    ...(listed === undefined ? {} : { onecliSecretNames: mcpSecretCandidates(listed) }),
+  };
+}
+
 export interface ModelCredentialsDeps {
   models: Models;
   config: Pick<OrchestratorConfig, "onecli">;
-  listSecrets: () => Promise<readonly { hostPattern?: string }[]>;
+  listSecrets: ListSecrets;
   /** Writes the hint (`publishModelProviders`); true if it changed. */
   publish: (providers: readonly ModelProviderStatus[]) => Promise<boolean>;
+  /** Writes the secret names an MCP server could reference (`publishOnecliSecretNames`); true if they changed. */
+  publishSecretNames: (names: readonly string[]) => Promise<boolean>;
 }
 
 /**
- * Keeps the per-provider credential hint (ADR 0025) current, so a secret added to OneCLI shows in the console without a
- * restart. Shard 0 runs it. A failed listing keeps the last hint: publishing `unknown` would empty the console's model
- * list on every OneCLI blip. The catalog itself changes only with a new image, so it stays a start-time publish.
+ * Keeps the per-provider credential hint (ADR 0025) and the MCP secret names (ADR 0040 amendment) current, so a secret
+ * added to OneCLI shows in the console without a restart. Shard 0 runs it. A failed listing keeps the last values:
+ * publishing `unknown` would empty the console's model list on every OneCLI blip. The catalog itself changes only with
+ * a new image, so it stays a start-time publish.
  */
 export class ModelCredentialsLoop {
   readonly #deps: ModelCredentialsDeps;
@@ -111,7 +146,7 @@ export class ModelCredentialsLoop {
     if (this.#timer !== undefined) clearInterval(this.#timer);
   }
 
-  /** One check. Returns whether the hint changed; never throws. Skipped while the previous one still runs. */
+  /** One check. Returns whether the hint or the names changed; never throws. Skipped while the previous one still runs. */
   async run(): Promise<boolean> {
     if (this.#running) return false;
     this.#running = true;
@@ -127,7 +162,11 @@ export class ModelCredentialsLoop {
           configured: providers.filter((p) => p.credential === "configured").map((p) => p.provider),
         });
       }
-      return changed;
+      const names = mcpSecretCandidates(secrets);
+      const namesChanged = await d.publishSecretNames(names);
+      // A count only: the names are not secret, but a log line has no need for them.
+      if (namesChanged) log("onecli-secret-names-refreshed", { count: names.length });
+      return changed || namesChanged;
     } catch (error) {
       log("model-credentials-refresh-failed", { message: errorMessage(error) });
       return false;

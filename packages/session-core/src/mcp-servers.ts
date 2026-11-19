@@ -32,7 +32,7 @@ export interface McpServerConfig {
   timeoutMs: number;
   /** What the model gets of one result at most; the output is cut to it (the middle of long text is dropped). */
   maxOutputBytes: number;
-  /** A reference to the OneCLI secret or grant for the server, never the secret itself. Unused until #42. */
+  /** The name of the OneCLI secret for the server, never the secret itself (ADR 0040); null for a server without one. */
   onecliSecret: string | null;
 }
 
@@ -87,6 +87,11 @@ const DEFAULTS = {
   maxOutputBytes: MAX_MCP_OUTPUT_BYTES,
   onecliSecret: null,
 } as const;
+
+/** Whether `name` can be a server's `onecliSecret`: the same check as a write, so a name offered to the console can be saved. */
+export function isOnecliSecretRef(name: string): boolean {
+  return name.length <= MAX_SECRET_REF && SECRET_REF.test(name);
+}
 
 /** Whether `name` can be a server name; the message for a 400 otherwise. */
 export function mcpServerNameError(name: unknown): string | undefined {
@@ -168,10 +173,7 @@ export function validateMcpServer(
     return `maxOutputBytes must be an integer from ${String(MIN_MCP_OUTPUT_BYTES)} to ${String(MAX_MCP_OUTPUT_BYTES)}`;
   }
   const secret = pick("onecliSecret");
-  if (
-    secret !== null &&
-    (typeof secret !== "string" || secret.length > MAX_SECRET_REF || !SECRET_REF.test(secret))
-  ) {
+  if (secret !== null && (typeof secret !== "string" || !isOnecliSecretRef(secret))) {
     return `onecliSecret must be null or a reference of at most ${String(MAX_SECRET_REF)} characters (letters, digits and ._:/-)`;
   }
   return {

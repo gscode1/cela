@@ -25,9 +25,26 @@ export interface McpServer {
   updatedBy: string;
 }
 
+/**
+ * The names of the OneCLI secrets a server could name, as the orchestrator last listed them (up to about 30 s old).
+ * `source: "none"` while unknown (no OneCLI admin key, or not published yet): an empty list then says nothing.
+ */
+export interface OnecliSecretNames {
+  names: string[];
+  source: "orchestrator" | "none";
+}
+
 export interface McpCatalog {
   servers: McpServer[];
   invalid: { name: string; message: string }[];
+  /** Absent from an ingest that does not publish it: the same as unknown. */
+  onecliSecrets?: OnecliSecretNames;
+}
+
+/** The known secret names, or undefined while the list is unknown. */
+export function knownSecretNames(catalog: McpCatalog | undefined): string[] | undefined {
+  const secrets = catalog?.onecliSecrets;
+  return secrets?.source === "orchestrator" ? secrets.names : undefined;
 }
 
 export type McpFields = Pick<
@@ -52,6 +69,18 @@ export const MCP_LIMITS = {
 } as const;
 
 export const MCP_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+const MAX_SECRET_REF = 200;
+const SECRET_REF = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+
+/** Client-side hint for a typed OneCLI secret name (empty means none); mirrors the validator, the API decides. */
+export function secretRefProblem(text: string): string | undefined {
+  const name = text.trim();
+  if (name === "") return undefined;
+  if (name.length > MAX_SECRET_REF || !SECRET_REF.test(name))
+    return `the OneCLI secret name has at most ${String(MAX_SECRET_REF)} letters, digits and ._:/- and starts with a letter or digit`;
+  return undefined;
+}
 
 export function listMcpServers(token: string, signal?: AbortSignal): Promise<McpCatalog> {
   return adminJson<McpCatalog>(token, "/admin/mcp-servers", signal ? { signal } : {});

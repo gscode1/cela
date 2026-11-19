@@ -4,6 +4,8 @@
  * revokes, the agents of another (docs/decisions/0013-e2e-namespace-per-run.md).
  */
 
+import { isOnecliSecretRef } from "@pi-durable-k8s/session-core";
+
 /** What production uses; the names of existing agents and secrets do not change. */
 export const DEFAULT_ONECLI_NAME_PREFIX = "pi-session-";
 
@@ -58,4 +60,23 @@ export function namePatterns(prefix: string): { agent: RegExp; secret: RegExp } 
     agent: new RegExp(`^${p}(${UUID_SHAPE})(?:-m)?$`),
     secret: new RegExp(`^${p}(${UUID_SHAPE})-(git|api)$`),
   };
+}
+
+/**
+ * A per-session secret of any orchestrator (`<prefix><uuid>-git|api`, `secretName`), whatever its prefix: every prefix
+ * ends in `-`, so the name ends in `-<uuid>-git` or `-<uuid>-api`.
+ */
+const SESSION_SECRET = new RegExp(`-${UUID_SHAPE}-(git|api)$`);
+
+/**
+ * The names an MCP server could name as its `onecliSecret`, for the admin console (ADR 0040 amendment): sorted, without
+ * duplicates, without the secrets orchestrators create for sessions (of this orchestrator or another sharing the OneCLI
+ * workspace) and without names the API would refuse. Names only: no value or id ever leaves here.
+ */
+export function mcpSecretCandidates(secrets: readonly { name: string }[]): string[] {
+  const names = new Set<string>();
+  for (const { name } of secrets) {
+    if (isOnecliSecretRef(name) && !SESSION_SECRET.test(name)) names.add(name);
+  }
+  return [...names].sort();
 }

@@ -154,6 +154,7 @@ export class FakeSettingsDb {
         instance: string;
         models?: unknown;
         model_providers?: unknown;
+        onecli_secret_names?: unknown;
       }
     | undefined;
   /** inbox.sessions rows by id, as the columns the profile code writes and reads. */
@@ -674,12 +675,13 @@ export class FakeSettingsDb {
       return done(this.capabilities === undefined ? [] : [{ ...this.capabilities }]);
     }
     if (text.startsWith("insert into inbox.orchestrator_capabilities")) {
-      const [tools, extensions, instance, models, providers] = params as [
+      const [tools, extensions, instance, models, providers, secretNames] = params as [
         string,
         string,
         string,
         string | null,
         string | null,
+        string | null | undefined,
       ];
       this.capabilities = {
         tools: JSON.parse(tools) as unknown,
@@ -687,8 +689,24 @@ export class FakeSettingsDb {
         instance,
         models: models === null ? null : (JSON.parse(models) as unknown),
         model_providers: providers === null ? null : (JSON.parse(providers) as unknown),
+        onecli_secret_names:
+          secretNames === null || secretNames === undefined
+            ? null
+            : (JSON.parse(secretNames) as unknown),
       };
       return done();
+    }
+    if (text.startsWith("update inbox.orchestrator_capabilities set onecli_secret_names")) {
+      const [names] = params as [string];
+      const next = JSON.parse(names) as unknown;
+      if (
+        this.capabilities === undefined ||
+        JSON.stringify(this.capabilities.onecli_secret_names) === JSON.stringify(next)
+      ) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      this.capabilities = { ...this.capabilities, onecli_secret_names: next };
+      return Promise.resolve({ rows: [], rowCount: 1 });
     }
     if (text.startsWith("update inbox.orchestrator_capabilities set model_providers")) {
       const [providers] = params as [string];

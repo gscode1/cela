@@ -42,6 +42,7 @@ export type { McpCatalogCacheOptions, McpCatalogListener } from "./mcp-cache.js"
 export {
   DEFAULT_MCP_TIMEOUT_MS,
   deleteMcpServer,
+  isOnecliSecretRef,
   listMcpServerHistory,
   MAX_MCP_OUTPUT_BYTES,
   MCP_SERVER_NAME,
@@ -73,6 +74,7 @@ export {
   catalogKeys,
   publishCapabilities,
   publishModelProviders,
+  publishOnecliSecretNames,
   putProfile,
   deleteProfile,
   readCapabilities,

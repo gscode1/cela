@@ -181,3 +181,19 @@ changes nothing writes nothing, so a hand-removed owned rule comes back with the
 **Not verified:** a credentialed server that speaks real MCP behind OneCLI (no third-party credential was used; the dummy servers
 provision the identities and prove injection per agent, but never list a tool); two shards racing for the reconciler's lock
 (unit-tested with a fake); an orchestrator MCP call that was in flight when its server was deleted (the design lets it finish).
+
+## Amendment: the console offers OneCLI's secret names (issue #283)
+
+The console had no field for `onecliSecret`, so a credentialed server could only be registered through the API, and the operator
+had to know the secret's exact name. Ingest has no OneCLI key ([0042](0042-onecli-admin-key-in-orchestrator.md)), so it cannot list
+the secrets itself. The orchestrator already lists them, at its start and every 30 s on shard 0, for the model credential hint
+([0025](0025-model-catalog.md), amendment). From the same listing it now also publishes the names an MCP server could name, in
+`inbox.orchestrator_capabilities.onecli_secret_names` (migration 032), the same way as `model_providers`: written at start by every
+shard, then only on a change by shard 0 (`publishOnecliSecretNames`), and kept on a failed re-read. Only names are published, never
+values or ids. The list leaves out the secrets that orchestrators create for sessions (`<prefix><uuid>-git`/`-api`, of any prefix,
+because several orchestrators can share a OneCLI workspace) and names the validator would refuse. Without an admin key, or when
+the listing at start fails, the column is null: the list is unknown, which differs from an empty list. `GET /admin/mcp-servers`
+returns it as `onecliSecrets: { names, source }`, admins only. The console offers the names in the register and edit forms but
+still accepts any typed name. A name the list lacks gives a warning, not an error, because the list can be up to 30 s old. The
+orchestrator still checks the secret when it grants it (it must exist and cover the server's host). A separate admin route and a
+listing from ingest were rejected: the first adds a route for one field, and the second needs the OneCLI key in ingest.

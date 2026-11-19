@@ -954,9 +954,14 @@ async function handleAdminMcpServers(
       return;
     }
     const catalog = await readMcpServers(deps.pool);
+    // The names an `onecliSecret` could take, as the orchestrator last listed them (ADR 0040 amendment): a picker's
+    // list, never a check. `source: "none"` while unknown, which is not the same as an empty list.
+    const names = (await readCapabilities(deps.pool))?.onecliSecretNames;
     sendJson(res, 200, {
       servers: catalog.servers.map(mcpServerJson),
       invalid: catalog.invalid,
+      onecliSecrets:
+        names === undefined ? { names: [], source: "none" } : { names, source: "orchestrator" },
     });
     return;
   }

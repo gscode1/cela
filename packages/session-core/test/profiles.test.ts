@@ -7,6 +7,7 @@ import {
   listProfileVersions,
   publishCapabilities,
   publishModelProviders,
+  publishOnecliSecretNames,
   putProfile,
   readCapabilities,
   readProfile,
@@ -562,6 +563,27 @@ describe("capabilities", () => {
       modelProviders: configured,
     });
     expect(db.capabilities?.instance).toBe("o1");
+  });
+
+  it("publishes the OneCLI secret names: absent while unknown, replaced only on a change, never before a start publish", async () => {
+    const db = new FakeSettingsDb();
+    const pool = db.asPool();
+    expect(await publishOnecliSecretNames(pool, ["github-mcp"])).toBe(false);
+    expect(db.capabilities).toBeUndefined();
+    await publishCapabilities(pool, { tools: [], extensions: [] }, "o1");
+    expect((await readCapabilities(pool))?.onecliSecretNames).toBeUndefined();
+    await publishCapabilities(
+      pool,
+      { tools: [], extensions: [], onecliSecretNames: ["a-key"] },
+      "o1",
+    );
+    expect((await readCapabilities(pool))?.onecliSecretNames).toEqual(["a-key"]);
+    expect(await publishOnecliSecretNames(pool, ["a-key", "github-mcp"])).toBe(true);
+    expect(await publishOnecliSecretNames(pool, ["a-key", "github-mcp"])).toBe(false);
+    expect((await readCapabilities(pool))?.onecliSecretNames).toEqual(["a-key", "github-mcp"]);
+    // An empty list is known and empty, not unknown.
+    expect(await publishOnecliSecretNames(pool, [])).toBe(true);
+    expect((await readCapabilities(pool))?.onecliSecretNames).toEqual([]);
   });
 
   it("checks a profile's defaultModel against the catalog only when one is given", () => {
