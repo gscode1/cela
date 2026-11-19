@@ -29,15 +29,41 @@ const labels = [
   "other-sandbox-grpc-pod",
 ];
 
+interface Mode {
+  proxied: boolean;
+  /** The probe line of direct public internet (proxied mode must see BLOCKED, direct mode REACHABLE). */
+  internet?: string;
+  /** The sandbox's DNS lookup (proxied mode must see NONE). */
+  dns?: string;
+}
+const direct: Mode = { proxied: false };
+
 /** Exercise the real shell verdict/control ordering, but never invoke kubectl or make a network connection. */
-function run(verdict: string, enforced: string, dead = "", missing = false): number | null {
+function run(
+  verdict: string,
+  enforced: string,
+  dead = "",
+  missing = false,
+  mode: Mode = direct,
+): number | null {
+  // With the proxy on the gateway is a denied target and the egress proxy is the control (ADR 0038).
+  const denied = mode.proxied ? [...labels, "onecli-gateway"] : labels;
+  const controls = mode.proxied
+    ? [
+        "egress-proxy REACHABLE",
+        `dns ${mode.dns ?? "NONE"}`,
+        `internet-direct ${mode.internet ?? "BLOCKED"}`,
+      ]
+    : ["onecli-gateway REACHABLE", `internet-direct ${mode.internet ?? "REACHABLE"}`];
   const result = spawnSync(
     "bash",
     [
       "-euc",
       `
     ns=test
+    proxied=${mode.proxied ? "1" : "0"}
     note() { :; }
+    addr_of() { echo 192.0.2.9; }
     cni_hint() { echo mock; }
     mkscript() { echo mock-script; }
     new_session() { echo session; }
@@ -70,9 +96,8 @@ function run(verdict: string, enforced: string, dead = "", missing = false): num
         NETPOL_ENFORCED: enforced,
         DEAD: dead,
         PROBE_OUT: [
-          ...labels.slice(missing ? 1 : 0).map((label) => `${label} ${verdict}`),
-          "onecli-gateway REACHABLE",
-          "internet-direct REACHABLE",
+          ...denied.slice(missing ? 1 : 0).map((label) => `${label} ${verdict}`),
+          ...controls,
         ].join("\n"),
       },
     },
@@ -99,5 +124,31 @@ describe("e2e isolation honesty", () => {
   it("cannot pass or become KNOWN-FAIL when a probe verdict is missing", () => {
     expect(run("BLOCKED", "1", "", true)).toBe(1);
     expect(run("REACHABLE", "", "", true)).toBe(1);
+  }, 15_000);
+  it("fails the direct mode when direct internet is blocked", () => {
+    expect(run("BLOCKED", "1", "", false, { proxied: false, internet: "BLOCKED" })).toBe(1);
+  }, 15_000);
+});
+
+describe("e2e isolation with the egress proxy", () => {
+  const proxied: Mode = { proxied: true };
+  it(
+    "passes when every target, the gateway included, is blocked, the internet is blocked and there is no DNS",
+    () => expect(run("BLOCKED", "1", "", false, proxied)).toBe(0),
+    15_000,
+  );
+  it("fails when the sandbox reaches the public internet directly", () => {
+    expect(run("BLOCKED", "1", "", false, { proxied: true, internet: "REACHABLE" })).toBe(1);
+  }, 15_000);
+  it("fails when the sandbox resolves names", () => {
+    expect(run("BLOCKED", "1", "", false, { proxied: true, dns: "RESOLVES" })).toBe(1);
+  }, 15_000);
+  it("fails on a dead gateway control or a missing verdict", () => {
+    expect(run("BLOCKED", "0", "onecli-gateway", false, proxied)).toBe(1);
+    expect(run("BLOCKED", "1", "", true, proxied)).toBe(1);
+  }, 15_000);
+  it("keeps automatic KNOWN-FAIL when nothing is enforced", () => {
+    expect(run("REACHABLE", "", "", false, proxied)).toBe(3);
+    expect(run("REACHABLE", "1", "", false, proxied)).toBe(1);
   }, 15_000);
 });
