@@ -118,6 +118,12 @@ egress_proxy=0
 if has_phase phase3 || has_phase phase4c || has_phase browser; then egress_proxy=${EGRESS_PROXY:-1}; fi
 if has_phase browser && [[ $egress_proxy != 1 ]]; then echo "the browser suite needs the egress proxy: unset EGRESS_PROXY" >&2; exit 64; fi
 export EGRESS_PROXY=$egress_proxy # read by chart-values.py
+# OneCLI refuses an agent identifier over 50 characters (ADR 0040), and a session's agent is <prefix><uuid> (36). A longer
+# RUN_ID would make every repo or MCP session fail at `POST /v1/agents` with a 400 that looks like a OneCLI fault.
+if { has_phase phase4c || has_phase mcp; } && ((${#onecli_prefix} + 36 > 50)); then
+  echo "RUN_ID '$run_id' is too long for ${1}: OneCLI agent names would exceed 50 characters (at most 6 characters; the default has 6)" >&2
+  exit 64
+fi
 
 work=$(mktemp -d)
 pf_pid="" # the console suite's port-forward
