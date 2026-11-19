@@ -2,7 +2,7 @@
 # Live check of the browser sandbox on a THROWAWAY kind cluster (epic #50, slice 9, issue #48,
 # docs/decisions/0041-browser-sandbox.md):
 #
-#   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy --browser
+#   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy
 #   hack/browser-smoke.sh [--name pi-egress] [--namespace pi-durable]
 #   hack/kind-down.sh --name pi-egress
 #
