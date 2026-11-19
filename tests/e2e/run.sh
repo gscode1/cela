@@ -21,7 +21,12 @@
 #           kubectl port-forward to pi-ingest with the run's alice (admin) and bob (owner without admin access) tokens; then
 #           the chart is upgraded with console.enabled=false and /console/ must be a 404. Needs `pnpm install` and
 #           `pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium`. Not part of `all`.
-#   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1)
+#   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1); it
+#           installs the chart once, so with phase3 in it every phase runs with the egress proxy
+#
+# The egress proxy (the chart's default, ADR 0038) is on for the suites that test the network, phase3 and browser (and
+# `all`, which has phase3), and off for the others, which test durability. EGRESS_PROXY_IMAGE is its image.
+#   EGRESS_PROXY=0     phase3 (and all) without the proxy: the explicit opt-out, the old direct sandbox egress (docs/e2e.md)
 #
 # Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (the charts/pi-postgres release, the
 # external database of pi-durable), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
@@ -57,6 +62,7 @@ tag=$(node -p "JSON.parse(require('node:fs').readFileSync('$root/package.json', 
 export ORCH_IMAGE=${ORCH_IMAGE:-pi-orchestrator:$tag}
 export INGEST_IMAGE=${INGEST_IMAGE:-pi-ingest:$tag}
 export SANDBOX_IMAGE=${SANDBOX_IMAGE:-pi-sandbox:$tag}
+export EGRESS_PROXY_IMAGE=${EGRESS_PROXY_IMAGE:-pi-egress-proxy:$tag}
 IMAGE=${DRIVER_IMAGE:-pi-e2e-driver:$tag}
 
 ctx=${KUBE_CONTEXT:-}
@@ -104,6 +110,11 @@ all) phases=(phase1 phase3 phase4 phase4b) ;;
   ;;
 esac
 has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0; done; return 1; }
+[[ ${EGRESS_PROXY:-} =~ ^[01]?$ ]] || { echo "EGRESS_PROXY must be unset, 0 or 1" >&2; exit 64; }
+egress_proxy=0
+if has_phase phase3 || has_phase browser; then egress_proxy=${EGRESS_PROXY:-1}; fi
+if has_phase browser && [[ $egress_proxy != 1 ]]; then echo "the browser suite needs the egress proxy: unset EGRESS_PROXY" >&2; exit 64; fi
+export EGRESS_PROXY=$egress_proxy # read by chart-values.py
 
 work=$(mktemp -d)
 pf_pid="" # the console suite's port-forward
@@ -256,8 +267,8 @@ if [[ $db_tls == 1 ]] && ! { k get secret pi-postgres-tls >/dev/null 2>&1 && k g
 fi
 pg_values=(--set persistence.size=1Gi --set persistence.retain=false
   --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"},{"app.kubernetes.io/name":"pi-egress-proxy"}]')
-# The browser suite runs the egress proxy, which reads the rules with the read-only role pi_egress (ADR 0035).
-has_phase browser && pg_values+=(--set auth.egressReader.enabled=true)
+# The egress proxy reads the rules with the read-only role pi_egress (ADR 0035).
+[[ $egress_proxy != 1 ]] || pg_values+=(--set auth.egressReader.enabled=true)
 [[ $db_tls != 1 ]] || pg_values+=(--set tls.existingSecret=pi-postgres-tls --set tls.requireTls=true)
 [[ -z ${STORAGE_CLASS:-} ]] || pg_values+=(--set "persistence.storageClass=$STORAGE_CLASS")
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-postgres "$root/charts/pi-postgres" --namespace "$ns" \
@@ -336,12 +347,12 @@ YAML
   k delete pod e2e-tls-probe --ignore-not-found --wait=false >/dev/null
 fi
 
-# The browser suite's egress proxy needs its database Secret (the URI of pi_egress) and the key that seals OneCLI tokens
+# The egress proxy needs its database Secret (the URI of pi_egress) and the key that seals OneCLI tokens
 # for it (ADR 0037). Both are made in the namespace through files in the private temp dir and never printed; a reused
 # namespace keeps them (a new binding key would leave stored bindings unreadable).
-if has_phase browser; then
+if [[ $egress_proxy == 1 ]]; then
   k get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | grep -q . ||
-    { echo "pi-postgres-auth in $ns has no egress-password (a namespace from before the browser suite): use a fresh RUN_ID" >&2; exit 1; }
+    { echo "pi-postgres-auth in $ns has no egress-password (a namespace from before the egress proxy): use a fresh RUN_ID" >&2; exit 1; }
   if ! k get secret pi-egress-database >/dev/null 2>&1; then
     {
       printf 'postgres://pi_egress:'
@@ -362,14 +373,13 @@ fi
 # the shard count can only grow, so a reused namespace that already has two keeps them.
 shards=1
 if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then shards=2; fi
-log "helm: charts/pi-durable into $ns (orchestrator shards: $shards)"
+log "helm: charts/pi-durable into $ns (orchestrator shards: $shards, egress proxy: $([[ $egress_proxy == 1 ]] && echo on || echo off))"
 # The console suite serves the console (CONSOLE_ENABLED is read by chart-values.py); every other suite leaves it off.
 if has_phase console; then export CONSOLE_ENABLED=1; fi
-# The browser suite turns on the egress proxy and the browser flavour (chart-values.py); the images have no local default.
+# The browser suite turns on the browser flavour (chart-values.py); its image has no local default.
 if has_phase browser; then
   export BROWSER_SUITE=1
   : "${BROWSER_SANDBOX_IMAGE:?BROWSER_SANDBOX_IMAGE (a pushed pi-sandbox-browser reference) is required for the browser suite}"
-  : "${EGRESS_PROXY_IMAGE:?EGRESS_PROXY_IMAGE (a pushed pi-egress-proxy reference) is required for the browser suite}"
 fi
 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \

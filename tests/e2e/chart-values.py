@@ -5,6 +5,9 @@ The run's own charts/pi-postgres release is the external database (secret `pi-db
 the shared OneCLI is external, and the test switches of the orchestrator are extra environment. Everything that varies
 per run comes from the environment (the image and storage-class variables of docs/e2e.md) or the two arguments.
 
+EGRESS_PROXY=1 keeps the chart's egress proxy on (its Secrets `pi-egress-database` and `pi-egress-binding` are made by
+run.sh, the image is EGRESS_PROXY_IMAGE); otherwise the values opt out of it. BROWSER_SUITE=1 adds the browser flavour.
+
 DB_TLS=1 makes the orchestrator and ingest verify the database server (database.tls verify-full against the CA in
 the Secret `pi-db-tls-ca`, which run.sh makes); the URI's host is a name in the server certificate.
 
@@ -106,21 +109,23 @@ def main() -> None:
         "ingest": {"replicas": 2},
         # Only the console suite turns the admin console on (tests/e2e/run.sh console).
         "console": {"enabled": os.environ.get("CONSOLE_ENABLED") == "1"},
-        # The chart turns the egress proxy on by default (ADR 0038, amendment of 2026-11-19). Only the browser suite runs
-        # with it (below); the other suites opt out, as they did before the default changed, so they keep testing what
-        # they were written for (direct sandbox egress, the OneCLI gateway reached from the sandbox).
+        # The chart turns the egress proxy on by default (ADR 0038, amendment of 2026-11-19). EGRESS_PROXY=1 (run.sh, for
+        # the suites that test the network: phase3 and browser) keeps it on; the other suites opt out, as they did before
+        # the default changed, because they test durability, not the network.
         "egressProxy": {"enabled": False},
     }
-    if os.environ.get("BROWSER_SUITE") == "1":
-        # The browser suite (run-browser.sh, ADR 0041): the egress proxy (its Secrets are made by run.sh), the browser
-        # flavour on the chart's default runtime (gVisor), and the live model it drives.
-        values["images"]["sandboxBrowser"] = split_ref(os.environ["BROWSER_SANDBOX_IMAGE"])
+    if os.environ.get("EGRESS_PROXY") == "1":
+        # The proxy's Secrets are made by run.sh: the URI of the read-only role pi_egress and the OneCLI binding key.
         values["images"]["egressProxy"] = split_ref(os.environ["EGRESS_PROXY_IMAGE"])
         values["egressProxy"] = {
             "enabled": True,
             "database": {"existingSecret": "pi-egress-database", "uriKey": "uri"},
             "binding": {"existingSecret": "pi-egress-binding", "key": "key"},
         }
+    if os.environ.get("BROWSER_SUITE") == "1":
+        # The browser suite (run-browser.sh, ADR 0041), with EGRESS_PROXY=1: the browser flavour on the chart's default
+        # runtime (gVisor) and the live model it drives.
+        values["images"]["sandboxBrowser"] = split_ref(os.environ["BROWSER_SANDBOX_IMAGE"])
         values["sandbox"]["flavours"] = {"browser": {"enabled": True}}
         values["models"]["allowlist"].append("openai-codex/gpt-6-luna")
     if os.environ.get("DB_TLS") == "1":
