@@ -181,16 +181,11 @@ export function createFakeAdmin() {
     ...stored.server,
     revision: stored.revision,
     source: stored.source,
-    // The orchestrator's discovery outcome (ADR 0044); the fake has no orchestrator, so every enabled server is ok.
-    reachability: stored.server.enabled ? "ok" : "unknown",
+    // The orchestrator's discovery outcome (ADR 0044). The fake has no orchestrator, so nothing has reported: a row
+    // with default settings keeps nothing to expand, as the specs expect.
+    reachability: "unknown",
     discovery: stored.server.enabled
-      ? {
-          state: "ready",
-          tools: 2,
-          toolNames: ["search", "fetch"],
-          checkedAt: stored.updatedAt,
-          shard: 0,
-        }
+      ? { state: "unknown", tools: 0, checkedAt: null }
       : { state: "disabled", tools: 0, checkedAt: null },
     createdAt: stored.createdAt,
     createdBy: stored.createdBy,
