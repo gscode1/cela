@@ -61,7 +61,8 @@ Selection is real authorization: the sandbox never holds the grant, so what a co
 - Pinning `settings.extensions` is a host default, read at every use and not stored: turning the flag off again hides
   the MCP tools from the conversations that stored them (the stored names stay and resolve again when it is back on).
 - One shared client means one connection to each server for all sessions; calls from different sessions run in
-  parallel on it. The orchestrator's memory per concurrent call is to be recorded in the e2e run (issue #39).
+  parallel on it. The orchestrator's memory per concurrent call is not measured: issue #39 was closed on 2026-11-19 as not worth an
+  experiment for the proof of concept (an open env costs about 11 MiB, [metrics](../metrics.md)).
 - Rejected: a client in the sandbox through pi-env `openProcess` (that is for local stdio servers, later); a client per
   conversation (stateful servers, but a connection and a session per conversation); installing the extensions for every
   conversation (silent change to existing ones).
