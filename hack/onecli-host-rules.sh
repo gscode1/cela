@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Apply the OneCLI v2 host allowlist (docs/onecli-host-rules.md): one `allow` org rule per host, then `block *`.
+# OPTIONAL hardening (docs/decisions/0043-open-onecli-defaults.md): the bundled OneCLI is open by default and this script
+# is what turns it into an allowlist. It creates `pi-block-all`, which blocks every host not allowed.
 # Default is a dry run that only prints the plan and makes no request. --apply writes through the OneCLI API.
 #
 #   hack/onecli-host-rules.sh            # plan only
@@ -23,7 +25,7 @@ base=${ONECLI_URL:?set ONECLI_URL to the OneCLI API base, e.g. https://onecli.ex
 ctx=${KUBE_CONTEXT:-}
 rules_path=/v1/org/policy/rules
 
-# Keep in step with hack/onecli-policies/egress.yaml (the pod's FQDN allowlist).
+# Keep in step with hack/onecli-policies/egress-strict.yaml (the pod's FQDN allowlist) and docs/onecli-host-rules.md.
 hosts=(
   chatgpt.com '*.chatgpt.com' auth.openai.com api.openai.com openrouter.ai
   github.com api.github.com codeload.github.com objects.githubusercontent.com

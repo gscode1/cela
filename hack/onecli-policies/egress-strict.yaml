@@ -1,6 +1,10 @@
-# Example OneCLI egress: DNS, database and public HTTPS allowlist. Adapt dependencies before applying.
-# Private CIDR denies protect against DNS rebinding; verify their interaction with database endpoints.
-# Roll out in audit mode, inspect Hubble, then enforce. See README.md.
+# STRICT variant of the OneCLI egress example (hardening, docs/decisions/0043-open-onecli-defaults.md): DNS, database and an
+# HTTPS FQDN allowlist, with every private range denied. Use it together with the host rules (ONECLI_HOSTS,
+# docs/onecli-host-rules.md) when OneCLI must reach nothing but the listed hosts; a LAN MCP server then cannot work.
+# It has the SAME metadata.name as egress.yaml (the open default): applying one replaces the other, never both. It is not in
+# kustomization.yaml. Keep the FQDN list in step with docs/onecli-host-rules.md and hack/onecli-host-rules.sh (a unit test
+# compares them). Adapt dependencies before applying; private CIDR denies protect against DNS rebinding, verify their
+# interaction with database endpoints. Roll out in audit mode, inspect Hubble, then enforce. See README.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
