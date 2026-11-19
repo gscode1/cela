@@ -102,3 +102,11 @@ changes the Consequences above (the dashboard was reachable by port-forward only
   on another platform, the install would not be reachable on localhost; it would not become more open, because the rule
   names one address.
 
+## Amendment: open defaults (issue #288, [0043](0043-open-onecli-defaults.md))
+
+This record's "host allowlist already in place" and the restrictive network defaults are replaced. A fresh bootstrap creates no host
+rules and no `block *` (`ONECLI_HOSTS` opts in); `charts/pi-onecli/upstream-values.yaml` sets `gateway.allowPrivateDestinations` to
+the RFC 1918 ranges; the gateway's policy gains a separate rule for those ranges on TCP 443 (`gateway.privateHttps`). CGNAT, link-local
+and loopback stay blocked. `hack/onecli.sh` installs the hardened values instead when the pi-durable release has no egress proxy
+(`--egress-proxy off`, passed by `hack/install.sh`), unless acknowledged. An install bootstrapped before keeps its `pi-block-all`.
+The sign-up and API-reachability reasoning above is unchanged.

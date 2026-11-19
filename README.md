@@ -52,8 +52,8 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
   the profile's rules, and is logged. `networkMode: direct` is an operator opt-in ([ADR 0038](docs/decisions/0038-network-modes.md)).
 - Each sandbox's daemon accepts only its own token, derived from a master key the orchestrator holds
   ([ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)).
-- No upstream credentials (model keys, GitHub tokens) in sandboxes or in the agent: OneCLI holds them and only relays to
-  allowlisted hosts ([host rules](docs/onecli-host-rules.md)). A repository session's sandbox can read its own per-session
+- No upstream credentials (model keys, GitHub tokens) in sandboxes or in the agent: OneCLI holds them. It relays any host by default and an allowlist is opt-in hardening
+  ([ADR 0043](docs/decisions/0043-open-onecli-defaults.md), [host rules](docs/onecli-host-rules.md)). A repository session's sandbox can read its own per-session
   OneCLI proxy token, which is only usable through the gateway ([repo workspace](docs/repo-workspace.md)).
 - Accepted risk for the proof of concept: the orchestrator holds the OneCLI admin key and the GitHub App private key
   ([ADR 0042](docs/decisions/0042-onecli-admin-key-in-orchestrator.md)).

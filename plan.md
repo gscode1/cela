@@ -124,7 +124,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
   - On the example test cluster, `onecli:10254/v1/agents` returns agents including their `accessToken`, and `/v1/secrets` returns metadata, with no authentication.
   - Protect any exposed dashboard and management routes as well as in-cluster access.
   - Require OneCLI authentication and protect ingress before using real credentials; v2 findings are below.
-- **Gateway egress:** an explicit host allowlist (model APIs, github.com, package registries). Deny cluster CIDRs and `*.svc` through CONNECT. Use a CiliumNetworkPolicy `toFQDNs` rule where it helps.
+- **Gateway egress:** open by default since [ADR 0043](docs/decisions/0043-open-onecli-defaults.md) (any public host, RFC 1918 on 443 only, CGNAT, metadata and cluster-internal addresses refused); an explicit host allowlist (model APIs, github.com, package registries) with `toFQDNs` is opt-in hardening, and is installed instead when the release has no egress proxy. Deny cluster CIDRs and `*.svc` through CONNECT.
 - **Per-sandbox sandboxd token (done, [ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)):** token = HMAC-SHA256(master, claim); only its sha256 is injected per claim (SandboxClaim `spec.env`, template policy `Allowed`), replacing the shared secret. Master in Secret `sandboxd-auth` key `master`, orchestrator only; bridges get their own claim's token. Claims from before this need a one-time recreate.
 - **Token handling:**
   - Treat session proxy tokens as readable by the agent.

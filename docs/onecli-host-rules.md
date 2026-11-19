@@ -1,13 +1,30 @@
-# OneCLI v2 host rules (public egress allowlist)
+# OneCLI v2 host rules (optional hardening: a public egress allowlist)
 
-Why: OneCLI v2.20.0 refuses private, cluster and metadata targets, but it relays **any public host** for a valid agent
+**This is optional hardening, not the default** ([ADR 0043](decisions/0043-open-onecli-defaults.md)). The bundled OneCLI is installed
+open: the bootstrap makes no host rules and no `block *` unless `ONECLI_HOSTS` is set, so OneCLI relays any host a valid agent token
+asks for and, with the private destinations the chart opens, an admin-named LAN MCP server on :443. Use this page when the gateway
+must relay nothing but a list you choose. Three independent tools harden OneCLI, and you can use any of them:
+
+| Tool | Effect |
+|---|---|
+| host rules: `ONECLI_HOSTS="h1 h2 ..." hack/onecli-bootstrap.sh -n NS` (or `hack/kind-up.sh` with it exported), or `hack/onecli-host-rules.sh --apply` | an allow rule per host, then `block *` |
+| `--set gateway.allowPrivateDestinations=` on the upstream chart, and `gateway.privateHttps.enabled=false` on `charts/pi-onecli` | OneCLI refuses private destinations again, and the network policy no longer admits them |
+| `hack/onecli-policies/egress-strict.yaml` (Cilium, external OneCLI) | the FQDN allowlist and the full private deny, for the OneCLI Pod |
+
+**The new default does not remove an existing `pi-block-all`.** An install bootstrapped before this change keeps the block (the
+bootstrap warns about it and never deletes it), and `hack/onecli-host-rules.sh` or an old bootstrap creates it again. To open such
+an install, delete the rule through the API (see Rollback). `ONECLI_HOSTS` keeps the behaviour described below: allows, then the
+block last.
+
+Why this list exists: OneCLI v2.20.0 refuses private, cluster and metadata targets, but it relays **any public host** for a valid agent
 token (`docs/research/onecli-v2-recheck.md`, section 2). The `Default Rule: block` switch (`/v1/org/policy/default`) does
 not change that: it only applies to credentialed non-LLM requests. The working allowlist is ordered explicit org rules:
 `allow <host>` for each host, then `block *`. That test returned 403 for every host not allowed and 200 with injection for
 `openrouter.ai`.
 
 This is the gateway-side control (what a leaked token can ask for). The pod-side control is the Cilium FQDN allowlist
-in `hack/onecli-policies/egress.yaml`; keep both lists identical.
+in `hack/onecli-policies/egress-strict.yaml`; keep both lists identical (a unit test compares the strict policy, the script's list and
+the table below).
 
 ## The rule set
 
@@ -38,7 +55,7 @@ behaved as an allowlist); check with the probes below after applying.
 
 ## Apply
 
-`hack/onecli-host-rules.sh`. Dry run by default.
+`hack/onecli-host-rules.sh`. Dry run by default. (`hack/onecli-bootstrap.sh` does the same for the hosts in `ONECLI_HOSTS`, which has no default.)
 
 ```sh
 hack/onecli-host-rules.sh            # prints the plan, makes no request
@@ -51,7 +68,7 @@ hack/onecli-host-rules.sh --apply    # needs the admin key
 - `ONECLI_URL` (required): the OneCLI API base, e.g. `https://onecli.example.com`. Use `http://localhost:10256` with
   `kubectl -n onecli port-forward svc/onecli 10256` if the Cilium ingress policy has closed the route.
 - Idempotent by rule name (`pi-allow-<host>`, `pi-block-all`). Adding a host later: add it to `hosts` in the script and to
-  `egress.yaml`, rerun; the script creates the missing allow rules first, while `pi-block-all` still exists, then deletes
+  `egress-strict.yaml`, rerun; the script creates the missing allow rules first, while `pi-block-all` still exists, then deletes
   and recreates the block last. If creating an allow rule fails, the old block is untouched (the allowlist stays on).
   Only between the block DELETE and its POST is there no block rule (the gateway relays public hosts as before): an
   EXIT trap recreates the block if anything fails in that step, and prints a "rerun with --apply NOW" message if even
@@ -84,15 +101,16 @@ Probes from the orchestrator pod through `:10255` with its agent token (not prin
 The Cilium FQDN policy on the OneCLI pod (see `hack/onecli-policies/`) is the second layer: a host allowed here but
 missing there fails to connect.
 
-Sandboxes still reach public hosts directly (`sandbox-allow-internet-egress`, decision 2026-11-15), so this list only
+(Historical, before the egress proxy.) Sandboxes still reach public hosts directly (`sandbox-allow-internet-egress`, decision 2026-11-15), so this list only
 limits what goes through the gateway: model calls and git with injected credentials. Routing sandbox traffic through the
 gateway too would need `HTTPS_PROXY` in the sandbox, the OneCLI CA in every tool, and the package hosts each session
 needs on this list. It is not done; revisit before real use with untrusted code.
 
-## Rollback
+## Rollback (back to the open default)
 
 List rules with `GET /v1/org/policy/rules` and delete `pi-block-all` first (restores relaying of public hosts as in
-v2.20.0 defaults), then the `pi-allow-*` rules if wanted. Deleting only the block rule is enough to undo the restriction.
+v2.20.0 defaults), then the `pi-allow-*` rules if wanted. Deleting only the block rule is enough to undo the restriction. Do not
+rerun the script or an old bootstrap afterwards: they create the block again.
 
 ## Reconciled rules: MCP servers and route=onecli hosts (ADR 0040)
 
@@ -114,12 +132,13 @@ A catalog PUT is reachable in seconds (live numbers in ADR 0040).
 the block gets no rule of ours. **The terminal block is the one exception**: the gateway applies rules in creation order (first
 match wins; `priority` is not settable), so an allow created behind `block *` is ineffective. When the reconciler adds allows it
 recreates the block, same name and body, behind them: the copy is created first and the original deleted second, so the gateway
-is never without a block. It never creates a block where there is none. Do not edit `pi-egress-allow-*` rules by hand: the next
+is never without a block. It never creates a block where there is none (an open install stays open). Do not edit `pi-egress-allow-*` rules by hand: the next
 pass puts them back (or removes them).
 
 **Without the reconciler** (the default for a chart install) an MCP catalog row still does not open egress: the host must be
 allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's egress policy
-(`hack/onecli-policies/egress.yaml`). Until then the server fails to connect: the orchestrator logs `mcp-discovery-failed` with the
+(`hack/onecli-policies/egress-strict.yaml`). On an open install (no block) none of this applies: the server connects as soon as the
+orchestrator can reach it. Until then the server fails to connect: the orchestrator logs `mcp-discovery-failed` with the
 retry delay, and calls to its tools settle `tool_unavailable`.
 
 The reconciler uses the OneCLI admin key the orchestrator holds for repo sessions; it stays there for the proof of concept

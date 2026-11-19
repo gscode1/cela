@@ -22,8 +22,8 @@ Files:
 | `charts/pi-durable/templates/networkpolicy/` | default-deny both ways, DNS, per-workload allows, sandbox policies; with `provider: cilium` also kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `helm install` / `hack/install.sh` (the Cilium policies need the Cilium CRDs) |
 | `charts/pi-postgres/templates/networkpolicy.yaml` | the bundled database: ingress from the `clientSelectors` only | the `pi-postgres` release |
 | `tests/e2e/deploy/` | test-only policies of the e2e driver (and the CiliumNetworkPolicies in `tests/e2e/deploy/cilium`), see `docs/e2e.md` | `tests/e2e/run.sh`, next to the chart, in every run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`) |
-| `hack/onecli-policies/` | `onecli` namespace ingress and egress (FQDN allowlist) of an external OneCLI; the bundled one has its own in `charts/pi-onecli` | your OneCLI deployment manager, see its README |
-| `hack/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | OneCLI v2 `allow ...` then `block *` | by hand, operator machine |
+| `hack/onecli-policies/` | `onecli` namespace ingress and egress of an external OneCLI: `egress.yaml` is open (TCP 443 to the world), `egress-strict.yaml` is the FQDN allowlist (hardening, never both); the bundled one has its own in `charts/pi-onecli` | your OneCLI deployment manager, see its README |
+| `hack/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | optional hardening: OneCLI v2 `allow ...` then `block *` (also `ONECLI_HOSTS` in the bootstrap) | by hand, operator machine |
 
 ## Example pod labels (adapt to your installed components)
 
@@ -74,8 +74,10 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | Envoy Gateway proxies | OneCLI web, gateway, API | 10254, 10255, 10256 | optional ingress-controller example; replace selectors or use port-forward | C onecli-ingress |
 | OneCLI pod | CoreDNS | 53 (with DNS proxy rule) | FQDN allowlist needs Cilium to see lookups | C onecli-egress |
 | OneCLI pod | `onecli/onecli-db` (example; patch for your database) | 5432 | OneCLI database | C onecli-egress |
-| OneCLI pod | chatgpt.com, `*.chatgpt.com`, auth.openai.com, api.openai.com, openrouter.ai, github.com, api.github.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, pypi.org, files.pythonhosted.org | 443 | model providers, GitHub, package registries | C onecli-egress |
-| OneCLI pod | 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 | any | explicit deny: a public name resolving to a private address | C onecli-egress (egressDeny) |
+| OneCLI pod | anything outside the cluster (`world`), including the LAN | 443 | model providers, GitHub, package registries and admin-named MCP servers (open default, [ADR 0043](decisions/0043-open-onecli-defaults.md)) | C onecli-egress (`egress.yaml`) |
+| OneCLI pod | 100.64/10, 169.254/16 | any | explicit deny: CGNAT and cloud metadata, in both variants | C onecli-egress (egressDeny) |
+| OneCLI pod (hardening) | chatgpt.com, `*.chatgpt.com`, auth.openai.com, api.openai.com, openrouter.ai, github.com, api.github.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, pypi.org, files.pythonhosted.org, mcp.deepwiki.com | 443 | replaces the world rule | C onecli-egress (`egress-strict.yaml`) |
+| OneCLI pod (hardening) | 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 | any | explicit deny: a public name resolving to a private address | C onecli-egress (`egress-strict.yaml`, egressDeny) |
 | kubelet, `kubectl port-forward` | any pod | any | host traffic; Cilium admits the local node by default, so probes keep working | (default) |
 
 Rows marked "(ingress side)" repeat a flow from the receiving end and add no rules. The bundled Postgres has no egress rule of its own; in the same namespace `default-deny-all` also covers it.
@@ -188,7 +190,7 @@ Enforcement starts per pod the moment any policy selects it, so the safe route i
 
 Fast, per layer, in reverse order:
 
-- Host rules: delete `pi-block-all` through the API (restores relaying of public hosts).
+- Host rules (a hardened install only; the default has none): delete `pi-block-all` through the API (restores relaying of public hosts).
 - OneCLI policies: remove them with your OneCLI deployment manager (for plain kubectl:
   `kubectl -n onecli delete cnp onecli-ingress onecli-egress`).
 - pi-durable-poc, whole set (does not touch Pods or data):
@@ -298,6 +300,7 @@ the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release
 | OneCLI pods | `pi-postgres` | 5432 | the `onecli` database (pi-postgres admits `app.kubernetes.io/name=onecli`) |
 | OneCLI pods | CoreDNS | 53 | |
 | OneCLI gateway | public internet (not private, CGNAT, link-local, loopback) | any | model, GitHub and package hosts, as for sandboxes |
+| OneCLI gateway | 10/8, 172.16/12, 192.168/16 (`gateway.privateHttps`, a separate policy `<release>-gateway-allow-private-https-egress`; `gateway.privateHttps.except` carves out the kube API and pod CIDRs) | 443 | an admin-named LAN MCP server with an injected key ([ADR 0043](decisions/0043-open-onecli-defaults.md)). CGNAT, link-local, loopback and the IPv6 private ranges stay in no rule. `hack/onecli.sh` turns it off, with the gateway's `allowPrivateDestinations`, when the release has no egress proxy |
 | the CA Job | any address | 443, 6443 | the Kubernetes API cannot be named in a plain policy |
 
 Everything else is denied (`<release>-default-deny`). **Why it matters more than for other services:** OneCLI's

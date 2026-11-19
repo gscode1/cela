@@ -281,7 +281,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
     - Status: implemented (issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)). `hack/onecli.sh` creates
       `onecli-database` and `onecli-secrets` once, installs `charts/pi-onecli` (network policies) first, then the upstream
       chart (pinned by version and digest; runner off, one replica, no Redis, the `onecli` database), then runs the
-      bootstrap (`hack/onecli-bootstrap.sh`: account, admin key, orchestrator agent and token Secret, host rules, public
+      bootstrap (`hack/onecli-bootstrap.sh`: account, admin key, orchestrator agent and token Secret, host rules only with `ONECLI_HOSTS` (ADR 0043), public
       CA ConfigMap; a second run prints `changed=0`). `hack/install.sh` calls it for `onecli.mode=bundled`;
       `hack/kind-up.sh --onecli` is that on kind; `hack/kind-smoke.sh --onecli` proves the orchestrator's CONNECT through
       the gateway (407 without the token, a TLS handshake that verifies against the CA ConfigMap, the gateway's own 403
