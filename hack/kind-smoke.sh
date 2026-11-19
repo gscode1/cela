@@ -178,9 +178,9 @@ if [[ $onecli -eq 1 ]]; then
     fi
   fi
   echo "-- gateway log (agent and rule only):"
-  logs=$(k logs deploy/onecli-gateway --tail=200 2>&1 | grep -E 'agent="pi-orchestrator"|BLOCKED' | tail -5) || true
+  logs=$(k logs deploy/onecli-gateway --tail=200 2>&1 | grep -E '"agent":"pi-orchestrator"|agent="pi-orchestrator"|BLOCKED' | tail -5) || true
   printf '%s\n' "$logs"
-  check "the gateway logged the orchestrator's agent" "$logs" 'agent="pi-orchestrator"|BLOCKED'
+  check "the gateway logged the orchestrator's agent" "$logs" '"agent":"pi-orchestrator"|agent="pi-orchestrator"|BLOCKED'
 
   log "the OneCLI management API is closed to everything but the orchestrator"
   probe='fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then((r) => console.log("reachable " + r.status), (e) => console.log("closed " + (e.cause?.code ?? e.name)))'
