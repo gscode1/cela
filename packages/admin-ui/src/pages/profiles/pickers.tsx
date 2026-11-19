@@ -31,107 +31,6 @@ export function UnfilteredBadge() {
   );
 }
 
-/**
- * How the profile's sandboxes reach the network. `direct` is offered only when the chart allows it
- * (security.allowDirectSandboxEgress); otherwise it is disabled with the reason, and a profile that already says
- * direct keeps showing it, so the operator sees what to change.
- */
-export function NetworkModePicker({
-  mode,
-  catalog,
-  onChange,
-}: {
-  mode: NetworkMode;
-  catalog: NetworkModeCatalog | undefined;
-  onChange: (mode: NetworkMode) => void;
-}) {
-  const directAllowed = catalog?.directAllowed === true;
-  return (
-    <Fieldset
-      legend={fieldLabel("networkMode")}
-      hint="How this profile's sandboxes reach the network. Fixed when a session is created; applies to new sessions only."
-    >
-      <Select
-        id="profile-network-mode"
-        aria-label={fieldLabel("networkMode")}
-        value={mode}
-        onChange={(event) => {
-          onChange(event.target.value === "direct" ? "direct" : "proxied");
-        }}
-      >
-        <option value="proxied">
-          Proxied: only through the egress proxy, under the rules (default)
-        </option>
-        <option value="direct" disabled={!directAllowed && mode !== "direct"}>
-          Direct: open internet, unfiltered and unaudited
-          {directAllowed ? "" : " (not allowed in this deployment)"}
-        </option>
-      </Select>
-      {mode === "direct" && (
-        <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="direct-warning">
-          <UnfilteredBadge /> No egress rule applies and nothing is audited. Not combinable with
-          repositories, credentialed MCP servers or rule sets with a OneCLI route.
-        </p>
-      )}
-      {!directAllowed && catalog !== undefined && (
-        <p className="text-sm text-muted-foreground" data-testid="direct-disabled">
-          Direct is off: the chart sets security.allowDirectSandboxEgress to false, so the API
-          refuses it.
-        </p>
-      )}
-    </Fieldset>
-  );
-}
-
-/**
- * The sandbox image of the profile's sessions (ADR 0041). `browser` is offered only when the chart enables it
- * (sandbox.flavours.browser.enabled); a profile that already says browser keeps showing it.
- */
-export function SandboxFlavourPicker({
-  flavour,
-  catalog,
-  onChange,
-}: {
-  flavour: SandboxFlavour;
-  catalog: SandboxFlavourCatalog | undefined;
-  onChange: (flavour: SandboxFlavour) => void;
-}) {
-  const browserEnabled = catalog?.browserEnabled === true;
-  return (
-    <Fieldset
-      legend={fieldLabel("sandboxFlavour")}
-      hint="Which image the sandbox runs. Fixed when a session is created; applies to new sessions only."
-    >
-      <Select
-        id="profile-sandbox-flavour"
-        aria-label={fieldLabel("sandboxFlavour")}
-        value={flavour}
-        onChange={(event) => {
-          onChange(event.target.value === "browser" ? "browser" : "default");
-        }}
-      >
-        <option value="default">Default: shell and files (default)</option>
-        <option value="browser" disabled={!browserEnabled && flavour !== "browser"}>
-          Browser: Chromium with Playwright CLI and agent-browser
-          {browserEnabled ? "" : " (not enabled in this deployment)"}
-        </option>
-      </Select>
-      {flavour === "browser" && (
-        <p className="text-sm text-muted-foreground" data-testid="browser-note">
-          Pair it with the proxied network mode and an egress rule set that allows the sites. Not
-          combinable with repositories, credentialed MCP servers or rule sets with a OneCLI route.
-        </p>
-      )}
-      {!browserEnabled && catalog !== undefined && (
-        <p className="text-sm text-muted-foreground" data-testid="browser-disabled">
-          Browser is off: the chart sets sandbox.flavours.browser.enabled to false, so the API
-          refuses it.
-        </p>
-      )}
-    </Fieldset>
-  );
-}
-
 export function Fieldset({
   legend,
   hint,
@@ -158,78 +57,168 @@ export function sizeSummary(size: SandboxSize): string {
 }
 
 /**
- * The profile's sandbox size and the sizes a caller may ask for (docs/decisions/0030-sandbox-sizes.md). Sizes are the
- * deployment's (chart values); one that is no longer defined stays visible with a way to drop it, since the API refuses
- * to store it again.
+ * The profile's sandbox: size (docs/decisions/0030-sandbox-sizes.md), network mode (ADR 0038) and image flavour (ADR
+ * 0041). When the deployment offers one choice for each and the profile uses the default, there is nothing to pick and
+ * one muted line says what the sandbox is. Otherwise one row of three selects, so a value the profile already has stays
+ * visible. Sizes are the deployment's (chart values); one that is no longer defined stays visible with a way to drop it,
+ * since the API refuses to store it again. `direct` and `browser` are disabled while the chart does not allow them, and a
+ * profile that already says so keeps showing it.
  */
-export function SandboxSizePicker({
+export function SandboxPicker({
   size,
-  allowed,
-  catalog,
+  allowedSizes,
+  sizeCatalog,
+  mode,
+  modeCatalog,
+  flavour,
+  flavourCatalog,
   onChange,
 }: {
   size: string;
-  allowed: string[];
-  catalog: SandboxSizeCatalog | undefined;
-  onChange: (change: { sandboxSize?: string; sandboxSizes?: string[] }) => void;
+  allowedSizes: string[];
+  sizeCatalog: SandboxSizeCatalog | undefined;
+  mode: NetworkMode;
+  modeCatalog: NetworkModeCatalog | undefined;
+  flavour: SandboxFlavour;
+  flavourCatalog: SandboxFlavourCatalog | undefined;
+  onChange: (
+    change:
+      | { sandboxSize: string }
+      | { sandboxSizes: string[] }
+      | { networkMode: NetworkMode }
+      | { sandboxFlavour: SandboxFlavour },
+  ) => void;
 }) {
-  const sizes = catalog?.sizes ?? [];
+  const sizes = sizeCatalog?.sizes ?? [];
   const defined = (name: string): boolean => sizes.some((entry) => entry.name === name);
-  if (catalog !== undefined && sizes.length === 0 && size === "" && allowed.length === 0) {
+  const directAllowed = modeCatalog?.directAllowed === true;
+  const browserEnabled = flavourCatalog?.browserEnabled === true;
+  const nothingToPick =
+    sizeCatalog !== undefined &&
+    modeCatalog !== undefined &&
+    flavourCatalog !== undefined &&
+    sizes.length <= 1 &&
+    size === "" &&
+    allowedSizes.length === 0 &&
+    !directAllowed &&
+    mode === "proxied" &&
+    !browserEnabled &&
+    flavour === "default";
+  if (nothingToPick) {
     return (
-      <Fieldset legend={fieldLabel("sandboxSize")}>
-        <p className="text-sm text-muted-foreground">This deployment defines no sandbox sizes.</p>
-      </Fieldset>
+      <p className="text-sm text-muted-foreground" data-testid="sandbox-default">
+        Sandbox: default size, proxied network, default image.
+      </p>
     );
   }
-  const effective = size === "" ? (catalog?.defaultSize ?? "") : size;
+  const effective = size === "" ? (sizeCatalog?.defaultSize ?? "") : size;
   return (
-    <Fieldset
-      legend={fieldLabel("sandboxSize")}
-      hint="CPU, memory and workspace of this profile's sandboxes. Applies to new sessions only."
-    >
-      <Select
-        id="profile-sandbox-size"
-        aria-label={fieldLabel("sandboxSize")}
-        value={size}
-        onChange={(event) => {
-          onChange({ sandboxSize: event.target.value });
-        }}
-      >
-        <option value="">
-          Inherit (global default{catalog?.defaultSize ? `: ${catalog.defaultSize}` : ""})
-        </option>
-        {sizes.map((entry) => (
-          <option key={entry.name} value={entry.name}>
-            {entry.name}: {sizeSummary(entry)}
-          </option>
-        ))}
-        {size !== "" && catalog !== undefined && !defined(size) && (
-          <option value={size}>{size} (not defined)</option>
-        )}
-      </Select>
-      <p className="text-sm font-medium">{fieldLabel("sandboxSizes")}</p>
-      {sizes
-        .filter((entry) => entry.name !== effective)
-        .map((entry) => (
-          <div key={entry.name} className="flex flex-wrap items-center gap-2 text-sm">
-            <Checkbox
-              id={`size-${entry.name}`}
-              checked={allowed.includes(entry.name)}
-              onChange={(event) => {
-                onChange({
-                  sandboxSizes: event.target.checked
-                    ? [...allowed, entry.name]
-                    : allowed.filter((name) => name !== entry.name),
-                });
-              }}
-            />
-            <Label htmlFor={`size-${entry.name}`}>{entry.name}</Label>
-            <span className="text-muted-foreground">{sizeSummary(entry)}</span>
-          </div>
-        ))}
-      {catalog !== undefined &&
-        allowed
+    <Fieldset legend="Sandbox">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="profile-sandbox-size">{fieldLabel("sandboxSize")}</Label>
+          <Select
+            id="profile-sandbox-size"
+            value={size}
+            onChange={(event) => {
+              onChange({ sandboxSize: event.target.value });
+            }}
+          >
+            <option value="">
+              Inherit (global default
+              {sizeCatalog?.defaultSize ? `: ${sizeCatalog.defaultSize}` : ""})
+            </option>
+            {sizes.map((entry) => (
+              <option key={entry.name} value={entry.name}>
+                {entry.name}: {sizeSummary(entry)}
+              </option>
+            ))}
+            {size !== "" && sizeCatalog !== undefined && !defined(size) && (
+              <option value={size}>{size} (not defined)</option>
+            )}
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="profile-network-mode">{fieldLabel("networkMode")}</Label>
+          <Select
+            id="profile-network-mode"
+            value={mode}
+            onChange={(event) => {
+              onChange({ networkMode: event.target.value === "direct" ? "direct" : "proxied" });
+            }}
+          >
+            <option value="proxied">Proxied: under the egress rules (default)</option>
+            <option
+              value="direct"
+              disabled={!directAllowed && mode !== "direct"}
+              {...(directAllowed ? {} : { title: "Not allowed in this deployment" })}
+            >
+              Direct: open internet, unfiltered
+              {directAllowed ? "" : " (not allowed)"}
+            </option>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="profile-sandbox-flavour">{fieldLabel("sandboxFlavour")}</Label>
+          <Select
+            id="profile-sandbox-flavour"
+            value={flavour}
+            onChange={(event) => {
+              onChange({
+                sandboxFlavour: event.target.value === "browser" ? "browser" : "default",
+              });
+            }}
+          >
+            <option value="default">Default: shell and files (default)</option>
+            <option
+              value="browser"
+              disabled={!browserEnabled && flavour !== "browser"}
+              {...(browserEnabled ? {} : { title: "Not enabled in this deployment" })}
+            >
+              Browser: Chromium and agent-browser
+              {browserEnabled ? "" : " (not enabled)"}
+            </option>
+          </Select>
+        </div>
+      </div>
+      {mode === "direct" && (
+        <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="direct-warning">
+          <UnfilteredBadge /> No egress rule applies and nothing is audited. Not combinable with
+          repositories, credentialed MCP servers or rule sets with a OneCLI route.
+        </p>
+      )}
+      {flavour === "browser" && (
+        <p className="text-sm text-muted-foreground" data-testid="browser-note">
+          Pair it with the proxied network mode and an egress rule set that allows the sites. Not
+          combinable with repositories, credentialed MCP servers or rule sets with a OneCLI route.
+        </p>
+      )}
+      {sizes.length > 1 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium">{fieldLabel("sandboxSizes")}</p>
+          {sizes
+            .filter((entry) => entry.name !== effective)
+            .map((entry) => (
+              <div key={entry.name} className="flex flex-wrap items-center gap-2 text-sm">
+                <Checkbox
+                  id={`size-${entry.name}`}
+                  checked={allowedSizes.includes(entry.name)}
+                  onChange={(event) => {
+                    onChange({
+                      sandboxSizes: event.target.checked
+                        ? [...allowedSizes, entry.name]
+                        : allowedSizes.filter((name) => name !== entry.name),
+                    });
+                  }}
+                />
+                <Label htmlFor={`size-${entry.name}`}>{entry.name}</Label>
+                <span className="text-muted-foreground">{sizeSummary(entry)}</span>
+              </div>
+            ))}
+        </div>
+      )}
+      {sizeCatalog !== undefined &&
+        allowedSizes
           .filter((name) => !defined(name))
           .map((name) => (
             <div
@@ -243,7 +232,7 @@ export function SandboxSizePicker({
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  onChange({ sandboxSizes: allowed.filter((entry) => entry !== name) });
+                  onChange({ sandboxSizes: allowedSizes.filter((entry) => entry !== name) });
                 }}
               >
                 Remove {name}
@@ -265,13 +254,10 @@ export function ToolList({
   selected,
   offered,
   installed,
-  bare = false,
   onChange,
 }: {
   idPrefix: string;
   legend: string;
-  /** Inside another disclosure: no frame of its own. */
-  bare?: boolean;
   all: boolean;
   selected: string[];
   /** The tools that may be picked: the installed ones, narrowed for `modelTools` by the enabled tools. */
@@ -280,9 +266,8 @@ export function ToolList({
   onChange: (all: boolean, selected: string[]) => void;
 }) {
   const unknown = selected.filter((name) => !installed.includes(name));
-  const Frame = bare ? BareFrame : Fieldset;
   return (
-    <Frame legend={legend}>
+    <Fieldset legend={legend}>
       <div className="flex items-center gap-2">
         <Checkbox
           id={`${idPrefix}-all`}
@@ -343,17 +328,7 @@ export function ToolList({
           </Button>
         </div>
       ))}
-    </Frame>
-  );
-}
-
-/** The same heading as a fieldset, without the frame: for a list that already sits in one. */
-function BareFrame({ legend, children }: { legend: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm font-medium">{legend}</p>
-      {children}
-    </div>
+    </Fieldset>
   );
 }
 
@@ -574,12 +549,14 @@ export function SkillPicker({
             )}
             <Button
               size="sm"
-              variant="outline"
+              variant="ghost"
+              className="h-6 px-2"
+              aria-label={`Remove ${pin.name}`}
               onClick={() => {
                 onChange(pins.filter((entry) => entry.name !== pin.name));
               }}
             >
-              Remove {pin.name}
+              {"×"}
             </Button>
           </div>
         );

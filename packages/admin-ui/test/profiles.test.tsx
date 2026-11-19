@@ -30,7 +30,7 @@ function addProfile(
 async function openProfile(admin: FakeAdmin, name: string): Promise<void> {
   renderApp(`/profiles/${name}`);
   await signIn("alice-token");
-  await screen.findByRole("heading", { name: new RegExp(`Edit ${name}`) });
+  await screen.findByRole("heading", { name: new RegExp(`^${name}`) });
   await waitFor(() => {
     expect(screen.getByLabelText("Instructions")).toBeInTheDocument();
   });
@@ -42,12 +42,24 @@ async function openProfile(admin: FakeAdmin, name: string): Promise<void> {
 
 const publish = () => screen.getByRole("button", { name: "Publish new version" });
 
+describe("profile header", () => {
+  it("links to the playground with this profile, in one card without an Edit title", async () => {
+    const admin = createFakeAdmin();
+    await openProfile(admin, "coding");
+    expect(screen.getByRole("link", { name: "Try this profile" })).toHaveAttribute(
+      "href",
+      "/playground?profile=coding",
+    );
+    expect(screen.queryByRole("heading", { name: /^Edit coding/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("deleting a profile", () => {
   it("is offered only for a disabled profile that is not the default", async () => {
     const admin = createFakeAdmin();
     addProfile(admin, "review", { instructions: "x" });
     await openProfile(admin, "review");
-    expect(screen.getByRole("button", { name: "Delete profile" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Delete profile" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disable for new sessions" }));
     await screen.findByText("review is disabled for new sessions.");
     expect(screen.getByRole("button", { name: "Delete profile" })).toBeEnabled();
@@ -331,12 +343,12 @@ describe("editor details", () => {
     expect(screen.queryByText(/of 8000 characters/)).not.toBeInTheDocument();
   });
 
-  it("keeps Tools the model can call behind Advanced, and opens it for a custom selection", async () => {
+  it("keeps Tools the model can call behind Limit tools the model sees, and opens it for a custom selection", async () => {
     const admin = createFakeAdmin();
     addProfile(admin, "narrow", { modelTools: ["read"] });
     await openProfile(admin, "coding");
     expect(screen.queryByText("Tools the model can call")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await userEvent.click(screen.getByRole("button", { name: "Limit tools the model sees…" }));
     expect(screen.getByText("Tools the model can call")).toBeInTheDocument();
   });
 
@@ -464,16 +476,55 @@ describe("create", () => {
   });
 });
 
-describe("sandbox flavour", () => {
-  it("disables browser with the reason while the chart does not enable it", async () => {
+describe("sandbox", () => {
+  it("shows one muted line, and no pickers, when the deployment offers one choice", async () => {
     const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    expect(await screen.findByTestId("sandbox-default")).toHaveTextContent(
+      "Sandbox: default size, proxied network, default image.",
+    );
+    expect(screen.queryByLabelText("Sandbox flavour")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Network mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Sandbox size")).not.toBeInTheDocument();
+    expect(screen.queryByText(/security\.allowDirectSandboxEgress/)).not.toBeInTheDocument();
+  });
+
+  it("shows the selects and the sizes a session may ask for when there are several sizes", async () => {
+    const admin = createFakeAdmin();
+    const size = (name: string) => ({
+      name,
+      requests: {},
+      limits: { cpu: "1", memory: "1Gi" },
+      workspaceSize: "1Gi",
+      ephemeralStorage: "1Gi",
+    });
+    admin.sandboxSizes = [size("small"), size("large")];
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    expect(await screen.findByLabelText("Sandbox size")).toBeInTheDocument();
+    expect(await screen.findByText("Sizes a session may ask for")).toBeInTheDocument();
+  });
+
+  it("shows the three selects when the profile does not use the default", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { networkMode: "direct" });
+    await openProfile(admin, "review");
+    expect(await screen.findByLabelText("Network mode")).toHaveValue("direct");
+    expect(screen.getByLabelText("Sandbox flavour")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sandbox size")).toBeInTheDocument();
+    expect(screen.queryByTestId("sandbox-default")).not.toBeInTheDocument();
+  });
+});
+
+describe("sandbox flavour", () => {
+  it("disables browser while the chart does not enable it", async () => {
+    const admin = createFakeAdmin();
+    admin.directAllowed = true;
     addProfile(admin, "review", { instructions: "x" });
     await openProfile(admin, "review");
     const select = await screen.findByLabelText("Sandbox flavour");
     expect(within(select).getByRole("option", { name: /^Browser/ })).toBeDisabled();
-    expect(await screen.findByTestId("browser-disabled")).toHaveTextContent(
-      "sandbox.flavours.browser.enabled",
-    );
   });
 
   it("offers browser when enabled and explains what it cannot combine with", async () => {
@@ -491,15 +542,13 @@ describe("sandbox flavour", () => {
 });
 
 describe("network mode", () => {
-  it("disables direct with the reason while the chart gate is off", async () => {
+  it("disables direct while the chart gate is off", async () => {
     const admin = createFakeAdmin();
+    admin.browserEnabled = true;
     addProfile(admin, "review", { instructions: "x" });
     await openProfile(admin, "review");
     const select = await screen.findByLabelText("Network mode");
     expect(within(select).getByRole("option", { name: /^Direct/ })).toBeDisabled();
-    expect(await screen.findByTestId("direct-disabled")).toHaveTextContent(
-      "security.allowDirectSandboxEgress",
-    );
   });
 
   it("offers direct when allowed, and warns that it is unfiltered and unaudited", async () => {

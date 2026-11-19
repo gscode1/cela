@@ -6,7 +6,7 @@ import { LastChanged } from "@/components/changed";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { isConflict } from "@/lib/api";
 import { deleteProfile, putProfile } from "@/lib/api/profiles";
@@ -168,7 +168,13 @@ function ProfileScreenFor({ name }: { name: string }) {
               <LastChanged by={stored.updatedBy} at={stored.updatedAt} />
             </CardDescription>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              className={buttonVariants({ variant: "outline" })}
+              to={`/playground?profile=${encodeURIComponent(name)}`}
+            >
+              Try this profile
+            </Link>
             <Button
               variant="outline"
               disabled={toggle.isPending || (isDefault && stored.enabledForNew)}
@@ -184,22 +190,18 @@ function ProfileScreenFor({ name }: { name: string }) {
               {stored.enabledForNew ? "Disable for new sessions" : "Enable for new sessions"}
             </Button>
             {/* Only a disabled profile that is not the default can go (ADR 0027); the API checks again. */}
-            <Button
-              variant="outline"
-              disabled={stored.enabledForNew || isDefault || deleting}
-              title={
-                isDefault
-                  ? "The default profile cannot be deleted. Select another default in Settings first."
-                  : stored.enabledForNew
-                    ? "Disable it for new sessions first."
-                    : "Delete this profile and all its versions"
-              }
-              onClick={() => {
-                setDeleting(true);
-              }}
-            >
-              Delete profile
-            </Button>
+            {!stored.enabledForNew && !isDefault && (
+              <Button
+                variant="outline"
+                disabled={deleting}
+                title="Delete this profile and all its versions"
+                onClick={() => {
+                  setDeleting(true);
+                }}
+              >
+                Delete profile
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">

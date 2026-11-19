@@ -580,7 +580,7 @@ describe("egress page: session rules and history", () => {
 describe("profile editor: egress rule sets", () => {
   async function openProfile(name: string): Promise<void> {
     await open(`/profiles/${name}`);
-    await screen.findByRole("heading", { name: new RegExp(`Edit ${name}`) });
+    await screen.findByRole("heading", { name: new RegExp(`^${name}`) });
   }
 
   it("lists the sets and marks the ones that apply to all sessions as already included", async () => {

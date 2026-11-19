@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
-import type { ProfileDefinition } from "@/lib/api/profiles";
+import type { ProfileDefinition, SandboxSize } from "@/lib/api/profiles";
 
 /**
  * An in-memory stand-in for the admin endpoints the console uses, with the answers that matter to it: revisions and
@@ -39,6 +39,8 @@ export interface FakeAdmin {
   directAllowed: boolean;
   /** The chart's sandbox.flavours.browser.enabled, as `GET /admin/sandbox-flavours` reports it. */
   browserEnabled: boolean;
+  /** The chart's sandbox sizes, as `GET /admin/sandbox-sizes` reports them (none: the default only). */
+  sandboxSizes: SandboxSize[];
   /** The `GET /admin/models` answer (default view). */
   models: Record<string, unknown>;
   mcp: ({ name: string; url: string; enabled: boolean } & Record<string, unknown>)[];
@@ -103,6 +105,7 @@ export function createFakeAdmin(): FakeAdmin {
     tools: ["read", "write", "edit", "bash"],
     directAllowed: false,
     browserEnabled: false,
+    sandboxSizes: [],
     models: {
       models: [
         { provider: "openai", id: "gpt-fast", name: "GPT Fast", reasoning: false },
@@ -307,6 +310,11 @@ export function createFakeAdmin(): FakeAdmin {
         directAllowed: admin.directAllowed,
       });
     }
+    if (route === "/admin/sandbox-sizes")
+      return reply(200, {
+        sizes: admin.sandboxSizes,
+        defaultSize: admin.sandboxSizes[0]?.name ?? null,
+      });
     if (route === "/admin/sandbox-flavours") {
       return reply(200, {
         flavours: admin.browserEnabled ? ["default", "browser"] : ["default"],
