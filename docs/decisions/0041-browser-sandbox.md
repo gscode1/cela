@@ -183,10 +183,25 @@ own resources.
 --build --onecli --egress-proxy --browser`) checks, on real sessions: the seeded profile and skills, the Pod (pool, image,
 label, uid, `/dev/shm`), both tools returning a page title and a PNG screenshot in `/workspace`, the unreachable addresses,
 the blocked schemes, a rule-refused host, github.com without a credential, no UDP, no DNS, loopback listeners, and the memory
-and CPU numbers above. The local kind cluster runs the sandboxes under **runc**, not gVisor, so **gVisor compatibility is
-unverified**: Chromium under gVisor may need `--no-zygote` or `--disable-dev-shm-usage` (the wrapper already falls back to
-the latter when `/dev/shm` is small) or other flags, and its memory use differs. Verify on a gVisor node before enabling the
-flavour for untrusted pages. amd64 is built by CI (`images.yml`) and not run here.
+and CPU numbers above. The local kind cluster runs the sandboxes under **runc**, not gVisor.
+
+**gVisor, verified (issue #267).** `tests/e2e/run.sh browser` (docs/e2e.md) ran on an arm64 cluster whose sandbox RuntimeClass is
+`gvisor` (kernel as the sandbox sees it: `Linux 4.19.0-gvisor`), with Chromium for Testing 159.0.8154.6:
+
+- **No extra flag was needed.** `pi-browser start` as it is (`--no-sandbox`, no `--no-zygote`, `--disable-dev-shm-usage` not
+  added) starts Chromium in about 15 s from a stopped browser, including the exec round trip, and neither tool crashed it.
+  Only a dbus error from UPower is logged, which is harmless. The wrapper's `/dev/shm` fallback does not trigger: gVisor's tmpfs
+  reports about 15 GB instead of the volume's 256 Mi limit, so the limit is enforced by the memory limit, not by `df`.
+- Playwright CLI and agent-browser each return the title of example.com and a valid PNG screenshot; the egress denials hold
+  (kube API by name and by IP, a platform Service, the metadata address, `file://`, `chrome://`, a host outside a narrower
+  profile's rules), and github.com loads with no OneCLI route.
+- A live `openai-codex/gpt-6-luna` session on the browser profile used the playwright-cli skill and then the agent-browser
+  skill: two turns, five tool calls, "Example Domain" in both answers, and both PNGs in `/workspace`. The credential stays in
+  OneCLI and the orchestrator.
+- **Not measurable under gVisor:** the cgroup counters that the memory numbers above came from (`memory.stat`, `cpu.stat`) read
+  zero inside a gVisor sandbox, so no gVisor memory number exists yet. No sandbox was OOM-killed under the 1536 Mi limit.
+
+amd64 is built by CI (`images.yml`) and not run here.
 
 ## Deferred and rejected
 
