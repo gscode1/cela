@@ -515,7 +515,7 @@ describe("hack/seed-browser-profile.mjs --create-only", () => {
     try {
       const r = await api.run();
       expect(r.code, r.out).toBe(0);
-      expect(api.requests).toContain("POST /admin/skills/playwright-cli/versions");
+      expect(api.requests).toContain("POST /admin/skills/patchright/versions");
       expect(api.requests).toContain("POST /admin/skills/agent-browser/versions");
       expect(api.requests).toContain("PUT /admin/profiles/browser");
     } finally {
@@ -525,7 +525,7 @@ describe("hack/seed-browser-profile.mjs --create-only", () => {
     try {
       const r = await kept.run();
       expect(r.code, r.out).toBe(0);
-      expect(r.out).toContain("skill playwright-cli v3 exists, kept");
+      expect(r.out).toContain("skill patchright v3 exists, kept");
       expect(kept.requests.filter((q) => q.startsWith("POST"))).toEqual([]);
       expect(kept.requests).toContain("PUT /admin/profiles/browser");
     } finally {

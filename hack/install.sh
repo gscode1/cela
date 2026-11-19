@@ -18,7 +18,7 @@
 #   6. reads GET /admin/status through ingest (waits up to 2 min for the isolation probe) and prints the runtime and
 #      network-policy state; warnings do not fail
 #   7. with the browser flavour (sandbox.flavours.browser.enabled, the default) and the egress proxy: seeds the `browser`
-#      session profile and its skills playwright-cli and agent-browser (hack/seed-browser-profile.mjs --create-only,
+#      session profile and its skills patchright and agent-browser (hack/seed-browser-profile.mjs --create-only,
 #      ADR 0041), through a port-forward to ingest with the first api.admins token read from the api-auth Secret (never
 #      printed). Create-only: a profile or skill that exists, edited by an operator or not, is never touched, so every
 #      upgrade is a no-op. Skipped with a one-line note when the flavour or the proxy is off, with

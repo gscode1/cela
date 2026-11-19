@@ -1,0 +1,9 @@
+#!/bin/sh
+# Runs a Node script with the image's pinned Patchright resolvable: `patchright-run script.cjs`. Patchright is a library, so
+# the scripts are CommonJS (`require("patchright")`; NODE_PATH does not apply to ES module imports). The platform gives
+# tool commands no writable HOME, so Node's state goes under /tmp.
+export NODE_NO_WARNINGS=1
+export NODE_PATH=/opt/browser-tools/node_modules
+export HOME="${PI_BROWSER_STATE:-/tmp/pi-browser}/tools-home"
+mkdir -p "$HOME"
+exec node "$@"
