@@ -22,6 +22,7 @@ beforeEach(() => {
       "  orchestrator: { tag: t }",
       "  ingest: { tag: t }",
       "  sandbox: { tag: t }",
+      "  sandboxBrowser: { tag: t }",
       "  egressProxy: { tag: t }",
       "database:",
       "  external:",

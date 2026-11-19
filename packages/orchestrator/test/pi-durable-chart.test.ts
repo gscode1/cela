@@ -316,7 +316,12 @@ describe("sandbox sizes (docs/decisions/0030-sandbox-sizes.md)", () => {
 
   it("renders a template and a pool per size, plus the unsized pair on the default size", () => {
     const list = docs(external);
-    expect(ofKind(list, "SandboxTemplate").map((d) => d.metadata.name)).toEqual([
+    // The browser flavour (on by default) has its own set: the "browser flavour" block below.
+    expect(
+      ofKind(list, "SandboxTemplate")
+        .map((d) => d.metadata.name)
+        .filter((n) => !n.includes("browser")),
+    ).toEqual([
       "pi-env-template",
       "pi-env-template-l",
       "pi-env-template-m",
@@ -1571,7 +1576,9 @@ describe("network cutover and network modes (ADR 0038)", () => {
       });
 
       it("renders a direct template and a non-warm pool per size, and the unsized pair, labelled direct", () => {
-        const templates = ofKind(list, "SandboxTemplate");
+        const templates = ofKind(list, "SandboxTemplate").filter(
+          (t) => !t.metadata.name.includes("browser"),
+        );
         const direct = templates.filter((t) => modeOf(t) === "direct").map((t) => t.metadata.name);
         expect(direct.sort()).toEqual(
           ["", "-l", "-m", "-s", "-xl"].map((suffix) => `pi-env-direct-template${suffix}`).sort(),
@@ -1619,6 +1626,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
 
 describe("browser flavour (ADR 0041)", () => {
   const browser = ["--set", "sandbox.flavours.browser.enabled=true"];
+  const off = ["--set", "sandbox.flavours.browser.enabled=false"];
   const on = [
     "--set",
     "egressProxy.enabled=true",
@@ -1632,11 +1640,28 @@ describe("browser flavour (ADR 0041)", () => {
   const names = (list: Obj[], kind: string): string[] =>
     ofKind(list, kind).map((d) => d.metadata.name);
 
-  it("renders no browser template or pool by default, and tells ingest so", () => {
+  it("is on by default, with no warm Pods, and tells ingest so", () => {
     const list = docs(external);
+    expect(names(list, "SandboxTemplate")).toContain("pi-env-browser-template");
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe(
+      "browser",
+    );
+    for (const pool of ofKind(list, "SandboxWarmPool").filter((d) =>
+      d.metadata.name.includes("browser"),
+    )) {
+      expect(pool.spec.replicas).toBe(0);
+    }
+  });
+
+  it("renders no browser template or pool when switched off, and tells ingest so", () => {
+    const list = docs([...external, ...off]);
     expect(names(list, "SandboxTemplate").filter((n) => n.includes("browser"))).toEqual([]);
     expect(names(list, "SandboxWarmPool").filter((n) => n.includes("browser"))).toEqual([]);
     expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe("");
+  });
+
+  it("installs without the browser image once switched off", () => {
+    expect(() => docs([...external, ...off, "--set", "images.sandboxBrowser.tag="])).not.toThrow();
   });
 
   it("renders a browser template and pool per size, plus the unsized pair, when enabled", () => {
@@ -1723,8 +1748,8 @@ describe("browser flavour (ADR 0041)", () => {
     expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(0);
   });
 
-  it("needs the browser image once enabled", () => {
-    expect(() => docs([...external, ...browser, "--set", "images.sandboxBrowser.tag="])).toThrow(
+  it("needs the browser image by default, like the sandbox image", () => {
+    expect(() => docs([...external, "--set", "images.sandboxBrowser.tag="])).toThrow(
       /images\.sandboxBrowser/,
     );
   });
