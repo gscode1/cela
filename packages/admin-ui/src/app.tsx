@@ -4,6 +4,7 @@ import { EgressPage } from "@/pages/egress";
 import { GlobalSettings } from "@/pages/settings";
 import { McpServersPage } from "@/pages/mcp";
 import { Placeholder } from "@/pages/placeholder";
+import { PlaygroundPage } from "@/pages/playground";
 import { Profiles } from "@/pages/profiles";
 import { SignIn } from "@/pages/sign-in";
 import { SkillsRoutes } from "@/pages/skills";
@@ -30,6 +31,7 @@ export function App() {
         <Route path="skills/*" element={<SkillsRoutes />} />
         <Route path="egress/*" element={<EgressPage />} />
         <Route path="status/*" element={<ShardStatusPage />} />
+        <Route path="playground" element={<PlaygroundPage />} />
         {SECTIONS.filter((section) => !BUILT.has(section.path)).map((section) => (
           <Route
             key={section.path}

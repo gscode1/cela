@@ -10,6 +10,7 @@ export const SECTIONS = [
   { path: "skills", title: "Skills" },
   { path: "egress", title: "Egress" },
   { path: "status", title: "Isolation" },
+  { path: "playground", title: "Playground" },
 ] as const;
 
 export function Shell() {
