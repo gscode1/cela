@@ -25,7 +25,7 @@ test.describe("catalogs in readOnly mode", () => {
     await expect(page.getByTestId("version-1")).toBeVisible();
     await expect(page.getByRole("button", { name: "Add version" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Add version" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Files" }).click();
+    await page.getByRole("button", { name: /1 file/ }).click();
     await expect(page.getByRole("cell", { name: "SKILL.md", exact: true })).toBeVisible();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download zip" }).click();
@@ -52,7 +52,13 @@ test.describe("catalogs in readOnly mode", () => {
     await expect(page.getByText("MCP servers are read-only in this console")).toBeVisible();
     const row = page.getByTestId(`mcp-${name}`);
     await expect(row).toContainText("ro.example.com");
-    await expect(row.getByRole("button")).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Edit" })).toHaveCount(0);
+    await row.getByRole("button", { name: "Details" }).click();
+    await expect(
+      page
+        .getByTestId(`mcp-${name}-details`)
+        .getByRole("button", { name: /^(Disable|Enable|Delete)$/ }),
+    ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Register a server" })).toHaveCount(0);
     await page.getByText("Recent changes").click();
     await expect(page.getByText(new RegExp(`${name} created`))).toBeVisible();
