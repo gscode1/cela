@@ -50,7 +50,7 @@ All routes except the probes and the console (below) need `Authorization: Bearer
 | `POST /admin/skills/{name}/versions` body `{ files: [{ path, content \| contentBase64, executable? }], source? }` | `201` for a new version, `200` when the content is identical to the current version (nothing written); the version as in GET plus `versionCreated` | Admins only; the body may be up to about 7 MiB. `files` must include `SKILL.md`, which starts with a YAML frontmatter block that gives the `description` (see Skills); there is no separate `description` field (sending one is `400`). A bad name, a frontmatter that is missing, malformed, without a non-empty `description` or with a `name` that differs from `{name}`, traversal or absolute path, duplicate path, field that is not `path`/`content`/`contentBase64`/`executable` (so no symlinks, devices or modes), NUL or unpaired surrogate in text, or a limit exceeded (see Skills) is `400` and writes nothing. `source` is optional (see Reserved `source`); it is not part of the digest, so identical files with another `source` are `200`, write nothing and keep the stored version's `source`. |
 | `GET /admin/skills/{name}/versions/{v}` (`?content=true`) | `200`, the version as above; with `content=true` each file also has `contentBase64` | Admins only, so a skill can be reviewed like code. `404` if there is none. Versions cannot be updated or deleted one by one (`405`); `DELETE /admin/skills/{name}` removes the whole skill. |
 | `GET /admin/skills/{name}/versions/{v}/zip` | `200`, `application/zip`, `attachment; filename="{name}-v{v}.zip"` | Admins only. The version's files at their paths (no top-level folder), stored without compression, each with Unix mode `0644`, or `0755` when the manifest marks it executable, so an unzip restores the executable bit and a re-upload gives the same digest. `404` if there is none; `409` if the stored bytes do not match the manifest. |
-| `GET /admin/mcp-servers` | `200 { servers: [...], invalid: [{ name, message }], onecliSecrets: { names, source } }` | Admins only. Every server of the MCP catalog, by name. A server is `{ name, url, transport, enabled, readOnly, timeoutMs, maxOutputBytes, onecliSecret, revision, source, reachability, createdAt, createdBy, updatedAt, updatedBy }`. `reachability` is always `"unknown"`: the API does not probe the network, and a host that is not allowed in the OneCLI rules fails only when the orchestrator connects (log `mcp-discovery-failed`). `invalid` lists rows edited by hand into something the validator rejects; the orchestrator skips them. `onecliSecrets` lists the OneCLI secrets an `onecliSecret` could name, for the console's picker: names only (never values or ids), sorted, without the secrets the orchestrators create for sessions (`<prefix><uuid>-git`/`-api`) and without names the validator would refuse. `source: "orchestrator"` when an orchestrator with a OneCLI admin key published them (at its start, and re-read by shard 0 every 30 s, so up to about 30 s old; a failed re-read keeps the last list); `source: "none"` with `names: []` while they are unknown (no admin key, a failed listing at start, no orchestrator yet), which is not the same as an empty list. A list, never a check: a write may name a secret it lacks ([ADR 0040](decisions/0040-mcp-egress-flow.md), amendment). |
+| `GET /admin/mcp-servers` | `200 { servers: [...], invalid: [{ name, message }], onecliSecrets: { names, source } }` | Admins only. Every server of the MCP catalog, by name. A server is `{ name, url, transport, enabled, readOnly, timeoutMs, maxOutputBytes, onecliSecret, revision, source, reachability, discovery, createdAt, createdBy, updatedAt, updatedBy }`. `reachability` and `discovery` are what the orchestrator found when it last listed the server's tools through the gateway ([MCP discovery status](#mcp-discovery-status)); the API itself does not probe the network. `invalid` lists rows edited by hand into something the validator rejects; the orchestrator skips them. `onecliSecrets` lists the OneCLI secrets an `onecliSecret` could name, for the console's picker: names only (never values or ids), sorted, without the secrets the orchestrators create for sessions (`<prefix><uuid>-git`/`-api`) and without names the validator would refuse. `source: "orchestrator"` when an orchestrator with a OneCLI admin key published them (at its start, and re-read by shard 0 every 30 s, so up to about 30 s old; a failed re-read keeps the last list); `source: "none"` with `names: []` while they are unknown (no admin key, a failed listing at start, no orchestrator yet), which is not the same as an empty list. A list, never a check: a write may name a secret it lacks ([ADR 0040](decisions/0040-mcp-egress-flow.md), amendment). |
 | `GET /admin/mcp-servers/{name}` | `200`, one server as above | Admins only. `404` if there is none. |
 | `PUT /admin/mcp-servers/{name}` body `{ url?, transport?, enabled?, readOnly?, timeoutMs?, maxOutputBytes?, onecliSecret?, source?, expectedRevision? }` | `201` for a new server, `200` for an update, the server as in GET | Admins only; creates or updates. A create needs `url` (https, no credentials) and `readOnly` (your declaration that the server is stateless and read-only: one client serves every session); `transport` is `streamable-http` (the only one), `enabled` defaults to true, `timeoutMs` to 60000 (1000 to 300000), `maxOutputBytes` to 24576 (1024 to 24576: it can only tighten the cut of the text a call returns), `onecliSecret` (the name of a OneCLI secret the operator made, never a value: the server is then credentialed, and a session whose profile names it calls it as its own OneCLI agent, ADR 0040) to null. An update lays the body over the stored row, so `{"enabled": false}` disables a server. `name` matches `^[a-z][a-z0-9-]{0,31}$`, is immutable (`history` is reserved) and becomes the tool prefix `mcp__<name>__`. A bad value, an unknown key or a `name` that differs from the path is `400` and changes nothing. `source` is optional (see Reserved `source`): omitted keeps the stored one, `null` clears it, and a change of `source` alone is a write (a new `revision`, a history entry) that changes no behaviour. `expectedRevision` that is not the stored `revision`, or any positive `expectedRevision` for a server that does not exist, is `409` and changes nothing. `expectedRevision: 0` is a create only: `409` when the server exists (or the name was deleted), so a create never overwrites one. A change that alters nothing writes nothing. Writes a history entry and notifies the orchestrators, and in the same transaction rewrites the derived egress rules of the catalog (the read-only rule set `mcp-catalog`, ADR 0040). |
 | `DELETE /admin/mcp-servers/{name}?expectedRevision=N` | `200 { name, deleted: true }` | Admins only. Removes the row for real (to keep it, `PUT` `enabled: false`); the history keeps the old value. See Deleting below: `409` with `blockedBy` while a profile's current version names it, and the name is never created again. `404` if there is none. |
@@ -586,3 +586,39 @@ about 5 s and the probe takes seconds to about a minute (longer with an image pu
 "state": "requested"}`; `202 {"requested": false, "state": "running"}` while a run is in progress (no second run is
 queued); `503` before shard 0 has published a status row. Poll `GET /admin/status` until `networkPolicy.state` is no
 longer `running` and `checkedAt` is new.
+
+### MCP discovery status
+
+Whether an MCP server works is seen from the orchestrator, not from ingest: the path that matters is the OneCLI gateway,
+its host rules and the egress policy ([ADR 0044](decisions/0044-mcp-discovery-status.md)). Each orchestrator records the
+latest outcome of its discovery of every enabled catalog server in its own `inbox.shard_status` row (column
+`mcp_discovery`, a map from server name to the outcome) on every attempt, so a retry loop that keeps failing keeps
+`checkedAt` current. A server that leaves the catalog, is disabled or is replaced by a changed row loses its entry. A
+restart resets the map, so a server is `unknown` until the new process has listed its tools. A tool list is read at
+discovery, so the tool names are those of the last discovery (a server whose tools change without a row change is noticed
+at the next row change or restart).
+
+`GET /admin/mcp-servers` and `GET /admin/mcp-servers/{name}` (and the answers of `PUT`) add to each server:
+
+```json
+{
+  "reachability": "ok",
+  "discovery": {
+    "state": "ready",
+    "tools": 2,
+    "toolNames": ["search", "fetch"],
+    "checkedAt": "2026-11-19T10:00:00.000Z",
+    "shard": 0
+  }
+}
+```
+
+- `reachability` is `ok` (discovery succeeded), `failing` (the last attempt failed) or `unknown`.
+- `discovery.state` is `ready`, `failed` (with `error`, `tools: 0`), `disabled` (a disabled server is not discovered, so
+  `reachability` is `unknown`) or `unknown` (no orchestrator has reported yet; `tools: 0`, `checkedAt: null`).
+- `error` is short and sanitized: whitespace collapsed, at most 300 characters, and bearer tokens, credential headers,
+  URL userinfo, secret query parameters and long opaque strings replaced with `[redacted]`.
+- `toolNames` lists at most 200 names; `tools` is the exact count.
+- Several shards: every shard's orchestrator discovers every server through its own gateway path, so the API reports one
+  view. A failure on any shard wins (the lowest failing shard, which `shard` names), because that is what an admin has to
+  fix; otherwise the lowest shard's `ready`. `checkedAt` is the database clock at the write.
