@@ -29,7 +29,7 @@ for `mcp.deepwiki.com`.
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
 | `KEEP_NS=1`         | never delete the namespace at the end                                                                     |
 | `KEEP_NS_ON_FAIL=1` | keep it if the exit code is not 0. Exit code 2 (the operator machine lost the Job) always keeps it, the Job is still in it |
-| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 6 random hex digits); an existing e2e namespace is reused               |
+| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 6 random hex digits); an existing e2e namespace is reused. At most 6 characters for `phase4c` and `mcp`: OneCLI refuses agent names over 50 characters |
 | `SKIP_SWEEP=1`      | do not run the sweeper at the start                                                                       |
 | `SWEEP_MAX_AGE_HOURS` | age limit of the sweeper (default 6)                                                                    |
 | `NS_DELETE_WAIT_SECONDS` | how long the end of a run waits for the namespace to be gone (default 300)                           |
