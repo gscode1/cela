@@ -159,7 +159,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
 
 **Enforcement result (2026-11-16):**
 - Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all pi-durable-poc endpoints enforce in both directions.
-- The isolation test PASSES for real: orchestrator, Postgres, other sandboxes, the kube API and the OneCLI API/web are BLOCKED from a sandbox. The OneCLI gateway and public internet are reachable.
+- The isolation test PASSES for real: orchestrator, Postgres, other sandboxes, the kube API and the OneCLI API/web are BLOCKED from a sandbox. The OneCLI gateway and public internet are reachable. (This run predates the egress proxy; with the proxy, the default since 2026-11-19, a sandbox reaches only the proxy, [ADR 0038](docs/decisions/0038-network-modes.md).)
 - Phases 1, 3, 4 and 4b, including a real Codex run, are green under enforcement.
 - Open:
   - Hubble is disabled.
@@ -223,7 +223,7 @@ Tests:
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
 - The sandbox image adds git and CA certificates.
-- Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS). (Superseded by the baseline decision above: direct public internet stays open; private, LAN and metadata ranges are blocked. Gateway-only egress is #47, and the egress proxy spike, [ADR 0012](docs/decisions/0012-egress-proxy-spike.md), is its first slice: Smokescreen chained to OneCLI in `packages/egress-proxy`, built and tested locally, not deployed.)
+- Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS). (Superseded twice: first by the 2026-11-15 baseline above, direct public internet open; then by the egress proxy (epic #50, ADRs 0034–0041), the chart's default since 2026-11-19: a sandbox reaches only the proxy, which applies the profile's rules and routes credentialed hosts to OneCLI.)
 - Tests:
   - A session without a repo works unchanged.
   - The clone happens once and survives a restart.
@@ -270,7 +270,7 @@ decision: [ADR 0020](docs/decisions/0020-helm-install.md).
 - Process reattachment.
 - Warm pools (PVC-backed sandboxes start cold; the SandboxWarmPool has `replicas: 0` and is only a template alias).
 - Encryption in transit to sandboxd, audit logging, retention, backup policy.
-- Web console.
+- A user-facing web UI for sessions (the admin console under `/console/` is for operators, [plan](docs/admin-ui-plan.md)).
 
 ## 8. Effort
 
@@ -304,14 +304,16 @@ packages/
   ingest/           # session API (stateless HTTP front, 2 replicas)
   mcp/              # stdio MCP adapter for coding agents, a session-API client only (ADR 0031)
   session-core/     # shared schema, migrations, settings, profiles, skills, MCP catalog, auth
-  egress-proxy/     # Go: Smokescreen chained to OneCLI (spike, ADR 0012)
+  egress-proxy/     # Go: the egress proxy, Smokescreen with rules from Postgres and a OneCLI route (ADRs 0034–0041)
+  browser-proxy/    # loopback forwarder in the browser sandbox (ADR 0041)
+  admin-ui/         # admin console, served by ingest under /console/
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
 charts/             # pi-durable (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
 hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules), onecli-policies/
-images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), e2e-driver/, egress-proxy/
+images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), sandbox-browser/, e2e-driver/, egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
 examples/           # recorded load-test and bug-hunt runs
-tests/e2e/          # restart, double-owner, long-command, sandbox-loss and more; run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
+tests/e2e/          # restart, double-owner, long-command, sandbox-loss and more; run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|browser|console|all> runs them as an in-cluster Job in a fresh namespace pi-e2e-<id> (docs/e2e.md)
 ```
 
 Extract `sandbox-env` into its own package once it passes the env conformance suite; it is the piece most useful to others.
