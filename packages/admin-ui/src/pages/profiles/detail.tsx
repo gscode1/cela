@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useAuth } from "@/auth";
+import { Breadcrumb } from "@/components/breadcrumb";
 import { LastChanged } from "@/components/changed";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { Alert } from "@/components/ui/alert";
@@ -49,9 +50,7 @@ export function NewProfile() {
   };
   return (
     <div className="flex flex-col gap-4">
-      <Link className="text-sm underline-offset-4 hover:underline" to="/profiles">
-        Back to profiles
-      </Link>
+      <Breadcrumb items={[{ label: "Profiles", to: "/profiles" }, { label: "New profile" }]} />
       <ProfileEditor
         stored={undefined}
         draft={current}
@@ -139,9 +138,7 @@ function ProfileScreenFor({ name }: { name: string }) {
               <span className="break-words">{invalid.message}</span>
             </Alert>
           )}
-          <Link className="text-sm underline-offset-4 hover:underline" to="/profiles">
-            Back to profiles
-          </Link>
+          <Breadcrumb items={[{ label: "Profiles", to: "/profiles" }, { label: name }]} />
         </CardContent>
       </Card>
     );
@@ -152,9 +149,7 @@ function ProfileScreenFor({ name }: { name: string }) {
   const toggleConflict = toggle.isError && isConflict(toggle.error) ? toggle.error : undefined;
   return (
     <div className="flex flex-col gap-4">
-      <Link className="text-sm underline-offset-4 hover:underline" to="/profiles">
-        Back to profiles
-      </Link>
+      <Breadcrumb items={[{ label: "Profiles", to: "/profiles" }, { label: name }]} />
       <Card>
         <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
           <div className="flex flex-col gap-1.5">
