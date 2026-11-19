@@ -17,6 +17,7 @@ import type { RuleSetSummary } from "@/lib/api/egress";
 import type { StoredProfile } from "@/lib/api/profiles";
 import { APPLIES_TO_ALL_WARNING, MAX_DESCRIPTION, ruleSetNameProblem } from "@/lib/egress-form";
 import { keys, useProfilesQuery, useRuleSetsQuery } from "@/lib/queries";
+import { EgressHistory } from "@/pages/egress/history";
 import { useRevisionBase, WriteError } from "@/pages/egress/shared";
 
 type Pending = { kind: "create" } | { kind: "edit" | "delete"; set: RuleSetSummary };
@@ -255,7 +256,6 @@ export function RuleSetsPage() {
                   <Th>Name</Th>
                   <Th>Description</Th>
                   <Th>Rules</Th>
-                  <Th>Applies to</Th>
                   <Th>Used by</Th>
                   <Th>
                     <span className="sr-only">Actions</span>
@@ -273,19 +273,21 @@ export function RuleSetsPage() {
                           to={`/egress/sets/${encodeURIComponent(set.name)}`}
                         >
                           {set.name}
-                        </Link>
+                        </Link>{" "}
+                        {set.system === true ? (
+                          <Badge variant="outline" title="Derived from the MCP catalog">
+                            derived
+                          </Badge>
+                        ) : (
+                          set.appliesToAll && (
+                            <Badge variant="warning" title="Applies to all sessions">
+                              all sessions
+                            </Badge>
+                          )
+                        )}
                       </Td>
                       <Td className="break-words">{set.description}</Td>
                       <Td>{set.ruleCount}</Td>
-                      <Td>
-                        {set.system === true ? (
-                          <Badge variant="outline">Derived from the MCP catalog</Badge>
-                        ) : set.appliesToAll ? (
-                          <Badge variant="warning">Applies to all sessions</Badge>
-                        ) : (
-                          <span className="text-muted-foreground">named profiles</span>
-                        )}
-                      </Td>
                       <Td>
                         {profiles.data === undefined ? (
                           ""
@@ -345,6 +347,7 @@ export function RuleSetsPage() {
           onClose={close}
         />
       )}
+      <EgressHistory />
     </div>
   );
 }

@@ -186,16 +186,11 @@ export function ExplainPanel() {
     <Card aria-label="Explain">
       <CardHeader>
         <CardTitle>Explain</CardTitle>
-        <CardDescription>
-          Ask what the stored rules say about a connection. Give a session to see what it would get:
-          without a profile, its stored rule sets are used (the ones its profile named when it was
-          created). Nothing is resolved, so name the addresses to ask what happens if the host
-          resolves to them.
-        </CardDescription>
+        <CardDescription>Ask what the stored rules say about a connection.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <form
-          className="flex max-w-xl flex-col gap-4"
+          className="flex max-w-2xl flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             explain.mutate();
@@ -225,46 +220,55 @@ export function ExplainPanel() {
               />
             </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="explain-profile">Profile (optional)</Label>
-            <Select
-              id="explain-profile"
-              value={profile}
-              onChange={(event) => {
-                setProfile(event.target.value);
-              }}
-            >
-              <option value="">None: only the sets that apply to all</option>
-              {(profiles.data?.profiles ?? []).map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {entry.name}
-                </option>
-              ))}
-            </Select>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="explain-profile">Profile (optional)</Label>
+              <Select
+                id="explain-profile"
+                value={profile}
+                onChange={(event) => {
+                  setProfile(event.target.value);
+                }}
+              >
+                <option value="">None: only the sets that apply to all</option>
+                {(profiles.data?.profiles ?? []).map((entry) => (
+                  <option key={entry.name} value={entry.name}>
+                    {entry.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="explain-session">Session id (optional)</Label>
+              <Input
+                id="explain-session"
+                autoComplete="off"
+                value={sessionId}
+                onChange={(event) => {
+                  setSessionId(event.target.value);
+                }}
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="explain-session">Session id (optional)</Label>
-            <Input
-              id="explain-session"
-              autoComplete="off"
-              value={sessionId}
-              onChange={(event) => {
-                setSessionId(event.target.value);
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="explain-addresses">Addresses (optional)</Label>
-            <Input
-              id="explain-addresses"
-              autoComplete="off"
-              placeholder="10.0.4.7, 93.184.216.34"
-              value={addresses}
-              onChange={(event) => {
-                setAddresses(event.target.value);
-              }}
-            />
-          </div>
+          <details open={addresses !== ""}>
+            <summary className="cursor-pointer text-sm text-muted-foreground">More</summary>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <Label htmlFor="explain-addresses">Addresses (optional)</Label>
+              <Input
+                id="explain-addresses"
+                autoComplete="off"
+                placeholder="10.0.4.7, 93.184.216.34"
+                value={addresses}
+                onChange={(event) => {
+                  setAddresses(event.target.value);
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Nothing is resolved: name the addresses the host would resolve to. A session without
+                a profile uses the rule sets stored for it.
+              </p>
+            </div>
+          </details>
           {problems.length > 0 && host !== "" && (
             <ul className="list-disc pl-5 text-xs text-muted-foreground">
               {problems.map((problem) => (

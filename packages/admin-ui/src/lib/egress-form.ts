@@ -214,6 +214,10 @@ export function ruleSetNameProblem(name: string): string | undefined {
 }
 
 /** "443", "80, 443". */
+/** A rule on 443 only is the common case; a table shows ports only when they differ. */
+export const hasDefaultPorts = (ports: readonly number[]): boolean =>
+  ports.length === 1 && ports[0] === 443;
+
 export const portsText = (ports: readonly number[]): string => ports.join(", ");
 
 /** True when the rule has an expiry that has passed: evaluation ignores it. */

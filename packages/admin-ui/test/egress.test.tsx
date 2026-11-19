@@ -40,13 +40,14 @@ describe("egress page: rule sets", () => {
     await userEvent.click(await screen.findByRole("link", { name: "Egress" }));
     const npm = await screen.findByTestId("rule-set-npm");
     expect(within(npm).getByText("1")).toBeInTheDocument();
-    expect(within(npm).getByText("named profiles")).toBeInTheDocument();
+    expect(within(npm).queryByText("all sessions")).toBeNull();
+    expect(within(npm).queryByText("derived")).toBeNull();
     expect(within(npm).getByRole("link", { name: "scraper" })).toHaveAttribute(
       "href",
       "/profiles/scraper",
     );
     const all = screen.getByTestId("rule-set-open-web");
-    expect(within(all).getByText("Applies to all sessions")).toBeInTheDocument();
+    expect(within(all).getByText("all sessions")).toBeInTheDocument();
   });
 
   it("shows the revision and the counts from the status endpoint", async () => {
@@ -101,14 +102,15 @@ describe("egress page: rule sets", () => {
     await open("/egress");
     await screen.findByTestId("rule-set-npm");
     await userEvent.click(screen.getByRole("button", { name: "Edit npm" }));
-    expect(screen.getByText("No changes yet.")).toBeInTheDocument();
+    // The form's own "No changes yet." comes before the collapsed history's.
+    expect(screen.getAllByText("No changes yet.")[0]).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("Applies to all sessions"));
     expect(screen.getByTestId("applies-to-all-warning")).toHaveTextContent(
       "Every session gets these rules, not only sessions whose profile names this set. It holds 1 rule now.",
     );
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => {
-      expect(screen.getByTestId("rule-set-npm")).toHaveTextContent("Applies to all sessions");
+      expect(screen.getByTestId("rule-set-npm")).toHaveTextContent("all sessions");
     });
     expect(write(egress)).toEqual({
       path: "PUT /admin/egress/rule-sets/npm",
@@ -210,13 +212,15 @@ describe("egress page: rules of a set", () => {
     const row = await screen.findByTestId("rule-3");
     expect(row).toHaveTextContent("allow");
     expect(row).toHaveTextContent(".githubusercontent.com");
-    expect(row).toHaveTextContent("80, 443");
+    expect(row).toHaveTextContent(":80, 443");
     expect(row).toHaveTextContent("onecli");
     expect(row).toHaveTextContent("expired, ignored");
     expect(row).toHaveTextContent("raw files");
     expect(screen.getByTestId("rule-4")).toHaveTextContent("private");
     expect(screen.getByTestId("rule-5")).toHaveTextContent("deny");
-    expect(screen.getByTestId("rule-1")).toHaveTextContent("never");
+    // The usual rule (443, no expiry, direct) has no filler in its row.
+    expect(screen.getByTestId("rule-1")).not.toHaveTextContent("never");
+    expect(screen.getByTestId("rule-1")).not.toHaveTextContent(":443");
     expect(screen.getByRole("link", { name: "scraper" })).toBeInTheDocument();
   });
 
@@ -565,7 +569,6 @@ describe("egress page: session rules and history", () => {
       },
     ];
     await open("/egress");
-    await userEvent.click(await screen.findByRole("link", { name: "History" }));
     const entries = await screen.findAllByTestId("egress-history-entry");
     expect(entries[0]).toHaveTextContent(
       "created rule #7 in npm: allow a.example.com ports 443 via direct",
