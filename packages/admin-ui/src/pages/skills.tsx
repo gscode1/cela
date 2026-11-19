@@ -18,7 +18,7 @@ import { NEW_SKILL, SkillPublish } from "@/pages/skills-publish";
 function PublishButton() {
   return (
     <Link to={`/skills/${NEW_SKILL}/publish`}>
-      <Button size="sm">Publish a skill</Button>
+      <Button size="sm">Add skill</Button>
     </Link>
   );
 }

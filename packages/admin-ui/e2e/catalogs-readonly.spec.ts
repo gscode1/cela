@@ -18,13 +18,13 @@ test.describe("catalogs in readOnly mode", () => {
     await signInAndGo(page, "/console/skills");
     await expect(page.getByText("Skills are read-only in this console")).toBeVisible();
     await expect(page.getByTestId(`skill-${name}`)).toBeVisible();
-    await expect(page.getByRole("link", { name: "Publish a skill" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Publish a skill" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Add skill" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add skill" })).toHaveCount(0);
 
     await page.getByRole("link", { name }).click();
     await expect(page.getByTestId("version-1")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Publish a new version" })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Publish a new version" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add version" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Add version" })).toHaveCount(0);
     await page.getByRole("button", { name: "Files" }).click();
     await expect(page.getByRole("cell", { name: "SKILL.md", exact: true })).toBeVisible();
     const download = page.waitForEvent("download");

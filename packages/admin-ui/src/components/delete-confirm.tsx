@@ -18,7 +18,7 @@ export function BlockedReasons({ blockedBy }: { blockedBy: BlockedBy }) {
         <li>
           It is the default profile for new sessions: choose another in{" "}
           <Link className="underline" to="/settings">
-            Global settings
+            Settings
           </Link>{" "}
           first.
         </li>

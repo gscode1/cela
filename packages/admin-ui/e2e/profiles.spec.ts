@@ -63,7 +63,7 @@ test.describe("session profiles", () => {
 
     await page
       .getByRole("navigation", { name: "Console" })
-      .getByRole("link", { name: "Session profiles" })
+      .getByRole("link", { name: "Profiles" })
       .click();
     const row = page
       .getByRole("row")

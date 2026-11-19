@@ -37,7 +37,7 @@ test.describe("skills", () => {
       "notes.txt": "plain notes\n",
     });
     await signInAndGo(page, "/console/skills");
-    await page.getByRole("link", { name: "Publish a skill" }).click();
+    await page.getByRole("link", { name: "Add skill" }).click();
     // One control, no name to type first, no confirmation, no limits text.
     await expect(page.getByRole("button", { name: "Choose a folder or a .zip" })).toBeVisible();
     await expect(page.getByLabel("Skill name")).toHaveCount(0);
@@ -188,7 +188,7 @@ test.describe("skills", () => {
 
     // The same content again: the review says so and there is nothing to press.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
-    await page.getByRole("link", { name: "Publish a new version" }).click();
+    await page.getByRole("link", { name: "Add version" }).click();
     await chooseZip(page, "a.zip", makeZip(files));
     await expect(page.getByTestId("identical")).toHaveText("No changes \u2014 nothing to publish.");
     await expect(publishButton(page, name)).toBeDisabled();
@@ -648,7 +648,7 @@ test.describe("isolation", () => {
   test("says so in one sentence when there are no reports", async ({ page, request }) => {
     await request.put("/__fake/status", { data: { shards: [] } });
     await signInAndGo(page, "/console/status");
-    await expect(page.getByRole("heading", { name: "Isolation" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Status" })).toBeVisible();
     await expect(page.getByText("No report yet \u2014 the runtime has not started.")).toBeVisible();
     await expect(page.getByRole("table")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Re-check network isolation" })).toHaveCount(0);

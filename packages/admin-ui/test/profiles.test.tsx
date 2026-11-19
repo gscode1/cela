@@ -324,7 +324,7 @@ describe("editor details", () => {
   it("shows the review card only for a changed draft, and says an empty profile inherits", async () => {
     const admin = createFakeAdmin();
     await openProfile(admin, "coding");
-    expect(screen.getByText("Inherits everything from Global settings.")).toBeInTheDocument();
+    expect(screen.getByText("Inherits everything from Settings.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Publish new version" })).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Instructions"), "x");
     expect(publish()).toBeInTheDocument();
