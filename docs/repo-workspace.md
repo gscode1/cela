@@ -3,7 +3,7 @@
 `POST /sessions` may carry `{ "repo": "owner/name", "branch": "…" }`. The session then gets `/workspace/repo`, a clone of
 that GitHub repository, and can push to it. Without `repo` nothing changes: no OneCLI agent, no secret, no GitHub call.
 
-Status: run live on the example test cluster on 2026-11-16 (`tests/e2e/run.sh phase4c`, needs `REPO_A` and `REPO_B`): clone, push and branch delete through OneCLI pass, a push to the other repo is refused (plan.md). The items under "Unverified" were not checked separately.
+Status: run live on the example test cluster on 2026-11-16 (`tests/e2e/run.sh phase4c`, needs `REPO_A` and `REPO_B`): clone, push and branch delete through OneCLI pass, a push to the other repo is refused (plan.md). On 2026-11-19 the same suite passed with the egress proxy on (the sandbox reaches GitHub only through the proxy's OneCLI route; issue #284). The items under "Unverified" were not checked separately.
 
 ## Input
 
@@ -117,7 +117,13 @@ re-sent; a create looks the object up by name again after a failure and POSTs on
 
 ## Unverified
 
-- Through the egress proxy (ADR 0037) the chain sandbox -> proxy -> OneCLI -> origin was run live with a dummy GitHub token (`hack/egress-onecli-smoke.sh`); a real clone and push through it, and the repo A / repo B isolation, still need `tests/e2e/run.sh phase4c` with a GitHub App.
+- Verified since (2026-11-19, issue #284): through the egress proxy (ADR 0037) the chain sandbox -> proxy -> OneCLI -> GitHub
+  with the real GitHub App. `tests/e2e/run.sh phase4c` (proxy on, its default now) passed 5/5 on the test cluster (run
+  `pi-e2e-a449ac`): clone, push of a test branch and its deletion, restart-skip, scope and delete. The sandbox's `HTTPS_PROXY`
+  was the proxy, its environment held no OneCLI address, agent token or GitHub token, explain answered `route: onecli` with a
+  binding for `github.com` and `api.github.com`, and the proxy logged the session's 4 `github.com:443` tunnels as allowed with
+  route onecli and none direct. The installation was shown to cover repo B (a `metadata: read` token scoped to B minted and
+  revoked in the orchestrator), and A's token was refused reading B. Not covered: `EGRESS_PROXY=0` was not re-run live.
 
 - The OneCLI v2 generic-secret body (`type: "generic"`, `injectionConfig: {headerName, valueFormat}`), `PATCH /v1/secrets/{id}`, the
   response shapes of `GET /v1/agents`, `/v1/secrets` and `GET /v1/agents/{id}/grants`, and `DELETE …/grants/connections/{id}` come

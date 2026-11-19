@@ -29,15 +29,15 @@ for `mcp.deepwiki.com`.
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
 | `KEEP_NS=1`         | never delete the namespace at the end                                                                     |
 | `KEEP_NS_ON_FAIL=1` | keep it if the exit code is not 0. Exit code 2 (the operator machine lost the Job) always keeps it, the Job is still in it |
-| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 6 random hex digits); an existing e2e namespace is reused               |
+| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 6 random hex digits); an existing e2e namespace is reused. At most 6 characters for `phase4c` and `mcp`: OneCLI refuses agent names over 50 characters |
 | `SKIP_SWEEP=1`      | do not run the sweeper at the start                                                                       |
 | `SWEEP_MAX_AGE_HOURS` | age limit of the sweeper (default 6)                                                                    |
 | `NS_DELETE_WAIT_SECONDS` | how long the end of a run waits for the namespace to be gone (default 300)                           |
 | `E2E_PARALLEL`      | independent tests of a suite that run side by side (default 4; 1 = one by one). Tests that restart or kill the orchestrator run alone afterwards (`tests/e2e/fns.sh`) |
 | `ONLY`              | `ONLY="a,b"` runs just those tests of the phase                                                           |
 | `DB_TLS=1`          | the run's Postgres requires TLS and pi-durable verifies it ([Database TLS](#database-tls)); unset or `0`: plain, as before |
-| `EGRESS_PROXY_IMAGE` | egress proxy image (default `pi-egress-proxy:<version>-<sha>`), for the suites that run the proxy: `phase3`, `browser` and `all` |
-| `EGRESS_PROXY=0`    | `phase3` (and `all`) without the egress proxy: the explicit opt-out, which tests the old direct sandbox egress ([Isolation](#isolation-enforcement-and-database-client)). `browser` refuses it |
+| `EGRESS_PROXY_IMAGE` | egress proxy image (default `pi-egress-proxy:<version>-<sha>`), for the suites that run the proxy: `phase3`, `phase4c`, `browser` and `all` |
+| `EGRESS_PROXY=0`    | `phase3`, `phase4c` (and `all`) without the egress proxy: the explicit opt-out, which tests the old direct sandbox egress ([Isolation](#isolation-enforcement-and-database-client), [phase4c](#repository-workspace-phase4c)). `browser` refuses it |
 | `BROWSER_SANDBOX_IMAGE` | the `browser` suite only: a pushed reference of `pi-sandbox-browser` (required; there is no local default) |
 | `SKIP_LIVE=1`       | the `browser` suite leaves out its live-model test |
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
@@ -51,7 +51,7 @@ the run installs the chart with `networkPolicy.provider: cilium`. Your own `loca
 network identities, secret stores and OneCLI endpoints. `HELM_TIMEOUT` (default `10m`) bounds the chart's rollout wait.
 
 Build and push all four images before running the suites ([build instructions](../images/README.md)), and `pi-egress-proxy`
-for `phase3`, `browser` and `all` (`EGRESS_PROXY_IMAGE`).
+for `phase3`, `phase4c`, `browser` and `all` (`EGRESS_PROXY_IMAGE`).
 The defaults match `images/build.sh` at the current root package version and git short SHA; they are local names,
 not published images. On a remote cluster set all four variables to reachable registry references, preferably digests:
 
@@ -154,7 +154,8 @@ holds no OneCLI management key (only the orchestrator pods do).
 ## OneCLI ingress for test namespaces
 
 The ingress policy of your OneCLI namespace must admit orchestrators from namespaces labelled
-`pi-durable-e2e=true` to :10255 and :10256, and sandboxes to :10255 only.
+`pi-durable-e2e=true` to :10255 and :10256, and sandboxes and the egress proxy (the `route=onecli` upstream of `phase4c`,
+ADR 0037) to :10255 only.
 Without these rules, suites that call the gateway or API from a run namespace fail.
 The example `hack/onecli-policies/ingress.yaml` (the OneCLI side, not part of the chart) includes these entries; apply them however you manage OneCLI:
 
@@ -172,6 +173,13 @@ The example `hack/onecli-policies/ingress.yaml` (the OneCLI side, not part of th
         - matchLabels:
             k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
             app.kubernetes.io/name: pi-sandbox
+      toPorts:
+        - ports:
+            - { port: "10255", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            app.kubernetes.io/name: pi-egress-proxy
       toPorts:
         - ports:
             - { port: "10255", protocol: TCP }
@@ -198,6 +206,10 @@ spec:
     - from:
         - namespaceSelector: { matchLabels: { pi-durable-e2e: "true" } }
           podSelector: { matchLabels: { app.kubernetes.io/name: pi-sandbox } }
+      ports: [{ protocol: TCP, port: 10255 }]
+    - from:
+        - namespaceSelector: { matchLabels: { pi-durable-e2e: "true" } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: pi-egress-proxy } }
       ports: [{ protocol: TCP, port: 10255 }]
 ```
 
@@ -253,8 +265,24 @@ target: no in-cluster client may reach it, so it has no positive control.
 `EGRESS_PROXY=0 tests/e2e/run.sh phase3` is the opt-out: the chart is installed with `egressProxy.enabled: false` and the
 isolation test asserts the sandbox egress of before the cutover (public internet and the OneCLI gateway reachable, the
 gateway as the control); `egress-proxy` is SKIP. `all` installs the chart once, so with `phase3` in it phases 1, 4 and 4b
-run with the proxy as well. `smoke`, `phase1`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards` and `console` run without it:
+run with the proxy as well. `smoke`, `phase1`, `phase4`, `phase4b`, `mcp`, `shards` and `console` run without it:
 they test durability, credentials and the console, not the sandbox network.
+
+### Repository workspace (phase4c)
+
+`phase4c` runs with the egress proxy by default (issue #284): a repo session's sandbox reaches `github.com` only through
+the proxy, which chains its tunnels to the OneCLI gateway with the session's sealed binding (`route=onecli`, ADR 0037). Next
+to the clone, push and scope checks, `clone-push` then asserts that the sandbox's `HTTPS_PROXY` is the proxy Service's
+address and that its environment holds no OneCLI gateway address or agent token, that `POST /admin/egress/explain` answers
+`route: onecli` with a binding for `github.com` and `api.github.com`, and that the proxy logged the session's `github.com:443`
+tunnels (Smokescreen's `CANONICAL-PROXY-DECISION`, `role` = session id) as allowed with route onecli and none otherwise.
+`scope` first proves that the GitHub App installation covers `REPO_B`: in the orchestrator pod (which holds the App key) it
+mints a token scoped to `REPO_B` with only `metadata: read`, checks that GitHub names exactly that repository and revokes
+it, printing neither the token nor the installation id. Then A's session reads `REPO_B` with `git ls-remote` (refused) and
+`REPO_A` (allowed); `REPO_B` is never pushed to. `delete` also asserts that the binding and the session's rules are gone.
+The proxy needs the OneCLI gateway: an external OneCLI must admit `app.kubernetes.io/name=pi-egress-proxy` from the e2e
+namespaces on :10255 ([below](#onecli-ingress-for-test-namespaces)). `EGRESS_PROXY=0 tests/e2e/run.sh phase4c` is the
+opt-out: the sandbox uses the OneCLI gateway directly with the agent token, as before, and the proxy checks are left out.
 
 All SQL suites use `e2e_db` / `e2e_db_start` in `tests/e2e/fns.sh`, not a database-server Pod name or a database operator's readiness.
 The helper creates a restricted, tokenless `e2e-psql` client Pod in the throwaway namespace, waits for `select 1`,
