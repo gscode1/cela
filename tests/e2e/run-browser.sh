@@ -137,11 +137,15 @@ t_seed() {
 }
 
 t_gvisor() {
-  local id out claim t0 t1 pod
+  local id out claim t0 t1 pod shm
   id=$(cat "$work/det_session")
   out=$(sbx "$id" env-$RANDOM "$pre printf 'user=%s shm=%s skills=' \"\$(id -u)\" \"\$(df -m /dev/shm | awk 'NR==2{print \$2}')\"; ls /workspace/.skills | tr '\\n' ' '")
   note "sandbox: $out"
-  assert_match "uid 1000, a 256 MB /dev/shm and both skills in /workspace/.skills" "$out" 'user=1000 shm=256 skills=.*agent-browser.*playwright-cli|user=1000 shm=256 skills=.*playwright-cli.*agent-browser'
+  assert_match "uid 1000 and both skills in /workspace/.skills" "$out" 'user=1000 .*skills=.*(agent-browser.*playwright-cli|playwright-cli.*agent-browser)'
+  # gVisor's tmpfs does not report the volume's 256 Mi size limit (measured on the first run: 15874 MB), so only a floor is asserted.
+  shm=$(sed -n 's/.*shm=\([0-9]*\).*/\1/p' <<<"$out")
+  [[ ${shm:-0} -ge 256 ]] || { note "ASSERT FAILED: /dev/shm is ${shm:-unknown} MB, wanted at least 256 (the wrapper would add --disable-dev-shm-usage)"; exit 1; }
+  note "ok: /dev/shm reports ${shm} MB (at least 256)"
   claim=$(claim_of "$id")
   pod=$claim
   assert_eq "the Pod runs under the gvisor RuntimeClass" gvisor "$(k get pod "$pod" -o jsonpath='{.spec.runtimeClassName}')"

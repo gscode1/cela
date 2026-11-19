@@ -255,7 +255,7 @@ if [[ $db_tls == 1 ]] && ! { k get secret pi-postgres-tls >/dev/null 2>&1 && k g
   rm -rf "$tls"
 fi
 pg_values=(--set persistence.size=1Gi --set persistence.retain=false
-  --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"}]')
+  --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"},{"app.kubernetes.io/name":"pi-egress-proxy"}]')
 # The browser suite runs the egress proxy, which reads the rules with the read-only role pi_egress (ADR 0035).
 has_phase browser && pg_values+=(--set auth.egressReader.enabled=true)
 [[ $db_tls != 1 ]] || pg_values+=(--set tls.existingSecret=pi-postgres-tls --set tls.requireTls=true)
