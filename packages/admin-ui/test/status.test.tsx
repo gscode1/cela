@@ -46,7 +46,9 @@ function serve(answers: Partial<Answers> = {}): { admin: FakeAdmin; calls: strin
     calls.push(`${method} ${path}`);
     if (path === "/admin/status" && method === "GET") return Promise.resolve(Response.json(status));
     if (path === "/admin/status/probe")
-      return Promise.resolve(Response.json({ requested: true, state: "requested" }, { status: 202 }));
+      return Promise.resolve(
+        Response.json({ requested: true, state: "requested" }, { status: 202 }),
+      );
     if (path === "/admin/egress/status") return Promise.resolve(Response.json(egress));
     if (path === "/admin/sandbox-sizes")
       return Promise.resolve(Response.json({ sizes: [{ name: "small" }], defaultSize: "small" }));

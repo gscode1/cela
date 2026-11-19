@@ -12,9 +12,7 @@ import type { NetworkPolicyState, ShardStatus, StatusReport } from "@/lib/api/st
 
 /** What a query has so far, without the query library: loading, failed with a message, or an answer. */
 export type Source<T> =
-  | { state: "loading" }
-  | { state: "error"; message: string }
-  | { state: "ok"; data: T };
+  { state: "loading" } | { state: "error"; message: string } | { state: "ok"; data: T };
 
 export interface StatusInputs {
   status: Source<StatusReport>;
@@ -34,14 +32,7 @@ export interface StatusInputs {
 export type Level = "problem" | "attention" | "unknown" | "ok" | "info";
 
 export type RowId =
-  | "runtime"
-  | "network"
-  | "direct"
-  | "shards"
-  | "egress"
-  | "onecli"
-  | "mcp"
-  | "deployment";
+  "runtime" | "network" | "direct" | "shards" | "egress" | "onecli" | "mcp" | "deployment";
 
 export interface StatusRow {
   id: RowId;
@@ -67,7 +58,11 @@ const plural = (n: number, one: string, many: string = `${one}s`): string =>
   `${String(n)} ${n === 1 ? one : many}`;
 
 /** The row for a source that has no answer: still loading, or failed. */
-function pending(id: RowId, title: string, source: Exclude<Source<unknown>, { state: "ok" }>): StatusRow {
+function pending(
+  id: RowId,
+  title: string,
+  source: Exclude<Source<unknown>, { state: "ok" }>,
+): StatusRow {
   return {
     id,
     title,
@@ -91,7 +86,10 @@ function runtimeRow(source: Source<StatusReport>): StatusRow {
       ...row,
       level: "problem",
       sentence: mismatched
-        .map((shard) => `${several ? `Shard ${String(shard.shard)}: ` : ""}${runtimeText(shard).text}.`)
+        .map(
+          (shard) =>
+            `${several ? `Shard ${String(shard.shard)}: ` : ""}${runtimeText(shard).text}.`,
+        )
         .join(" "),
     };
   const unobserved = shards.filter((shard) => shard.observedRuntime === null);
@@ -184,7 +182,9 @@ function shardsRow(source: Source<StatusReport>): StatusRow {
   if (shards.length === 0)
     return { ...row, level: "attention", sentence: "No shard has reported yet." };
   // The newest report: a report is a record of the last start and publish, not a heartbeat.
-  const latest = shards.reduce((a, b) => (Date.parse(b.updatedAt) > Date.parse(a.updatedAt) ? b : a));
+  const latest = shards.reduce((a, b) =>
+    Date.parse(b.updatedAt) > Date.parse(a.updatedAt) ? b : a,
+  );
   return {
     ...row,
     level: "ok",
@@ -212,9 +212,7 @@ function egressRow(source: Source<EgressStatus>): StatusRow {
   const levels: Level[] = [];
   if (stale.length > 0) {
     parts.push(
-      stale
-        .map((r) => `${label(r)} is ${r.state === "silent" ? "silent" : "stale"}`)
-        .join(", "),
+      stale.map((r) => `${label(r)} is ${r.state === "silent" ? "silent" : "stale"}`).join(", "),
     );
     levels.push("problem");
   }
@@ -312,9 +310,7 @@ function mcpRow(source: Source<McpCatalog>): StatusRow {
 function deploymentRow(deployment: NonNullable<StatusInputs["deployment"]>): StatusRow {
   const row = { id: "deployment", title: "Deployment" } as const;
   const { networkModes, flavours, sizes } = deployment;
-  const failed = [networkModes, flavours, sizes, deployment.tools].find(
-    (s) => s.state === "error",
-  );
+  const failed = [networkModes, flavours, sizes, deployment.tools].find((s) => s.state === "error");
   if (failed?.state === "error")
     return {
       ...row,

@@ -99,11 +99,7 @@ function NetworkDetails({ inputs }: { inputs: StatusInputs }) {
       <Fact label="Scope">The whole cluster: one check, run by the first shard.</Fact>
       <Fact label="Result">{policy.reason ?? "No result yet."}</Fact>
       <Fact label="Checked">
-        {policy.checkedAt === null ? (
-          "not since the last start"
-        ) : (
-          <Time value={policy.checkedAt} />
-        )}
+        {policy.checkedAt === null ? "not since the last start" : <Time value={policy.checkedAt} />}
       </Fact>
     </Facts>
   );
@@ -339,8 +335,8 @@ function StatusLineRow({
     <li className="flex flex-col gap-2 py-3" data-testid={`status-row-${row.id}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <StateDot level={row.level} />
-        <span className="w-44 shrink-0 text-sm font-medium">{row.title}</span>
-        <span className="min-w-0 flex-1 text-sm break-words">
+        <span className="min-w-0 flex-1 text-sm font-medium sm:w-44 sm:flex-none">{row.title}</span>
+        <span className="order-last w-full min-w-0 pl-5 text-sm break-words sm:order-none sm:w-auto sm:flex-1 sm:pl-0">
           {row.sentence}
           {row.failing !== undefined && (
             <>

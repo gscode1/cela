@@ -125,9 +125,18 @@ const modelControl = (req, res) => {
   });
 };
 if (process.env.FAKE_ADMIN !== "1") {
+  // The Status page reads the egress status, which needs the egress tables the in-memory settings database lacks (the
+  // real route answers 500 here): the fake answers it for an admin, and the real server keeps 401 and 403.
+  const egressStatusFake = createFakeAdmin();
   createServer((req, res) => {
-    if (new URL(req.url ?? "/", "http://localhost").pathname === "/__local/models")
-      return modelControl(req, res);
+    const path = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (path === "/__local/models") return modelControl(req, res);
+    if (path === "/admin/egress/status")
+      return void authenticate(req.headers).then((principal) =>
+        principal?.owner === "alice"
+          ? egressStatusFake.handle(req, res, principal.owner)
+          : ingest.emit("request", req, res),
+      );
     return ingest.emit("request", req, res);
   }).listen(Number(process.env.PORT), "127.0.0.1");
 } else {

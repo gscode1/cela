@@ -73,7 +73,9 @@ const inputs = (over: Partial<StatusInputs> = {}): StatusInputs => ({
   status: ok(report([shard()])),
   egress: ok(egress()),
   models: ok(models()),
-  mcp: ok(mcp([server("github")], { onecliSecrets: { names: ["a", "b"], source: "orchestrator" } })),
+  mcp: ok(
+    mcp([server("github")], { onecliSecrets: { names: ["a", "b"], source: "orchestrator" } }),
+  ),
   ...over,
 });
 
@@ -118,7 +120,9 @@ describe("status rows", () => {
     expect(row(fresh, "runtime").sentence).toMatch(/^Not observed yet/);
     const several = statusRows(
       inputs({
-        status: ok(report([shard(), shard({ shard: 1 }), shard({ shard: 2, observedRuntime: null })])),
+        status: ok(
+          report([shard(), shard({ shard: 1 }), shard({ shard: 2, observedRuntime: null })]),
+        ),
       }),
     );
     expect(row(several, "runtime").sentence).toBe(
@@ -160,8 +164,9 @@ describe("status rows", () => {
   });
 
   it("shows direct sessions only when there are some", () => {
-    expect(statusRows(inputs({ status: ok(report([shard()], { directSessions: 0 })) })).map((r) => r.id))
-      .not.toContain("direct");
+    expect(
+      statusRows(inputs({ status: ok(report([shard()], { directSessions: 0 })) })).map((r) => r.id),
+    ).not.toContain("direct");
     const rows = statusRows(inputs({ status: ok(report([shard()], { directSessions: 2 })) }));
     expect(row(rows, "direct")).toMatchObject({
       level: "attention",
@@ -198,7 +203,9 @@ describe("status rows", () => {
     });
     const behind = statusRows(
       inputs({
-        egress: ok(egress({ proxy: { replicas: [{ name: "proxy-0", revision: 2, state: "serving" }] } })),
+        egress: ok(
+          egress({ proxy: { replicas: [{ name: "proxy-0", revision: 2, state: "serving" }] } }),
+        ),
       }),
     );
     expect(row(behind, "egress").level).toBe("attention");
@@ -246,9 +253,7 @@ describe("status rows", () => {
     expect(unknown.level).toBe("unknown");
     expect(unknown.sentence).toContain("secret list unknown");
     const none = row(
-      statusRows(
-        inputs({ models: ok(models({ credentials: "none-configured", providers: [] })) }),
-      ),
+      statusRows(inputs({ models: ok(models({ credentials: "none-configured", providers: [] })) })),
       "onecli",
     );
     expect(none).toMatchObject({ level: "problem" });
