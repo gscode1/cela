@@ -116,6 +116,8 @@ describe("hack/kind-up.sh", () => {
     const calls = log();
     expect(calls).toContain("docker manifest inspect ghcr.io/gscode1/pi-orchestrator:1.2.3-abc");
     expect(calls).toContain("docker manifest inspect ghcr.io/gscode1/pi-sandbox:1.2.3-abc");
+    // The egress proxy is on by default (ADR 0038, amendment of 2026-11-19), so its image is checked too.
+    expect(calls).toContain("docker manifest inspect ghcr.io/gscode1/pi-egress-proxy:1.2.3-abc");
     expect(calls).toContain(
       `docker manifest inspect registry.local:5000/pi-ingest@sha256:${"a".repeat(64)}`,
     );
@@ -128,6 +130,23 @@ describe("hack/kind-up.sh", () => {
       .filter((l) => l.startsWith("kubectl") && !l.includes("version --client"))) {
       expect(line).toContain("--context kind-demo");
     }
+  });
+
+  it("--no-egress-proxy opts out: no proxy image, the chart's opt-out passed to the install, and no browser", () => {
+    const r = run(["--name", "demo", "--no-egress-proxy"], { IMAGE_TAG: "t" });
+    expect(r.stderr).toContain("cannot reach the cluster through context kind-demo");
+    expect(log()).not.toContain("pi-egress-proxy");
+    const kindUp = readFileSync(script, "utf8");
+    expect(kindUp).toContain(
+      "[[ $egress_proxy -eq 1 ]] || extra_args+=(--set egressProxy.enabled=false)",
+    );
+    const browser = run(["--browser", "--no-egress-proxy"], { IMAGE_TAG: "t" });
+    expect(browser.status).toBe(1);
+    expect(browser.stderr).toContain("--browser needs the egress proxy");
+    // --egress-proxy, the old way to ask for it, still works.
+    expect(run(["--name", "demo", "--egress-proxy"], { IMAGE_TAG: "t" }).stderr).toContain(
+      "cannot reach the cluster through context kind-demo",
+    );
   });
 
   it("reuses an existing cluster of that name", () => {

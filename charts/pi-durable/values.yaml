@@ -28,7 +28,7 @@ images:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
-  # Only needed with egressProxy.enabled.
+  # Needed with egressProxy.enabled (the default).
   egressProxy:
     repository: ghcr.io/gscode1/pi-egress-proxy
     tag: ""
@@ -290,13 +290,15 @@ github:
   repoAllowlist: []
 
 # The egress proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md): a CONNECT proxy that allows a connection only
-# when the rules in Postgres (the admin console's Egress page) say so, on the address the host resolves to. Off by
-# default, because turning it on is the network cutover (ADR 0038): a sandbox then reaches the proxy and nothing else (no
+# when the rules in Postgres (the admin console's Egress page) say so, on the address the host resolves to. On by default
+# (ADR 0038, amendment of 2026-11-19): this is the network cutover, so a sandbox reaches the proxy and nothing else (no
 # DNS, no direct internet, no direct OneCLI gateway) and every connection is judged by the rules, unless its profile asks
-# for `networkMode: direct` (security.allowDirectSandboxEgress). Without it the sandbox policies stay as they were: DNS,
-# the OneCLI gateway and the public internet, directly.
+# for `networkMode: direct` (security.allowDirectSandboxEgress). It needs database.existingSecret below (and, with OneCLI,
+# binding.existingSecret); hack/install.sh names them pi-egress-database and pi-egress-binding and creates the binding key.
+# Opt out with `enabled: false`: the sandbox policies are then as before the proxy existed (DNS, the OneCLI gateway and
+# the public internet, directly, unfiltered and unaudited).
 egressProxy:
-  enabled: false
+  enabled: true
   replicas: 2
   resources:
     requests: { cpu: 50m, memory: 64Mi }

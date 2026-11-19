@@ -172,8 +172,9 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
    full policy set; there the probe must report `enforced` (`NETPOL_ENFORCED` defaults to 1).
 3. Build native-arch images and `kind load` them; the release path pulls digests instead.
 4. `hack/install.sh --values values-kind.yaml`: runc with `allowInsecureRuntime`, kind's `standard` StorageClass,
-   bundled Postgres and agent-sandbox, `onecli.mode: disabled` and the scripted model by default. `hack/kind-up.sh
-   --onecli` adds bundled OneCLI (`onecli.mode=bundled`; `externalUrl` `http://localhost:10254` with
+   bundled Postgres and agent-sandbox, the egress proxy (the chart's default since 2026-11-19, ADR 0038 amendment; the
+   bundled Postgres creates its read-only role, `--no-egress-proxy` opts out), `onecli.mode: disabled` and the scripted
+   model by default. `hack/kind-up.sh --onecli` adds bundled OneCLI (`onecli.mode=bundled`; `externalUrl` `http://localhost:10254` with
    `allowInsecureExternalUrl` for a port-forward trial). No ESO and no credentials are needed.
 5. Verify: read `/admin/status` and print the runtime and network-policy warnings; then smoke (create a session, run
    one tool call that writes a workspace marker, stream the result, replace the Pod, check the marker, delete the

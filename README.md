@@ -30,7 +30,7 @@ see the open items in [plan.md](plan.md).
    sandbox is suspended and resumed by the next tool call. A profile picks the sandbox size
    ([ADR 0030](docs/decisions/0030-sandbox-sizes.md)) and flavour: `default`, or `browser` with Chromium, Playwright CLI
    and agent-browser ([ADR 0041](docs/decisions/0041-browser-sandbox.md)).
-6. With the **egress proxy** (`packages/egress-proxy`, `egressProxy.enabled`) the sandbox's only way out is the proxy: each
+6. Through the **egress proxy** (`packages/egress-proxy`, on by default) the sandbox's only way out is the proxy: each
    connection is checked against the profile's rules and audited, git goes on to OneCLI, allowed sites to the internet
    ([ADR 0038](docs/decisions/0038-network-modes.md)).
 7. Progress and answers stream back to the client over SSE.
@@ -108,6 +108,7 @@ hack/kind-up.sh --build         # or build the images here (native architecture)
 hack/kind-smoke.sh              # a session, a message, a tool call in the sandbox, a replaced Pod, deletion
 hack/kind-up.sh --build --onecli  # the same plus the bundled OneCLI (credential gateway), for real models
 hack/kind-up.sh --build --no-expose  # no localhost ports (8080, 10254, 10256): use kubectl port-forward
+hack/kind-up.sh --build --no-egress-proxy  # opt out of the egress proxy: sandboxes get direct internet
 hack/kind-smoke.sh --onecli     # also: the orchestrator's way through the gateway, and the OneCLI API closed to everyone else
 hack/kind-down.sh               # delete the cluster
 ```
@@ -161,12 +162,13 @@ installs the chart and prints the runtime and network-policy state from `GET /ad
 [chart README](charts/pi-durable/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
 [network policy](docs/network-policy.md) for the isolation rules.
 
-**Sandbox network.** With `egressProxy.enabled` a sandbox reaches the egress proxy and nothing else (no DNS, no direct
+**Sandbox network.** With the egress proxy (`egressProxy.enabled`, the default) a sandbox reaches it and nothing else (no DNS, no direct
 internet, no direct OneCLI gateway): every connection is judged by the egress rules and audited. That is the default
 `proxied` network mode. A profile can opt into `networkMode: direct` (open internet and DNS, no rules, no audit; private,
 cluster and platform addresses stay blocked) only when the operator sets `security.allowDirectSandboxEgress`, which the
-console flags as "unfiltered, unaudited". Without the proxy the sandbox policies are unchanged (every sandbox has
-direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
+console flags as "unfiltered, unaudited". The proxy needs a read-only database role and its Secret (`hack/install.sh`
+explains, [network policy](docs/network-policy.md#egress-proxy-egressproxyenabled)). `egressProxy.enabled: false` opts out:
+the sandbox policies are then as before the cutover (every sandbox has direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
 
 A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, default off) runs the
 sandbox image plus Chromium, Playwright CLI and agent-browser, always through the egress proxy and without credentials.

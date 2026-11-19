@@ -283,7 +283,8 @@ and exits listing missing shards instead of silently sending them to shard 0.
 
 `tests/e2e/run.sh browser` runs the browser sandbox of [ADR 0041](decisions/0041-browser-sandbox.md) on the cluster's real runtime
 (gVisor) with a live model (issue #267). It is not part of `all` and it spends model turns. The run installs the chart with
-`egressProxy.enabled` and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `BROWSER_SUITE=1`), adds
+`egressProxy.enabled` (every other suite sets `egressProxy.enabled: false`, the chart's opt-out: they test direct sandbox
+egress and the OneCLI gateway reached from the sandbox) and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `BROWSER_SUITE=1`), adds
 `openai-codex/gpt-6-luna` to the model allowlist and makes the proxy's Secrets in the namespace: `pi-egress-database` (the URI of
 the read-only role `pi_egress`, which the run's Postgres creates with `auth.egressReader`) and `pi-egress-binding`. It does not
 turn on `onecli.hostRules.reconcile`, so no global OneCLI rule changes. `BROWSER_SANDBOX_IMAGE` and `EGRESS_PROXY_IMAGE` are
@@ -334,6 +335,7 @@ pnpm --filter @pi-durable-k8s/admin-ui e2e:local
 ## Without a cluster: kind
 
 `hack/kind-up.sh` creates a local kind cluster with the same chart (runc, kindnet, bundled Postgres, scripted model) and
-`hack/kind-smoke.sh` runs a short session, tool call, Pod replacement and deletion against it; the `kind` workflow runs both
+`hack/kind-smoke.sh` runs a short session, tool call, Pod replacement and deletion against it, with the egress proxy on (the
+chart's default) and a check that the sandbox has no direct internet; the `kind` workflow runs both
 on every pull request. It is a smoke test of the install path, not these suites: it has no gVisor and does not run
 `phase3`. See [Quick start on kind](../README.md#quick-start-on-kind).

@@ -337,7 +337,7 @@ fails if a sandbox reaches the node's :6443 or :10250. The `kind-cilium` CI job 
 
 ## Egress proxy (`egressProxy.enabled`)
 
-ADR [0035](decisions/0035-egress-proxy-runtime.md). Off by default; turning it on is the network cutover for sandboxes ([ADR 0038](decisions/0038-network-modes.md), above). With it on,
+ADR [0035](decisions/0035-egress-proxy-runtime.md). On by default since 2026-11-19: it is the network cutover for sandboxes ([ADR 0038](decisions/0038-network-modes.md), above, and its amendment). `egressProxy.enabled: false` opts out and keeps the sandbox policies of before the cutover. With it on,
 the pods `app.kubernetes.io/name=pi-egress-proxy` get these policies on top of `default-deny-all` and the DNS rule:
 
 | Policy | Direction | Allows |
@@ -352,5 +352,14 @@ rule in the database, admin). Either alone connects nothing. The platform itself
 OneCLI API, the Kubernetes API) is blocked by the proxy whatever the rules say. Kubelet probes use :3130 from the node. Cilium
 does not match Pod or Service addresses with a `cidr` rule, so use selectors for in-cluster destinations there.
 
-Live check: `hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --egress-proxy`, then
-`hack/egress-smoke.sh --name pi-egress`.
+The proxy needs two Secrets and a role. The database Secret (`egressProxy.database.existingSecret`; `hack/install.sh` names
+it `pi-egress-database` and creates it from `EGRESS_DATABASE_URL`) holds the URI of the read-only role `pi_egress`, which
+only a database admin can create: `auth.egressReader.enabled=true` with charts/pi-postgres, otherwise once by hand (the
+statements are in `egressProxy.database` of [values.yaml](../charts/pi-durable/values.yaml)). With OneCLI the binding key
+(`egressProxy.binding.existingSecret`, `pi-egress-binding`) seals the OneCLI tokens; `hack/install.sh` creates it once.
+The chart refuses to render with the proxy on and either name empty. The database must admit the proxy's pods on 5432
+(charts/pi-postgres does, `networkPolicy.clientSelectors`).
+
+Live check: `hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build` (the proxy is on by default), then
+`hack/egress-smoke.sh --name pi-egress`. `hack/kind-smoke.sh` checks on every kind run that a sandbox has no direct
+internet and that the proxy answers it.

@@ -106,13 +106,13 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- end -}}
 {{- if .Values.egressProxy.enabled -}}
 {{- if not .Values.egressProxy.database.existingSecret -}}
-{{- fail "egressProxy.enabled needs egressProxy.database.existingSecret: a Secret with the connection URI of the proxy's read-only role (docs/decisions/0035-egress-proxy-runtime.md)" -}}
+{{- fail "egressProxy.enabled (the default) needs egressProxy.database.existingSecret: a Secret with the connection URI of the proxy's read-only role pi_egress (docs/network-policy.md, docs/decisions/0035-egress-proxy-runtime.md; hack/install.sh creates it from EGRESS_DATABASE_URL). To run without the proxy, set egressProxy.enabled=false: sandboxes then reach the internet directly, unfiltered (docs/decisions/0038-network-modes.md)" -}}
 {{- end -}}
 {{- if and (ne .Values.onecli.mode "disabled") (not .Values.egressProxy.binding.existingSecret) -}}
-{{- fail "egressProxy.enabled with OneCLI needs egressProxy.binding.existingSecret: a Secret with a 32 byte base64 key under `key`, which seals the OneCLI tokens the proxy chains (docs/decisions/0037-egress-onecli-route.md)" -}}
+{{- fail "egressProxy.enabled (the default) with OneCLI needs egressProxy.binding.existingSecret: a Secret with a 32 byte base64 key under `key`, which seals the OneCLI tokens the proxy chains (docs/decisions/0037-egress-onecli-route.md; hack/install.sh creates it). Or set egressProxy.enabled=false to run without the proxy" -}}
 {{- end -}}
 {{- if not (or .Values.images.egressProxy.tag .Values.images.egressProxy.digest) -}}
-{{- fail "egressProxy.enabled needs images.egressProxy.tag or digest (images/build.sh egress-proxy prints them)" -}}
+{{- fail "egressProxy.enabled (the default) needs images.egressProxy.tag or digest, like the other images (CI publishes ghcr.io/gscode1/pi-egress-proxy with the same tag; images/build.sh egress-proxy prints them)" -}}
 {{- end -}}
 {{- range $i, $p := .Values.egressProxy.privateEgress -}}
 {{- $hasCidr := not (empty $p.cidr) -}}

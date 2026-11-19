@@ -11,3 +11,7 @@ database:
     existingSecret: pi-database
     egress:
       podSelector: { app.kubernetes.io/name: pi-postgres }
+# The egress proxy is on by default (ADR 0038, amendment of 2026-11-19); its Secrets have no default name.
+egressProxy:
+  database: { existingSecret: pi-egress-database }
+  binding: { existingSecret: pi-egress-binding }

@@ -22,6 +22,7 @@ beforeEach(() => {
       "  orchestrator: { tag: t }",
       "  ingest: { tag: t }",
       "  sandbox: { tag: t }",
+      "  egressProxy: { tag: t }",
       "database:",
       "  external:",
       "    existingSecret: db-uri",
@@ -99,7 +100,7 @@ const run = (args: string[], o: Opts = {}) =>
       FAKE_DIR: dir,
       FAKE_LOG: join(dir, "log"),
       FAKE_NS: o.ns ?? "no",
-      FAKE_SECRETS: (o.secrets ?? ["db-uri"]).join(" "),
+      FAKE_SECRETS: (o.secrets ?? ["db-uri", "pi-egress-database"]).join(" "),
       FAKE_OWNERS: o.owners ?? "root\nops",
       FAKE_STATUS: o.status ?? gvisorStatus,
       FAKE_STATUS_RC: String(o.statusRc ?? 0),
@@ -110,6 +111,14 @@ const run = (args: string[], o: Opts = {}) =>
 const log = () => (existsSync(join(dir, "log")) ? readFileSync(join(dir, "log"), "utf8") : "");
 const file = (name: string) => readFileSync(join(dir, name), "utf8");
 const base = () => ["--namespace", "demo", "--values", valuesFile];
+const externalOnecli = [
+  "--set",
+  "onecli.mode=external",
+  "--set",
+  "onecli.external.apiUrl=http://onecli.onecli:10256",
+  "--set",
+  "onecli.external.gatewayUrl=http://onecli.onecli:10255",
+];
 
 describe("hack/install.sh", () => {
   it("creates the namespace with the restricted Pod Security labels, the missing Secrets, then installs", () => {
@@ -140,13 +149,18 @@ describe("hack/install.sh", () => {
   });
 
   it("never prints a secret value", () => {
-    const r = run(base(), {
-      env: { DATABASE_URL: "postgres://u:hunter2secret@db/app" },
+    const r = run([...base(), ...externalOnecli], {
+      env: {
+        DATABASE_URL: "postgres://u:hunter2secret@db/app",
+        EGRESS_DATABASE_URL: "postgres://pi_egress:hunter3secret@db/app",
+      },
       secrets: [],
     });
     expect(r.status, r.stderr).toBe(0);
     const out = r.stdout + r.stderr + log();
     expect(out).not.toContain("hunter2secret");
+    expect(out).not.toContain("hunter3secret");
+    expect(out).not.toContain(file("secret-pi-egress-binding"));
     expect(out).not.toContain(file("secret-sandboxd-auth"));
     for (const t of file("secret-api-auth").split("\n"))
       expect(out).not.toContain(t.split(":")[1] ?? "x");
@@ -155,17 +169,21 @@ describe("hack/install.sh", () => {
   });
 
   it("keeps existing Secrets and an existing namespace, and changes nothing about them", () => {
-    const r = run(base(), { ns: "yes", secrets: ["db-uri", "sandboxd-auth", "api-auth"] });
+    const r = run([...base(), ...externalOnecli], {
+      ns: "yes",
+      secrets: ["db-uri", "sandboxd-auth", "api-auth", "pi-egress-database", "pi-egress-binding"],
+    });
     expect(r.status, r.stderr).toBe(0);
     expect(log()).not.toMatch(/create secret|apply -f -|delete|replace|patch/);
     expect(r.stdout).toContain("sandboxd-auth: exists, kept");
     expect(r.stdout).toContain("api-auth: exists, kept");
+    expect(r.stdout).toContain("pi-egress-binding: exists, kept");
   });
 
   it("warns when an admin has no token, and when the namespace does not enforce restricted", () => {
     const r = run(base(), {
       ns: "yes",
-      secrets: ["db-uri", "sandboxd-auth", "api-auth"],
+      secrets: ["db-uri", "sandboxd-auth", "api-auth", "pi-egress-database"],
       owners: "root",
       env: { FAKE_PSA: "baseline" },
     });
@@ -180,6 +198,67 @@ describe("hack/install.sh", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Secret db-uri");
     expect(log()).not.toContain("helm upgrade");
+  });
+
+  it("stops before installing when the egress proxy's database Secret is missing, and names the opt-out", () => {
+    const r = run(base(), { secrets: ["db-uri"] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Secret pi-egress-database");
+    expect(r.stderr).toContain("auth.egressReader.enabled=true");
+    expect(r.stderr).toContain("--set egressProxy.enabled=false");
+    expect(log()).not.toContain("helm upgrade");
+    expect(log()).not.toContain("create secret generic pi-egress-database");
+  });
+
+  it("creates the egress proxy's database Secret from EGRESS_DATABASE_URL, and only from a postgres URI", () => {
+    const uri = "postgres://pi_egress:pw@db/app";
+    const r = run(base(), { secrets: ["db-uri"], env: { EGRESS_DATABASE_URL: uri } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(file("secret-pi-egress-database")).toBe(uri);
+    expect(file("secret-pi-egress-database.arg")).toContain("--from-file=uri=");
+    expect(log()).toContain("--values");
+    const bad = run(base(), { secrets: ["db-uri"], env: { EGRESS_DATABASE_URL: "mysql://x" } });
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("EGRESS_DATABASE_URL must be a postgres:// URI");
+  });
+
+  it("creates the binding key only when the chart mounts it (proxy and OneCLI)", () => {
+    let r = run(base());
+    expect(r.status, r.stderr).toBe(0);
+    expect(log()).not.toContain("pi-egress-binding");
+    r = run([...base(), ...externalOnecli]);
+    expect(r.status, r.stderr).toBe(0);
+    // 32 random bytes, base64 (ADR 0037).
+    expect(file("secret-pi-egress-binding")).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(file("secret-pi-egress-binding.arg")).toContain("--from-file=key=");
+  });
+
+  it("follows Secret names from the user's values over its own defaults", () => {
+    const r = run(
+      [
+        ...base(),
+        ...externalOnecli,
+        "--set",
+        "egressProxy.database.existingSecret=my-egress-db",
+        "--set",
+        "egressProxy.binding.existingSecret=my-binding",
+      ],
+      { secrets: ["db-uri", "my-egress-db"] },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("my-egress-db: exists");
+    expect(file("secret-my-binding")).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(log()).not.toMatch(/create secret generic pi-egress-/);
+  });
+
+  it("installs without the proxy and its Secrets when the user opts out", () => {
+    const r = run([...base(), ...externalOnecli, "--set", "egressProxy.enabled=false"], {
+      secrets: ["db-uri"],
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("egress proxy: off");
+    expect(log()).not.toMatch(/pi-egress-/);
+    expect(log()).toContain("egressProxy.enabled=false");
   });
 
   it("rejects a DATABASE_URL that is not a postgres URI", () => {

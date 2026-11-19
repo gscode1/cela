@@ -91,7 +91,7 @@ row is written; the replica shows silent, which is itself the signal.
 
 ### Chart
 
-`egressProxy` (off by default): 2 replicas with anti-affinity and a PodDisruptionBudget (`minAvailable: 1`), a Service on 3128,
+`egressProxy` (off by default when this was decided; on by default since 2026-11-19, ADR 0038 amendment): 2 replicas with anti-affinity and a PodDisruptionBudget (`minAvailable: 1`), a Service on 3128,
 a ServiceAccount without a token, restricted Pod Security, probes on :3130. Policies: ingress from sandboxes and
 `egressProxy.clients`; egress to the database, to the public internet on `egressProxy.publicPorts` (default 80 and 443) minus
 the private, CGNAT, link-local and loopback ranges, DNS (the namespace baseline), and `egressProxy.privateEgress`: each entry

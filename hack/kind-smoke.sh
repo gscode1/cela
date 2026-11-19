@@ -34,6 +34,10 @@
 #   4c. from the sandbox: the node IP on each exposed NodePort and each ClusterIP Service port are blocked. A sandbox must
 #       not reach ingest or OneCLI's API through the published ports (only the Docker gateway /32 is admitted)
 #
+# With the egress proxy (the chart's default; the orchestrator has PI_EGRESS_PROXY_URL) it also checks:
+#   4e. from the sandbox: a direct TCP connection to a public address (1.1.1.1:443) fails, HTTPS_PROXY carries the
+#       session's token, and the proxy answers a CONNECT made with it (any status: a host without a rule is denied)
+#
 # --status runs step 1 only (kind-up.sh uses it). The API is called from inside an ingest pod (hack/kind-client.mjs): no
 # port-forward, and the API token never leaves the cluster or reaches a log. Only kind contexts are used.
 set -euo pipefail
@@ -238,6 +242,21 @@ if [[ $cilium -eq 1 ]]; then
   check "the sandbox does not reach the kubelet on the node" "$out" "blocked-10250"
 elif grep -q 'OPEN-' <<<"$out"; then
   echo "WARNING: a sandbox reaches the node ($(grep -o 'OPEN-[0-9]*' <<<"$out" | tr '\n' ' ')): kindnet does not filter traffic to hostNetwork Pods. hack/kind-up.sh --cni cilium closes it (issue #139)" >&2
+fi
+
+if [[ -n $(k get deploy pi-orchestrator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]]; then
+  # The chart's default (ADR 0038, amendment of 2026-11-19). The sandbox has no DNS: CONNECT goes to the proxy's address
+  # in HTTPS_PROXY, with the session's token as Basic credentials; the token is never printed.
+  log "from the sandbox: no direct internet, the egress proxy answers"
+  cmd='if timeout 5 bash -c "exec 3<>/dev/tcp/1.1.1.1/443" 2>/dev/null; then echo direct-OPEN; else echo direct-blocked; fi; '
+  cmd+='[[ $HTTPS_PROXY == http://x:*@*:3128 ]] && echo proxy-env-set || echo proxy-env-missing; '
+  cmd+='ph=${HTTPS_PROXY#*@}; pp=${ph##*:}; ph=${ph%:*}; tok=${HTTPS_PROXY#http://x:}; tok=${tok%%@*}; '
+  cmd+='if exec 3<>/dev/tcp/$ph/$pp; then printf "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n" "$(printf "x:%s" "$tok" | base64 -w0)" >&3; read -t 15 -r line <&3; echo "proxy-answer ${line%$(printf "\r")}"; else echo proxy-unreachable; fi'
+  out=$(api ask "$session" "$(script_json "egress-$marker" "$cmd")" "egress-$marker" 600)
+  printf '%s\n' "$out"
+  check "the sandbox cannot open a direct connection to the internet (1.1.1.1:443)" "$out" "direct-blocked"
+  check "the sandbox has the proxy variable with its token" "$out" "proxy-env-set"
+  check "the egress proxy answers the sandbox's CONNECT" "$out" "proxy-answer HTTP/1.[01] [0-9]{3}"
 fi
 
 if [[ $exposed -eq 1 ]]; then
