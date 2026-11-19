@@ -45,10 +45,14 @@ describe("MCP servers page, OneCLI secret", () => {
     renderApp("/mcp-servers");
     await signIn("alice-token");
     const row = await screen.findByTestId("mcp-github");
-    // A server without a secret and with default limits has nothing to expand.
-    expect(
-      within(screen.getByTestId("mcp-plain")).queryByRole("button", { name: "Details" }),
-    ).toBeNull();
+    // A server without a secret has no such row in its Details.
+    await userEvent.click(
+      within(screen.getByTestId("mcp-plain")).getByRole("button", { name: "Details" }),
+    );
+    expect(screen.queryByText("OneCLI secret")).toBeNull();
+    await userEvent.click(
+      within(screen.getByTestId("mcp-plain")).getByRole("button", { name: "Details" }),
+    );
     await userEvent.click(within(row).getByRole("button", { name: "Details" }));
     expect(screen.getByText("OneCLI secret")).toBeInTheDocument();
     expect(screen.getByText("github-mcp")).toBeInTheDocument();
@@ -111,18 +115,22 @@ describe("MCP servers page, discovery status", () => {
     renderApp("/mcp-servers");
     await signIn("alice-token");
     const good = await screen.findByTestId("mcp-good");
-    expect(within(good).getByText("ok, 3 tools")).toBeInTheDocument();
-    expect(within(good).getByText("5 min ago")).toBeInTheDocument();
+    expect(within(good).getByText("ready \u00b7 3 tools")).toBeInTheDocument();
     await userEvent.click(within(good).getByRole("button", { name: "Details" }));
+    expect(screen.getByText("5 min ago")).toBeInTheDocument();
     expect(screen.getByText("Tools")).toBeInTheDocument();
     expect(screen.getByText("search")).toBeInTheDocument();
     expect(screen.getByText("and 1 more")).toBeInTheDocument();
 
     const bad = screen.getByTestId("mcp-bad");
     expect(within(bad).getByText("failing")).toBeInTheDocument();
-    expect(within(bad).getByText("mcp bad connect timed out after 15000 ms")).toBeInTheDocument();
+    // The error is in the Details, not in the row.
+    expect(screen.queryByText("mcp bad connect timed out after 15000 ms")).toBeNull();
+    await userEvent.click(within(bad).getByRole("button", { name: "Details" }));
+    expect(screen.getByText("mcp bad connect timed out after 15000 ms")).toBeInTheDocument();
     expect(within(screen.getByTestId("mcp-silent")).getByText("unknown")).toBeInTheDocument();
     const off = screen.getByTestId("mcp-off");
+    expect(within(off).getByText("disabled")).toBeInTheDocument();
     expect(within(off).queryByText("unknown")).toBeNull();
     expect(within(off).queryByText(/tools?$/)).toBeNull();
   });
@@ -134,7 +142,7 @@ describe("MCP servers page, discovery status", () => {
     renderApp("/mcp-servers");
     await signIn("alice-token");
     const row = await screen.findByTestId("mcp-old");
-    expect(within(row).queryByText("unknown")).toBeNull();
+    expect(within(row).getByText("unknown")).toBeInTheDocument();
     expect(within(row).queryByText("failing")).toBeNull();
   });
 });

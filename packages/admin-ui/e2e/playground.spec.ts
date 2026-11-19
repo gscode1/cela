@@ -32,8 +32,9 @@ test.describe("playground", () => {
     const server = unique("demo");
     const profile = await profileWithServer(request, server);
     await signInAndGo(page, "/console/mcp-servers");
+    await page.getByTestId(`mcp-${server}`).getByRole("button", { name: "Details" }).click();
     await page
-      .getByTestId(`mcp-${server}`)
+      .getByTestId(`mcp-${server}-details`)
       .getByRole("link", { name: "Try in playground" })
       .click();
 
