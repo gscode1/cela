@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--egress-proxy] [--browser] [--no-expose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-egress-proxy] [--browser] [--no-expose]
 #                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
@@ -15,14 +15,14 @@
 #   3. images: published ones from ghcr.io/gscode1 (default: the tag build.sh gives HEAD, 0.0.0-<short sha>), or with
 #      --build built here for the native architecture and loaded into the node
 #   4. hack/agent-sandbox.sh bundled (controller and CRDs; skipped when they exist)
-#   5. the namespace, random Secrets (never printed) and charts/pi-postgres
+#   5. the namespace, random Secrets (never printed) and charts/pi-postgres (with the egress proxy's read-only role)
 #      Expose (default): ingest.expose and OneCLI's expose add NodePort Services (externalTrafficPolicy Local) and one
 #      NetworkPolicy source each: the IPv4 gateway of the Docker network `kind`, as a /32 (docker network inspect),
 #      which is where the host's localhost connections arrive from. Sandboxes are not admitted
 #      (docs/decisions/0022-bundled-onecli.md, addendum). --no-expose: no mappings, no Services, port-forward as before
 #   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
-#      network policies, OneCLI disabled (or, with --onecli, bundled: install.sh runs hack/onecli.sh first), the scripted
-#      model only
+#      network policies, the egress proxy (the chart's default), OneCLI disabled (or, with --onecli, bundled: install.sh
+#      runs hack/onecli.sh first), the scripted model only
 #   7. reads the isolation probe (hack/kind-smoke.sh --status), checks that the admin console (charts' console.enabled,
 #      on in values-kind.yaml), the session API and, with --onecli, the OneCLI dashboard answer, and ends with a summary:
 #      the URLs and whether each is ready, how to sign in (commands that read the Secrets; no secret is printed), the
@@ -37,19 +37,21 @@
 #
 # --browser (issue #48, docs/decisions/0041-browser-sandbox.md) enables the browser sandbox flavour
 # (sandbox.flavours.browser.enabled) with the image pi-sandbox-browser (SANDBOX_BROWSER_IMAGE overrides it; --build builds it
-# too: the image is about 1.6 GB, so it is built only on request). It needs the egress proxy (--egress-proxy): a browser
-# profile is proxied.
+# too: the image is about 1.6 GB, so it is built only on request). It needs the egress proxy (not --no-egress-proxy): a
+# browser profile is proxied.
 #
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
 # which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
 # gateway. A real model: docs/model-credentials.md.
 #
-# --egress-proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md) turns on the egress proxy: the bundled Postgres
-# creates the read-only role pi_egress (auth.egressReader), this script makes the Secret pi-egress-database with its URI,
-# and the install sets egressProxy.enabled, the database Secret and a client admission for the namespace pi-egress-test
-# (where hack/egress-smoke.sh runs its test pods). --set key=value (repeatable) is passed to hack/install.sh as it is,
-# after everything this script sets, for example --set egressProxy.rules.staleAfter=30s.
+# The egress proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md) is on by default, as in the chart (ADR 0038,
+# amendment of 2026-11-19): the bundled Postgres creates the read-only role pi_egress (auth.egressReader), hack/install.sh
+# makes the Secret pi-egress-database from its URI (EGRESS_DATABASE_URL, set here) and, with --onecli, the binding key
+# pi-egress-binding, and the install admits the namespace pi-egress-test to the proxy (where hack/egress-smoke.sh runs its
+# test pods). --no-egress-proxy opts out (egressProxy.enabled=false: sandboxes reach the internet directly, as before the
+# cutover); --egress-proxy is still accepted and changes nothing. --set key=value (repeatable) is passed to
+# hack/install.sh as it is, after everything this script sets, for example --set egressProxy.rules.staleAfter=30s.
 #
 # Images: IMAGE_TAG (default as above) applies to all of them; ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE and
 # EGRESS_PROXY_IMAGE (a tag or digest reference, for example ghcr.io/gscode1/pi-ingest@sha256:...) override one image. IMAGE_REPO (default ghcr.io/gscode1)
@@ -63,7 +65,7 @@ namespace=pi-durable
 timeout=10m
 build=0
 onecli=0
-egress_proxy=0
+egress_proxy=1
 browser=0
 user_sets=()
 expose=1
@@ -76,7 +78,7 @@ verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
@@ -93,7 +95,8 @@ while [[ $# -gt 0 ]]; do
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
-  --egress-proxy) egress_proxy=1; shift ;;
+  --egress-proxy) egress_proxy=1; shift ;; # the default; kept so older commands still work
+  --no-egress-proxy) egress_proxy=0; shift ;;
   --browser) browser=1; shift ;;
   --set) [[ $# -ge 2 ]] || usage; user_sets+=(--set "$2"); shift 2 ;;
   --no-expose) expose=0; shift ;;
@@ -106,6 +109,7 @@ done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
 [[ $cni == kindnet || $cni == cilium ]] || die "bad --cni '$cni' (kindnet or cilium)"
+[[ $browser -eq 0 || $egress_proxy -eq 1 ]] || die "--browser needs the egress proxy (a browser profile is proxied): drop --no-egress-proxy"
 # On Cilium the probe must say enforced; kind-smoke.sh reads the same variable.
 [[ $cni == kindnet ]] || export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}
 
@@ -204,6 +208,7 @@ ref_sandbox_browser=${SANDBOX_BROWSER_IMAGE:-$repo/pi-sandbox-browser:$tag}
 set_args=()
 extra_args=()
 [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
+[[ $egress_proxy -eq 1 ]] || extra_args+=(--set egressProxy.enabled=false)
 [[ $cni == kindnet ]] || extra_args+=(--set networkPolicy.provider=cilium)
 add_image_sets() { # key ref: --set images.<key>.repository/tag/digest from a "repo:tag" or "repo@sha256:..." reference
   local key=$1 ref=$2 repository tag="" digest=""
@@ -391,33 +396,21 @@ pi_password=$(kn get secret pi-postgres-auth -o jsonpath='{.data.pi-password}' |
 DATABASE_URL="postgres://pi:$pi_password@pi-postgres.$namespace.svc:5432/pi"
 export DATABASE_URL
 if [[ $egress_proxy -eq 1 ]]; then
-  # The proxy's own Secret: the URI of the read-only role. Written through a file, never argv or stdout; kept if it exists.
-  if [[ -z $(kn get secret pi-egress-database --ignore-not-found -o name) ]]; then
-    egress_password=$(kn get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | base64 -d)
-    printf 'postgres://pi_egress:%s@pi-postgres.%s.svc:5432/pi' "$egress_password" "$namespace" >"$tmp/egress-uri"
-    kn create secret generic pi-egress-database --from-file=uri="$tmp/egress-uri" >/dev/null
-    unset egress_password
-    echo "pi-egress-database: created (the URI of the read-only role pi_egress)"
-  fi
-  extra_args+=(--set egressProxy.enabled=true --set egressProxy.database.existingSecret=pi-egress-database
-    --set 'egressProxy.clients[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=pi-egress-test')
-  if [[ $onecli -eq 1 ]]; then
-    # The key that seals the sessions' OneCLI tokens for the proxy (ADR 0037): 32 random bytes, kept if it exists
-    # (a new key would leave the stored bindings unreadable until each session is bound again). Never printed.
-    if [[ -z $(kn get secret pi-egress-binding --ignore-not-found -o name) ]]; then
-      openssl rand -base64 32 | tr -d '\n' >"$tmp/binding-key"
-      kn create secret generic pi-egress-binding --from-file=key="$tmp/binding-key" >/dev/null
-      echo "pi-egress-binding: created (the key that seals OneCLI tokens for the egress proxy)"
-    fi
-    extra_args+=(--set egressProxy.binding.existingSecret=pi-egress-binding --set onecli.hostRules.reconcile=true)
-  fi
+  # The URI of the proxy's read-only role, for install.sh, which creates the Secret pi-egress-database once (and keeps an
+  # existing one) and, with OneCLI, the binding key pi-egress-binding. Never printed.
+  egress_password=$(kn get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | base64 -d)
+  EGRESS_DATABASE_URL="postgres://pi_egress:$egress_password@pi-postgres.$namespace.svc:5432/pi"
+  export EGRESS_DATABASE_URL
+  unset egress_password
+  extra_args+=(--set 'egressProxy.clients[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=pi-egress-test')
+  [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.hostRules.reconcile=true)
 fi
 
 # ------------------------------------------------------------------ 6. pi-durable
 step "install pi-durable$([[ $onecli -eq 0 ]] || echo ' and OneCLI') (hack/install.sh)"
 KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/pi-durable/values-kind.yaml" \
   ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} ${user_sets[@]+"${user_sets[@]}"} --timeout "$timeout"
-unset DATABASE_URL pi_password
+unset DATABASE_URL pi_password EGRESS_DATABASE_URL
 
 # ------------------------------------------------------------------ 7. isolation probe
 step "isolation probe (GET /admin/status)"
@@ -538,6 +531,7 @@ if [[ $probe_state != enforced ]]; then
   fi
 fi
 [[ $onecli -eq 1 ]] || printf '  %s!%s only the scripted model works: a real model needs OneCLI, rerun with --onecli\n' "$yellow" "$off"
+[[ $egress_proxy -eq 1 ]] || printf '  %s!%s no egress proxy (--no-egress-proxy): sandboxes reach the internet directly, unfiltered and unaudited\n' "$yellow" "$off"
 
 heading "Next"
 echo "  Smoke test    hack/kind-smoke.sh --name $name --namespace $namespace$([[ $onecli -eq 0 ]] || echo ' --onecli')"

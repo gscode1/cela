@@ -1,5 +1,6 @@
 # Values for hack/kind-up.sh (docs/install-plan.md section 7, D9): a kind cluster with kindnet and runc, the bundled
-# Postgres (charts/pi-postgres) and the scripted model only. Images are not set here: kind-up.sh passes them with --set,
+# Postgres (charts/pi-postgres), the egress proxy (the chart's default; kind-up.sh --no-egress-proxy opts out) and the
+# scripted model only. Images are not set here: kind-up.sh passes them with --set,
 # from IMAGE_TAG or per-image refs, or builds them and loads them into the node.
 #
 # NOT for real use: runc is not gVisor. Agent code runs with container isolation only.
