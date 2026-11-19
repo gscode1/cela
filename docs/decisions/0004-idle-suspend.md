@@ -106,3 +106,26 @@ re-measured, not changed, until the #58 numbers say what an open env costs now.
 ## Addendum: the cap is derived since ADR 0018 (issue #91)
 
 `PI_MAX_OPEN_BRIDGES` no longer defaults to 12: it is derived from the memory limit, and `0` means no cap; see [0018](0018-derived-bridge-cap.md).
+
+## Addendum: background processes do not keep a sandbox alive (issue #60, 2026-11-19)
+
+Suspend is decided by the last tool call only (`planSuspend` in `packages/orchestrator/src/lifecycle.ts`), not by what
+still runs in the sandbox. A dev server, a `npm install &`, a browser or any other background process is killed when the
+Pod is deleted at suspend, and is not restarted on resume; only the workspace PVC survives. An agent must not rely on a
+process outliving the turn that started it (the browser profile already says to start the browser again).
+
+Issue #60 proposed suspending on process quiescence instead. It was closed without building it:
+
+- It would make the costly cases worse: a browser sandbox (Chromium and the Playwright daemon) or a sandbox with a
+  forgotten dev server is never quiescent, so it would never be suspended without a hard cap, and that cap is today's
+  timer.
+- It conflicts with [0003](0003-recycle-pod-on-interrupt.md): escaped `setsid` processes are meant to die with the Pod,
+  not to keep it alive (one may hold a repository proxy token).
+- Detection has no cheap source: cgroup `cpu.stat` and `memory.stat` read 0 under gVisor
+  ([0041](0041-browser-sandbox.md)), `sandboxd` is the upstream image, and a probe through the bridge counts as a call.
+
+The idle threshold is the operator's cost setting: `PI_SANDBOX_IDLE_SUSPEND_SECONDS` on the orchestrator
+(`orchestrator.extraEnv` in the chart; default 1800, 0 = never, not below the eviction age). Until it suspends, an idle
+sandbox holds its size's requests (`sandbox.sizes`, 100m/128Mi for `s` up to 2 CPU/4Gi for `xl`; a browser sandbox
+500m/768Mi). Revisit with measurements if idle Pods become the capacity bottleneck; a per-flavour or per-size threshold
+is the next step then, not quiescence.
