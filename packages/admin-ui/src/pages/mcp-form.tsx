@@ -115,9 +115,7 @@ function SecretField({
         </datalist>
       )}
       <p className="text-xs text-muted-foreground">
-        The name of a secret in OneCLI, never its value. Sessions whose profile names this server
-        call it with this secret only; its host pattern must cover the server&apos;s host. Empty for
-        a server without credentials.
+        OneCLI secret whose host pattern covers this server. Empty: no credentials.
         {names === undefined && " OneCLI's secret names are not known here: type the name."}
       </p>
       {unlisted && (
@@ -158,7 +156,9 @@ export function McpForm({
   const [maxOutput, setMaxOutput] = useState(
     toTyped(server?.maxOutputBytes ?? MCP_LIMITS.maxOutputBytes.default, OUTPUT_FIELD.scale),
   );
-  const [enabled, setEnabled] = useState(server?.enabled ?? true);
+  // Validation is shown after a save attempt, not while the form is still being filled in.
+  const [attempted, setAttempted] = useState(false);
+  const [limitsOpen, setLimitsOpen] = useState(false);
   const [secret, setSecret] = useState(server?.onecliSecret ?? "");
   // On create nothing is preselected: `readOnly` must be a deliberate answer.
   const [readOnly, setReadOnly] = useState<Declared>(
@@ -207,7 +207,8 @@ export function McpForm({
     if (onecliSecret !== base.onecliSecret && secretIssue === undefined)
       changes.onecliSecret = onecliSecret;
   }
-  const nothingChanged = editing && Object.keys(changes).length === 0;
+  // A form with problems can still be submitted, so the attempt shows them.
+  const nothingChanged = editing && Object.keys(changes).length === 0 && problems.length === 0;
 
   const save = useMutation({
     mutationFn: () =>
@@ -219,7 +220,6 @@ export function McpForm({
           : {
               url,
               readOnly: readOnly === "yes",
-              enabled,
               timeoutMs,
               maxOutputBytes,
               ...(onecliSecret === null ? {} : { onecliSecret }),
@@ -274,13 +274,17 @@ export function McpForm({
     <Card>
       <CardHeader>
         <CardTitle>{editing ? `Edit ${server.name}` : "Register an MCP server"}</CardTitle>
-        <CardDescription>The host must be allowed in OneCLI&apos;s egress rules.</CardDescription>
       </CardHeader>
       <CardContent>
         <form
           className="flex max-w-xl flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
+            if (problems.length > 0) {
+              setAttempted(true);
+              if (timeoutIssue !== undefined || outputIssue !== undefined) setLimitsOpen(true);
+              return;
+            }
             save.mutate();
           }}
         >
@@ -298,36 +302,34 @@ export function McpForm({
             <Label htmlFor="mcp-url">URL</Label>
             <Input id="mcp-url" value={url} onChange={(event) => setUrl(event.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="mcp-timeout">Timeout (seconds)</Label>
-              <Input
-                id="mcp-timeout"
-                value={timeout}
-                onChange={(event) => setTimeoutText(event.target.value)}
-              />
+          <details
+            open={limitsOpen}
+            onToggle={(event) => {
+              setLimitsOpen(event.currentTarget.open);
+            }}
+          >
+            <summary className="cursor-pointer text-sm text-muted-foreground">Limits</summary>
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-timeout">Timeout (seconds)</Label>
+                <Input
+                  id="mcp-timeout"
+                  value={timeout}
+                  onChange={(event) => setTimeoutText(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-output">Max output (KB)</Label>
+                <Input
+                  id="mcp-output"
+                  value={maxOutput}
+                  onChange={(event) => setMaxOutput(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Cuts longer tool output.</p>
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="mcp-output">Max output (KB)</Label>
-              <Input
-                id="mcp-output"
-                value={maxOutput}
-                onChange={(event) => setMaxOutput(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">Cuts longer tool output.</p>
-            </div>
-          </div>
+          </details>
           <SecretField value={secret} names={secretNames} onChange={setSecret} />
-          {!editing && (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
-              />
-              Enabled
-            </label>
-          )}
           {mustReask && (
             <Alert>The URL changed. Answer again for the new address before saving.</Alert>
           )}
@@ -338,7 +340,7 @@ export function McpForm({
               setReasked(true);
             }}
           />
-          {problems.length > 0 && (
+          {attempted && problems.length > 0 && (
             <ul className="list-disc pl-5 text-xs text-muted-foreground">
               {problems.map((problem) => (
                 <li key={problem}>{problem}</li>
@@ -386,10 +388,7 @@ export function McpForm({
           )}
           {reload.isError && <Alert variant="destructive">{reload.error.message}</Alert>}
           <div className="flex gap-2">
-            <Button
-              type="submit"
-              disabled={problems.length > 0 || nothingChanged || save.isPending}
-            >
+            <Button type="submit" disabled={nothingChanged || save.isPending}>
               {editing ? "Save changes" : "Register"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>

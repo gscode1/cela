@@ -51,9 +51,7 @@ import {
   Fieldset,
   EgressRuleSetPicker,
   McpPicker,
-  NetworkModePicker,
-  SandboxFlavourPicker,
-  SandboxSizePicker,
+  SandboxPicker,
   SkillPicker,
   ToolList,
 } from "@/pages/profiles/pickers";
@@ -224,13 +222,18 @@ export function ProfileEditor({
   return (
     <div className="flex flex-col gap-6">
       <Card>
-        <CardHeader>
-          <CardTitle>{creating ? "New profile" : `Edit ${name}`}</CardTitle>
-          {isEmptyForm(form) && (
-            <CardDescription>Inherits everything from Settings.</CardDescription>
+        {creating && (
+          <CardHeader>
+            <CardTitle>New profile</CardTitle>
+            {isEmptyForm(form) && (
+              <CardDescription>Inherits everything from Settings.</CardDescription>
+            )}
+          </CardHeader>
+        )}
+        <CardContent className={`flex flex-col gap-4 ${creating ? "" : "pt-6"}`}>
+          {!creating && isEmptyForm(form) && (
+            <p className="text-sm text-muted-foreground">Inherits everything from Settings.</p>
           )}
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
           {tools.isError && <Alert variant="destructive">{tools.error.message}</Alert>}
           {creating && (
             <div className="flex flex-col gap-1.5">
@@ -281,20 +284,19 @@ export function ProfileEditor({
               });
             }}
           />
-          <div className="flex flex-col gap-2 rounded-lg border p-4">
+          <div className="flex flex-col gap-2">
             <button
               type="button"
-              className="text-left text-sm font-medium"
+              className="self-start text-sm text-muted-foreground underline-offset-4 hover:underline"
               aria-expanded={advancedOpen || !form.allModelTools}
               onClick={() => {
                 setAdvancedOpen(!advancedOpen);
               }}
             >
-              Advanced
+              Limit tools the model sees…
             </button>
             {(advancedOpen || !form.allModelTools) && (
               <ToolList
-                bare
                 idPrefix="model-tools"
                 legend={fieldLabel("modelTools")}
                 all={form.allModelTools}
@@ -353,58 +355,52 @@ export function ProfileEditor({
               )}
             </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="profile-turn-budget">{fieldLabel("turnBudget")}</Label>
-            <Input
-              id="profile-turn-budget"
-              inputMode="numeric"
-              placeholder={
-                settingsValues === undefined
-                  ? ""
-                  : `Inherit (global: ${String(settingsValues.turnBudget)})`
-              }
-              value={form.turnBudget}
-              onChange={(event) => {
-                edit({ turnBudget: event.target.value });
-              }}
-            />
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="profile-turn-budget">{fieldLabel("turnBudget")}</Label>
+              <Input
+                id="profile-turn-budget"
+                className="w-48"
+                inputMode="numeric"
+                placeholder={
+                  settingsValues === undefined
+                    ? ""
+                    : `Inherit (global: ${String(settingsValues.turnBudget)})`
+                }
+                value={form.turnBudget}
+                onChange={(event) => {
+                  edit({ turnBudget: event.target.value });
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="profile-token-budget">{fieldLabel("tokenBudget")}</Label>
+              <Input
+                id="profile-token-budget"
+                className="w-48"
+                inputMode="numeric"
+                placeholder={
+                  settingsValues === undefined
+                    ? ""
+                    : `Inherit (global: ${String(settingsValues.tokenBudget ?? "no limit")})`
+                }
+                value={form.tokenBudget}
+                onChange={(event) => {
+                  edit({ tokenBudget: event.target.value });
+                }}
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="profile-token-budget">{fieldLabel("tokenBudget")}</Label>
-            <Input
-              id="profile-token-budget"
-              inputMode="numeric"
-              placeholder={
-                settingsValues === undefined
-                  ? ""
-                  : `Inherit (global: ${String(settingsValues.tokenBudget ?? "no limit")})`
-              }
-              value={form.tokenBudget}
-              onChange={(event) => {
-                edit({ tokenBudget: event.target.value });
-              }}
-            />
-          </div>
-          <SandboxSizePicker
+          <SandboxPicker
             size={form.sandboxSize}
-            allowed={form.sandboxSizes}
-            catalog={sandboxSizes.data}
+            allowedSizes={form.sandboxSizes}
+            sizeCatalog={sandboxSizes.data}
+            mode={form.networkMode}
+            modeCatalog={networkModes.data}
+            flavour={form.sandboxFlavour}
+            flavourCatalog={sandboxFlavours.data}
             onChange={(change) => {
               edit(change);
-            }}
-          />
-          <NetworkModePicker
-            mode={form.networkMode}
-            catalog={networkModes.data}
-            onChange={(networkMode) => {
-              edit({ networkMode });
-            }}
-          />
-          <SandboxFlavourPicker
-            flavour={form.sandboxFlavour}
-            catalog={sandboxFlavours.data}
-            onChange={(sandboxFlavour) => {
-              edit({ sandboxFlavour });
             }}
           />
           <McpPicker

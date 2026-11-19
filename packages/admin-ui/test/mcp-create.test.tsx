@@ -54,12 +54,31 @@ describe("McpForm create", () => {
         body: {
           url: "https://mcp.example.com/",
           readOnly: true,
-          enabled: true,
           timeoutMs: 60_000,
           maxOutputBytes: 24_576,
           expectedRevision: 0,
         },
       },
     ]);
+  });
+
+  it("has no Enabled box, keeps the limits folded and shows problems only after a save attempt", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <MemoryRouter>
+            <McpForm server={undefined} usedByProfiles={false} onClose={() => undefined} />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByLabelText("Enabled")).toBeNull();
+    expect(screen.queryByText(/egress rules/)).toBeNull();
+    expect(screen.getByText("Limits").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText(/the name starts with a letter/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Register" }));
+    expect(screen.getByText(/the name starts with a letter/)).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

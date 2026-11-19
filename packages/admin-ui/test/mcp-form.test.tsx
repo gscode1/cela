@@ -131,7 +131,6 @@ describe("McpForm OneCLI secret", () => {
       {
         url: "https://mcp.example.com/",
         readOnly: true,
-        enabled: true,
         timeoutMs: 60_000,
         maxOutputBytes: 24_576,
         onecliSecret: "github-mcp",
@@ -167,9 +166,11 @@ describe("McpForm OneCLI secret", () => {
   it("refuses a name the API would refuse", async () => {
     renderForm({ server: server(), secretNames: [] });
     await userEvent.type(screen.getByLabelText("OneCLI secret (optional)"), "has space");
+    // The problems show after a save attempt, and nothing is sent.
+    expect(screen.queryByText(/the OneCLI secret name has at most 200/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(screen.getByText(/the OneCLI secret name has at most 200/)).toBeInTheDocument();
     expect(screen.queryByText(NOT_LISTED)).toBeNull();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
   it("clearing a stored secret sends null; an unchanged one is not sent", async () => {

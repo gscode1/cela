@@ -64,6 +64,15 @@ function Field({
   );
 }
 
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-4" aria-label={title}>
+      <h3 className="border-b pb-1 text-sm font-medium text-muted-foreground">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
 function ReasoningSelect({
   id,
   value,
@@ -219,134 +228,135 @@ export function GlobalSettings() {
             </Alert>
           )}
           <form
-            className="flex flex-col gap-4"
+            className="flex flex-col gap-6"
             onSubmit={(event) => {
               event.preventDefault();
             }}
           >
-            <ModelNotice view={models} />
-            <Field id="default-model" label={fieldLabel("defaultModel")}>
-              <ModelSelect
-                id="default-model"
-                value={current.form.defaultModel}
-                view={models}
-                onChange={(key) => {
-                  edit({ defaultModel: key });
-                }}
-              />
-            </Field>
-            <AllowedModels
-              value={current.form.allowlist}
-              defaultModel={current.form.defaultModel.trim()}
-              view={models}
-              onChange={(next) => {
-                edit({ allowlist: next });
-              }}
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field id="reasoning" label={fieldLabel("reasoning")}>
-                {reasoningSupport === false && current.form.reasoning === "" ? (
-                  <p className="text-sm text-muted-foreground">
-                    This model has no reasoning levels.
-                  </p>
-                ) : (
-                  <>
-                    <ReasoningSelect
-                      id="reasoning"
-                      value={current.form.reasoning}
-                      emptyLabel="model default"
-                      onChange={(value) => {
-                        edit({ reasoning: value });
-                      }}
-                    />
-                    {reasoningSupport === false && (
-                      <p className="text-xs text-muted-foreground">
-                        This model has no reasoning levels.
-                      </p>
-                    )}
-                  </>
-                )}
-              </Field>
-              <Field id="max-reasoning" label={fieldLabel("maxReasoning")}>
-                <ReasoningSelect
-                  id="max-reasoning"
-                  value={current.form.maxReasoning}
-                  emptyLabel="no limit"
-                  onChange={(value) => {
-                    edit({ maxReasoning: value });
+            <Group title="Model">
+              <ModelNotice view={models} />
+              <Field id="default-model" label={fieldLabel("defaultModel")}>
+                <ModelSelect
+                  id="default-model"
+                  value={current.form.defaultModel}
+                  view={models}
+                  onChange={(key) => {
+                    edit({ defaultModel: key });
                   }}
                 />
               </Field>
-            </div>
-            <Field
-              id="default-profile"
-              label={fieldLabel("defaultProfile")}
-              hint="The profile a new session gets when its request names none."
-            >
-              <Select
-                id="default-profile"
-                value={current.form.defaultProfile}
-                onChange={(event) => {
-                  edit({ defaultProfile: event.target.value });
-                }}
-              >
-                <DefaultProfileOptions
-                  selected={current.form.defaultProfile}
-                  profiles={profiles.data?.profiles ?? []}
-                  invalid={profiles.data?.invalid.map((entry) => entry.name) ?? []}
-                  loaded={profiles.data !== undefined}
-                />
-              </Select>
-            </Field>
-            <Field
-              id="turn-budget"
-              label={fieldLabel("turnBudget")}
-              hint="Model turns one session may use in total, 1 to 1000000."
-            >
-              <Input
-                id="turn-budget"
-                inputMode="numeric"
-                value={current.form.turnBudgetText}
-                onChange={(event) => {
-                  edit({ turnBudgetText: event.target.value });
+              <AllowedModels
+                value={current.form.allowlist}
+                defaultModel={current.form.defaultModel.trim()}
+                view={models}
+                onChange={(next) => {
+                  edit({ allowlist: next });
                 }}
               />
-            </Field>
-            <Field
-              id="token-budget"
-              label={fieldLabel("tokenBudget")}
-              hint="Model tokens one session may use in total, checked before each message. Empty: no limit."
-            >
-              <Input
-                id="token-budget"
-                inputMode="numeric"
-                placeholder="No limit"
-                value={current.form.tokenBudgetText}
-                onChange={(event) => {
-                  edit({ tokenBudgetText: event.target.value });
-                }}
-              />
-            </Field>
-            <Field
-              id="repo-allowlist"
-              label={fieldLabel("repoAllowlist")}
-              hint="Repositories a session may clone, one per line: owner/name, owner/* for all of an owner's, or * for every repository the GitHub App can reach."
-            >
-              <Textarea
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field id="reasoning" label={fieldLabel("reasoning")}>
+                  {reasoningSupport === false && current.form.reasoning === "" ? (
+                    <p className="text-sm text-muted-foreground">
+                      This model has no reasoning levels.
+                    </p>
+                  ) : (
+                    <>
+                      <ReasoningSelect
+                        id="reasoning"
+                        value={current.form.reasoning}
+                        emptyLabel="model default"
+                        onChange={(value) => {
+                          edit({ reasoning: value });
+                        }}
+                      />
+                      {reasoningSupport === false && (
+                        <p className="text-xs text-muted-foreground">
+                          This model has no reasoning levels.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </Field>
+                <Field id="max-reasoning" label={fieldLabel("maxReasoning")}>
+                  <ReasoningSelect
+                    id="max-reasoning"
+                    value={current.form.maxReasoning}
+                    emptyLabel="no limit"
+                    onChange={(value) => {
+                      edit({ maxReasoning: value });
+                    }}
+                  />
+                </Field>
+              </div>
+            </Group>
+            <Group title="Sessions">
+              <div className="flex flex-wrap items-start gap-4">
+                <Field id="default-profile" label={fieldLabel("defaultProfile")}>
+                  <Select
+                    id="default-profile"
+                    className="w-48"
+                    value={current.form.defaultProfile}
+                    onChange={(event) => {
+                      edit({ defaultProfile: event.target.value });
+                    }}
+                  >
+                    <DefaultProfileOptions
+                      selected={current.form.defaultProfile}
+                      profiles={profiles.data?.profiles ?? []}
+                      invalid={profiles.data?.invalid.map((entry) => entry.name) ?? []}
+                      loaded={profiles.data !== undefined}
+                    />
+                  </Select>
+                </Field>
+                <Field id="turn-budget" label={fieldLabel("turnBudget")}>
+                  <Input
+                    id="turn-budget"
+                    className="w-40"
+                    inputMode="numeric"
+                    placeholder="1–1,000,000"
+                    value={current.form.turnBudgetText}
+                    onChange={(event) => {
+                      edit({ turnBudgetText: event.target.value });
+                    }}
+                  />
+                </Field>
+                <Field id="token-budget" label={fieldLabel("tokenBudget")}>
+                  <Input
+                    id="token-budget"
+                    className="w-40"
+                    inputMode="numeric"
+                    placeholder="No limit"
+                    value={current.form.tokenBudgetText}
+                    onChange={(event) => {
+                      edit({ tokenBudgetText: event.target.value });
+                    }}
+                  />
+                </Field>
+              </div>
+            </Group>
+            <Group title="Repositories">
+              <Field
                 id="repo-allowlist"
-                spellCheck={false}
-                placeholder="acme/app"
-                value={current.form.repoAllowlistText}
-                onChange={(event) => {
-                  edit({ repoAllowlistText: event.target.value });
-                }}
-              />
-              {values.repoAllowlist.length === 0 && (
-                <Alert variant="warning" data-testid="repo-allowlist-empty">
-                  Repo sessions are refused while this list is empty.
-                </Alert>
-              )}
-            </Field>
+                label={fieldLabel("repoAllowlist")}
+                hint="One per line: owner/name, owner/*, or *."
+              >
+                <Textarea
+                  id="repo-allowlist"
+                  rows={3}
+                  spellCheck={false}
+                  placeholder="acme/app"
+                  value={current.form.repoAllowlistText}
+                  onChange={(event) => {
+                    edit({ repoAllowlistText: event.target.value });
+                  }}
+                />
+                {values.repoAllowlist.length === 0 && (
+                  <Alert variant="warning" data-testid="repo-allowlist-empty">
+                    Repo sessions are refused while this list is empty.
+                  </Alert>
+                )}
+              </Field>
+            </Group>
           </form>
         </CardContent>
       </Card>
@@ -425,7 +435,6 @@ export function GlobalSettings() {
               <Button variant="ghost" disabled={save.isPending} onClick={discard}>
                 Discard changes
               </Button>
-              <span className="text-sm text-muted-foreground">Applies to new sessions only.</span>
             </div>
           </CardContent>
         </Card>
@@ -451,11 +460,11 @@ function SettingsHistory({
   const [all, setAll] = useState(false);
   const shown = all ? entries : entries.slice(0, HISTORY_SHOWN);
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Recent changes</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
+    <details className="group">
+      <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
+        Recent changes
+      </summary>
+      <div className="mt-2 flex flex-col gap-2">
         {error !== undefined && <Alert variant="destructive">{error}</Alert>}
         <ol className="flex flex-col gap-1" aria-label="Settings history">
           {shown.map((entry) => (
@@ -475,8 +484,8 @@ function SettingsHistory({
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </details>
   );
 }
 

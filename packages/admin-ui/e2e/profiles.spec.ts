@@ -148,7 +148,7 @@ test.describe("session profiles", () => {
     const name = unique("old");
     await api(request, "PUT", `/admin/profiles/${name}`, { definition: { instructions: "x" } });
     await signIn(page, `/console/profiles/${name}`);
-    await expect(page.getByRole("button", { name: "Delete profile" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Delete profile" })).toHaveCount(0);
     await page.getByRole("button", { name: "Disable for new sessions" }).click();
     await expect(page.getByTestId("saved")).toHaveText(`${name} is disabled for new sessions.`);
     await page.getByRole("button", { name: "Delete profile" }).click();

@@ -27,11 +27,12 @@ test.describe("global settings", () => {
       review.getByRole("row", { name: /Default reasoning\s+model default\s+low/ }),
     ).toBeVisible();
     await expect(page.getByText(/from their next message/)).toBeVisible();
-    await expect(page.getByText("Applies to new sessions only.")).toBeVisible();
+    await expect(page.getByText("Applies to new sessions only.")).toHaveCount(0);
     await shot(page, "01-settings-pending-diff");
 
     await page.getByRole("button", { name: "Save settings" }).click();
     await expect(page.getByTestId("saved")).toHaveText("Settings saved.");
+    await page.getByText("Recent changes").click();
     const history = page.getByRole("list", { name: "Settings history" });
     await expect(history.getByRole("listitem").first()).toContainText("alice");
     await expect(history.getByRole("listitem").first()).toContainText("Turn budget");
@@ -294,6 +295,7 @@ test.describe("model pickers", () => {
   test("shows one line per history entry and expands it", async ({ page, request }) => {
     await api(request, "PUT", "/admin/settings", { turnBudget: 120 });
     await signIn(page, "/console/settings");
+    await page.getByText("Recent changes").click();
     const entry = page.getByRole("list", { name: "Settings history" }).getByRole("button").first();
     await expect(entry).toContainText("alice changed Turn budget");
     await entry.click();

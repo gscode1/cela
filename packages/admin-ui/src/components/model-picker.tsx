@@ -98,7 +98,8 @@ export function ModelSelect({
   view: ModelView;
   onChange: (key: string) => void;
 }) {
-  const note = value === "" ? undefined : currentNote(view, value);
+  // The scripted note is the allowlist's to give: the default model is always listed there.
+  const note = value === "" || isScripted(value) ? undefined : currentNote(view, value);
   if (view.mode !== "list") {
     return (
       <div className="flex flex-col gap-2">

@@ -28,9 +28,7 @@ export function ProfileList() {
       <CardHeader className="flex-row items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <CardTitle>Profiles</CardTitle>
-          <CardDescription>
-            What a new session gets. A disabled profile that is not the default can be deleted.
-          </CardDescription>
+          <CardDescription>What a new session gets.</CardDescription>
         </div>
         <Link className={buttonVariants()} to="/profiles/new">
           New profile

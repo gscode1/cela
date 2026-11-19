@@ -33,7 +33,8 @@ describe("settings editor", () => {
     expect(screen.getByText("Turn budget", { selector: "td" })).toBeInTheDocument();
     expect(screen.getByText("150", { selector: "td" })).toBeInTheDocument();
     expect(screen.getByText(/from their next message/)).toBeInTheDocument();
-    expect(screen.getByText("Applies to new sessions only.")).toBeInTheDocument();
+    // The old fixed footer line contradicted the budget notes above, which apply to running sessions.
+    expect(screen.queryByText("Applies to new sessions only.")).not.toBeInTheDocument();
     expect(screen.queryByText(/revision/i)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
