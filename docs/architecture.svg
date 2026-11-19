@@ -16,6 +16,9 @@
     .gw { fill: #faf5ff; stroke: #9333ea; stroke-width: 1.6; }
     .ext { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.3; }
     .panel { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 1.2; }
+    .tag { fill: #dbeafe; stroke: #3b82f6; stroke-width: 1; }
+    .tagt { font-size: 10.5px; font-weight: 600; fill: #1d4ed8; }
+    .bs { font-size: 12px; fill: #334155; }
     .chip { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.1; }
     .flow { stroke: #2563eb; stroke-width: 2.4; fill: none; marker-end: url(#mb); }
     .back { stroke: #2563eb; stroke-width: 2; fill: none; stroke-dasharray: 7 5; marker-end: url(#mb); }
@@ -39,22 +42,34 @@
   <text class="t" x="40" y="48">pi-durable-k8s</text>
   <text class="s" x="40" y="76">Run AI coding agents on your own Kubernetes cluster. Each session gets an agent that never loses its work and a</text>
   <text class="s" x="40" y="96">private sandbox to run commands in, and it never sees a password or API key.</text>
+  <!-- Legend: what this repository builds -->
+  <rect class="tag" x="1040" y="36" width="70" height="18" rx="9"/><text class="tagt" x="1075" y="48.5" text-anchor="middle">this repo</text>
+  <text class="b" x="1118" y="49">built in this repository;</text>
+  <text class="b" x="1040" y="69">everything else is open source it deploys</text>
 
-  <!-- Step 6: answer streams back (drawn first so boxes sit on top) -->
-  <path class="back" d="M690,178 L690,140 L125,140 L125,196"/>
+  <!-- Step 6: answer streams back -->
+  <path class="back" d="M690,178 L690,140 L125,140 L125,166"/>
   <circle cx="400" cy="140" r="13" fill="#2563eb"/><text class="num" x="400" y="145" text-anchor="middle">6</text>
 
-  <!-- You -->
-  <rect class="card" x="40" y="200" width="170" height="100" rx="12"/>
-  <text class="h" x="58" y="232">You / your app</text>
-  <text class="b" x="58" y="256">chat UI, CLI or bot</text>
-  <text class="b" x="58" y="276">talks plain HTTP</text>
+  <!-- Clients -->
+  <rect class="card" x="40" y="170" width="175" height="95" rx="12"/>
+  <text class="h" x="58" y="200">You / your app</text>
+  <text class="b" x="58" y="224">chat UI, CLI or bot</text>
+  <text class="b" x="58" y="244">plain HTTP, live events</text>
+
+  <rect class="card" x="40" y="290" width="175" height="112" rx="12"/>
+  <text class="h" x="58" y="320">Coding agent</text>
+  <text class="b" x="58" y="344">Claude Code, Codex, …</text>
+  <text class="b" x="58" y="364">hands tasks to sessions</text>
+  <rect class="tag" x="46" y="376" width="157" height="18" rx="9"/><text class="tagt" x="125" y="388.5" text-anchor="middle">MCP adapter · this repo</text>
 
   <!-- Session API -->
-  <rect class="ours" x="280" y="200" width="190" height="100" rx="12"/>
-  <text class="h" x="298" y="232">Session API</text>
-  <text class="b" x="298" y="256">start a session,</text>
-  <text class="b" x="298" y="276">send messages, watch live</text>
+  <rect class="ours" x="280" y="185" width="195" height="115" rx="12"/>
+  <text class="h" x="298" y="217">Session API</text>
+  <text class="b" x="298" y="241">start a session,</text>
+  <text class="b" x="298" y="261">send messages, watch live</text>
+  <text class="b" x="298" y="281">admin console and API</text>
+  <rect class="tag" x="397" y="193" width="70" height="18" rx="9"/><text class="tagt" x="432" y="205.5" text-anchor="middle">this repo</text>
 
   <!-- Orchestrator -->
   <rect class="ours" x="540" y="180" width="300" height="140" rx="12"/>
@@ -63,15 +78,16 @@
   <text class="b" x="560" y="258">thinks with the model, uses tools</text>
   <text class="b" x="560" y="278">picks up where it left off after a crash</text>
   <text class="tech" x="560" y="304">Pi Durable agent loop</text>
+  <rect class="tag" x="762" y="188" width="70" height="18" rx="9"/><text class="tagt" x="797" y="200.5" text-anchor="middle">this repo</text>
 
   <!-- Database -->
-  <rect class="ours" x="380" y="410" width="200" height="105" rx="12"/>
+  <rect class="card" x="380" y="410" width="200" height="105" rx="12"/>
   <text class="h" x="398" y="442">Database</text>
   <text class="b" x="398" y="466">sessions, message inbox,</text>
-  <text class="b" x="398" y="486">the agents' memory</text>
+  <text class="b" x="398" y="486">the agents' memory, settings</text>
   <text class="tech" x="398" y="505">PostgreSQL</text>
 
-  <!-- Sandbox (stacked to show one per session) -->
+  <!-- Sandbox -->
   <rect class="sbx" x="656" y="398" width="240" height="200" rx="12" opacity="0.55"/>
   <rect class="sbx" x="646" y="406" width="240" height="200" rx="12" opacity="0.75"/>
   <rect class="sbx" x="636" y="414" width="240" height="200" rx="12"/>
@@ -81,11 +97,12 @@
   <text class="b" x="654" y="492">runs commands, edits files</text>
   <text class="b" x="654" y="512">has its own workspace disk</text>
   <text class="b" x="654" y="532">optional: a clone of your repo</text>
-  <text class="b" x="654" y="552">holds no keys or passwords</text>
-  <text class="tech" x="654" y="590">agent-sandbox · gVisor · pi-env</text>
+  <text class="b" x="654" y="552">standard, or with a browser</text>
+  <text class="b" x="654" y="572">holds no keys or passwords</text>
+  <text class="tech" x="654" y="600">agent-sandbox · gVisor · pi-env</text>
 
   <!-- OneCLI -->
-  <rect class="gw" x="930" y="180" width="210" height="290" rx="12"/>
+  <rect class="gw" x="930" y="180" width="210" height="280" rx="12"/>
   <text class="h" x="948" y="212">OneCLI gateway</text>
   <text class="b" x="948" y="238">the only way out for</text>
   <text class="b" x="948" y="258">anything that needs a key</text>
@@ -95,6 +112,14 @@
   <text class="b" x="948" y="362">blocks the rest</text>
   <text class="b" x="948" y="394">keys are stored here,</text>
   <text class="b" x="948" y="414">never handed to the agent</text>
+
+  <!-- Egress proxy -->
+  <rect class="ours" x="930" y="500" width="210" height="120" rx="12"/>
+  <text class="h" x="948" y="532">Egress proxy</text>
+  <text class="b" x="948" y="556">the sandbox's only way out</text>
+  <text class="b" x="948" y="576">checks each connection</text>
+  <text class="b" x="948" y="596">against rules, audits it</text>
+  <rect class="tag" x="1062" y="508" width="70" height="18" rx="9"/><text class="tagt" x="1097" y="520.5" text-anchor="middle">this repo</text>
 
   <!-- Outside world -->
   <rect class="ext" x="1210" y="180" width="160" height="100" rx="12"/>
@@ -107,12 +132,14 @@
   <text class="b" x="1228" y="406">one repo per session</text>
   <rect class="ext" x="1210" y="520" width="160" height="90" rx="12"/>
   <text class="h" x="1228" y="552">Public internet</text>
-  <text class="b" x="1228" y="578">npm, PyPI, docs</text>
+  <text class="b" x="1228" y="578">npm, PyPI, docs, sites</text>
   <text class="b" x="1228" y="596">(no keys needed)</text>
 
   <!-- Step arrows -->
-  <path class="flow" d="M210,250 L278,250"/>
-  <circle cx="244" cy="250" r="13" fill="#2563eb"/><text class="num" x="244" y="255" text-anchor="middle">1</text>
+  <path class="flow" d="M215,225 L278,225"/>
+  <circle cx="246" cy="225" r="13" fill="#2563eb"/><text class="num" x="246" y="230" text-anchor="middle">1</text>
+  <path class="flow" d="M215,340 L278,292"/>
+  <text class="lbl" x="250" y="330">MCP</text>
 
   <path class="flow" d="M375,300 L455,408"/>
   <circle cx="415" cy="354" r="13" fill="#2563eb"/><text class="num" x="415" y="359" text-anchor="middle">2</text>
@@ -127,24 +154,26 @@
   <path class="tool" d="M740,320 L740,412"/>
   <circle cx="740" cy="364" r="13" fill="#16a34a"/><text class="num" x="740" y="369" text-anchor="middle">5</text>
 
-  <!-- Sandbox traffic -->
-  <path class="git" d="M896,450 L928,450"/>
+  <!-- Sandbox traffic: all of it through the egress proxy -->
+  <path class="web" d="M896,560 L928,560"/>
+  <path class="web" d="M1140,565 L1208,565"/>
+  <text class="lbl" x="1174" y="555" text-anchor="middle">allowed</text>
+  <path class="git" d="M1035,500 L1035,463"/>
+  <text class="lbl" x="1043" y="487">git</text>
   <path class="git" d="M1140,375 L1208,375"/>
   <text class="lbl" x="1146" y="366">git</text>
-  <path class="web" d="M896,565 L1208,565"/>
-  <text class="lbl" x="1000" y="557">package installs, direct</text>
 
   <!-- Blocked -->
   <path class="blocked" d="M636,470 L582,470"/>
   <circle cx="609" cy="470" r="11" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
   <path d="M603,464 L615,476 M615,464 L603,476" stroke="#dc2626" stroke-width="2.2"/>
-  <text class="lbl" x="609" y="636" text-anchor="middle" style="fill:#dc2626">the sandbox cannot reach the database, the agent, the cluster or other sandboxes</text>
+  <text class="lbl" x="609" y="644" text-anchor="middle" style="fill:#dc2626">the sandbox cannot reach the database, the agent, the cluster or other sandboxes</text>
 
   <!-- Panel: how it works -->
   <rect class="panel" x="40" y="670" width="650" height="210" rx="12"/>
   <text class="ph" x="62" y="702">How a message flows</text>
   <circle cx="72" cy="728" r="10" fill="#2563eb"/><text class="num" x="72" y="733" text-anchor="middle" style="font-size:11px">1</text>
-  <text class="p" x="92" y="733">You send a message to your session.</text>
+  <text class="p" x="92" y="733">You, or your coding agent through MCP, send a message to a session.</text>
   <circle cx="72" cy="754" r="10" fill="#2563eb"/><text class="num" x="72" y="759" text-anchor="middle" style="font-size:11px">2</text>
   <text class="p" x="92" y="759">It is saved first, so nothing is lost if the agent is busy or restarting.</text>
   <circle cx="72" cy="780" r="10" fill="#2563eb"/><text class="num" x="72" y="785" text-anchor="middle" style="font-size:11px">3</text>
@@ -152,40 +181,46 @@
   <circle cx="72" cy="806" r="10" fill="#9333ea"/><text class="num" x="72" y="811" text-anchor="middle" style="font-size:11px">4</text>
   <text class="p" x="92" y="811">It asks the AI model. OneCLI adds the key on the way, so the agent never holds it.</text>
   <circle cx="72" cy="832" r="10" fill="#16a34a"/><text class="num" x="72" y="837" text-anchor="middle" style="font-size:11px">5</text>
-  <text class="p" x="92" y="837">Commands and file edits run in the session's own sandbox.</text>
+  <text class="p" x="92" y="837">Commands, file edits and browsing run in the session's own sandbox.</text>
   <circle cx="72" cy="858" r="10" fill="#2563eb"/><text class="num" x="72" y="863" text-anchor="middle" style="font-size:11px">6</text>
   <text class="p" x="92" y="863">Progress and the answer stream back to you live.</text>
 
   <!-- Panel: why it is safe -->
   <rect class="panel" x="720" y="670" width="650" height="210" rx="12"/>
   <text class="ph" x="742" y="702">Why it is safe</text>
-  <text class="p" x="742" y="733"><tspan class="pb">Isolated sandboxes.</tspan> gVisor and network rules (Cilium) wall each one off.</text>
+  <text class="p" x="742" y="733"><tspan class="pb">Isolated sandboxes.</tspan> gVisor and Kubernetes network policies wall each one off.</text>
   <text class="p" x="742" y="759"><tspan class="pb">No keys in reach.</tspan> Model and GitHub credentials stay in OneCLI.</text>
   <text class="p" x="742" y="785"><tspan class="pb">Narrow GitHub access.</tspan> One repo per session, token expires in 1 hour.</text>
-  <text class="p" x="742" y="811"><tspan class="pb">Allowlisted traffic.</tspan> OneCLI only talks to approved sites.</text>
+  <text class="p" x="742" y="811"><tspan class="pb">Checked traffic.</tspan> Every sandbox connection is matched to the profile's rules and logged.</text>
   <text class="p" x="742" y="837"><tspan class="pb">Crash safe.</tspan> Work is kept in the database and on disk, so a restarted agent carries on.</text>
 
   <!-- Built on -->
   <text class="ph" x="40" y="920">Built on</text>
-  <rect class="chip" x="130" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="144" y="925">Pi Durable</text>
-  <text class="b" x="144" y="947">survives restarts</text>
-  <rect class="chip" x="310" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="324" y="925">pi-env</text>
-  <text class="b" x="324" y="947">runs agent tools remotely</text>
-  <rect class="chip" x="490" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="504" y="925">agent-sandbox</text>
-  <text class="b" x="504" y="947">sandboxes on Kubernetes</text>
-  <rect class="chip" x="670" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="684" y="925">gVisor</text>
-  <text class="b" x="684" y="947">extra kernel isolation</text>
-  <rect class="chip" x="850" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="864" y="925">OneCLI</text>
-  <text class="b" x="864" y="947">credential gateway</text>
-  <rect class="chip" x="1030" y="900" width="170" height="64" rx="10"/>
-  <text class="pb" x="1044" y="925">Cilium</text>
-  <text class="b" x="1044" y="947">network isolation</text>
-  <rect class="chip" x="1210" y="900" width="160" height="64" rx="10"/>
-  <text class="pb" x="1224" y="925">PostgreSQL</text>
-  <text class="b" x="1224" y="947">sessions and memory</text>
+  <rect class="chip" x="125" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="137" y="925">Pi Durable</text>
+  <text class="bs" x="137" y="947">survives restarts</text>
+  <rect class="chip" x="262" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="274" y="925">pi-env</text>
+  <text class="bs" x="274" y="947">remote agent tools</text>
+  <rect class="chip" x="399" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="411" y="925">agent-sandbox</text>
+  <text class="bs" x="411" y="947">sandboxes on k8s</text>
+  <rect class="chip" x="536" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="548" y="925">gVisor</text>
+  <text class="bs" x="548" y="947">kernel isolation</text>
+  <rect class="chip" x="673" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="685" y="925">OneCLI</text>
+  <text class="bs" x="685" y="947">credential gateway</text>
+  <rect class="chip" x="810" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="822" y="925">Smokescreen</text>
+  <text class="bs" x="822" y="947">egress proxy core</text>
+  <rect class="chip" x="947" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="959" y="925">NetworkPolicy</text>
+  <text class="bs" x="959" y="947">any enforcing CNI</text>
+  <rect class="chip" x="1084" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="1096" y="925">PostgreSQL</text>
+  <text class="bs" x="1096" y="947">sessions, memory</text>
+  <rect class="chip" x="1221" y="900" width="130" height="64" rx="10"/>
+  <text class="pb" x="1233" y="925">Playwright</text>
+  <text class="bs" x="1233" y="947">browser sandbox</text>
 </svg>

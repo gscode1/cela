@@ -4,7 +4,8 @@ Run [Pi Durable](https://github.com/earendil-works/pi) coding agents on your own
 
 Each session gets an agent that keeps its state in PostgreSQL and resumes after a crash, plus a private gVisor
 sandbox with a persistent workspace where its tools run. Model and GitHub credentials never reach the agent or the
-sandbox: [OneCLI](https://github.com/onecli/onecli) injects them at its gateway.
+sandbox: [OneCLI](https://github.com/onecli/onecli) injects them at its gateway. Sessions are started over HTTP or, from
+a coding agent such as Claude Code or Codex, through the bundled MCP adapter.
 
 **Status: proof of concept.** It has been tested end to end in one small arm64 example environment. It is not hardened for production;
 see the open items in [plan.md](plan.md).
@@ -13,7 +14,9 @@ see the open items in [plan.md](plan.md).
 
 ## How it works
 
-1. A client creates a session and posts messages to the **session API** (`packages/ingest`).
+1. A client creates a session and posts messages to the **session API** (`packages/ingest`). A coding agent can do the
+   same through the stdio **MCP adapter** (`packages/mcp`, [docs](docs/mcp-adapter.md)); operators use the admin console
+   that ingest serves under `/console/`.
 2. Messages land in an inbox in **PostgreSQL** first, so nothing is lost while the agent is busy or restarting.
 3. The **orchestrator** (`packages/orchestrator`) runs one durable Pi agent loop per session and takes inbox
    messages in order. It scales out by Postgres schema: one orchestrator Deployment per shard, and a new session goes to
@@ -24,8 +27,13 @@ see the open items in [plan.md](plan.md).
    It is created on the first tool call (a repository session's is provisioned and cloned before its first input) and
    keeps its workspace on a PVC. The orchestrator reaches it through an
    in-process broker and a thin relay per session ([ADR 0016](docs/decisions/0016-in-process-broker.md)); an idle
-   sandbox is suspended and resumed by the next tool call.
-6. Progress and answers stream back to the client over SSE.
+   sandbox is suspended and resumed by the next tool call. A profile picks the sandbox size
+   ([ADR 0030](docs/decisions/0030-sandbox-sizes.md)) and flavour: `default`, or `browser` with Chromium, Playwright CLI
+   and agent-browser ([ADR 0041](docs/decisions/0041-browser-sandbox.md)).
+6. With the **egress proxy** (`packages/egress-proxy`, `egressProxy.enabled`) the sandbox's only way out is the proxy: each
+   connection is checked against the profile's rules and audited, git goes on to OneCLI, allowed sites to the internet
+   ([ADR 0038](docs/decisions/0038-network-modes.md)).
+7. Progress and answers stream back to the client over SSE.
 
 Optionally a session works on one GitHub repository: the orchestrator mints a token scoped to that repository,
 stores it in OneCLI for that session only, and the sandbox clones and pushes through the gateway.
@@ -36,32 +44,39 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 
 ## Security model
 
-- Sandboxes run under gVisor. Network policies (written for Cilium) block sandboxes from the orchestrator, the
-  database, the Kubernetes API, OneCLI's management API and each other.
+- Sandboxes run under gVisor. Kubernetes network policies block sandboxes from the orchestrator, the database, the
+  Kubernetes API, OneCLI's management API and each other. Any CNI that enforces NetworkPolicy works
+  (`networkPolicy.provider: standard`); with `cilium` (the chart default) it adds Cilium policies (API server entity, FQDN egress),
+  and Cilium is what the e2e suites run on ([network policy](docs/network-policy.md)).
+- With the egress proxy on, a sandbox has no DNS and no direct internet: every connection goes through the proxy, under
+  the profile's rules, and is logged. `networkMode: direct` is an operator opt-in ([ADR 0038](docs/decisions/0038-network-modes.md)).
 - Each sandbox's daemon accepts only its own token, derived from a master key the orchestrator holds
   ([ADR 0001](docs/decisions/0001-per-sandbox-sandboxd-token.md)).
 - No upstream credentials (model keys, GitHub tokens) in sandboxes or in the agent: OneCLI holds them and only relays to
   allowlisted hosts ([host rules](docs/onecli-host-rules.md)). A repository session's sandbox can read its own per-session
   OneCLI proxy token, which is only usable through the gateway ([repo workspace](docs/repo-workspace.md)).
+- Accepted risk for the proof of concept: the orchestrator holds the OneCLI admin key and the GitHub App private key
+  ([ADR 0042](docs/decisions/0042-onecli-admin-key-in-orchestrator.md)).
 
 ## Repository layout
 
-| Path                                   | What                                                                                                                                           |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                                       |
-| `packages/mcp`                         | Stdio MCP adapter: coding agents start and follow sessions through the session API ([docs](docs/mcp-adapter.md))                               |
-| `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))                           |
-| `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                                                 |
-| `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                                              |
-| `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                                            |
-| `packages/egress-proxy`                | Go module: the egress proxy, Smokescreen with rules from Postgres and a OneCLI route ([ADR 0035](docs/decisions/0035-egress-proxy-runtime.md)) |
-| `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                                     |
-| `images/`                              | Multi-arch app, sandbox and e2e driver builds; egress proxy spike                                                                              |
-| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)                                |
-| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                                    |
-| `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                                                  |
-| `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                                           |
-| `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                                               |
+| Path                                   | What                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/ingest`                      | Session API: auth, owner checks, inbox writes, SSE proxy                                                                                               |
+| `packages/mcp`                         | Stdio MCP adapter: coding agents start and follow sessions through the session API ([docs](docs/mcp-adapter.md))                                       |
+| `packages/admin-ui`                    | Admin console (React, Vite, Tailwind, shadcn/ui), served by ingest under `/console/` ([plan](docs/admin-ui-plan.md))                                   |
+| `packages/orchestrator`                | Pi Durable harness, sandbox lifecycle, model and OneCLI wiring                                                                                         |
+| `packages/sandbox-env`                 | Bridge from Pi's `RemoteExecutionEnv` to an agent-sandbox pod (the only SDK user)                                                                      |
+| `packages/session-core`                | Shared schema, migrations, settings, profiles, skills, MCP catalog and auth helpers                                                                    |
+| `packages/egress-proxy`                | Go module: the egress proxy, Smokescreen with rules from Postgres and a OneCLI route ([ADR 0035](docs/decisions/0035-egress-proxy-runtime.md))         |
+| `packages/browser-proxy`               | Loopback forwarder in the browser sandbox: adds the session's egress token to Chromium's CONNECTs ([ADR 0041](docs/decisions/0041-browser-sandbox.md)) |
+| `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                                             |
+| `images/`                              | Multi-arch builds: app, egress proxy, sandbox, browser sandbox and e2e driver                                                                          |
+| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)                                        |
+| `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                                            |
+| `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                                                          |
+| `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                                                   |
+| `docs/`                                | API, credentials, networking, scaling, metrics, decisions (`docs/decisions/`) and research notes                                                       |
 
 ## Docs
 
@@ -74,6 +89,9 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [End-to-end suites, one namespace per run](docs/e2e.md)
 - [Pod Security: the restricted level](docs/decisions/0019-restricted-pod-security.md)
 - [Network policy](docs/network-policy.md) and [OneCLI host rules](docs/onecli-host-rules.md)
+- Egress: [rules](docs/decisions/0034-egress-rules.md), [proxy](docs/decisions/0035-egress-proxy-runtime.md),
+  [network modes](docs/decisions/0038-network-modes.md)
+- [Sandbox sizes](docs/decisions/0030-sandbox-sizes.md) and the [browser sandbox](docs/decisions/0041-browser-sandbox.md)
 - [Installation plan: Helm, bundled dependencies, kind](docs/install-plan.md)
 - [Architecture decision records](docs/decisions/)
 - [Plan, decisions and phase results](plan.md)
@@ -129,7 +147,7 @@ The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), in
 Prerequisites (separate from the chart): the **agent-sandbox controller with extensions** (v1.0.11; `hack/agent-sandbox.sh
 external` checks it), a gVisor RuntimeClass named `gvisor` (or `security.allowInsecureRuntime` for evaluation), a Postgres 17
 reachable by URI (the bundled `charts/pi-postgres` or any other), OneCLI (tested with v2.20.0) unless you only use scripted models, a
-NetworkPolicy-enforcing CNI such as Cilium (or `networkPolicy.provider: standard`), and a dynamically provisioned
+NetworkPolicy-enforcing CNI (the default `networkPolicy.provider: cilium` needs Cilium; `standard` works with any other), and a dynamically provisioned
 StorageClass. Do not use real credentials until the isolation suite passes. Build the application and sandbox images
 for your nodes (amd64 and arm64 are supported, [build instructions](images/README.md)).
 
