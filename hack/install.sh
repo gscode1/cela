@@ -17,6 +17,13 @@
 #   5. helm upgrade --install, waits for the rollout
 #   6. reads GET /admin/status through ingest (waits up to 2 min for the isolation probe) and prints the runtime and
 #      network-policy state; warnings do not fail
+#   7. with the browser flavour (sandbox.flavours.browser.enabled, the default) and the egress proxy: seeds the `browser`
+#      session profile and its skills playwright-cli and agent-browser (hack/seed-browser-profile.mjs --create-only,
+#      ADR 0041), through a port-forward to ingest with the first api.admins token read from the api-auth Secret (never
+#      printed). Create-only: a profile or skill that exists, edited by an operator or not, is never touched, so every
+#      upgrade is a no-op. Skipped with a one-line note when the flavour or the proxy is off, with
+#      --no-seed-browser-profile, or when api-auth has no token for any admin; a failed seed warns and does not fail.
+#      Needs node on this machine (the skills are read from the repo).
 #
 # The database stays external: the Secret named by database.external.existingSecret must exist, or DATABASE_URL (a
 # postgres:// URI) in the environment creates it once. OneCLI is bundled (onecli.mode=bundled, step 4b), external or off.
@@ -33,6 +40,8 @@
 # Bundled OneCLI is open by default (private HTTPS destinations, ADR 0043). When this release has NO egress proxy, sandboxes
 # reach the gateway directly, so the script installs the HARDENED OneCLI instead (hack/onecli.sh --egress-proxy off), unless
 # --onecli-allow-open-without-proxy acknowledges the risk.
+#
+# --no-seed-browser-profile skips step 7 (hack/kind-up.sh --no-browser needs no flag: its chart value turns the flavour off).
 #
 # Inputs: --namespace/-n (default pi-durable), --values/-f (repeatable), --set (repeatable, passed to helm),
 # --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
@@ -51,9 +60,10 @@ sets=()
 onecli_url=""
 onecli_expose_cidr=""
 onecli_allow_open=0
+seed_browser=1
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL] [--onecli-expose-cidr A.B.C.D/32] [--onecli-allow-open-without-proxy]" >&2
+  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL] [--onecli-expose-cidr A.B.C.D/32] [--onecli-allow-open-without-proxy] [--no-seed-browser-profile]" >&2
   exit 64
 }
 die() {
@@ -71,6 +81,7 @@ while [[ $# -gt 0 ]]; do
   --onecli-external-url) [[ $# -ge 2 ]] || usage; onecli_url=$2; shift 2 ;;
   --onecli-expose-cidr) [[ $# -ge 2 ]] || usage; onecli_expose_cidr=$2; shift 2 ;;
   --onecli-allow-open-without-proxy) onecli_allow_open=1; shift ;;
+  --no-seed-browser-profile) seed_browser=0; shift ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -324,5 +335,54 @@ while read -r kind shard configured _ network; do
   fi
 done <<<"$status"
 [[ $warned -eq 0 ]] || echo "(warnings do not fail the install; see NOTES above)" >&2
+
+# ------------------------------------------------------------------ 7. browser profile
+log "browser profile (hack/seed-browser-profile.mjs --create-only)"
+seed_note=""
+if [[ $(rendered_value PI_SANDBOX_FLAVOURS) != *browser* ]]; then
+  seed_note="the browser flavour is off (sandbox.flavours.browser.enabled=false)"
+elif [[ -z $egress_database_secret ]]; then
+  seed_note="the egress proxy is off and a browser profile is proxied"
+elif [[ $seed_browser -eq 0 ]]; then
+  seed_note="--no-seed-browser-profile"
+elif ! command -v node >/dev/null 2>&1; then
+  seed_note="node is not installed here"
+fi
+seed_token=""
+if [[ -z $seed_note ]]; then
+  # Names and tokens of api-auth, one "owner:token" per line; the first api.admins owner with a token is used.
+  seed_tokens=$(k get secret "$api_secret" -o jsonpath='{.data.tokens}' | base64 -d)
+  for admin in $(tr ',' ' ' <<<"$admins"); do
+    seed_token=$(awk -F: -v a="$admin" '$1 == a { sub(/^[^:]*:/, ""); print; exit }' <<<"$seed_tokens")
+    [[ -z $seed_token ]] || break
+  done
+  [[ -n $seed_token ]] || seed_note="$api_secret has no token for any api.admins entry ($admins)"
+fi
+if [[ -n $seed_note ]]; then
+  echo "skipped: $seed_note. Seed later: hack/seed-browser-profile.mjs --create-only (PI_API_URL, PI_API_TOKEN)"
+else
+  # Port 0: kubectl picks a free local port and says which.
+  k port-forward svc/pi-ingest :8080 >"$tmp/pf.log" 2>&1 &
+  pf=$!
+  seed_port=""
+  for _ in $(seq 1 30); do
+    seed_port=$(sed -n 's/^Forwarding from 127.0.0.1:\([0-9]*\) .*/\1/p' "$tmp/pf.log" | head -1)
+    [[ -z $seed_port ]] || break
+    sleep 1
+  done
+  rc=1
+  if [[ -n $seed_port ]]; then
+    for _ in $(seq 1 10); do
+      rc=0
+      PI_API_URL=http://127.0.0.1:$seed_port PI_API_TOKEN=$seed_token node "$root/hack/seed-browser-profile.mjs" --create-only ||
+        rc=$?
+      [[ $rc -eq 69 ]] || break # 69: ingest not reachable yet
+      sleep 2
+    done
+  fi
+  kill "$pf" 2>/dev/null || true
+  [[ $rc -eq 0 ]] ||
+    echo "WARNING: the browser profile was not seeded (exit $rc); the install is done. Seed it later: hack/seed-browser-profile.mjs --create-only" >&2
+fi
 echo
 echo "installed $release in $namespace"

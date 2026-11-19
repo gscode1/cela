@@ -6,7 +6,8 @@
 #   hack/browser-smoke.sh [--name pi-egress] [--namespace pi-durable]
 #   hack/kind-down.sh --name pi-egress
 #
-# It seeds the `browser` profile and its skills (hack/seed-browser-profile.mjs), creates sessions and a narrow profile
+# It seeds the `browser` profile and its skills (hack/seed-browser-profile.mjs, without --create-only: hack/install.sh has
+# usually done it create-only already, and this run checks that the repo's definition publishes nothing new), creates sessions and a narrow profile
 # (named smoke-*), and refuses the cluster pi-durable and any context that is not a kind cluster. The APIs are called from
 # inside an ingest pod (hack/kind-client.mjs); only the seed script goes through a port-forward with the admin token,
 # which is never printed. Every check prints `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still

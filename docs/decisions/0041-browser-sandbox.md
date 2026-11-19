@@ -218,6 +218,14 @@ safety, and nothing in the Security section changes:
 - Installers: `hack/kind-up.sh` enables it (and builds it with `--build`); `--no-browser` leaves it out, `--browser` is
   accepted and changes nothing. Without the egress proxy kind-up leaves it out. The e2e suites other than `browser`
   (`tests/e2e/chart-values.py`) and the kind CI job (`--no-browser`) switch it off, so they need no browser image.
+- Seeding: `hack/install.sh` seeds the `browser` profile and its two skills after the rollout (issue #307), when the flavour and
+  the egress proxy are on, through a port-forward to ingest with the first `api.admins` token read from the `api-auth` Secret
+  (never printed). It runs `hack/seed-browser-profile.mjs --create-only`: a skill or the profile that already exists is left
+  exactly as it is, so an operator's edits to the profile (and a skill version they published) survive every upgrade, which
+  is then a no-op. Without `--create-only` the repo's definition wins and a changed profile gets a new version; only
+  `hack/browser-smoke.sh` uses that. `--no-seed-browser-profile` opts out; without the flavour, the proxy or an admin token
+  the step is skipped with a one-line note, and a failed seed warns without failing the install. It is still not a migration
+  (see the seeded profile above). `hack/kind-up.sh --no-browser` therefore seeds nothing, and neither do the kind CI jobs.
 
 ## Deferred and rejected
 
