@@ -323,18 +323,21 @@ test.describe("MCP servers", () => {
     const name = unique("reg");
     await signInAndGo(page, "/console/mcp-servers");
     await register(page, name, "http://plain.example.com/mcp");
-    await expect(
-      page.getByText("The host must be allowed in OneCLI's egress rules."),
-    ).toBeVisible();
+    await expect(page.getByText(/egress rules/)).toHaveCount(0);
+    await expect(page.getByLabel("Enabled")).toHaveCount(0);
     const submit = page.getByRole("button", { name: "Register", exact: true });
+    // Problems show after a save attempt, not while typing.
+    await expect(page.getByText("the URL must be https", { exact: true })).toHaveCount(0);
+    await submit.click();
     await expect(page.getByText("the URL must be https", { exact: true })).toBeVisible();
-    await expect(submit).toBeDisabled();
     await page.getByLabel("URL").fill("https://mcp.example.com/mcp");
     // Nothing is preselected: the answer has to be given.
     await expect(page.getByText("Does this server change anything?")).toBeVisible();
     await expect(page.getByRole("radio", { name: /^No, it only reads/ })).not.toBeChecked();
     await expect(page.getByRole("radio", { name: /^Yes, it can change state/ })).not.toBeChecked();
-    await expect(submit).toBeDisabled();
+    await submit.click();
+    await expect(page.getByText("answer whether the server changes anything")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Saved." })).toHaveCount(0);
     await page.getByRole("radio", { name: /^No, it only reads/ }).check();
     await submit.click();
 
@@ -444,6 +447,7 @@ test.describe("MCP servers", () => {
     await row.getByRole("button", { name: "Edit" }).click();
     const save = page.getByRole("button", { name: "Save changes" });
     await expect(save).toBeDisabled();
+    await page.getByText("Limits", { exact: true }).click();
     await expect(page.getByLabel("Timeout (seconds)")).toHaveValue("60");
     await expect(page.getByLabel("Max output (KB)")).toHaveValue("24");
 
@@ -451,7 +455,9 @@ test.describe("MCP servers", () => {
     await expect(save).toBeEnabled();
     await page.getByLabel("URL").fill("https://two.example.com/mcp");
     await expect(page.getByText("The URL changed. Answer again")).toBeVisible();
-    await expect(save).toBeDisabled();
+    // Saving is refused until the declaration is made again for the new address.
+    await save.click();
+    await expect(page.getByText("answer whether the server changes anything")).toBeVisible();
     await page.getByRole("radio", { name: /^No, it only reads/ }).check();
     await expect(save).toBeEnabled();
     await save.click();
@@ -471,9 +477,10 @@ test.describe("MCP servers", () => {
 
     // The API's own range check is mirrored before the request is made.
     await row.getByRole("button", { name: "Edit" }).click();
+    await page.getByText("Limits", { exact: true }).click();
     await page.getByLabel("Max output (KB)").fill("99");
+    await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("Max output must be from 1 to 24 KB")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
   test("a stale edit keeps the draft, says who changed it and saves after a reload", async ({
@@ -485,6 +492,7 @@ test.describe("MCP servers", () => {
     await signInAndGo(page, "/console/mcp-servers");
     const row = page.getByTestId(`mcp-${name}`);
     await row.getByRole("button", { name: "Edit" }).click();
+    await page.getByText("Limits", { exact: true }).click();
     await page.getByLabel("Timeout (seconds)").fill("45");
 
     // Someone else changes the server meanwhile.
