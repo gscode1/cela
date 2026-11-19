@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router";
+import { Breadcrumb } from "@/components/breadcrumb";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,11 +17,7 @@ export function RuleSetDetail() {
   const using = profiles.data === undefined ? [] : profilesUsing(profiles.data.profiles, name);
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm">
-        <Link className="underline" to="/egress">
-          All rule sets
-        </Link>
-      </p>
+      <Breadcrumb items={[{ label: "Egress", to: "/egress" }, { label: name }]} />
       {detail.isError && <Alert variant="destructive">{detail.error.message}</Alert>}
       {detail.isSuccess && (
         <Card>

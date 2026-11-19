@@ -3,7 +3,6 @@ import { Alert } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useEgressStatusQuery } from "@/lib/queries";
 import { ExplainPanel } from "@/pages/egress/explain";
-import { EgressHistory } from "@/pages/egress/history";
 import { RuleSetDetail } from "@/pages/egress/rule-set-detail";
 import { RuleSetsPage } from "@/pages/egress/rule-sets";
 import { SessionRulesPanel } from "@/pages/egress/session-rules";
@@ -48,7 +47,6 @@ const TABS = [
   { to: "/egress", label: "Rule sets", end: true },
   { to: "/egress/explain", label: "Explain", end: false },
   { to: "/egress/session-rules", label: "Session rules", end: false },
-  { to: "/egress/history", label: "History", end: false },
 ] as const;
 
 export function EgressPage() {
@@ -78,7 +76,6 @@ export function EgressPage() {
         <Route path="sets/:name" element={<RuleSetDetail />} />
         <Route path="explain" element={<ExplainPanel />} />
         <Route path="session-rules" element={<SessionRulesPanel />} />
-        <Route path="history" element={<EgressHistory />} />
         <Route path="*" element={<RuleSetsPage />} />
       </Routes>
     </div>

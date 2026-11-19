@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
 import { deleteRule } from "@/lib/api/egress";
 import type { EgressRule, RuleOwner } from "@/lib/api/egress";
-import { isExpired, portsText } from "@/lib/egress-form";
+import { hasDefaultPorts, isExpired, portsText } from "@/lib/egress-form";
 import { keys } from "@/lib/queries";
 import { RuleForm } from "@/pages/egress/rule-form";
 import { EffectBadge, useRevisionBase, WriteError } from "@/pages/egress/shared";
@@ -112,10 +112,6 @@ export function RuleManager({
             <tr>
               <Th>Effect</Th>
               <Th>Host</Th>
-              <Th>Ports</Th>
-              <Th>Route</Th>
-              <Th>Private</Th>
-              <Th>Expires</Th>
               <Th>Note</Th>
               {!readOnly && (
                 <Th>
@@ -131,20 +127,24 @@ export function RuleManager({
                   <EffectBadge effect={rule.effect} />
                 </Td>
                 <Td>
-                  <HostText host={rule.host} />
-                </Td>
-                <Td>{portsText(rule.ports)}</Td>
-                <Td>{rule.effect === "allow" ? rule.route : "—"}</Td>
-                <Td>{rule.private ? <Badge variant="warning">private</Badge> : "—"}</Td>
-                <Td>
-                  {rule.expiresAt === null ? (
-                    <span className="text-muted-foreground">never</span>
-                  ) : (
-                    <span className="flex flex-wrap items-center gap-1">
-                      <Time value={rule.expiresAt} />
-                      {isExpired(rule) && <Badge variant="outline">expired, ignored</Badge>}
-                    </span>
-                  )}
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <HostText host={rule.host} />
+                    {hasDefaultPorts(rule.ports) ? null : (
+                      <code className="text-muted-foreground">:{portsText(rule.ports)}</code>
+                    )}
+                    {rule.effect === "allow" && rule.route === "onecli" && (
+                      <Badge variant="outline">onecli</Badge>
+                    )}
+                    {rule.private && <Badge variant="warning">private</Badge>}
+                    {rule.expiresAt !== null &&
+                      (isExpired(rule) ? (
+                        <Badge variant="outline">expired, ignored</Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1">
+                          expires <Time value={rule.expiresAt} />
+                        </Badge>
+                      ))}
+                  </span>
                 </Td>
                 <Td className="break-words">{rule.note}</Td>
                 {!readOnly && (

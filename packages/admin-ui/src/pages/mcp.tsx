@@ -5,7 +5,7 @@ import { useAuth } from "@/auth";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
-import { DiscoveryStatus, DiscoveryTools } from "@/components/mcp-discovery";
+import { DiscoveryDetail, DiscoveryTools, ServerStatus } from "@/components/mcp-discovery";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -141,7 +141,7 @@ function EnablePanel({ server, onClose }: { server: McpServer; onClose: () => vo
   );
 }
 
-const COLUMNS = 8;
+const COLUMNS = 5;
 
 function ServerRow({
   server,
@@ -164,33 +164,19 @@ function ServerRow({
   });
   const referencing = profiles === undefined ? undefined : profilesWithMcp(profiles, server.name);
   const limits = nonDefaultLimits(server);
-  const hasDetails =
-    limits.length > 0 ||
-    server.source !== null ||
-    server.onecliSecret !== null ||
-    (server.discovery?.toolNames?.length ?? 0) > 0;
   return (
     <Fragment>
       <tr data-testid={`mcp-${server.name}`}>
-        <Td className="font-medium break-all">{server.name}</Td>
-        <Td>
-          <Badge variant={server.enabled ? "secondary" : "warning"}>
-            {server.enabled ? "enabled" : "disabled"}
-          </Badge>
-        </Td>
-        <Td>
-          <DiscoveryStatus server={server} />
-        </Td>
         <Td className="break-all">
-          <span title={server.url}>{hostOf(server.url)}</span>
+          <span className="font-medium">{server.name}</span>
+          <span className="block text-xs text-muted-foreground" title={server.url}>
+            {hostOf(server.url)}
+          </span>
         </Td>
         <Td>
-          {server.readOnly ? (
-            <span className="text-muted-foreground">Read-only</span>
-          ) : (
-            <Badge variant="warning">Can change state</Badge>
-          )}
+          <ServerStatus server={server} />
         </Td>
+        <Td>{!server.readOnly && <Badge variant="warning">Can change state</Badge>}</Td>
         <Td>
           {referencing === undefined ? (
             ""
@@ -201,98 +187,107 @@ function ServerRow({
           )}
         </Td>
         <Td>
-          <Time value={server.updatedAt} />
-          <span className="text-muted-foreground"> by {server.updatedBy}</span>
-        </Td>
-        <Td>
           <span className="flex flex-wrap gap-1">
-            <Link
-              className={buttonVariants({ variant: "ghost", size: "sm" })}
-              to={`/playground?mcp=${encodeURIComponent(server.name)}`}
-            >
-              Try in playground
-            </Link>
-            {hasDetails && (
+            {manage && (
               <Button
                 size="sm"
-                variant="ghost"
-                aria-expanded={open}
-                onClick={() => setOpen((shown) => !shown)}
+                variant="outline"
+                onClick={() => onAction({ kind: "edit", server })}
               >
-                Details
+                Edit
               </Button>
             )}
-            {manage && (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onAction({ kind: "edit", server })}
-                >
-                  Edit
-                </Button>
-                {server.enabled ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => toggle.mutate(false)}
-                    disabled={toggle.isPending}
-                  >
-                    Disable
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={toggle.isPending}
-                    onClick={() =>
-                      server.readOnly ? toggle.mutate(true) : onAction({ kind: "enable", server })
-                    }
-                  >
-                    Enable
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onAction({ kind: "delete", server })}
-                >
-                  Delete
-                </Button>
-              </>
-            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={open}
+              onClick={() => setOpen((shown) => !shown)}
+            >
+              Details
+            </Button>
           </span>
         </Td>
       </tr>
       {(open || toggle.isError) && (
-        <tr>
+        <tr data-testid={`mcp-${server.name}-details`}>
           <Td colSpan={COLUMNS} className="bg-muted/40">
             {open && (
-              <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
-                {limits.map(({ label, value }) => (
-                  <Fragment key={label}>
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd>{value}</dd>
-                  </Fragment>
-                ))}
-                <DiscoveryTools server={server} />
-                {server.onecliSecret !== null && (
-                  <>
-                    <dt className="text-muted-foreground">OneCLI secret</dt>
-                    <dd className="break-all">
-                      <code>{server.onecliSecret}</code>
-                    </dd>
-                  </>
-                )}
-                {server.source !== null && (
-                  <>
-                    <dt className="text-muted-foreground">Source</dt>
-                    <dd className="break-all">
-                      {server.source.repository} @ {server.source.commit}
-                    </dd>
-                  </>
-                )}
-              </dl>
+              <div className="flex flex-col gap-3">
+                <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
+                  <dt className="text-muted-foreground">URL</dt>
+                  <dd className="break-all">{server.url}</dd>
+                  <dt className="text-muted-foreground">Updated</dt>
+                  <dd>
+                    <Time value={server.updatedAt} />
+                    <span className="text-muted-foreground"> by {server.updatedBy}</span>
+                  </dd>
+                  <DiscoveryDetail server={server} />
+                  {limits.map(({ label, value }) => (
+                    <Fragment key={label}>
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd>{value}</dd>
+                    </Fragment>
+                  ))}
+                  <DiscoveryTools server={server} />
+                  {server.onecliSecret !== null && (
+                    <>
+                      <dt className="text-muted-foreground">OneCLI secret</dt>
+                      <dd className="break-all">
+                        <code>{server.onecliSecret}</code>
+                      </dd>
+                    </>
+                  )}
+                  {server.source !== null && (
+                    <>
+                      <dt className="text-muted-foreground">Source</dt>
+                      <dd className="break-all">
+                        {server.source.repository} @ {server.source.commit}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+                <span className="flex flex-wrap gap-1">
+                  <Link
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                    to={`/playground?mcp=${encodeURIComponent(server.name)}`}
+                  >
+                    Try in playground
+                  </Link>
+                  {manage &&
+                    (server.enabled ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => toggle.mutate(false)}
+                        disabled={toggle.isPending}
+                      >
+                        Disable
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={toggle.isPending}
+                        onClick={() =>
+                          server.readOnly
+                            ? toggle.mutate(true)
+                            : onAction({ kind: "enable", server })
+                        }
+                      >
+                        Enable
+                      </Button>
+                    ))}
+                  {manage && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onAction({ kind: "delete", server })}
+                    >
+                      Delete
+                    </Button>
+                  )}
+                </span>
+              </div>
             )}
             {toggle.isError && <Alert variant="destructive">{toggle.error.message}</Alert>}
           </Td>
@@ -373,14 +368,7 @@ export function McpServersPage() {
       <Card>
         <CardHeader>
           <CardTitle>MCP servers</CardTitle>
-          <CardDescription>
-            Remote tool servers that sessions can call. Each enabled server's host gets a rule in
-            the derived{" "}
-            <Link className="underline" to="/egress/sets/mcp-catalog">
-              mcp-catalog
-            </Link>{" "}
-            rule set, and the OneCLI host rules follow within seconds.
-          </CardDescription>
+          <CardDescription>Remote tool servers that sessions can call.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {modeError !== undefined && <Alert variant="destructive">{modeError}</Alert>}
@@ -413,11 +401,8 @@ export function McpServersPage() {
                 <tr>
                   <Th>Name</Th>
                   <Th>Status</Th>
-                  <Th>Connection</Th>
-                  <Th>URL</Th>
                   <Th>Access</Th>
                   <Th>Used by</Th>
-                  <Th>Updated</Th>
                   <Th>
                     <span className="sr-only">Actions</span>
                   </Th>

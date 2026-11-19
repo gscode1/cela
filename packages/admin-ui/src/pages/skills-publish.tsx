@@ -3,6 +3,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { Link, useParams } from "react-router";
 import { useAuth } from "@/auth";
+import { Breadcrumb } from "@/components/breadcrumb";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -437,6 +438,15 @@ export function SkillPublish() {
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
+          <Breadcrumb
+            items={[
+              { label: "Skills", to: "/skills" },
+              ...(expected === undefined
+                ? []
+                : [{ label: expected, to: `/skills/${encodeURIComponent(expected)}` }]),
+              { label: expected === undefined ? "Add skill" : "New version" },
+            ]}
+          />
           <CardTitle>
             {expected === undefined ? "Add skill" : `New version of ${expected}`}
           </CardTitle>

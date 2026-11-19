@@ -134,10 +134,10 @@ test.describe("skills", () => {
     // Version table: files behind an expander, hashes only in Details and on hover.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
     const row = page.getByTestId("version-1");
-    await expect(row).toContainText("Has a script and a binary");
+    await expect(row).not.toContainText("Has a script and a binary");
     await expect(row).toContainText("3 files");
     await expect(page.getByText(tool?.sha256 ?? "missing")).toHaveCount(0);
-    await row.getByRole("button", { name: "Files" }).click();
+    await row.getByRole("button", { name: /3 files/ }).click();
     await expect(page.getByText("sha256", { exact: true })).toHaveCount(0);
     await expect(
       page.getByRole("cell", { name: "bin/tool.bin executable", exact: true }),
@@ -352,10 +352,10 @@ test.describe("MCP servers", () => {
       "title",
       "https://mcp.example.com/mcp",
     );
-    await expect(row).toContainText("Read-only");
-    await expect(row).toContainText("enabled");
-    // Defaults and no source: nothing to expand, and none of the removed fields anywhere.
-    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    // Read-only is the quiet case: no badge, and the row keeps the secondary actions in its Details.
+    await expect(row).not.toContainText("Can change state");
+    await expect(page.getByTestId(`mcp-${name}-details`)).toHaveCount(0);
+    // None of the removed fields anywhere.
     for (const gone of ["Transport", "Reachability", "onecliSecret", "#42", "Revision"])
       await expect(page.getByText(gone)).toHaveCount(0);
     await page.getByText("Recent changes").click();
@@ -423,7 +423,7 @@ test.describe("MCP servers", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
-    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    await expect(page.getByTestId(`mcp-${name}-details`)).not.toContainText("OneCLI secret");
     await page.getByText("Recent changes").click();
     const changes = page.getByRole("listitem").filter({ hasText: name });
     await expect(changes.filter({ hasText: "OneCLI secret: none → github-mcp" })).toBeVisible();
@@ -520,22 +520,24 @@ test.describe("MCP servers", () => {
     await signInAndGo(page, "/console/mcp-servers");
 
     const roRow = page.getByTestId(`mcp-${ro}`);
-    await roRow.getByRole("button", { name: "Disable" }).click();
+    await roRow.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${ro}-details`).getByRole("button", { name: "Disable" }).click();
     await expect(roRow.getByText("disabled", { exact: true })).toBeVisible();
     // The badge says it all: no paragraph about disabled servers.
     await expect(page.getByText("its tools are unavailable")).toHaveCount(0);
-    await roRow.getByRole("button", { name: "Enable" }).click();
-    await expect(roRow.getByText("enabled", { exact: true })).toBeVisible();
+    await page.getByTestId(`mcp-${ro}-details`).getByRole("button", { name: "Enable" }).click();
+    await expect(roRow.getByText("disabled", { exact: true })).toHaveCount(0);
 
     const rwRow = page.getByTestId(`mcp-${rw}`);
     await expect(rwRow.getByText("disabled", { exact: true })).toBeVisible();
-    await rwRow.getByRole("button", { name: "Enable" }).click();
+    await rwRow.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${rw}-details`).getByRole("button", { name: "Enable" }).click();
     const panel = page.getByLabel(`Enable ${rw}`);
     await expect(panel.getByText("Does this server change anything?")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Enable" })).toBeDisabled();
     await panel.getByRole("radio", { name: /^Yes, it can change state/ }).check();
     await panel.getByRole("button", { name: "Enable" }).click();
-    await expect(rwRow.getByText("enabled", { exact: true })).toBeVisible();
+    await expect(rwRow.getByText("disabled", { exact: true })).toHaveCount(0);
   });
 
   test("delete is off while a profile names the server and offers to disable it; a free one is deleted after typing its name", async ({
@@ -551,7 +553,8 @@ test.describe("MCP servers", () => {
     await signInAndGo(page, "/console/mcp-servers");
     const row = page.getByTestId(`mcp-${name}`);
     await expect(row.getByRole("link", { name: profile })).toBeVisible();
-    await row.getByRole("button", { name: "Delete" }).click();
+    await row.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${name}-details`).getByRole("button", { name: "Delete" }).click();
     const panel = page.getByLabel(`Delete ${name}`);
     await expect(panel).toContainText(`Used by ${profile}`);
     await expect(panel).toContainText("cannot be undone");
@@ -565,7 +568,8 @@ test.describe("MCP servers", () => {
     // Free the server: no profile names it any more, so typing its name deletes it.
     await request.put(`/__fake/profiles/${profile}`, { data: { definition: {} } });
     await signInAndGo(page, "/console/mcp-servers");
-    await row.getByRole("button", { name: "Delete" }).click();
+    await row.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${name}-details`).getByRole("button", { name: "Delete" }).click();
     const free = page.getByLabel(`Delete ${name}`);
     await expect(free).not.toContainText("Used by");
     const confirm = free.getByRole("button", { name: `Delete ${name}` });
