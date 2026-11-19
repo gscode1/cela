@@ -76,6 +76,7 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | OneCLI pod | `onecli/onecli-db` (example; patch for your database) | 5432 | OneCLI database | C onecli-egress |
 | OneCLI pod | anything outside the cluster (`world`), including the LAN | 443 | model providers, GitHub, package registries and admin-named MCP servers (open default, [ADR 0043](decisions/0043-open-onecli-defaults.md)) | C onecli-egress (`egress.yaml`) |
 | OneCLI pod | 100.64/10, 169.254/16 | any | explicit deny: CGNAT and cloud metadata, in both variants | C onecli-egress (egressDeny) |
+| OneCLI pod, in-cluster LoadBalancer MCP server | the ingress or gateway pods behind the LoadBalancer IP (namespace and labels), not `world` | the pod's target port (10443 for Envoy Gateway's 443 listener), not 443 | an MCP hostname that resolves to a LoadBalancer IP of this cluster: Cilium translates it to the backend pod before the policy applies, so the `world` rule does not match. Add the commented `toEndpoints` example of `egress.yaml` | C onecli-egress (`egress.yaml`, optional rule) |
 | OneCLI pod (hardening) | chatgpt.com, `*.chatgpt.com`, auth.openai.com, api.openai.com, openrouter.ai, github.com, api.github.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, pypi.org, files.pythonhosted.org, mcp.deepwiki.com | 443 | replaces the world rule | C onecli-egress (`egress-strict.yaml`) |
 | OneCLI pod (hardening) | 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 | any | explicit deny: a public name resolving to a private address | C onecli-egress (`egress-strict.yaml`, egressDeny) |
 | kubelet, `kubectl port-forward` | any pod | any | host traffic; Cilium admits the local node by default, so probes keep working | (default) |
@@ -301,6 +302,7 @@ the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release
 | OneCLI pods | CoreDNS | 53 | |
 | OneCLI gateway | public internet (not private, CGNAT, link-local, loopback) | any | model, GitHub and package hosts, as for sandboxes |
 | OneCLI gateway | 10/8, 172.16/12, 192.168/16 (`gateway.privateHttps`, a separate policy `<release>-gateway-allow-private-https-egress`; `gateway.privateHttps.except` carves out the kube API and pod CIDRs) | 443 | an admin-named LAN MCP server with an injected key ([ADR 0043](decisions/0043-open-onecli-defaults.md)). CGNAT, link-local, loopback and the IPv6 private ranges stay in no rule. `hack/onecli.sh` turns it off, with the gateway's `allowPrivateDestinations`, when the release has no egress proxy |
+| OneCLI gateway, in-cluster LoadBalancer MCP server | the ingress or gateway pods | the pod's target port | the `privateHttps` ipBlock does not match on CNIs that translate a LoadBalancer IP to its backend pod before policy: add a pod-selector egress rule (namespace, labels, target port) for the gateway instead | `<release>-gateway-allow-private-https-egress` (extra rule) |
 | the CA Job | any address | 443, 6443 | the Kubernetes API cannot be named in a plain policy |
 
 Everything else is denied (`<release>-default-deny`). **Why it matters more than for other services:** OneCLI's

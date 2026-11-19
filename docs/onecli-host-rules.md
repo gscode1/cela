@@ -139,7 +139,8 @@ pass puts them back (or removes them).
 allowed here (a rule in `hack/onecli-host-rules.sh`, applied before the final block rule) and in the orchestrator's egress policy
 (`hack/onecli-policies/egress-strict.yaml`). On an open install (no block) none of this applies: the server connects as soon as the
 orchestrator can reach it. Until then the server fails to connect: the orchestrator logs `mcp-discovery-failed` with the
-retry delay, and calls to its tools settle `tool_unavailable`.
+retry delay, and calls to its tools settle `tool_unavailable`. The MCP server URL must include the server's MCP endpoint path
+(`https://host/mcp`, not the host root); the root answers 404 `Cannot POST /` in the same log line.
 
 The reconciler uses the OneCLI admin key the orchestrator holds for repo sessions; it stays there for the proof of concept
 ([ADR 0042](decisions/0042-onecli-admin-key-in-orchestrator.md)).
