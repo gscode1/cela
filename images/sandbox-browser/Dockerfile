@@ -1,5 +1,6 @@
-# Build context: repository root. The sandbox image plus one Chromium, the Playwright CLI and agent-browser, both driving
-# that Chromium, and the loopback forwarder that gives it the session's egress token (docs/decisions/0041-browser-sandbox.md).
+# Build context: repository root. The sandbox image plus one Chromium, Patchright and agent-browser, both driving that
+# Chromium, and the loopback forwarder that gives it the session's egress token (docs/decisions/0041-browser-sandbox.md,
+# 0046-patchright-browser.md).
 # The pi-env stage is the same as images/sandbox/Dockerfile (a test keeps them equal).
 FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS pi-env
 ARG TARGETARCH
@@ -23,8 +24,8 @@ COPY packages ./packages
 RUN pnpm install --frozen-lockfile --filter @pi-durable-k8s/browser-proxy... \
  && pnpm --filter @pi-durable-k8s/browser-proxy build
 
-# Exact versions from the lockfile (Playwright CLI 0.1.25 pins playwright 1.66.0-alpha-2026-11-18, whose Chromium is
-# the one both tools drive).
+# Exact versions from the lockfile (patchright 1.64.3 pins patchright-core 1.64.3, whose Chromium is the one both tools
+# drive).
 FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS tools
 WORKDIR /opt/browser-tools
 COPY images/sandbox-browser/package.json images/sandbox-browser/package-lock.json ./
@@ -41,13 +42,14 @@ USER root
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 COPY --from=tools /opt/browser-tools /opt/browser-tools
 COPY --from=tools /usr/local/bin/node /usr/local/bin/node
-# Chromium's system libraries come from Playwright's own list for this distribution; the browser is the one build of
-# Chromium that Playwright's version pins, for both architectures. No headless shell: both tools drive the full browser.
+# Chromium's system libraries come from Patchright's own list (Playwright's, for this distribution); the browser is the one
+# build of Chromium that Patchright's version pins, for both architectures. No headless shell: both tools drive the full
+# browser.
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
- && node /opt/browser-tools/node_modules/playwright/cli.js install-deps chromium \
- && node /opt/browser-tools/node_modules/playwright/cli.js install --no-shell chromium \
+ && node /opt/browser-tools/node_modules/patchright/cli.js install-deps chromium \
+ && node /opt/browser-tools/node_modules/patchright/cli.js install --no-shell chromium \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
  && chmod -R a+rX /opt/ms-playwright \
  && ln -s "$(find /opt/ms-playwright -maxdepth 3 -type f -name chrome | head -n 1)" /usr/local/bin/pi-chromium
@@ -55,11 +57,11 @@ COPY --from=pi-env --chmod=0755 /pi-env /usr/local/bin/pi-env
 COPY --from=agent-browser --chmod=0755 /${TARGETARCH} /opt/agent-browser/agent-browser
 COPY --from=forwarder /src/packages/browser-proxy/dist /opt/browser-proxy/dist
 COPY --from=forwarder /src/packages/browser-proxy/package.json /opt/browser-proxy/package.json
-# Chrome for Testing (what Playwright installs) reads /etc/opt/chrome_for_testing; a plain Chromium reads /etc/chromium.
+# Chrome for Testing (what Patchright installs) reads /etc/opt/chrome_for_testing; a plain Chromium reads /etc/chromium.
 COPY images/sandbox-browser/files/chromium-policy.json /etc/opt/chrome_for_testing/policies/managed/pi-browser.json
 COPY images/sandbox-browser/files/chromium-policy.json /etc/chromium/policies/managed/pi-browser.json
 COPY --chmod=0755 images/sandbox-browser/files/pi-browser /usr/local/bin/pi-browser
-COPY --chmod=0755 images/sandbox-browser/files/playwright-cli /usr/local/bin/playwright-cli
+COPY --chmod=0755 images/sandbox-browser/files/patchright-run /usr/local/bin/patchright-run
 COPY --chmod=0755 images/sandbox-browser/files/agent-browser /usr/local/bin/agent-browser
 COPY images/sandbox-browser/files/BROWSER.md /usr/local/share/pi-browser/BROWSER.md
 USER 1000:1000

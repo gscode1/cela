@@ -1,6 +1,6 @@
 ---
 name: agent-browser
-description: Drive the sandbox's Chromium with agent-browser 0.43.0 (accessibility snapshot with @refs, click, fill, screenshot). A lighter alternative to playwright-cli.
+description: Drive the sandbox's Chromium with agent-browser 0.43.0 (accessibility snapshot with @refs, click, fill, screenshot). A lighter alternative to the patchright skill's scripts.
 ---
 
 # agent-browser

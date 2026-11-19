@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Browser sandbox acceptance tests (issue #267, ADR 0041): Chromium, Playwright CLI and agent-browser in a gVisor sandbox behind
+# Browser sandbox acceptance tests (issue #267, ADR 0041): Chromium, Patchright and agent-browser in a gVisor sandbox behind
 # the egress proxy, driven by scripted bash steps (deterministic) and by a LIVE model through OneCLI (a few real turns: spend).
 # Runs IN the cluster as the e2e-driver Job started by `tests/e2e/run.sh browser`, which installs the chart with
 # egressProxy.enabled and sandbox.flavours.browser.enabled (tests/e2e/chart-values.py), on the chart's default runtime
@@ -8,11 +8,11 @@
 #   seed        hack/seed-browser-profile.mjs seeds the `browser` profile and both skills; a second run changes nothing
 #   gvisor      a session on the profile runs in a Pod of runtimeClass gvisor with the browser image; Chromium starts under
 #               gVisor (the wrapper's flags are enough, or the output says which are not); startup time and memory are noted
-#   playwright  Playwright CLI: title of example.com and a PNG screenshot in /workspace
+#   patchright  Patchright script: title of example.com and a PNG screenshot in /workspace
 #   agent       agent-browser on the same Chromium: title and a PNG screenshot
 #   denials     kube API (name and cluster IP), a platform Service, the metadata address, file:// and chrome:// are refused;
 #               a host that a narrower profile's rules do not allow is refused, one they allow loads
-#   live        openai-codex/gpt-6-luna on the browser profile: turn 1 uses the playwright-cli skill, turn 2 agent-browser,
+#   live        openai-codex/gpt-6-luna on the browser profile: turn 1 uses the patchright skill, turn 2 agent-browser,
 #               each to open https://example.com, report the title and save a screenshot under /workspace. Asserts the tool
 #               calls, "Example Domain" in the answer and the PNG in the sandbox, not the wording
 #
@@ -129,7 +129,7 @@ t_seed() {
   token=""
   def=$(api alice GET /admin/profiles/browser | jq -c '.body.definition')
   assert_jq "the profile is browser flavour, proxied, open-web, with both skills" "$def" \
-    '.sandboxFlavour=="browser" and .networkMode=="proxied" and .egressRuleSets==["open-web"] and (.skills|map(.name)|sort)==["agent-browser","playwright-cli"]'
+    '.sandboxFlavour=="browser" and .networkMode=="proxied" and .egressRuleSets==["open-web"] and (.skills|map(.name)|sort)==["agent-browser","patchright"]'
   sess=$(new_session '{"provider":"scripted","model":"scripted-1","profile":"browser"}')
   assert_jq "a scripted session on the browser profile is created" "$sess" '.status==201'
   jq -r '.body.sessionId' <<<"$sess" >"$work/det_session"
@@ -141,7 +141,7 @@ t_gvisor() {
   id=$(cat "$work/det_session")
   out=$(sbx "$id" env-$RANDOM "$pre printf 'user=%s shm=%s skills=' \"\$(id -u)\" \"\$(df -m /dev/shm | awk 'NR==2{print \$2}')\"; ls /workspace/.skills | tr '\\n' ' '")
   note "sandbox: $out"
-  assert_match "uid 1000 and both skills in /workspace/.skills" "$out" 'user=1000 .*skills=.*(agent-browser.*playwright-cli|playwright-cli.*agent-browser)'
+  assert_match "uid 1000 and both skills in /workspace/.skills" "$out" 'user=1000 .*skills=.*(agent-browser.*patchright|patchright.*agent-browser)'
   # gVisor's tmpfs does not report the volume's 256 Mi size limit (measured on the first run: 15874 MB), so only a floor is asserted.
   shm=$(sed -n 's/.*shm=\([0-9]*\).*/\1/p' <<<"$out")
   [[ ${shm:-0} -ge 256 ]] || { note "ASSERT FAILED: /dev/shm is ${shm:-unknown} MB, wanted at least 256 (the wrapper would add --disable-dev-shm-usage)"; exit 1; }
@@ -162,12 +162,12 @@ t_gvisor() {
   note "measure (idle Chromium under gVisor): $out"
 }
 
-t_playwright() {
+t_patchright() {
   local id out png
   id=$(cat "$work/det_session")
-  out=$(sbx "$id" pw-$RANDOM "$pre pi-browser start >/dev/null && playwright-cli attach --cdp=http://127.0.0.1:9222 >/dev/null && playwright-cli goto https://example.com | grep -E 'Page Title' | tr '\\n' ' '; playwright-cli screenshot --filename=/workspace/pw-det.png >/dev/null; echo done")
+  out=$(sbx "$id" pw-$RANDOM "$pre pi-browser start >/dev/null && patchright-run -e 'const {chromium}=require(\"patchright\");(async()=>{const b=await chromium.connectOverCDP(\"http://127.0.0.1:9222\");const p=await b.contexts()[0].newPage();await p.goto(\"https://example.com\",{waitUntil:\"domcontentloaded\",timeout:30000});console.log(\"Page Title: \"+await p.title());await p.screenshot({path:\"/workspace/pw-det.png\"});await p.close();await b.close()})().catch(e=>{console.error(e.message);process.exit(1)})' | tr '\\n' ' '; echo done")
   note "output: $out"
-  assert_match "Playwright CLI returns the title of example.com" "$out" 'Page Title: Example Domain'
+  assert_match "Patchright returns the title of example.com" "$out" 'Page Title: Example Domain'
   png=$(png_magic "$(claim_of "$id")" /workspace/pw-det.png)
   assert_eq "its screenshot is a PNG in /workspace" 89504e470d0a1a0a "$png"
 }
@@ -231,11 +231,11 @@ t_live() {
   id=$(jq -r '.body.sessionId' <<<"$out")
   start=$(now)
 
-  res=$(live_turn "$id" "turn 1" playwright-cli \
-    'Use the playwright-cli skill to open https://example.com, tell me the page title, and save a screenshot to /workspace/pw.png. Keep it short and end by stating the title.')
-  assert_jq "turn 1: the model answered with the title after calling playwright-cli" "$res" '.found==true'
+  res=$(live_turn "$id" "turn 1" patchright \
+    'Use the patchright skill to open https://example.com, tell me the page title, and save a screenshot to /workspace/pw.png. Keep it short and end by stating the title.')
+  assert_jq "turn 1: the model answered with the title after calling patchright" "$res" '.found==true'
   note "turn 1: $(jq -r '.calls|length' <<<"$res") tool call(s); answer: $(jq -r '.answer' <<<"$res" | tr '\n' ' ' | cut -c1-300)"
-  assert_jq "turn 1 ran playwright-cli through a tool call" "$res" '[.calls[] | select(contains("playwright-cli"))] | length > 0'
+  assert_jq "turn 1 ran patchright through a tool call" "$res" '[.calls[] | select(contains("patchright"))] | length > 0'
   assert_jq "the answer has the title" "$res" '.answer|test("Example Domain";"i")'
   claim=$(claim_of "$id")
   assert_eq "the live session runs under gVisor" gvisor "$(k get pod "$claim" -o jsonpath='{.spec.runtimeClassName}')"
@@ -272,7 +272,7 @@ t_live() {
 # One sandbox and one Chromium are shared by the deterministic tests, in the order of the header; everything is serial.
 e2e_serial seed t_seed
 e2e_serial gvisor t_gvisor
-e2e_serial playwright t_playwright
+e2e_serial patchright t_patchright
 e2e_serial agent t_agent
 e2e_serial denials t_denials
 e2e_serial live t_live

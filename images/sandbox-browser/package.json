@@ -1,8 +1,8 @@
 {
   "name": "pi-sandbox-browser-tools",
   "private": true,
-  "description": "Browser tools of the browser sandbox image (docs/decisions/0041-browser-sandbox.md). Installed with npm ci; not a workspace package.",
+  "description": "Browser tools of the browser sandbox image (docs/decisions/0041-browser-sandbox.md, 0046-patchright-browser.md). Installed with npm ci; not a workspace package.",
   "dependencies": {
-    "@playwright/cli": "0.1.25"
+    "patchright": "1.64.3"
   }
 }

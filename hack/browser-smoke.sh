@@ -14,7 +14,7 @@
 # runs. The numbers (memory, CPU) are printed as `measure: ...`.
 #
 #   1. the browser profile is seeded; a session on it reports the flavour, runs in a browser pool Pod and has both skills
-#   2. Playwright CLI opens a public page: title and a screenshot in /workspace
+#   2. Patchright opens a public page: title and a screenshot in /workspace
 #   3. agent-browser opens a public page on the same Chromium: title and a screenshot in /workspace
 #   4. nothing is reachable that must not be: cluster, platform, OneCLI, metadata, LAN; a host that the rules do not allow
 #      is refused; file:// and chrome:// are blocked; github.com is reached without any credential (no OneCLI route)
@@ -154,18 +154,18 @@ m=m$RANDOM
 out=$(sandbox "$sa" "env-$m" "$pre printf 'user=%s proxy=%s shm=%s' \"\$(id -u)\" \"\$(printf %s \"\$HTTPS_PROXY\" | sed -E 's#(://x:)[^@]*@[0-9.]+:3128#\\1***@P#')\" \"\$(df -m /dev/shm | awk 'NR==2{print \$2}')\"; echo; ls /workspace/.skills/*/*/SKILL.md | sed -E 's#.*/.skills/([^/]+)/.*#\\1#' | tr '\\n' ' '; echo $m")
 echo "$out"
 check "the sandbox runs as uid 1000 with the proxy variables and a 256 MB /dev/shm" "$out" 'user=1000 proxy=http://x:\*\*\*@P shm=256'
-check "both skills are materialized in /workspace/.skills" "$out" 'agent-browser .*playwright-cli|playwright-cli .*agent-browser'
+check "both skills are materialized in /workspace/.skills" "$out" 'agent-browser .*patchright|patchright .*agent-browser'
 claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$sa" -o jsonpath='{.items[0].metadata.name}')
 img=$(k get pod "$claim" -o jsonpath='{.spec.containers[0].image}')
 check "the Pod runs the browser image" "$img" 'pi-sandbox-browser'
 check "the Pod carries the browser flavour label" "$(k get pod "$claim" -o jsonpath='{.metadata.labels}')" '"pi-durable.dev/sandbox-flavour":"browser"'
 
-# ------------------------------------------------------------------ 2. Playwright CLI
-echo "## 2. Playwright CLI: a public page's title and a screenshot in /workspace"
+# ------------------------------------------------------------------ 2. Patchright
+echo "## 2. Patchright: a public page's title and a screenshot in /workspace"
 m=m$RANDOM
-out=$(sandbox "$sa" "pw-$m" "$pre pi-browser start >/dev/null && playwright-cli attach --cdp=http://127.0.0.1:9222 >/dev/null && playwright-cli goto https://example.com | grep -E 'Page Title' | tr '\\n' ' '; playwright-cli screenshot --filename=/workspace/pw.png >/dev/null; printf 'png=%s' \"\$(head -c 8 /workspace/pw.png | od -An -tx1 | tr -d ' ')\"; echo $m")
+out=$(sandbox "$sa" "pw-$m" "$pre pi-browser start >/dev/null && patchright-run -e 'const {chromium}=require(\"patchright\");(async()=>{const b=await chromium.connectOverCDP(\"http://127.0.0.1:9222\");const p=await b.contexts()[0].newPage();await p.goto(\"https://example.com\",{waitUntil:\"domcontentloaded\",timeout:30000});console.log(\"Page Title: \"+await p.title());await p.screenshot({path:\"/workspace/pw.png\"});await p.close();await b.close()})().catch(e=>{console.error(e.message);process.exit(1)})' | tr '\\n' ' '; printf 'png=%s' \"\$(head -c 8 /workspace/pw.png | od -An -tx1 | tr -d ' ')\"; echo $m")
 echo "$out"
-check "Playwright CLI returns the title of example.com" "$out" 'Page Title: Example Domain'
+check "Patchright returns the title of example.com" "$out" 'Page Title: Example Domain'
 check "its screenshot is a PNG in /workspace" "$out" 'png=89504e470d0a1a0a'
 
 # ------------------------------------------------------------------ 3. agent-browser

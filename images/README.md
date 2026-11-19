@@ -23,8 +23,8 @@ dependencies, including the vendored adapter/SDK and session-core SQL migrations
 suite scripts, Node clients and the sandbox-env Phase 1 test bundle. Containers run as uid/gid 1000; charts
 keep the restricted Pod Security controls (ADR 0019).
 
-`pi-sandbox-browser` (`images/sandbox-browser`, ADR 0041) is the sandbox image plus Chromium (Chrome for Testing, installed
-by Playwright 1.66.0-alpha-2026-11-18), Playwright CLI 0.1.25 and agent-browser 0.43.0 (release binaries by sha256), and the
+`pi-sandbox-browser` (`images/sandbox-browser`, ADR 0041) is the sandbox image plus Chromium (installed by Patchright 1.64.3,
+ADR 0046), Patchright and agent-browser 0.43.0 (release binaries by sha256), and the
 loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/sandbox-browser/package-lock.json`. It is
 about 1.6 GB (arm64, uncompressed) and needed by the chart's `sandbox.flavours.browser.enabled` (the default; `false` skips it); `hack/kind-up.sh --build` builds it unless `--no-browser`.
 

@@ -77,8 +77,8 @@ describe("image delivery replaces mutable code uploads", () => {
     const pkg = JSON.parse(
       readFileSync(join(root, "images/sandbox-browser/package.json"), "utf8"),
     ) as { dependencies: Record<string, string> };
-    expect(pkg.dependencies).toEqual({ "@playwright/cli": "0.1.25" });
-    // Both tools drive the one Chromium that Playwright installs, with the flags only the wrapper sets.
+    expect(pkg.dependencies).toEqual({ patchright: "1.64.3" });
+    // Both tools drive the one Chromium that Patchright installs, with the flags only the wrapper sets.
     const wrapper = readFileSync(join(root, "images/sandbox-browser/files/pi-browser"), "utf8");
     for (const flag of [
       "--no-sandbox",

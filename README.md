@@ -28,7 +28,7 @@ see the open items in [plan.md](plan.md).
    keeps its workspace on a PVC. The orchestrator reaches it through an
    in-process broker and a thin relay per session ([ADR 0016](docs/decisions/0016-in-process-broker.md)); an idle
    sandbox is suspended and resumed by the next tool call. A profile picks the sandbox size
-   ([ADR 0030](docs/decisions/0030-sandbox-sizes.md)) and flavour: `default`, or `browser` with Chromium, Playwright CLI
+   ([ADR 0030](docs/decisions/0030-sandbox-sizes.md)) and flavour: `default`, or `browser` with Chromium, Patchright
    and agent-browser ([ADR 0041](docs/decisions/0041-browser-sandbox.md)).
 6. Through the **egress proxy** (`packages/egress-proxy`, on by default) the sandbox's only way out is the proxy: each
    connection is checked against the profile's rules and audited, git goes on to OneCLI, allowed sites to the internet
@@ -171,7 +171,7 @@ explains, [network policy](docs/network-policy.md#egress-proxy-egressproxyenable
 the sandbox policies are then as before the cutover (every sandbox has direct internet). See [network policy](docs/network-policy.md) and [ADR 0038](docs/decisions/0038-network-modes.md).
 
 A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, on by default; set it to `false` to skip the image) runs the
-sandbox image plus Chromium, Playwright CLI and agent-browser, always through the egress proxy and without credentials.
+sandbox image plus Chromium, Patchright and agent-browser, always through the egress proxy and without credentials.
 `hack/install.sh` seeds the `browser` profile and its two skills on install when the flavour is on (create-only: an edited profile is never overwritten on upgrade; `--no-seed-browser-profile` opts out; the script is `hack/seed-browser-profile.mjs`); check a cluster with
 `hack/browser-smoke.sh`. See [ADR 0041](docs/decisions/0041-browser-sandbox.md).
 
