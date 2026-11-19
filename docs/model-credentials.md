@@ -160,6 +160,23 @@ but this agent does not have access..."}`. pi-ai keeps only that body, not the s
 `access_restricted` / `does not have access`. The next turn ends `failed` (two seconds), further input gets 409, the
 orchestrator does not restart. `PUT` on the same path restored the grant, and the next turn answered again.
 
+**Token refresh under parallel load: accepted risk (issue #265).** OneCLI v2.20.0 refreshes the Codex access token when
+it is within 5 minutes of expiring (it lives about 10 days), in `refresh_openai_oauth_if_expired`
+(`crates/inject/src/secret_inject.rs`). Unlike OneCLI's other OAuth connections, that path has no lock, re-read or
+compare-and-set ([egress bake-off, case 2](research/egress-bakeoff.md)), so model calls from several sessions that land in
+those 5 minutes each spend the same refresh token. If OpenAI rotates refresh tokens on use, only one exchange wins and the
+login may be revoked. It was never reproduced: a 100-session run on one subscription ([lab notes](lab-notes.md)) lasted
+minutes and almost certainly missed the window. It is accepted for the proof of concept because the effect is
+recoverable and nothing leaks.
+
+- **Symptom:** after a burst of parallel sessions, model calls on that subscription fail with authentication errors
+  (`401`, or a turn that ends `failed` with an auth message), across sessions, until the login is renewed. The OneCLI
+  gateway log has a warning from the Codex OAuth refresh (it then keeps injecting the old token).
+- **Fix:** sign in to Codex again and replace the secret in OneCLI (the same steps as the first setup above, or the
+  dashboard, [Bundled OneCLI](#bundled-onecli-sign-in-and-credentials)). Grants stay; new turns work at once.
+- **To avoid it:** keep large parallel bursts on one subscription away from the token's last minutes, or spread
+  sessions over more than one subscription. Revisit if OneCLI moves the Codex refresh onto its locked refresh path.
+
 ## Set up (once per cluster)
 
 1. **OneCLI agent for the orchestrator** (your dashboard, or the API with an `oc_` key): create
