@@ -1,6 +1,6 @@
 # 0038: Network modes and the network cutover
 
-Status: accepted, 2026-11-18 (slice 6 of epic #50, issue #47). Builds on [0010](0010-session-profiles.md) (profiles),
+Status: accepted, 2026-11-18 (slice 6 of epic #50, issue #47); amended 2026-11-19 (the proxy is on by default, below). Builds on [0010](0010-session-profiles.md) (profiles),
 [0030](0030-sandbox-sizes.md) (one template and pool per size, the pattern reused here), [0034](0034-egress-rules.md)
 (rules), [0035](0035-egress-proxy-runtime.md) (the proxy), [0036](0036-egress-principals.md) (principals) and
 [0037](0037-egress-onecli-route.md) (the OneCLI route). **Reverses** the decision of 2026-11-15 that every sandbox has
@@ -128,3 +128,26 @@ proxy, when a rule allows the resolver: `curl --doh-url https://<resolver>/dns-q
   escapes the policy.
 - **Mode as a per-request field of `POST /sessions`**: a caller must not choose its own network position; it chooses a
   profile.
+
+## Amendment: the proxy is on by default (2026-11-19, issue #273)
+
+`egressProxy.enabled` now defaults to `true`, so a default install is the cutover: proxied sandboxes, no direct internet.
+Every live check of the proxy since this decision ran with it on, and a secure default should not depend on the operator
+finding a flag. Nothing else changes: the policies, the modes and the direct gate are as above.
+
+- **Opt-out.** `egressProxy.enabled: false` stays and does exactly what "Proxy disabled" above says (the sandbox policies of
+  before the cutover, a notice in `NOTES.txt`, no direct gate). `hack/kind-up.sh --no-egress-proxy` passes it; the e2e
+  suites other than `browser` pass it too (`tests/e2e/chart-values.py`), because they test direct sandbox egress.
+- **Fails closed at render.** The proxy needs `egressProxy.database.existingSecret` (the read-only role `pi_egress`, ADR 0035),
+  with OneCLI `egressProxy.binding.existingSecret` (ADR 0037), and an image tag or digest, like the other images. The chart
+  keeps these names empty and refuses to render without them, with a message that names the opt-out. An existing install
+  that upgrades without setting them therefore fails the upgrade instead of losing the internet silently or starting a proxy
+  that cannot read its rules: its operator chooses the proxy (create the role and Secret) or the opt-out.
+- **Install path.** `hack/install.sh` defaults the names to `pi-egress-database` and `pi-egress-binding` (in a values file
+  passed before the user's). It creates the binding key once, like `sandboxd-auth`. It cannot create the role (`CREATE ROLE`
+  needs a database admin, and the app's user is not one), so it creates the database Secret from `EGRESS_DATABASE_URL` or
+  stops before installing with what to do, including the opt-out. `hack/kind-up.sh` turns on `auth.egressReader` of the
+  bundled Postgres and hands the role's URI to `install.sh`; `hack/kind-smoke.sh` checks that a sandbox has no direct
+  internet and that the proxy answers it.
+- **Not changed.** charts/pi-postgres keeps `auth.egressReader.enabled: false` by default: turning it on needs the key
+  `egress-password` in its Secret, which an existing install may not have.
