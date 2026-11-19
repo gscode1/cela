@@ -114,6 +114,9 @@ def main() -> None:
         # suites opt out, as they did before the default changed, because they test durability, not the network.
         "egressProxy": {"enabled": False},
     }
+    # The chart enables the browser flavour by default (ADR 0041, amendment of 2026-11-19). Only the browser suite tests it
+    # (and has its image), so the other suites switch it off: no 1.6 GB image to build, push or pull for them.
+    values["sandbox"]["flavours"] = {"browser": {"enabled": False}}
     if os.environ.get("EGRESS_PROXY") == "1":
         # The proxy's Secrets are made by run.sh: the URI of the read-only role pi_egress and the OneCLI binding key.
         values["images"]["egressProxy"] = split_ref(os.environ["EGRESS_PROXY_IMAGE"])

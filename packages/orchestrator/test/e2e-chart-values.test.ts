@@ -118,7 +118,7 @@ describe("tests/e2e/chart-values.py", () => {
       database: { existingSecret: "pi-egress-database", uriKey: "uri" },
       binding: { existingSecret: "pi-egress-binding", key: "key" },
     });
-    expect(on.sandbox.flavours).toBeUndefined();
+    expect(on.sandbox.flavours).toEqual({ browser: { enabled: false } });
     const text = render(file);
     expect(text).toContain("name: pi-egress-proxy");
     expect(text).toContain("PI_EGRESS_PROXY_URL");
