@@ -8,7 +8,7 @@ import { ReadOnlyNote } from "@/components/read-only-note";
 import { DiscoveryStatus, DiscoveryTools } from "@/components/mcp-discovery";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
 import { Time } from "@/components/time";
@@ -206,6 +206,12 @@ function ServerRow({
         </Td>
         <Td>
           <span className="flex flex-wrap gap-1">
+            <Link
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+              to={`/playground?mcp=${encodeURIComponent(server.name)}`}
+            >
+              Try in playground
+            </Link>
             {hasDetails && (
               <Button
                 size="sm"

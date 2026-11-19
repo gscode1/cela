@@ -371,7 +371,8 @@ with a small in-memory fake of the skills, MCP servers, status and profile reads
 session-core's validators, digest and zip writer), one in `console.catalogs: manage` and one in `readOnly` mode. The catalog
 specs (`catalogs.spec.ts`, `catalogs-readonly.spec.ts`: skill upload from a folder and a zip, review, diff, identical
 re-upload, MCP register, edit, conflict, disable, delete with references, shard status, read-only mode) need that fake and
-run on those two only. The fake keeps its own profile list, separate from the profiles of the fake database:
+run on those two only. The fake also scripts the session API for the playground (`playground.spec.ts`: a turn with an MCP tool call,
+a failing tool, stop, a dropped stream, ending the session on leaving the page); no orchestrator or model is involved. The fake keeps its own profile list, separate from the profiles of the fake database:
 
 ```sh
 pnpm build

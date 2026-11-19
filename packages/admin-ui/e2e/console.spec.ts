@@ -31,6 +31,7 @@ test.describe("console enabled", () => {
       "MCP servers",
       "Skills",
       "Isolation",
+      "Playground",
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();

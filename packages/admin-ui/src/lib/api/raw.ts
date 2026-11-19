@@ -7,12 +7,21 @@ import { apiErrorOf } from "@/lib/api";
 export async function adminRequest(
   token: string,
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    signal?: AbortSignal;
+    /** Extra headers (`accept`, `Last-Event-ID`); the token header is always the caller's token. */
+    headers?: Record<string, string>;
+    /** Lets the request outlive the page, for a call made while it unloads. */
+    keepalive?: boolean;
+  } = {},
 ): Promise<Response> {
-  const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+  const headers: Record<string, string> = { ...init.headers, authorization: `Bearer ${token}` };
   const request: RequestInit = { credentials: "omit", headers };
   if (init.method !== undefined) request.method = init.method;
   if (init.signal !== undefined) request.signal = init.signal;
+  if (init.keepalive === true) request.keepalive = true;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
     request.body = JSON.stringify(init.body);
