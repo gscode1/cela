@@ -280,7 +280,8 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   in a FIFO queue when all are in use. `docs/decisions/0004-idle-suspend.md`.
 - **Idle suspend.** A sandbox with no call for 30 minutes (`PI_SANDBOX_IDLE_SUSPEND_SECONDS`, 0 = never; not below the
   eviction age) is suspended: `Sandbox.spec.operatingMode: Suspended` deletes the Pod and keeps the Sandbox, the claim
-  and the PVC. The next tool call resumes it (about 15 s) and sees the old workspace. `docs/decisions/0004-idle-suspend.md`.
+  and the PVC. The next tool call resumes it (about 15 s) and sees the old workspace. Background processes (a dev server, a browser) do not keep it alive and do not survive
+  suspend; only the workspace does. `docs/decisions/0004-idle-suspend.md`.
 - **Interrupted commands.** A command that was aborted (cancel, steer), timed out, or was running when the orchestrator
   died gets its sandbox Pod replaced (the claim and PVC stay), because a `setsid` child escapes the process-group kill.
   The next tool call waits for the new Pod. `docs/decisions/0003-recycle-pod-on-interrupt.md`.
