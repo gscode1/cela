@@ -10,6 +10,7 @@ import {
   listSessionRefs,
   parseBindingKey,
   publishModelProviders,
+  publishOnecliSecretNames,
   repoAllowed,
   sessionByConversation,
   setExecInFlight,
@@ -23,7 +24,7 @@ import { bridgeCapFields } from "./bridge-cap.js";
 import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";
 import { OneCliAdmin } from "./onecli-admin.js";
-import { modelCatalog, providerCredentials } from "./providers.js";
+import { modelCatalog } from "./providers.js";
 import { McpAccess } from "./mcp-access.js";
 import { HostRuleReconciler } from "./onecli-host-rules.js";
 import { RepoAccess } from "./repo-access.js";
@@ -31,6 +32,7 @@ import type { SandboxHooks } from "./sandboxes.js";
 import {
   liveConversationProfiles,
   ModelCredentialsLoop,
+  oneCliSecretsView,
   publishAndCheckProfiles,
 } from "./capabilities.js";
 import { Host } from "./host.js";
@@ -301,16 +303,13 @@ async function main(): Promise<void> {
   if (shuttingDown()) return;
   // Before the first input: ingest validates profile writes against what is installed here.
   // Also the model catalog and, from OneCLI's secrets, a credential hint per provider (shard 0 refreshes the hint below).
+  // And the names of the OneCLI secrets an MCP server could reference, for the console's picker (ADR 0040 amendment).
   await publishAndCheckProfiles(
     pool,
     {
       ...host.capabilities(),
       models: modelCatalog(host.models),
-      modelProviders: await providerCredentials(
-        host.models,
-        config,
-        onecli?.listSecrets.bind(onecli),
-      ),
+      ...(await oneCliSecretsView(host.models, config, onecli?.listSecrets.bind(onecli))),
     },
     config.instance,
   );
@@ -321,6 +320,7 @@ async function main(): Promise<void> {
       config,
       listSecrets: () => onecli.listSecrets(),
       publish: (providers) => publishModelProviders(pool, providers),
+      publishSecretNames: (names) => publishOnecliSecretNames(pool, names),
     });
     running.modelCredentials = credentials;
     credentials.start(MODEL_CREDENTIALS_INTERVAL_MS);
