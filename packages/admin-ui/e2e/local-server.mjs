@@ -136,6 +136,15 @@ if (process.env.FAKE_ADMIN !== "1") {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     // Test controls of the fake: local only, no token.
     if (path.startsWith("/__fake/")) return void fake.handle(req, res, "test");
+    // The session API of the playground is scripted by the fake too (no orchestrator here); any known owner may use it.
+    if (path === "/sessions" || path.startsWith("/sessions/"))
+      return void authenticate(req.headers).then((principal) => {
+        if (principal === undefined) {
+          res.writeHead(401, { "content-type": "application/json" });
+          return res.end(JSON.stringify({ error: "unauthorized" }));
+        }
+        return fake.handle(req, res, principal.owner);
+      });
     if (!path.startsWith("/admin/")) return ingest.emit("request", req, res);
     // The same gate as ingest: 401 for an unknown token, 403 for an owner that is not an admin.
     void authenticate(req.headers).then(async (principal) => {

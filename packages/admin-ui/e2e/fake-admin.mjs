@@ -13,6 +13,7 @@ import {
 } from "../../session-core/dist/index.js";
 
 import { Buffer } from "node:buffer";
+import { clearTimeout, setTimeout } from "node:timers";
 
 const json = (res, status, body) => {
   res.writeHead(status, { "content-type": "application/json" });
@@ -46,6 +47,149 @@ export function createFakeAdmin() {
       .map((p) => ({ name: p.name, version: 1 }));
   let shards = [];
   const now = () => new Date().toISOString();
+
+  /** id -> { owner, profile, deleted, entries, live, watchers, timers }: the session API, scripted (no model, no sandbox). */
+  const sessions = new Map();
+  let sessionSeq = 0;
+  const sse = (res, text) => {
+    if (!res.writableEnded) res.write(text);
+  };
+  const sendLive = (session) => {
+    const text = `event: live\ndata: ${JSON.stringify(session.live)}\n\n`;
+    for (const res of session.watchers) sse(res, text);
+  };
+  const addEntry = (session, messages) => {
+    const entry = { id: session.entries.length + 1, kind: "message", messages };
+    session.entries.push(entry);
+    const text = `id: ${String(entry.id)}\nevent: entry\ndata: ${JSON.stringify(entry)}\n\n`;
+    for (const res of session.watchers) sse(res, text);
+  };
+  const later = (session, ms, fn) => session.timers.add(setTimeout(fn, ms));
+  const clearTimers = (session) => {
+    for (const timer of session.timers) clearTimeout(timer);
+    session.timers.clear();
+  };
+
+  /**
+   * One scripted turn: a tool call (the first MCP server of the profile as `mcp__<server>__echo`, else `bash`), its
+   * result, then an answer. "fail" in the text makes the tool error, "slow" keeps the turn running until a cancel.
+   */
+  function runTurn(session, text) {
+    const tool =
+      session.mcpServers[0] === undefined ? "bash" : `mcp__${session.mcpServers[0]}__echo`;
+    session.live = { running: true, queued: 0, partial: "Let me try the tool." };
+    sendLive(session);
+    if (text.includes("slow")) return;
+    later(session, 40, () => {
+      session.live = { running: true, queued: 0 };
+      addEntry(session, [
+        {
+          role: "assistant",
+          text: "Let me try the tool.",
+          calls: [`${tool}(${JSON.stringify({ text })})`],
+        },
+      ]);
+      sendLive(session);
+    });
+    later(session, 80, () => {
+      const failed = text.includes("fail");
+      addEntry(session, [
+        {
+          role: "toolResult",
+          text: failed ? "tool failed: simulated error" : `echo: ${text}\n${"line\n".repeat(30)}`,
+          isError: failed,
+        },
+      ]);
+    });
+    later(session, 120, () => {
+      addEntry(session, [{ role: "assistant", text: "Done: the tool answered." }]);
+      session.live = { running: false, queued: 0 };
+      sendLive(session);
+    });
+  }
+
+  async function handleSessions(req, res, owner, parts) {
+    const reply = (status, body) => json(res, status, body);
+    if (parts.length === 1 && req.method === "POST") {
+      let body;
+      try {
+        body = await readBody(req);
+      } catch {
+        return reply(400, { error: "body must be a JSON object" });
+      }
+      const name = body.profile ?? "coding";
+      const profile = profiles.get(name);
+      if (profile === undefined || !profile.enabledForNew)
+        return reply(400, { error: `profile "${name}" is unknown or disabled for new sessions` });
+      const id = `00000000-0000-4000-8000-${String(++sessionSeq).padStart(12, "0")}`;
+      sessions.set(id, {
+        id,
+        owner,
+        profile: name,
+        mcpServers: profile.definition.mcpServers ?? [],
+        deleted: false,
+        entries: [],
+        live: { running: false, queued: 0 },
+        watchers: new Set(),
+        timers: new Set(),
+        body,
+      });
+      return reply(201, {
+        sessionId: id,
+        profile: { name, version: 1 },
+        provider: body.provider ?? "scripted",
+        model: body.model ?? "scripted-1",
+        ...(body.reasoning === undefined ? {} : { reasoning: body.reasoning }),
+        networkMode: "proxied",
+        sandboxFlavour: "default",
+      });
+    }
+    const session = sessions.get(parts[1] ?? "");
+    if (session === undefined || session.owner !== owner)
+      return reply(404, { error: "session not found" });
+    if (session.deleted) return reply(410, { error: "session deleted" });
+    if (parts.length === 2 && req.method === "GET")
+      return reply(200, {
+        sessionId: session.id,
+        status: "active",
+        profile: { name: session.profile, version: 1 },
+        model: { provider: "scripted", model: "scripted-1" },
+      });
+    if (parts.length === 2 && req.method === "DELETE") {
+      session.deleted = true;
+      clearTimers(session);
+      for (const watcher of session.watchers) {
+        sse(watcher, "event: deleted\ndata: {}\n\n");
+        watcher.end();
+      }
+      return reply(202, { sessionId: session.id, status: "deleting" });
+    }
+    if (parts[2] === "events" && req.method === "POST") {
+      const body = await readBody(req);
+      if (body.kind === "cancel") {
+        clearTimers(session);
+        session.live = { running: false, queued: 0, runFailure: "aborted" };
+        sendLive(session);
+      } else if (body.kind === "message" && typeof body.text === "string") {
+        addEntry(session, [{ role: "user", text: body.text }]);
+        runTurn(session, body.text);
+      } else return reply(400, { error: "invalid event" });
+      return reply(202, { eventId: `e${String(session.entries.length)}`, duplicate: false });
+    }
+    if (parts[2] === "stream" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      res.write("retry: 2000\n\n");
+      const after = Number(req.headers["last-event-id"] ?? 0);
+      for (const entry of session.entries)
+        if (entry.id > after)
+          res.write(`id: ${String(entry.id)}\nevent: entry\ndata: ${JSON.stringify(entry)}\n\n`);
+      res.write(`event: live\ndata: ${JSON.stringify(session.live)}\n\n`);
+      session.watchers.add(res);
+      res.on("close", () => session.watchers.delete(res));
+      return undefined;
+    }
+    return reply(404, { error: "not found" });
+  }
 
   const versionJson = (v) => ({
     name: v.name,
@@ -310,6 +454,19 @@ export function createFakeAdmin() {
       });
       return json(res, 200, { ok: true });
     }
+    if (parts[1] === "sessions") {
+      // `drop` ends every open stream the way a proxy would (the console must reconnect); no `drop` lists the sessions.
+      if (parts[2] === "drop")
+        for (const s of sessions.values()) for (const w of s.watchers) w.end();
+      return json(res, 200, {
+        sessions: [...sessions.values()].map((s) => ({
+          id: s.id,
+          profile: s.profile,
+          deleted: s.deleted,
+          watchers: s.watchers.size,
+        })),
+      });
+    }
     return json(res, 404, { error: "unknown control" });
   }
 
@@ -319,6 +476,10 @@ export function createFakeAdmin() {
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] === "__fake") {
       await control(req, res, parts);
+      return true;
+    }
+    if (parts[0] === "sessions") {
+      await handleSessions(req, res, owner, parts);
       return true;
     }
     if (parts[0] !== "admin") return false;

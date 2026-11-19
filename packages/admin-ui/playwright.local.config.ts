@@ -3,7 +3,7 @@ import { defineConfig } from "@playwright/test";
 /**
  * The same specs against local ingest servers on session-core's in-memory fake database (e2e/local-server.mjs):
  * one with the console, one without, and two with the in-memory catalog fake in front (e2e/fake-admin.mjs), one in
- * `console.catalogs: manage` and one in `readOnly` mode. The catalog specs run on those two only. Needs `pnpm build` first (admin-ui and ingest) and a Chromium
+ * `console.catalogs: manage` and one in `readOnly` mode. The catalog specs and the playground spec (the fake scripts the session API too) run on those two only. Needs `pnpm build` first (admin-ui and ingest) and a Chromium
  * (`pnpm exec playwright install chromium`). Ports are fixed and local to this config; change them with
  * CONSOLE_LOCAL_PORT and CONSOLE_LOCAL_OFF_PORT if they clash.
  */
@@ -51,7 +51,7 @@ export default defineConfig({
   projects: [
     {
       name: "catalogs",
-      testMatch: "catalogs.spec.ts",
+      testMatch: ["catalogs.spec.ts", "playground.spec.ts"],
       use: { baseURL: `http://127.0.0.1:${String(catalogs)}`, trace: "retain-on-failure" },
     },
     {

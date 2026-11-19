@@ -55,6 +55,18 @@ export interface FakeAdmin {
       files: { path: string; size: number; executable: boolean }[];
     }[];
   }[];
+  /** The session API: sessions created, events and deletes received, and the streams opened (newest last). */
+  sessions: { id: string; body: Record<string, unknown>; deleted: boolean }[];
+  sent: { id: string; body: Record<string, unknown> }[];
+  streams: {
+    sessionId: string;
+    lastEventId: string | undefined;
+    controller: ReadableStreamDefaultController<Uint8Array>;
+  }[];
+  /** Writes raw SSE text to the newest stream. */
+  emit: (text: string) => void;
+  /** Ends the newest stream the way a proxy would. */
+  closeStream: () => void;
   /** Every write received, as `PUT path body`. */
   writes: { path: string; body: Record<string, unknown> }[];
   fetch: Mock<(path: string, init?: RequestInit) => Promise<Response>>;
@@ -104,6 +116,11 @@ export function createFakeAdmin(): FakeAdmin {
     mcp: [],
     mcpSecrets: undefined,
     skills: [],
+    sessions: [],
+    sent: [],
+    streams: [],
+    emit: (text) => admin.streams.at(-1)?.controller.enqueue(new TextEncoder().encode(text)),
+    closeStream: () => admin.streams.at(-1)?.controller.close(),
     writes: [],
     fetch: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
   };
@@ -130,6 +147,56 @@ export function createFakeAdmin(): FakeAdmin {
     const url = new URL(path, "http://x");
     const route = url.pathname;
     if (method === "PUT") admin.writes.push({ path: route, body });
+    if (route === "/sessions" && method === "POST") {
+      const id = `00000000-0000-4000-8000-${String(admin.sessions.length + 1).padStart(12, "0")}`;
+      admin.sessions.push({ id, body, deleted: false });
+      const name = typeof body.profile === "string" ? body.profile : admin.settings.defaultProfile;
+      return reply(201, {
+        sessionId: id,
+        profile: { name, version: 1 },
+        provider: typeof body.provider === "string" ? body.provider : "scripted",
+        model: typeof body.model === "string" ? body.model : "scripted-1",
+        networkMode: "proxied",
+        sandboxFlavour: "default",
+      });
+    }
+    const sessionRoute = /^\/sessions\/([^/]+)(?:\/(events|stream))?$/.exec(route);
+    if (sessionRoute?.[1] !== undefined) {
+      const id = sessionRoute[1];
+      const session = admin.sessions.find((entry) => entry.id === id);
+      if (session === undefined || session.deleted)
+        return reply(session ? 410 : 404, { error: "gone" });
+      if (sessionRoute[2] === "events" && method === "POST") {
+        admin.sent.push({ id, body });
+        return reply(202, { eventId: "e1", duplicate: false });
+      }
+      if (sessionRoute[2] === "stream") {
+        const headers = init.headers as Record<string, string>;
+        const body = new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            admin.streams.push({
+              sessionId: id,
+              lastEventId: headers["last-event-id"],
+              controller,
+            });
+          },
+        });
+        return Promise.resolve(
+          new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+        );
+      }
+      if (method === "DELETE") {
+        session.deleted = true;
+        return reply(202, { sessionId: id, status: "deleting" });
+      }
+      if (method === "GET")
+        return reply(200, {
+          sessionId: id,
+          status: "active",
+          profile: { name: admin.settings.defaultProfile, version: 1 },
+          model: { provider: "scripted", model: "scripted-1" },
+        });
+    }
     if (route === "/admin/settings" && method === "GET") return reply(200, admin.settings);
     if (route === "/admin/settings/history") return reply(200, { history: admin.history });
     if (route === "/admin/settings" && method === "PUT") {
