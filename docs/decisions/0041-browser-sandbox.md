@@ -87,7 +87,7 @@ denial), `ERR_TUNNEL_CONNECTION_FAILED` or `ERR_NAME_NOT_RESOLVED`; the skills t
 
 - `ProfileDefinition.sandboxFlavour: default | browser` (absent = `default`), validated like `networkMode`, stored per
   session in `inbox.sessions.sandbox_flavour` (migration 031; null = `default`) and reported as `sandboxFlavour`.
-- Chart `sandbox.flavours.browser.enabled` (default `false`). Off: no browser template or pool exists, ingest
+- Chart `sandbox.flavours.browser.enabled` (default `true`, since the amendment below; it was `false`). Off: no browser template or pool exists, ingest
   (`PI_SANDBOX_FLAVOURS`) answers `400` to a profile write or a session create that says `browser`. On: for every size and
   network mode a SandboxTemplate `pi-env-browser[-direct]-template[-<size>]` and SandboxWarmPool
   `pi-env-browser[-direct]-pool[-<size>]`, from `images.sandboxBrowser`. The orchestrator picks by (flavour, size, mode) in
@@ -202,6 +202,22 @@ and CPU numbers above. The local kind cluster runs the sandboxes under **runc**,
   zero inside a gVisor sandbox, so no gVisor memory number exists yet. No sandbox was OOM-killed under the 1536 Mi limit.
 
 amd64 is built by CI (`images.yml`) and not run here.
+
+## Amendment: the flavour is on by default (2026-11-19, issue #304)
+
+The owner decided that `sandbox.flavours.browser.enabled` defaults to `true`. This is a decision about availability, not about
+safety, and nothing in the Security section changes:
+
+- A browser session still gets no credentials: no repo, no onecli route, no credentialed MCP server (the API still answers `400`).
+  It is proxied and goes through the egress rules like every sandbox.
+- `warmPoolReplicas` stays `0`: no browser Pod exists until a session on a browser profile asks for one. What the default adds
+  is the browser SandboxTemplates and (empty) SandboxWarmPools, and a profile may say `sandboxFlavour: browser`.
+- The image is required like the others. `images.sandboxBrowser` needs a tag or a digest by default, and the chart fails with
+  `images.sandboxBrowser: set a tag or a digest` when an install that pins the other images does not. An operator who does not
+  want the 1.6 GB image sets `sandbox.flavours.browser.enabled=false`.
+- Installers: `hack/kind-up.sh` enables it (and builds it with `--build`); `--no-browser` leaves it out, `--browser` is
+  accepted and changes nothing. Without the egress proxy kind-up leaves it out. The e2e suites other than `browser`
+  (`tests/e2e/chart-values.py`) and the kind CI job (`--no-browser`) switch it off, so they need no browser image.
 
 ## Deferred and rejected
 

@@ -62,7 +62,7 @@ jobs:
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
       - name: Create the cluster and install (builds the images)
-        run: hack/kind-up.sh --build
+        run: hack/kind-up.sh --build --no-browser
       - name: Smoke test
         run: hack/kind-smoke.sh
       - name: Dump the cluster state
@@ -102,7 +102,7 @@ jobs:
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
       - name: Create the cluster and install (builds the images)
-        run: hack/kind-up.sh --build --cni cilium
+        run: hack/kind-up.sh --build --cni cilium --no-browser
       - name: Smoke test
         run: hack/kind-smoke.sh
       - name: Dump the cluster state

@@ -22,7 +22,8 @@ images:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
-  # Only needed with sandbox.flavours.browser.enabled.
+  # Needed with sandbox.flavours.browser.enabled (the default): a tag or a digest, like the sandbox image (the chart fails
+  # without one). Set sandbox.flavours.browser.enabled=false to install without it.
   sandboxBrowser:
     repository: ghcr.io/gscode1/pi-sandbox-browser
     tag: ""
@@ -145,11 +146,12 @@ sandbox:
   # Sandbox flavours besides the default (docs/decisions/0041-browser-sandbox.md).
   flavours:
     # The browser flavour: the sandbox image plus Chromium, Playwright CLI and agent-browser (images/sandbox-browser).
-    # On: renders pi-env-browser[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and lets a
-    # profile say `sandboxFlavour: browser`. Off (the default): none of that exists and the API refuses the field. Needs
-    # images.sandboxBrowser. A browser session never has credentials (no repo, no onecli route, no credentialed MCP).
+    # On (the default): renders pi-env-browser[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and lets a
+    # profile say `sandboxFlavour: browser`. Off: none of that exists and the API refuses the field. On is the default
+    # (owner decision, ADR 0041 amendment of 2026-11-19); it needs images.sandboxBrowser and costs nothing until a session
+    # asks for it (no warm Pods). Set `enabled: false` to skip the 1.6 GB image. A browser session never has credentials (no repo, no onecli route, no credentialed MCP).
     browser:
-      enabled: false
+      enabled: true
       # Its own limits, whatever the size: Chromium needs far more memory than a shell (measured: docs/decisions/0041).
       # The size still sets the workspace volume.
       resources:

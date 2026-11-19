@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--browser] [--no-expose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--no-browser] [--no-expose]
 #                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
@@ -35,10 +35,12 @@
 # that reaches the node. Slower to start (Cilium's images, about two minutes) and the node needs the images from quay.io.
 # kindnet stays the fast default. The CNI is fixed when the cluster is created: a reused cluster must match --cni.
 #
-# --browser (issue #48, docs/decisions/0041-browser-sandbox.md) enables the browser sandbox flavour
+# The browser sandbox flavour (issue #48, docs/decisions/0041-browser-sandbox.md) is on by default, as in the chart
 # (sandbox.flavours.browser.enabled) with the image pi-sandbox-browser (SANDBOX_BROWSER_IMAGE overrides it; --build builds it
-# too: the image is about 1.6 GB, so it is built only on request). It needs the egress proxy (not --no-egress-proxy): a
-# browser profile is proxied.
+# too: the image is about 1.6 GB, so --build takes longer and needs the disk). --no-browser leaves it out (the chart value
+# is set to false, no image is built, loaded or checked). --browser is accepted and changes nothing, for older commands.
+# It needs the egress proxy (a browser profile is proxied): with --no-egress-proxy the flavour is left out too, and
+# --browser together with --no-egress-proxy is an error.
 #
 # --onecli installs the bundled OneCLI (docs/decisions/0022-bundled-onecli.md) with its externalUrl http://localhost:10254,
 # which the exposed port serves (or a port-forward, with --no-expose). It needs the OneCLI images from ghcr.io/onecli (the node pulls them) and adds three to five minutes. The
@@ -71,7 +73,8 @@ build=0
 onecli=0
 onecli_open=0
 egress_proxy=1
-browser=0
+browser=1
+browser_explicit=0
 user_sets=()
 expose=1
 repo=${IMAGE_REPO:-ghcr.io/gscode1}
@@ -83,7 +86,7 @@ verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--no-browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
@@ -103,7 +106,8 @@ while [[ $# -gt 0 ]]; do
   --onecli-open-without-proxy) onecli_open=1; shift ;;
   --egress-proxy) egress_proxy=1; shift ;; # the default; kept so older commands still work
   --no-egress-proxy) egress_proxy=0; shift ;;
-  --browser) browser=1; shift ;;
+  --browser) browser=1; browser_explicit=1; shift ;; # the default; kept so older commands still work
+  --no-browser) browser=0; browser_explicit=0; shift ;;
   --set) [[ $# -ge 2 ]] || usage; user_sets+=(--set "$2"); shift 2 ;;
   --no-expose) expose=0; shift ;;
   --cni) [[ $# -ge 2 ]] || usage; cni=$2; shift 2 ;;
@@ -115,7 +119,8 @@ done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
 [[ $cni == kindnet || $cni == cilium ]] || die "bad --cni '$cni' (kindnet or cilium)"
-[[ $browser -eq 0 || $egress_proxy -eq 1 ]] || die "--browser needs the egress proxy (a browser profile is proxied): drop --no-egress-proxy"
+[[ $browser_explicit -eq 0 || $egress_proxy -eq 1 ]] || die "--browser needs the egress proxy (a browser profile is proxied): drop --no-egress-proxy"
+[[ $egress_proxy -eq 1 ]] || browser=0
 # On Cilium the probe must say enforced; kind-smoke.sh reads the same variable.
 [[ $cni == kindnet ]] || export NETPOL_ENFORCED=${NETPOL_ENFORCED:-1}
 
@@ -236,7 +241,7 @@ add_image_sets ingest "$ref_ingest"
 add_image_sets sandbox "$ref_sandbox"
 [[ $egress_proxy -eq 0 && $build -eq 0 ]] || add_image_sets egressProxy "$ref_egress_proxy"
 [[ $browser -eq 0 ]] || add_image_sets sandboxBrowser "$ref_sandbox_browser"
-[[ $browser -eq 0 ]] || extra_args+=(--set sandbox.flavours.browser.enabled=true)
+extra_args+=(--set "sandbox.flavours.browser.enabled=$([[ $browser -eq 1 ]] && echo true || echo false)")
 manifest_ok() { # the registry can be slow: three tries
   for _ in 1 2 3; do
     docker manifest inspect "$1" >/dev/null 2>&1 && return 0

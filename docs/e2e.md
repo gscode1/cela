@@ -329,7 +329,7 @@ and exits listing missing shards instead of silently sending them to shard 0.
 ## The browser suite (sandbox)
 
 `tests/e2e/run.sh browser` runs the browser sandbox of [ADR 0041](decisions/0041-browser-sandbox.md) on the cluster's real runtime
-(gVisor) with a live model (issue #267). It is not part of `all` and it spends model turns. The run installs the chart with
+(gVisor) with a live model (issue #267). It is not part of `all` and it spends model turns. The chart enables the browser flavour by default (ADR 0041, amendment of 2026-11-19), so `tests/e2e/chart-values.py` switches it off for every other suite (they need no browser image). The run installs the chart with
 `egressProxy.enabled` (like `phase3`; the suites that do not test the network set `egressProxy.enabled: false`, the chart's
 opt-out) and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `EGRESS_PROXY=1` and `BROWSER_SUITE=1`), adds
 `openai-codex/gpt-6-luna` to the model allowlist and makes the proxy's Secrets in the namespace: `pi-egress-database` (the URI of
