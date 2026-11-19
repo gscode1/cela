@@ -123,12 +123,12 @@ test.describe("global settings", () => {
     await page.getByLabel("Turn budget").fill("222");
     await page
       .getByRole("navigation", { name: "Console" })
-      .getByRole("link", { name: "Session profiles" })
+      .getByRole("link", { name: "Profiles" })
       .click();
-    await expect(page.getByRole("heading", { name: "Session profiles" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
     await page
       .getByRole("navigation", { name: "Console" })
-      .getByRole("link", { name: "Global settings" })
+      .getByRole("link", { name: "Settings" })
       .click();
     await expect(page.getByLabel("Turn budget")).toHaveValue("222");
   });

@@ -174,8 +174,7 @@ function ProfileScreenFor({ name }: { name: string }) {
               disabled={toggle.isPending || (isDefault && stored.enabledForNew)}
               {...(isDefault && stored.enabledForNew
                 ? {
-                    title:
-                      "This is the default profile. Select another default in Global settings first.",
+                    title: "This is the default profile. Select another default in Settings first.",
                   }
                 : {})}
               onClick={() => {
@@ -190,7 +189,7 @@ function ProfileScreenFor({ name }: { name: string }) {
               disabled={stored.enabledForNew || isDefault || deleting}
               title={
                 isDefault
-                  ? "The default profile cannot be deleted. Select another default in Global settings first."
+                  ? "The default profile cannot be deleted. Select another default in Settings first."
                   : stored.enabledForNew
                     ? "Disable it for new sessions first."
                     : "Delete this profile and all its versions"
@@ -226,7 +225,7 @@ function ProfileScreenFor({ name }: { name: string }) {
               <p>
                 Fix: select another enabled profile as the default in{" "}
                 <Link className="underline" to="/settings">
-                  Global settings
+                  Settings
                 </Link>
                 , then disable this one.
               </p>

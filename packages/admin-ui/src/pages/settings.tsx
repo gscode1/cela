@@ -93,7 +93,7 @@ function ReasoningSelect({
   );
 }
 
-/** Global settings: edit, review the change against the profiles, save with the revision the edit started from. */
+/** Settings: edit, review the change against the profiles, save with the revision the edit started from. */
 export function GlobalSettings() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -139,7 +139,7 @@ export function GlobalSettings() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Global settings</CardTitle>
+          <CardTitle>Settings</CardTitle>
           <CardDescription>{settings.isError ? settings.error.message : "Loading"}</CardDescription>
         </CardHeader>
       </Card>
@@ -198,7 +198,7 @@ export function GlobalSettings() {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Global settings</CardTitle>
+          <CardTitle>Settings</CardTitle>
           <CardDescription>
             What a new session gets when its request and its profile say nothing.
             {server !== undefined && (

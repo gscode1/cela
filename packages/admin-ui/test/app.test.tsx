@@ -50,15 +50,17 @@ describe("sign-in", () => {
     await signIn("alice-token");
     const nav = await screen.findByRole("navigation", { name: "Console" });
     for (const title of [
-      "Global settings",
-      "Session profiles",
+      "Status",
+      "Profiles",
+      "Settings",
       "MCP servers",
       "Skills",
-      "Isolation",
+      "Egress",
+      "Playground",
     ])
       expect(nav).toHaveTextContent(title);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/admin/settings");
-    expect(await screen.findByLabelText("Default model")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Status" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/admin/status", expect.anything());
   });
 
   it("keeps the token out of browser storage", async () => {
@@ -75,7 +77,7 @@ describe("sign-in", () => {
     stubApi();
     renderApp("/profiles");
     await signIn("alice-token");
-    expect(await screen.findByRole("heading", { name: "Session profiles" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Profiles" })).toBeInTheDocument();
   });
 });
 
@@ -112,7 +114,7 @@ describe("API content", () => {
         new: { ...admin.settings, defaultModel: hostile },
       },
     ];
-    renderApp();
+    renderApp("/settings");
     await signIn("alice-token");
     expect(await screen.findByText("<script>alert(2)</script>")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /set the initial values/ }));

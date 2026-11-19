@@ -99,9 +99,9 @@ test.describe("playground", () => {
 
     await page
       .getByRole("navigation", { name: "Console" })
-      .getByRole("link", { name: "Global settings" })
+      .getByRole("link", { name: "Settings" })
       .click();
-    await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await expect
       .poll(async () => (await fakeSessions(request)).find((s) => s.profile === profile)?.deleted)
       .toBe(true);

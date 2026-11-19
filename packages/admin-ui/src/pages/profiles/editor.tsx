@@ -227,7 +227,7 @@ export function ProfileEditor({
         <CardHeader>
           <CardTitle>{creating ? "New profile" : `Edit ${name}`}</CardTitle>
           {isEmptyForm(form) && (
-            <CardDescription>Inherits everything from Global settings.</CardDescription>
+            <CardDescription>Inherits everything from Settings.</CardDescription>
           )}
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

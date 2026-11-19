@@ -104,7 +104,7 @@ export function ShardStatusPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Isolation</CardTitle>
+        <CardTitle>Status</CardTitle>
         <CardDescription>
           Whether sandboxes are walled off from the node and the network.
         </CardDescription>

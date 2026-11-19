@@ -26,15 +26,20 @@ test.describe("console enabled", () => {
     await signIn(page, admin);
     const nav = page.getByRole("navigation", { name: "Console" });
     for (const title of [
-      "Global settings",
-      "Session profiles",
+      "Status",
+      "Profiles",
+      "Settings",
       "MCP servers",
       "Skills",
-      "Isolation",
+      "Egress",
       "Playground",
     ])
       await expect(nav.getByRole("link", { name: title })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Global settings" })).toBeVisible();
+    // The console lands on Status.
+    await expect(page.getByRole("heading", { name: "Status" })).toBeVisible();
+    expect(page.url()).toMatch(/\/console\/status$/);
+    await nav.getByRole("link", { name: "Settings" }).click();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     // A picker when the orchestrator published a catalog with credentials; without one (a kind cluster without OneCLI)
     // the screen shows the current model as text and says why there is no list. Either is a working Settings screen.
     await expect(
@@ -65,7 +70,7 @@ test.describe("console enabled", () => {
     const direct = await page.goto("/console/profiles");
     expect(direct?.status()).toBe(200);
     await signIn(page, admin);
-    await expect(page.getByRole("heading", { name: "Session profiles" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
     expect(page.url()).toMatch(/\/console\/profiles$/);
 
     expect((await request.get("/console/assets/missing.js")).status()).toBe(404);
@@ -140,7 +145,7 @@ test.describe("console enabled", () => {
         },
       }),
     );
-    await page.goto("/console/");
+    await page.goto("/console/settings");
     await signIn(page, admin);
     await expect(page.getByText("<script>window.__xss=2</script>").first()).toBeVisible();
     await page.getByRole("button", { name: /set the initial values/ }).click();

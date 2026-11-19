@@ -232,7 +232,7 @@ export function SkillDetail() {
           {mode === "manage" && (
             <div className="flex flex-wrap gap-2">
               <Link to={`/skills/${encodeURIComponent(name)}/publish`}>
-                <Button size="sm">Publish a new version</Button>
+                <Button size="sm">Add version</Button>
               </Link>
               {skill.isSuccess && (
                 <Button

@@ -27,7 +27,7 @@ import { readDrop, readFolder, readZipFile, zipBaseName } from "@/lib/skills/rea
 import { SKILL_NAME } from "@/lib/skills/limits";
 import { useCatalogMode } from "@/lib/use-catalog-mode";
 
-/** The route segment of "Publish a skill": the name comes from the chosen folder or zip, not from the address. */
+/** The route segment of "Add skill": the name comes from the chosen folder or zip, not from the address. */
 export const NEW_SKILL = "_new";
 
 /** Chrome's `webkitdirectory` is not in React's types; the attribute is what makes the input a folder picker. */
@@ -344,7 +344,7 @@ export function SkillPublish() {
   const { mode } = useCatalogMode();
   const queryClient = useQueryClient();
   const param = useParams().name ?? "";
-  // On a skill's own page the name is given; from "Publish a skill" it comes from the chosen folder or zip.
+  // On a skill's own page the name is given; from "Add skill" it comes from the chosen folder or zip.
   const expected = param === NEW_SKILL ? undefined : param;
   const [chosen, setChosen] = useState<
     { entries: RawEntry[]; label: string; fallback: string | undefined } | undefined
@@ -438,7 +438,7 @@ export function SkillPublish() {
       <Card>
         <CardHeader>
           <CardTitle>
-            {expected === undefined ? "Publish a skill" : `Publish a new version of ${expected}`}
+            {expected === undefined ? "Add skill" : `New version of ${expected}`}
           </CardTitle>
           {expected === undefined && (
             <CardDescription>The name comes from the SKILL.md in it.</CardDescription>
