@@ -51,7 +51,7 @@ export default defineConfig({
   projects: [
     {
       name: "catalogs",
-      testMatch: ["catalogs.spec.ts", "playground.spec.ts"],
+      testMatch: ["catalogs.spec.ts", "playground.spec.ts", "status.spec.ts"],
       use: { baseURL: `http://127.0.0.1:${String(catalogs)}`, trace: "retain-on-failure" },
     },
     {
