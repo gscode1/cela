@@ -47,6 +47,9 @@ const insecure = [
   "--set",
   "security.allowInsecureRuntime=true",
 ];
+// The explicit opt-out of the egress proxy (on by default, ADR 0038 amendment of 2026-11-19): the sandbox policies of
+// before the network cutover.
+const proxyOff = ["--set", "egressProxy.enabled=false"];
 const named = (list: Obj[], kind: string, name: string): Obj => {
   const found = list.find((d) => d.kind === kind && d.metadata.name === name);
   expect(found, `${kind}/${name}`).toBeDefined();
@@ -63,6 +66,7 @@ const allowedKinds = new Set([
   "Deployment",
   "NetworkPolicy",
   "CiliumNetworkPolicy",
+  "PodDisruptionBudget",
   "Role",
   "RoleBinding",
   "SandboxTemplate",
@@ -74,6 +78,7 @@ const allowedGroups = new Set([
   "v1",
   "apps/v1",
   "networking.k8s.io/v1",
+  "policy/v1",
   "cilium.io/v2",
   "rbac.authorization.k8s.io/v1",
   "extensions.agents.x-k8s.io/v1beta1",
@@ -136,7 +141,11 @@ describe.each(modes)(
     it("sets the runtime exactly as asked, and tells the orchestrator when it is insecure", () => {
       const template = named(list, "SandboxTemplate", "pi-env-template");
       expect(template.spec.podTemplate.spec.runtimeClassName).toBe(m.insecure ? "runc" : "gvisor");
-      for (const d of ofKind(list, "Deployment").filter((x) => x.metadata.name !== "pi-ingest")) {
+      const orchestrators = ofKind(list, "Deployment").filter((x) =>
+        x.metadata.name.startsWith("pi-orchestrator"),
+      );
+      expect(orchestrators).toHaveLength(m.shards);
+      for (const d of orchestrators) {
         expect(envOf(d).PI_ALLOW_INSECURE_RUNTIME?.value).toBe(m.insecure ? "1" : undefined);
       }
     });
@@ -168,7 +177,13 @@ describe("orchestrator and ingest configuration", () => {
       ofKind(list, "Service")
         .map((s) => s.metadata.name)
         .sort(),
-    ).toEqual(["pi-ingest", "pi-orchestrator", "pi-orchestrator-0", "pi-orchestrator-1"]);
+    ).toEqual([
+      "pi-egress-proxy",
+      "pi-ingest",
+      "pi-orchestrator",
+      "pi-orchestrator-0",
+      "pi-orchestrator-1",
+    ]);
     const instance = (name: string) =>
       named(list, "Service", name).spec.selector["app.kubernetes.io/instance"];
     expect(instance("pi-orchestrator")).toBe("pi-orchestrator");
@@ -200,8 +215,10 @@ describe("orchestrator and ingest configuration", () => {
   });
 
   it("wires the optional OneCLI and GitHub references, as optional", () => {
+    // Without the proxy, whose binding key would be one more (required) volume.
     const wired = docs([
       ...external,
+      ...proxyOff,
       "--set",
       "onecli.external.agentTokenSecret=tok",
       "--set",
@@ -476,9 +493,10 @@ describe("network policy invariants", () => {
   const nameOfSelector = (t: Obj): string | undefined =>
     t.podSelector?.matchLabels?.["app.kubernetes.io/name"];
 
+  // The sandbox policies of an install that opts out of the egress proxy: the proxied ones are checked under ADR 0038.
   for (const provider of ["cilium", "standard"]) {
-    describe(`provider ${provider}`, () => {
-      const list = docs([...external, "--set", `networkPolicy.provider=${provider}`]);
+    describe(`provider ${provider}, egress proxy off`, () => {
+      const list = docs([...external, ...proxyOff, "--set", `networkPolicy.provider=${provider}`]);
       const policies = ofKind(list, "NetworkPolicy");
 
       it("denies everything by default and allows DNS to CoreDNS only", () => {
@@ -495,6 +513,7 @@ describe("network policy invariants", () => {
           docs([
             ...external,
             ...insecure,
+            ...proxyOff,
             "--set-json",
             'networkPolicy.sandbox.extraEgressExcept=["203.0.113.0/24","2001:db8::/32","64:ff9b::/96"]',
           ]),
@@ -620,6 +639,7 @@ describe("network policy invariants", () => {
         expect(rule.ports.map((p: Obj) => p.port)).toEqual([10255, 10256]);
         const https = ofKind(
           docs([
+            ...proxyOff,
             "--set",
             "onecli.mode=external",
             "--set",
@@ -694,7 +714,9 @@ describe("network policy invariants", () => {
 });
 
 describe("bundled OneCLI (install slice 10, ADR 0022)", () => {
-  const bundled = ["--set", "onecli.mode=bundled"];
+  // Without the egress proxy: a sandbox then reaches the gateway directly. With it (the default), through the proxy only
+  // (the OneCLI route, ADR 0037, below).
+  const bundled = ["--set", "onecli.mode=bundled", ...proxyOff];
   const list = docs(bundled);
   const orchestrator = named(list, "Deployment", "pi-orchestrator");
   const env = envOf(orchestrator);
@@ -1164,9 +1186,36 @@ describe("egressProxy (ADR 0035)", () => {
       (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-egress-proxy",
     );
 
-  it("renders nothing by default", () => {
-    const all = docs();
+  it("renders nothing when disabled", () => {
+    const all = docs(proxyOff);
     expect(JSON.stringify(all)).not.toContain("pi-egress-proxy");
+    expect(JSON.stringify(all)).not.toContain("PI_EGRESS_PROXY_URL");
+  });
+
+  it("renders the proxy and the proxied-only sandbox egress by default (ADR 0038 amendment of 2026-11-19)", () => {
+    const all = docs();
+    expect(named(all, "Deployment", "pi-egress-proxy").spec.replicas).toBe(2);
+    expect(named(all, "Service", "pi-egress-proxy").spec.ports[0].port).toBe(3128);
+    expect(envOf(named(all, "Deployment", "pi-orchestrator")).PI_EGRESS_PROXY_URL?.value).toBe(
+      "http://pi-egress-proxy.ns.svc:3128",
+    );
+    const sandbox = ofKind(all, "NetworkPolicy").filter(
+      (p) => p.spec.podSelector?.matchLabels?.["app.kubernetes.io/name"] === "pi-sandbox",
+    );
+    expect(sandbox.map((p) => p.metadata.name).sort()).toEqual([
+      "sandbox-allow-egress-proxy-egress",
+      "sandbox-allow-orchestrator-ingress",
+      "sandbox-default-deny",
+    ]);
+    expect(sandbox.flatMap((p) => p.spec.egress ?? [])).toEqual([
+      {
+        to: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "pi-egress-proxy" } } }],
+        ports: [{ protocol: "TCP", port: 3128 }],
+      },
+    ]);
+    expect(JSON.stringify(all)).not.toMatch(
+      /sandbox-allow-internet-egress|sandbox-allow-onecli-egress/,
+    );
   });
 
   it("renders two replicas, a PDB, a Service and a ServiceAccount without a token", () => {
@@ -1202,7 +1251,7 @@ describe("egressProxy (ADR 0035)", () => {
           (d) => d.kind === "Deployment" && d.metadata.name.startsWith("pi-orchestrator"),
         ) ?? {},
       );
-    expect(orchestrator(docs()).PI_EGRESS_PROXY_URL).toBeUndefined();
+    expect(orchestrator(docs(proxyOff)).PI_EGRESS_PROXY_URL).toBeUndefined();
     const all = docs(on);
     expect(orchestrator(all).PI_EGRESS_PROXY_URL?.value).toBe("http://pi-egress-proxy.ns.svc:3128");
     // ADR 0038: with the cutover, nothing but a sandbox with its token reaches the proxy by default.
@@ -1249,7 +1298,11 @@ describe("egressProxy (ADR 0035)", () => {
         return String((e as { stderr?: string }).stderr ?? e);
       }
     };
-    expect(run(["--set", "egressProxy.enabled=true"])).toContain("existingSecret");
+    // On by default: without its Secret the render fails, and the message names the opt-out.
+    const missing = run(["--set", "egressProxy.database.existingSecret="]);
+    expect(missing).toContain("egressProxy.database.existingSecret");
+    expect(missing).toContain("egressProxy.enabled=false");
+    expect(run(["--set", "egressProxy.database.existingSecret=", ...proxyOff])).toBe("");
     expect(run([...on, "--set", "images.egressProxy.tag="])).toContain("images.egressProxy");
     expect(run([...on, "--set", "egressProxy.privateEgress[0].cidr=10.0.0.0/8"])).toMatch(/ports/);
   });
@@ -1326,13 +1379,21 @@ describe("egressProxy (ADR 0035)", () => {
       expect(
         proxyPolicies(noOnecli).some((p) => p.metadata.name === "egress-proxy-allow-onecli-egress"),
       ).toBe(false);
-      expect(JSON.stringify(docs(onecli))).not.toMatch(/egress-binding|EGRESS_UPSTREAM/);
+      expect(JSON.stringify(docs([...onecli, ...proxyOff]))).not.toMatch(
+        /egress-binding|EGRESS_UPSTREAM/,
+      );
     });
 
     it("refuses the proxy with OneCLI and no binding Secret", () => {
       let error = "";
       try {
-        helmTemplate(chart, [...on, "--set", "onecli.mode=bundled"]);
+        helmTemplate(chart, [
+          ...on,
+          "--set",
+          "onecli.mode=bundled",
+          "--set",
+          "egressProxy.binding.existingSecret=",
+        ]);
       } catch (e) {
         error = String((e as { stderr?: string }).stderr ?? e);
       }
@@ -1363,7 +1424,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
     t.spec.podTemplate.metadata.labels["pi-durable.dev/network-mode"];
 
   describe("without the egress proxy (the cutover is off)", () => {
-    const list = docs([...external]);
+    const list = docs([...external, ...proxyOff]);
 
     it("keeps the sandbox policies as before: DNS, the OneCLI gateway and the internet", () => {
       expect(names(sandboxPolicies(list))).toEqual([
@@ -1384,7 +1445,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
     });
 
     it("refuses the gate: there is no direct mode without the proxy", () => {
-      expect(() => docs([...external, ...gate])).toThrow(
+      expect(() => docs([...external, ...proxyOff, ...gate])).toThrow(
         /allowDirectSandboxEgress needs egressProxy/,
       );
     });
@@ -1549,7 +1610,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
   });
 
   it("says in the notes that the cutover is off without the proxy", () => {
-    expect(execNotes(external)).toMatch(
+    expect(execNotes([...external, ...proxyOff])).toMatch(
       /egressProxy\.enabled=false, so the network cutover is off/,
     );
     expect(execNotes([...on, ...external])).not.toMatch(/cutover is off/);
