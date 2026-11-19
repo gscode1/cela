@@ -175,7 +175,7 @@ Network policy probe (run only by the orchestrator, at start and on demand throu
    bundled Postgres and agent-sandbox, the egress proxy (the chart's default since 2026-11-19, ADR 0038 amendment; the
    bundled Postgres creates its read-only role, `--no-egress-proxy` opts out), `onecli.mode: disabled` and the scripted
    model by default. The browser sandbox flavour is on by default too (ADR 0041 amendment of 2026-11-19; `--build` also
-   builds the 1.6 GB `pi-sandbox-browser`); `--no-browser` leaves it out, `--browser` is a no-op. `hack/kind-up.sh --onecli` adds bundled OneCLI (`onecli.mode=bundled`; `externalUrl` `http://localhost:10254` with
+   builds the 1.6 GB `pi-sandbox-browser`); `--no-browser` leaves it out, `--browser` is a no-op. After the rollout `hack/install.sh` seeds the `browser` profile and its two skills when the flavour and the egress proxy are on (create-only, so an edited profile survives upgrades; `--no-seed-browser-profile` opts out; ADR 0041 amendment note). `hack/kind-up.sh --onecli` adds bundled OneCLI (`onecli.mode=bundled`; `externalUrl` `http://localhost:10254` with
    `allowInsecureExternalUrl` for a port-forward trial). No ESO and no credentials are needed.
 5. Verify: read `/admin/status` and print the runtime and network-policy warnings; then smoke (create a session, run
    one tool call that writes a workspace marker, stream the result, replace the Pod, check the marker, delete the

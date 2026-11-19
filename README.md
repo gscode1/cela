@@ -172,7 +172,7 @@ the sandbox policies are then as before the cutover (every sandbox has direct in
 
 A **browser sandbox** (profile field `sandboxFlavour: browser`, chart `sandbox.flavours.browser.enabled`, on by default; set it to `false` to skip the image) runs the
 sandbox image plus Chromium, Playwright CLI and agent-browser, always through the egress proxy and without credentials.
-Seed the `browser` profile and its two skills with `hack/seed-browser-profile.mjs`; check a cluster with
+`hack/install.sh` seeds the `browser` profile and its two skills on install when the flavour is on (create-only: an edited profile is never overwritten on upgrade; `--no-seed-browser-profile` opts out; the script is `hack/seed-browser-profile.mjs`); check a cluster with
 `hack/browser-smoke.sh`. See [ADR 0041](docs/decisions/0041-browser-sandbox.md).
 
 Test in a disposable namespace: `KUBE_CONTEXT=your-context STORAGE_CLASS=your-storage-class tests/e2e/run.sh smoke`. Omit

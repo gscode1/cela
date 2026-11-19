@@ -23,6 +23,7 @@
 #   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
 #      network policies, the egress proxy (the chart's default), OneCLI disabled (or, with --onecli, bundled: install.sh
 #      runs hack/onecli.sh first), the scripted model only
+#      (install.sh also seeds the `browser` profile and its skills, create-only, unless --no-browser or the proxy is off)
 #   7. reads the isolation probe (hack/kind-smoke.sh --status), checks that the admin console (charts' console.enabled,
 #      on in values-kind.yaml), the session API and, with --onecli, the OneCLI dashboard answer, and ends with a summary:
 #      the URLs and whether each is ready, how to sign in (commands that read the Secrets; no secret is printed), the
