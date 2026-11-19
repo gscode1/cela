@@ -10,6 +10,7 @@
 !tests/e2e/**
 !hack/
 !hack/gen-api-secret.sh
+!hack/seed-browser-profile.mjs
 !images/
 !images/**
 **/node_modules
