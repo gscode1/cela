@@ -148,6 +148,7 @@ test.describe("console enabled", () => {
     await page.goto("/console/settings");
     await signIn(page, admin);
     await expect(page.getByText("<script>window.__xss=2</script>").first()).toBeVisible();
+    await page.getByText("Recent changes").click();
     await page.getByRole("button", { name: /set the initial values/ }).click();
     await expect(page.getByText(hostile).first()).toBeVisible();
     await expect(page.locator("main img, main b, main script")).toHaveCount(0);
