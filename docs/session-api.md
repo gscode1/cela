@@ -111,6 +111,9 @@ no secret: the operator's token goes from the browser to `/admin/*` only. Other 
   a `409`, with reload and compare. The profile editor reads `GET /admin/tools`, `/admin/mcp-servers` and `/admin/skills`, and
   previews what a new session would get with the session-creation rules (allowlist with the default model, then profile,
   then settings; no caller overrides) before saving.
+- Playground: an admin-only screen that starts a real session with the signed-in token (`POST /sessions`, events, the SSE
+  stream read with `fetch` because an `EventSource` cannot send the bearer header, `DELETE`). It uses the API as any client does
+  and adds no endpoint ([ADR 0045](decisions/0045-console-playground.md)).
 - Served only when `PI_CONSOLE_DIR` names the built bundle (the chart sets `/app/console` with `console.enabled`, default
   off). Otherwise every console path is `404`.
 - `/console` redirects (`308`) to `/console/`. A path with a file extension is an asset: it is served from the directory
