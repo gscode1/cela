@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|console|all>
+# Single entry point for the e2e suites: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|browser|console|all>
 #   smoke   fast suite for every change (about 5 minutes): create/send/stream, dedup, auth, delete (one sandbox tool call), Postgres pod restart keeps data
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
@@ -12,6 +12,10 @@
 #   shards  horizontal scaling by schema sharding (docs/decisions/0017-schema-sharding.md): the chart is installed with
 #           orchestrator.shards=2 (a second orchestrator Deployment) and ingest routes between the two. Not part of `all`
 #           (it adds a Deployment and takes about 20 minutes).
+#   browser the browser sandbox (issue #267, ADR 0041) on a gVisor cluster with a live model: the chart is installed with
+#           the egress proxy and sandbox.flavours.browser; a live openai-codex/gpt-6-luna session drives Playwright CLI and
+#           agent-browser through OneCLI (a few real turns: spend), and scripted checks cover Chromium under gVisor and the
+#           denials. Needs BROWSER_SANDBOX_IMAGE and EGRESS_PROXY_IMAGE, the OneCLI secrets and the internet. Not part of `all`.
 #   console the admin console in a real browser (issue #143, docs/e2e.md "console suite"): the chart is installed with
 #           console.enabled=true, and Playwright on THIS machine (not a Job) drives http://127.0.0.1:<port>/console/ through a
 #           kubectl port-forward to pi-ingest with the run's alice (admin) and bob (owner without admin access) tokens; then
@@ -91,10 +95,11 @@ phase4b) phases=(phase4b) ;;
 phase4c) phases=(phase4c) ;;
 mcp) phases=(mcp) ;;
 shards) phases=(shards) ;;
+browser) phases=(browser) ;;
 console) phases=(console) ;;
 all) phases=(phase1 phase3 phase4 phase4b) ;;
 *)
-  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|console|all>" >&2
+  echo "usage: tests/e2e/run.sh <smoke|phase1|phase3|phase4|phase4b|phase4c|mcp|shards|browser|console|all>" >&2
   exit 64
   ;;
 esac
@@ -204,7 +209,7 @@ if ! k wait --for=condition=Ready externalsecret --all --timeout=120s >/dev/null
 fi
 # The gateway CA (public) from OneCLI itself, for the orchestrator's model calls and MCP. Only the suites that use OneCLI need it.
 if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/hack/fetch-onecli-ca.sh" >"$work/ca.log" 2>&1; then
-  if [[ ${REAL_MODEL:-0} == 1 ]] || has_phase phase4c || has_phase mcp; then
+  if [[ ${REAL_MODEL:-0} == 1 ]] || has_phase phase4c || has_phase mcp || has_phase browser; then
     cat "$work/ca.log" >&2
     echo "could not fetch the OneCLI CA, and this suite needs it" >&2
     exit 1
@@ -221,7 +226,7 @@ log "database: charts/pi-postgres into $ns"
 chmod 700 "$work"
 if ! k get secret pi-postgres-auth >/dev/null 2>&1; then
   mkdir -p "$work/pgauth"
-  for key in postgres-password pi-password onecli-password; do openssl rand -hex 24 | tr -d '\n' >"$work/pgauth/$key"; done
+  for key in postgres-password pi-password onecli-password egress-password; do openssl rand -hex 24 | tr -d '\n' >"$work/pgauth/$key"; done
   k create secret generic pi-postgres-auth --from-file="$work/pgauth" >/dev/null
   rm -rf "$work/pgauth"
 fi
@@ -251,6 +256,8 @@ if [[ $db_tls == 1 ]] && ! { k get secret pi-postgres-tls >/dev/null 2>&1 && k g
 fi
 pg_values=(--set persistence.size=1Gi --set persistence.retain=false
   --set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"app.kubernetes.io/name":"pi-ingest"},{"app.kubernetes.io/name":"e2e-db-client"}]')
+# The browser suite runs the egress proxy, which reads the rules with the read-only role pi_egress (ADR 0035).
+has_phase browser && pg_values+=(--set auth.egressReader.enabled=true)
 [[ $db_tls != 1 ]] || pg_values+=(--set tls.existingSecret=pi-postgres-tls --set tls.requireTls=true)
 [[ -z ${STORAGE_CLASS:-} ]] || pg_values+=(--set "persistence.storageClass=$STORAGE_CLASS")
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-postgres "$root/charts/pi-postgres" --namespace "$ns" \
@@ -329,6 +336,28 @@ YAML
   k delete pod e2e-tls-probe --ignore-not-found --wait=false >/dev/null
 fi
 
+# The browser suite's egress proxy needs its database Secret (the URI of pi_egress) and the key that seals OneCLI tokens
+# for it (ADR 0037). Both are made in the namespace through files in the private temp dir and never printed; a reused
+# namespace keeps them (a new binding key would leave stored bindings unreadable).
+if has_phase browser; then
+  k get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | grep -q . ||
+    { echo "pi-postgres-auth in $ns has no egress-password (a namespace from before the browser suite): use a fresh RUN_ID" >&2; exit 1; }
+  if ! k get secret pi-egress-database >/dev/null 2>&1; then
+    {
+      printf 'postgres://pi_egress:'
+      k get secret pi-postgres-auth -o jsonpath='{.data.egress-password}' | base64 -d
+      printf '@pi-postgres.%s.svc:5432/pi' "$ns"
+    } >"$work/egress-uri"
+    k create secret generic pi-egress-database --from-file=uri="$work/egress-uri" >/dev/null
+    rm -f "$work/egress-uri"
+  fi
+  if ! k get secret pi-egress-binding >/dev/null 2>&1; then
+    openssl rand -base64 32 | tr -d '\n' >"$work/binding-key"
+    k create secret generic pi-egress-binding --from-file=key="$work/binding-key" >/dev/null
+    rm -f "$work/binding-key"
+  fi
+fi
+
 # The chart, installed exactly as a user installs it. Orchestrator shards: the shards suite needs two (docs/scaling.md);
 # the shard count can only grow, so a reused namespace that already has two keeps them.
 shards=1
@@ -336,6 +365,12 @@ if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then 
 log "helm: charts/pi-durable into $ns (orchestrator shards: $shards)"
 # The console suite serves the console (CONSOLE_ENABLED is read by chart-values.py); every other suite leaves it off.
 if has_phase console; then export CONSOLE_ENABLED=1; fi
+# The browser suite turns on the egress proxy and the browser flavour (chart-values.py); the images have no local default.
+if has_phase browser; then
+  export BROWSER_SUITE=1
+  : "${BROWSER_SANDBOX_IMAGE:?BROWSER_SANDBOX_IMAGE (a pushed pi-sandbox-browser reference) is required for the browser suite}"
+  : "${EGRESS_PROXY_IMAGE:?EGRESS_PROXY_IMAGE (a pushed pi-egress-proxy reference) is required for the browser suite}"
+fi
 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
 helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \
   --values "$work/values.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm.log" 2>&1 || {
@@ -404,7 +439,7 @@ run_phase() { # phase1|phase3|phase4
     fi
     printf '\n-- %s result (final logs) --\n' "$name"
     sed -n '/^== RESULT/,$p' "$work/$name.full"
-    grep -E '^(ALL PHASE 1 E2E CHECKS PASSED|PHASE [34]:|PHASE 4[BC]:|SHARDS:)' "$work/$name.full" | sed 's/^/   /' || true
+    grep -E '^(ALL PHASE 1 E2E CHECKS PASSED|PHASE [34]:|PHASE 4[BC]:|SHARDS:|BROWSER:)' "$work/$name.full" | sed 's/^/   /' || true
   else
     echo "-- final logs could not be read (the verdict below comes from the Job status) --"
   fi

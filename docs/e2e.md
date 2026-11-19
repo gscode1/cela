@@ -14,8 +14,8 @@ RUN_ID=ab12cd tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept n
 tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 hours (DRY_RUN=1 lists them)
 ```
 
-Suites: `smoke`, `phase1`, `phase3`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards`, `console`, `all` (phase1, phase3, phase4, phase4b).
-`phase4c`, `mcp`, `shards` and `console` are not part of `all`; `phase4c` needs `REPO_A` and `REPO_B`, `mcp` needs the internet and the OneCLI host rule
+Suites: `smoke`, `phase1`, `phase3`, `phase4`, `phase4b`, `phase4c`, `mcp`, `shards`, `browser`, `console`, `all` (phase1, phase3, phase4, phase4b).
+`phase4c`, `mcp`, `shards`, `browser` and `console` are not part of `all`; `phase4c` needs `REPO_A` and `REPO_B`, `mcp` needs the internet and the OneCLI host rule
 for `mcp.deepwiki.com`.
 
 | Variable            | Meaning                                                                                                   |
@@ -36,6 +36,8 @@ for `mcp.deepwiki.com`.
 | `E2E_PARALLEL`      | independent tests of a suite that run side by side (default 4; 1 = one by one). Tests that restart or kill the orchestrator run alone afterwards (`tests/e2e/fns.sh`) |
 | `ONLY`              | `ONLY="a,b"` runs just those tests of the phase                                                           |
 | `DB_TLS=1`          | the run's Postgres requires TLS and pi-durable verifies it ([Database TLS](#database-tls)); unset or `0`: plain, as before |
+| `BROWSER_SANDBOX_IMAGE`, `EGRESS_PROXY_IMAGE` | the `browser` suite only: pushed references of `pi-sandbox-browser` and `pi-egress-proxy` (required; there is no local default) |
+| `SKIP_LIVE=1`       | the `browser` suite leaves out its live-model test |
 | `REAL_MODEL=1`      | phase4b also makes two real Codex turns through OneCLI (spend)                                            |
 | `REPO_A`, `REPO_B`  | private `owner/name` repos in the GitHub App installation, for phase4c (otherwise most of its tests SKIP) |
 
@@ -276,6 +278,23 @@ short Service URLs and the generated database Secret resolve inside that run's n
 gets `PI_ORCH_NAMESPACE` from its own metadata for sandbox probes. Adapt external OneCLI endpoints in both
 `tests/e2e/chart-values.py` and the driver template. Ingest stays unready until stored session shards have configured routes,
 and exits listing missing shards instead of silently sending them to shard 0.
+
+## The browser suite (sandbox)
+
+`tests/e2e/run.sh browser` runs the browser sandbox of [ADR 0041](decisions/0041-browser-sandbox.md) on the cluster's real runtime
+(gVisor) with a live model (issue #267). It is not part of `all` and it spends model turns. The run installs the chart with
+`egressProxy.enabled` and `sandbox.flavours.browser.enabled` (`tests/e2e/chart-values.py`, switched by `BROWSER_SUITE=1`), adds
+`openai-codex/gpt-6-luna` to the model allowlist and makes the proxy's Secrets in the namespace: `pi-egress-database` (the URI of
+the read-only role `pi_egress`, which the run's Postgres creates with `auth.egressReader`) and `pi-egress-binding`. It does not
+turn on `onecli.hostRules.reconcile`, so no global OneCLI rule changes. `BROWSER_SANDBOX_IMAGE` and `EGRESS_PROXY_IMAGE` are
+required next to the four usual image variables (the browser image is about 1.6 GB: the first sandbox waits for the pull).
+
+`tests/e2e/run-browser.sh` (in the driver Job) checks: the seed script (`hack/seed-browser-profile.mjs`, baked into the driver
+image with the skills), a Pod with `runtimeClassName: gvisor` and the browser image, Chromium starting under gVisor, Playwright
+CLI and agent-browser each returning a title and a PNG, the denials (kube API by name and IP, a platform Service, the metadata
+address, `file://`, `chrome://`, a host outside a narrow profile's rules), and two live turns (about eight model calls) on
+`openai-codex/gpt-6-luna` through OneCLI, one per tool, asserting the tool calls, "Example Domain" in the answer and the PNG
+files in the sandbox. The OneCLI credential never enters the sandbox (the suite also checks the sandbox's variable names).
 
 ## The console suite (browser)
 

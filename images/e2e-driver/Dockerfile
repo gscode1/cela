@@ -21,6 +21,9 @@ COPY --from=tools /usr/bin/kubectl /usr/local/bin/kubectl
 COPY --from=build --chown=1000:1000 /out /opt/phase1
 COPY tests/e2e /driver/tests/e2e
 COPY hack/gen-api-secret.sh /driver/hack/gen-api-secret.sh
+# The browser suite seeds the browser profile with the script and the skills of the browser image.
+COPY hack/seed-browser-profile.mjs /driver/hack/seed-browser-profile.mjs
+COPY images/sandbox-browser/skills /driver/images/sandbox-browser/skills
 USER 1000:1000
 WORKDIR /driver
 CMD ["bash"]

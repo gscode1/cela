@@ -107,6 +107,18 @@ def main() -> None:
         # Only the console suite turns the admin console on (tests/e2e/run.sh console).
         "console": {"enabled": os.environ.get("CONSOLE_ENABLED") == "1"},
     }
+    if os.environ.get("BROWSER_SUITE") == "1":
+        # The browser suite (run-browser.sh, ADR 0041): the egress proxy (its Secrets are made by run.sh), the browser
+        # flavour on the chart's default runtime (gVisor), and the live model it drives.
+        values["images"]["sandboxBrowser"] = split_ref(os.environ["BROWSER_SANDBOX_IMAGE"])
+        values["images"]["egressProxy"] = split_ref(os.environ["EGRESS_PROXY_IMAGE"])
+        values["egressProxy"] = {
+            "enabled": True,
+            "database": {"existingSecret": "pi-egress-database", "uriKey": "uri"},
+            "binding": {"existingSecret": "pi-egress-binding", "key": "key"},
+        }
+        values["sandbox"]["flavours"] = {"browser": {"enabled": True}}
+        values["models"]["allowlist"].append("openai-codex/gpt-6-luna")
     if os.environ.get("DB_TLS") == "1":
         values["database"]["tls"] = {"mode": "verify-full", "existingSecret": "pi-db-tls-ca", "caKey": "ca.crt"}
     json.dump(values, sys.stdout, indent=2)
