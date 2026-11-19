@@ -41,3 +41,12 @@ spec:
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
+    # An MCP host that resolves to a LoadBalancer IP served by this same cluster (an ingress or gateway) is not `world`: Cilium
+    # translates the IP to the backend pod, so the rule above does not match. Admit those pods on the pod's target port, not 443.
+    # - toEndpoints:
+    #     - matchLabels:
+    #         k8s:io.kubernetes.pod.namespace: <gateway-namespace>
+    #         <gateway-pod-label>: <value>
+    #   toPorts:
+    #     - ports:
+    #         - { port: "10443", protocol: TCP } # target port of the HTTPS listener (Envoy Gateway maps 443 to 10443)
