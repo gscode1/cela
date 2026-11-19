@@ -7,7 +7,7 @@
 #   1. sign up the first account (email + password), or sign in if it exists;
 #   2. read its `oc_` admin key;
 #   3. create the orchestrator agent (and read its `aoc_` token);
-#   4. create the host allowlist rules (allow per host, then `block *` last);
+#   4. optionally create the host allowlist rules (allow per host, then `block *` last), only when ONECLI_HOSTS is set;
 #   5. optionally create one generic secret and grant it to the agent;
 #   6. copy only the PUBLIC gateway CA certificate to a ConfigMap.
 # Results go to Kubernetes Secrets and a ConfigMap; nothing secret is printed. A second run changes nothing.
@@ -29,7 +29,10 @@
 #   ONECLI_AGENT_SECRET  Secret for the agent token (default pi-onecli; key agent-token)
 #   ONECLI_AGENT_ID      agent identifier (default pi-orchestrator)
 #   ONECLI_CA_CONFIGMAP  ConfigMap for the public CA (default pi-onecli-ca; key ca.pem, the key charts/pi-durable mounts)
-#   ONECLI_HOSTS         space-separated allowlist hosts (default: docs/onecli-host-rules.md); empty: no rules
+#   ONECLI_HOSTS         space-separated allowlist hosts: an allow rule per host, then a terminal `block *` (docs/onecli-host-rules.md
+#                        lists the hosts of the previous default). Unset or empty (the default, ADR 0043): no host rules and
+#                        no block, OneCLI relays any host. It never deletes an existing `pi-block-all`: an install that was
+#                        bootstrapped before keeps it until you delete it (the script says so).
 #   ONECLI_SECRET_NAME / ONECLI_SECRET_HOST / ONECLI_SECRET_VALUE
 #                        create one generic secret (header `authorization: Bearer {value}`) and grant it to the agent.
 #                        The value is read from the environment only. All three or none.
@@ -60,9 +63,9 @@ admin_secret=${ONECLI_ADMIN_SECRET:-pi-onecli-admin}
 agent_secret=${ONECLI_AGENT_SECRET:-pi-onecli}
 agent_id=${ONECLI_AGENT_ID:-pi-orchestrator}
 ca_cm=${ONECLI_CA_CONFIGMAP:-pi-onecli-ca}
-# Keep in step with docs/onecli-host-rules.md and hack/onecli-policies/egress.yaml (a unit test compares the first).
-default_hosts="chatgpt.com *.chatgpt.com auth.openai.com api.openai.com openrouter.ai github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org pypi.org files.pythonhosted.org mcp.deepwiki.com"
-hosts=${ONECLI_HOSTS-$default_hosts}
+# Open by default (ADR 0043): hardening is opt-in, with the list you choose. The list the project proposes is in
+# docs/onecli-host-rules.md, hack/onecli-host-rules.sh and hack/onecli-policies/egress-strict.yaml (a unit test keeps them equal).
+hosts=${ONECLI_HOSTS:-}
 block_name=pi-block-all
 sec_name=${ONECLI_SECRET_NAME:-}
 sec_host=${ONECLI_SECRET_HOST:-}
@@ -286,7 +289,7 @@ else
 fi
 unset token
 
-# ---- 4. host rules (allow each host, block everything else LAST) -------------------------------------------------
+# ---- 4. host rules, only when ONECLI_HOSTS is set (allow each host, block everything else LAST) -------------------
 
 rule_name() { printf 'pi-allow-%s' "${1//\*./wild-}"; }
 rule_body() { jq -n --arg n "$1" --arg a "$2" --arg h "$3" '{name:$n, action:$a, targets:[{kind:"network", hostPattern:$h}]}' >"$work/req.json"; }
@@ -319,6 +322,15 @@ if [[ -n $hosts ]]; then
   fi
   [[ $created -eq 0 ]] || changed
   log "host rules: $created written"
+else
+  # Open default: no rules are made. A block left by an earlier bootstrap, or by hack/onecli-host-rules.sh, still applies.
+  call GET /v1/org/policy/rules
+  expect "GET rules" 200
+  if jq -e --arg n "$block_name" '(if type=="array" then . else (.rules // .data // []) end) | any(.name==$n)' "$work/body" >/dev/null; then
+    log "host rules: none requested (ONECLI_HOSTS is empty), but the rule $block_name from an earlier install still blocks every host not allowed; delete it (docs/onecli-host-rules.md) to open OneCLI"
+  else
+    log "host rules: none requested (ONECLI_HOSTS is empty); OneCLI relays any host"
+  fi
 fi
 
 # ---- 5. optional secret and grant -------------------------------------------------------------------------------

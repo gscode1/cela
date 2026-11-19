@@ -246,9 +246,12 @@ const bootstrap = (env: Record<string, string> = {}): Promise<Result> =>
   });
 
 describe.skipIf(!tools)("hack/onecli-bootstrap.sh", () => {
+  // The hardening opt-in (docs/onecli-host-rules.md): an allow rule per host, then the terminal block.
+  const HARDENED = { ONECLI_HOSTS: "api.openai.com *.chatgpt.com github.com" };
+
   it("creates the account, key, agent, rules and CA on the first run, and changes nothing on the second", async () => {
     state = freshState();
-    const first = await bootstrap();
+    const first = await bootstrap(HARDENED);
     expect(first.status, first.out).toBe(0);
     expect(first.out).toMatch(/first account created/);
     expect(first.out).toMatch(/done: changed=[1-9]/);
@@ -269,6 +272,12 @@ describe.skipIf(!tools)("hack/onecli-bootstrap.sh", () => {
     expect(rules.at(-1)).toBe("pi-block-all");
     expect(rules).toContain("pi-allow-api.openai.com");
     expect(rules).toContain("pi-allow-wild-chatgpt.com");
+    expect(rules).toEqual([
+      "pi-allow-api.openai.com",
+      "pi-allow-wild-chatgpt.com",
+      "pi-allow-github.com",
+      "pi-block-all",
+    ]);
     const ruleCount = rules.length;
     const snapshot = readFileSync(join(dir, "state.json"), "utf8");
 
@@ -279,7 +288,7 @@ describe.skipIf(!tools)("hack/onecli-bootstrap.sh", () => {
     }
 
     state.calls.length = 0;
-    const second = await bootstrap();
+    const second = await bootstrap(HARDENED);
     expect(second.status, second.out).toBe(0);
     expect(second.out).toContain("done: changed=0");
     expect(second.out).toContain("stored admin key is valid");
@@ -291,6 +300,28 @@ describe.skipIf(!tools)("hack/onecli-bootstrap.sh", () => {
     // No write to OneCLI at all, and no auth call (those are rate limited).
     expect(state.calls.filter((c) => /^(POST|PUT|DELETE) /.test(c))).toEqual([]);
     expect(state.calls.filter((c) => c.includes("/auth/"))).toEqual([]);
+  });
+
+  it("makes no host rule and no block by default (open OneCLI, ADR 0043), and says so", async () => {
+    state = freshState();
+    rmSync(join(dir, "state.json"));
+    seedCa();
+    const run = await bootstrap();
+    expect(run.status, run.out).toBe(0);
+    expect(state.rules).toEqual([]);
+    expect(state.calls.filter((c) => /^(POST|PUT|DELETE) \/v1\/org\/policy/.test(c))).toEqual([]);
+    expect(run.out).toContain("host rules: none requested");
+    expect(run.out).toContain("OneCLI relays any host");
+  });
+
+  it("leaves a block from an earlier install alone, and warns that it still blocks", async () => {
+    state.rules.push({ id: "old", name: "pi-block-all", action: "block" });
+    state.calls.length = 0;
+    const run = await bootstrap();
+    expect(run.status, run.out).toBe(0);
+    expect(state.rules.map((r) => r.name)).toEqual(["pi-block-all"]);
+    expect(run.out).toContain("pi-block-all from an earlier install still blocks");
+    state.rules = [];
   });
 
   it("recovers the admin key from the stored login when only the key Secret is lost", async () => {
