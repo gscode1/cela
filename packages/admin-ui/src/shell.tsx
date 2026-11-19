@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router";
 import { useAuth } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { useStatusProblem } from "@/lib/use-status-rows";
 import { cn } from "@/lib/utils";
 
 /** The sidebar groups. Status is the landing page and stands alone, without a label. */
@@ -29,6 +30,7 @@ const GROUPS: readonly {
 
 export function Shell() {
   const { signOut } = useAuth();
+  const problem = useStatusProblem();
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-6 md:flex-row">
       <aside className="flex min-w-0 shrink-0 flex-col gap-4 md:w-56">
@@ -60,6 +62,15 @@ export function Shell() {
                   }
                 >
                   {link.title}
+                  {link.path === "status" && problem && (
+                    <span
+                      role="img"
+                      aria-label="Something is wrong"
+                      title="Something is wrong"
+                      data-testid="nav-problem"
+                      className="ml-2 inline-block size-2 rounded-full bg-red-600 align-middle"
+                    />
+                  )}
                 </NavLink>
               ))}
             </div>

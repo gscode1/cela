@@ -3,7 +3,6 @@ import { Link, Route, Routes } from "react-router";
 import { useAuth } from "@/auth";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
-import { Time } from "@/components/time";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,7 +67,6 @@ function SkillList() {
                 <Th>Current</Th>
                 <Th>Description</Th>
                 <Th>Used by</Th>
-                <Th>Updated</Th>
               </tr>
             </thead>
             <tbody>
@@ -97,10 +95,6 @@ function SkillList() {
                       ) : (
                         <ProfileLinks profiles={users} />
                       )}
-                    </Td>
-                    <Td>
-                      <Time value={skill.updatedAt} />
-                      <span className="text-muted-foreground"> by {skill.updatedBy}</span>
                     </Td>
                   </tr>
                 );

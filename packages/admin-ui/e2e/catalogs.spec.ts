@@ -134,10 +134,10 @@ test.describe("skills", () => {
     // Version table: files behind an expander, hashes only in Details and on hover.
     await page.getByRole("link", { name: `Back to ${name}` }).click();
     const row = page.getByTestId("version-1");
-    await expect(row).toContainText("Has a script and a binary");
+    await expect(row).not.toContainText("Has a script and a binary");
     await expect(row).toContainText("3 files");
     await expect(page.getByText(tool?.sha256 ?? "missing")).toHaveCount(0);
-    await row.getByRole("button", { name: "Files" }).click();
+    await row.getByRole("button", { name: /3 files/ }).click();
     await expect(page.getByText("sha256", { exact: true })).toHaveCount(0);
     await expect(
       page.getByRole("cell", { name: "bin/tool.bin executable", exact: true }),
@@ -355,10 +355,10 @@ test.describe("MCP servers", () => {
       "title",
       "https://mcp.example.com/mcp",
     );
-    await expect(row).toContainText("Read-only");
-    await expect(row).toContainText("enabled");
-    // Defaults and no source: nothing to expand, and none of the removed fields anywhere.
-    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    // Read-only is the quiet case: no badge, and the row keeps the secondary actions in its Details.
+    await expect(row).not.toContainText("Can change state");
+    await expect(page.getByTestId(`mcp-${name}-details`)).toHaveCount(0);
+    // None of the removed fields anywhere.
     for (const gone of ["Transport", "Reachability", "onecliSecret", "#42", "Revision"])
       await expect(page.getByText(gone)).toHaveCount(0);
     await page.getByText("Recent changes").click();
@@ -426,7 +426,7 @@ test.describe("MCP servers", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
-    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    await expect(page.getByTestId(`mcp-${name}-details`)).not.toContainText("OneCLI secret");
     await page.getByText("Recent changes").click();
     const changes = page.getByRole("listitem").filter({ hasText: name });
     await expect(changes.filter({ hasText: "OneCLI secret: none → github-mcp" })).toBeVisible();
@@ -528,22 +528,24 @@ test.describe("MCP servers", () => {
     await signInAndGo(page, "/console/mcp-servers");
 
     const roRow = page.getByTestId(`mcp-${ro}`);
-    await roRow.getByRole("button", { name: "Disable" }).click();
+    await roRow.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${ro}-details`).getByRole("button", { name: "Disable" }).click();
     await expect(roRow.getByText("disabled", { exact: true })).toBeVisible();
     // The badge says it all: no paragraph about disabled servers.
     await expect(page.getByText("its tools are unavailable")).toHaveCount(0);
-    await roRow.getByRole("button", { name: "Enable" }).click();
-    await expect(roRow.getByText("enabled", { exact: true })).toBeVisible();
+    await page.getByTestId(`mcp-${ro}-details`).getByRole("button", { name: "Enable" }).click();
+    await expect(roRow.getByText("disabled", { exact: true })).toHaveCount(0);
 
     const rwRow = page.getByTestId(`mcp-${rw}`);
     await expect(rwRow.getByText("disabled", { exact: true })).toBeVisible();
-    await rwRow.getByRole("button", { name: "Enable" }).click();
+    await rwRow.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${rw}-details`).getByRole("button", { name: "Enable" }).click();
     const panel = page.getByLabel(`Enable ${rw}`);
     await expect(panel.getByText("Does this server change anything?")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Enable" })).toBeDisabled();
     await panel.getByRole("radio", { name: /^Yes, it can change state/ }).check();
     await panel.getByRole("button", { name: "Enable" }).click();
-    await expect(rwRow.getByText("enabled", { exact: true })).toBeVisible();
+    await expect(rwRow.getByText("disabled", { exact: true })).toHaveCount(0);
   });
 
   test("delete is off while a profile names the server and offers to disable it; a free one is deleted after typing its name", async ({
@@ -559,7 +561,8 @@ test.describe("MCP servers", () => {
     await signInAndGo(page, "/console/mcp-servers");
     const row = page.getByTestId(`mcp-${name}`);
     await expect(row.getByRole("link", { name: profile })).toBeVisible();
-    await row.getByRole("button", { name: "Delete" }).click();
+    await row.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${name}-details`).getByRole("button", { name: "Delete" }).click();
     const panel = page.getByLabel(`Delete ${name}`);
     await expect(panel).toContainText(`Used by ${profile}`);
     await expect(panel).toContainText("cannot be undone");
@@ -573,7 +576,8 @@ test.describe("MCP servers", () => {
     // Free the server: no profile names it any more, so typing its name deletes it.
     await request.put(`/__fake/profiles/${profile}`, { data: { definition: {} } });
     await signInAndGo(page, "/console/mcp-servers");
-    await row.getByRole("button", { name: "Delete" }).click();
+    await row.getByRole("button", { name: "Details" }).click();
+    await page.getByTestId(`mcp-${name}-details`).getByRole("button", { name: "Delete" }).click();
     const free = page.getByLabel(`Delete ${name}`);
     await expect(free).not.toContainText("Used by");
     const confirm = free.getByRole("button", { name: `Delete ${name}` });
@@ -635,135 +639,5 @@ test.describe("MCP servers", () => {
     await expect(section).not.toContainText("The newest 20");
     await section.getByRole("button", { name: "Show more" }).click();
     expect(await section.getByRole("listitem").count()).toBeGreaterThan(5);
-  });
-});
-
-test.describe("isolation", () => {
-  test.describe.configure({ mode: "serial" });
-
-  const report = (over: Record<string, unknown> = {}) => ({
-    shard: 0,
-    configuredRuntime: "gvisor",
-    observedRuntime: "gvisor",
-    networkPolicy: "enforced",
-    networkPolicyCheckedAt: new Date().toISOString(),
-    networkPolicyDetail: null,
-    probeRequestedAt: null,
-    updatedAt: new Date().toISOString(),
-    ...over,
-  });
-
-  test("says so in one sentence when there are no reports", async ({ page, request }) => {
-    await request.put("/__fake/status", { data: { shards: [] } });
-    await signInAndGo(page, "/console/status");
-    await expect(page.getByRole("heading", { name: "Status" })).toBeVisible();
-    await expect(page.getByText("No report yet \u2014 the runtime has not started.")).toBeVisible();
-    await expect(page.getByRole("table")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Re-check network isolation" })).toHaveCount(0);
-  });
-
-  test("healthy: one green line, the table collapsed under Details and no Shard column for one shard", async ({
-    page,
-    request,
-  }) => {
-    await request.put("/__fake/status", { data: { shards: [report()] } });
-    await signInAndGo(page, "/console/status");
-    await expect(page.getByTestId("isolation-ok")).toHaveText(
-      "Sandboxes run under gVisor and network isolation is enforced.",
-    );
-    await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByRole("table")).toBeHidden();
-    await shot(page, "isolation-healthy.png");
-    await page.getByText("Details", { exact: true }).click();
-    const row = page.getByTestId("shard-0");
-    await expect(row).toBeVisible();
-    await expect(row).toContainText("gvisor");
-    await expect(row).toContainText("just now");
-    await expect(page.getByRole("columnheader", { name: "Shard" })).toHaveCount(0);
-    await expect(page.getByRole("columnheader", { name: "Last report" })).toBeVisible();
-    // A fresh check needs no timestamp of its own.
-    await expect(row).not.toContainText("checked");
-    await expect(page.getByRole("button", { name: "Re-check network isolation" })).toHaveAttribute(
-      "title",
-      "Takes up to a minute.",
-    );
-    for (const gone of ["Asks shard 0", "This page follows", "runtimeClassName"])
-      await expect(page.getByText(gone)).toHaveCount(0);
-  });
-
-  test("a problem: the alert names the shard, the table is open and mismatches read plainly", async ({
-    page,
-    request,
-  }) => {
-    const old = new Date(Date.now() - 3 * 86_400_000).toISOString();
-    await request.put("/__fake/status", {
-      data: {
-        shards: [
-          report({ networkPolicyCheckedAt: old }),
-          report({
-            shard: 1,
-            observedRuntime: "",
-            networkPolicy: "not-enforced",
-            networkPolicyDetail: { state: "not-enforced", reason: "egress to 10.0.0.1 succeeded" },
-          }),
-          report({
-            shard: 2,
-            configuredRuntime: "",
-            observedRuntime: null,
-            networkPolicy: "unknown",
-          }),
-        ],
-      },
-    });
-    await signInAndGo(page, "/console/status");
-    const alert = page.getByRole("alert");
-    await expect(alert).toContainText("Shard 1: configured gvisor, observed node default.");
-    await expect(alert).toContainText("Shard 1: network isolation is not enforced.");
-    await expect(alert).not.toContainText("no sandbox has started");
-    await expect(page.getByTestId("isolation-ok")).toHaveCount(0);
-    await expect(page.getByTestId("isolation-note")).toHaveText(
-      "Shard 2: no sandbox has started since the last restart, so the runtime is not confirmed yet.",
-    );
-    await expect(page.getByRole("columnheader", { name: "Shard" })).toBeVisible();
-    const first = page.getByTestId("shard-0");
-    await expect(first).toContainText("enforced");
-    // An old check shows when it ran.
-    await expect(first).toContainText("checked");
-    const second = page.getByTestId("shard-1");
-    await expect(second).toContainText("configured gvisor, observed node default");
-    await expect(second).toContainText("not enforced");
-    await expect(second).toContainText("egress to 10.0.0.1 succeeded");
-    const third = page.getByTestId("shard-2");
-    await expect(third).toContainText("not observed yet");
-    await expect(third).toContainText("not checked yet");
-    await expect(page.getByText("runtimeClassName")).toHaveCount(0);
-    await shot(page, "isolation-problem.png");
-  });
-
-  test("right after a restart: a neutral note, no alert", async ({ page, request }) => {
-    await request.put("/__fake/status", { data: { shards: [report({ observedRuntime: null })] } });
-    await signInAndGo(page, "/console/status");
-    await expect(page.getByTestId("isolation-note")).toContainText(
-      "No sandbox has started since the last restart, so the runtime is not confirmed yet.",
-    );
-    await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByTestId("isolation-ok")).toHaveCount(0);
-    await shot(page, "isolation-neutral.png");
-  });
-
-  test("re-checking turns a not-yet-checked report into the healthy line", async ({
-    page,
-    request,
-  }) => {
-    await request.put("/__fake/status", {
-      data: { shards: [report({ networkPolicy: "unknown", networkPolicyCheckedAt: null })] },
-    });
-    await signInAndGo(page, "/console/status");
-    await expect(page.getByRole("alert")).toContainText(
-      "network isolation has not been checked since the last start.",
-    );
-    await page.getByRole("button", { name: "Re-check network isolation" }).click();
-    await expect(page.getByTestId("isolation-ok")).toBeVisible();
-    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 });

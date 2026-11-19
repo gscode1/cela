@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  isStale,
-  runtimeName,
-  runtimeText,
-  statusPollInterval,
-  summarizeIsolation,
-} from "@/lib/api/status";
+import { runtimeName, runtimeText, statusPollInterval } from "@/lib/api/status";
 import type { ShardStatus } from "@/lib/api/status";
 
 const shard = (over: Partial<ShardStatus> = {}): ShardStatus => ({
@@ -44,56 +38,6 @@ describe("runtime text", () => {
   });
 });
 
-describe("isolation summary", () => {
-  it("is healthy only when every shard enforces and runs what is configured", () => {
-    expect(summarizeIsolation([shard()])).toMatchObject({ healthy: true, runtimes: ["gvisor"] });
-    expect(summarizeIsolation([]).healthy).toBe(false);
-  });
-
-  it("names the shard and the problem, but only when there are several shards", () => {
-    const one = summarizeIsolation([shard({ networkPolicy: "not-enforced" })]);
-    expect(one.problems).toEqual(["network isolation is not enforced."]);
-    const two = summarizeIsolation([
-      shard(),
-      shard({ shard: 1, observedRuntime: "", networkPolicy: "unknown" }),
-    ]);
-    expect(two.healthy).toBe(false);
-    expect(two.problems).toEqual([
-      "Shard 1: configured gvisor, observed node default.",
-      "Shard 1: network isolation has not been checked since the last start.",
-    ]);
-  });
-
-  it("treats a shard without a sandbox yet as a neutral note, not a problem", () => {
-    const fresh = summarizeIsolation([shard({ observedRuntime: null })]);
-    expect(fresh).toMatchObject({ healthy: true, problems: [], runtimes: [] });
-    expect(fresh.notes).toEqual([
-      "No sandbox has started since the last restart, so the runtime is not confirmed yet.",
-    ]);
-    const two = summarizeIsolation([shard(), shard({ shard: 1, observedRuntime: null })]);
-    expect(two.notes).toEqual([
-      "Shard 1: no sandbox has started since the last restart, so the runtime is not confirmed yet.",
-    ]);
-    expect(
-      summarizeIsolation([shard({ observedRuntime: null, networkPolicy: "not-enforced" })]),
-    ).toMatchObject({ healthy: false, problems: ["network isolation is not enforced."] });
-  });
-
-  it("treats a running probe as neither healthy nor a problem", () => {
-    expect(summarizeIsolation([shard({ networkPolicy: "running" })])).toMatchObject({
-      healthy: false,
-      checking: true,
-      problems: [],
-    });
-  });
-
-  it("calls a check stale after a day", () => {
-    const now = new Date("2026-11-17T12:00:00Z");
-    expect(isStale("2026-11-17T00:00:00Z", now)).toBe(false);
-    expect(isStale("2026-11-15T00:00:00Z", now)).toBe(true);
-  });
-});
-
 describe("status polling", () => {
   it("polls while a probe runs or a request waits for shard 0, and stops after", () => {
     expect(statusPollInterval(undefined)).toBe(false);
@@ -102,7 +46,5 @@ describe("status polling", () => {
     // Re-check asked: the state is still the old verdict until the orchestrator takes the request.
     const asked = [shard({ probeRequestedAt: "2026-11-18T00:00:00.000Z" })];
     expect(statusPollInterval(asked)).toBe(3_000);
-    expect(summarizeIsolation(asked)).toMatchObject({ checking: true, healthy: false });
-    expect(summarizeIsolation([shard()])).toMatchObject({ checking: false, healthy: true });
   });
 });

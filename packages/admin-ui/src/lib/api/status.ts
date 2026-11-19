@@ -19,11 +19,15 @@ export interface ShardStatus {
 
 export interface StatusReport {
   shards: ShardStatus[];
+  /** The cluster-wide verdict: shard 0 probes, the policy is the same for every shard. `null` before any report. */
   networkPolicy: {
     state: NetworkPolicyState;
     checkedAt: string | null;
+    detail?: { state: string; reason: string } | null;
     requestedAt: string | null;
   } | null;
+  /** Live sessions in network mode `direct` (open internet, no rules, no audit); 0 unless the chart allows it. */
+  directSessions?: number;
 }
 
 /**
@@ -74,64 +78,3 @@ export function runtimeText(shard: Pick<ShardStatus, "configuredRuntime" | "obse
     };
   return { text: plain(observedRuntime), mismatch: false };
 }
-
-export const POLICY_TEXT: Readonly<Record<NetworkPolicyState, string>> = {
-  enforced: "enforced",
-  "not-enforced": "not enforced",
-  unknown: "not checked yet",
-  running: "checking",
-  inconclusive: "inconclusive",
-};
-
-export interface IsolationSummary {
-  /** Every shard enforces the network policy and runs the runtime it is configured with. */
-  healthy: boolean;
-  /** One line per problem, naming the shard when there is more than one. */
-  problems: string[];
-  /** Normal states worth a muted line: no sandbox has started yet, so the runtime is not confirmed. */
-  notes: string[];
-  /** A probe is running or asked for: not a problem, but not healthy yet either. */
-  checking: boolean;
-  /** The runtimes the sandboxes run under, for the healthy sentence. */
-  runtimes: string[];
-}
-
-export function summarizeIsolation(shards: readonly ShardStatus[]): IsolationSummary {
-  const problems: string[] = [];
-  const notes: string[] = [];
-  const several = shards.length > 1;
-  for (const shard of shards) {
-    const who = several ? `Shard ${String(shard.shard)}: ` : "";
-    const runtime = runtimeText(shard);
-    if (shard.observedRuntime === null)
-      notes.push(
-        `${who}${several ? "n" : "N"}o sandbox has started since the last restart, so the runtime is not confirmed yet.`,
-      );
-    else if (runtime.mismatch) problems.push(`${who}${runtime.text}.`);
-    if (shard.networkPolicy === "not-enforced")
-      problems.push(`${who}network isolation is not enforced.`);
-    else if (shard.networkPolicy === "unknown")
-      problems.push(`${who}network isolation has not been checked since the last start.`);
-    else if (shard.networkPolicy === "inconclusive")
-      problems.push(`${who}the network isolation check was inconclusive.`);
-  }
-  const checking = shards.some(
-    (shard) => shard.networkPolicy === "running" || shard.probeRequestedAt !== null,
-  );
-  const runtimes = [
-    ...new Set(
-      shards.flatMap((shard) => (shard.observedRuntime === null ? [] : [shard.observedRuntime])),
-    ),
-  ];
-  return {
-    healthy: shards.length > 0 && problems.length === 0 && !checking,
-    problems,
-    notes,
-    checking,
-    runtimes,
-  };
-}
-
-/** The "checked" time of a policy result is worth a word only when it is old. */
-export const isStale = (iso: string, now: Date = new Date()): boolean =>
-  now.getTime() - new Date(iso).getTime() > 86_400_000;

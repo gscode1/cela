@@ -6,35 +6,47 @@ import type { McpServer } from "@/lib/api/mcp";
 const toolsText = (count: number): string => `${String(count)} ${count === 1 ? "tool" : "tools"}`;
 
 /**
- * What the orchestrator found when it last connected to the server through the gateway: ok with the tool count,
- * failing with the error text, or unknown. A disabled server is not discovered, so the Status column already says it.
+ * The one Status badge of a server: disabled, ready with the tool count, failing, or unknown. The failure text and
+ * the check time are in the row's Details (see DiscoveryDetail).
  */
-export function DiscoveryStatus({ server }: { server: McpServer }) {
+export function ServerStatus({ server }: { server: McpServer }) {
   const discovery = server.discovery;
-  if (!server.enabled || discovery === undefined || discovery.state === "disabled") {
-    return <span className="text-muted-foreground">{"—"}</span>;
+  if (!server.enabled || discovery?.state === "disabled") {
+    return <Badge variant="warning">disabled</Badge>;
   }
-  if (discovery.state === "unknown" || discovery.checkedAt === null) {
+  if (discovery === undefined || discovery.state === "unknown" || discovery.checkedAt === null) {
     return (
       <span title="No orchestrator has reported on this server since it started">
         <Badge variant="outline">unknown</Badge>
       </span>
     );
   }
+  return discovery.state === "ready" ? (
+    <Badge variant="secondary">
+      ready {"\u00b7"} {toolsText(discovery.tools)}
+    </Badge>
+  ) : (
+    <Badge variant="destructive">failing</Badge>
+  );
+}
+
+/** What the last discovery found, for the Details view: the error of a failing server and when it was checked. */
+export function DiscoveryDetail({ server }: { server: McpServer }) {
+  const discovery = server.discovery;
+  if (!server.enabled || discovery === undefined || discovery.checkedAt === null) return null;
   return (
-    <span className="flex flex-col gap-1">
-      {discovery.state === "ready" ? (
-        <Badge variant="secondary">ok, {toolsText(discovery.tools)}</Badge>
-      ) : (
-        <Badge variant="destructive">failing</Badge>
-      )}
+    <>
       {discovery.state === "failed" && discovery.error !== undefined && (
-        <span className="text-xs break-words text-destructive">{discovery.error}</span>
+        <>
+          <dt className="text-muted-foreground">Error</dt>
+          <dd className="break-words text-destructive">{discovery.error}</dd>
+        </>
       )}
-      <span className="text-xs text-muted-foreground">
-        checked <Time value={discovery.checkedAt} />
-      </span>
-    </span>
+      <dt className="text-muted-foreground">Checked</dt>
+      <dd>
+        <Time value={discovery.checkedAt} />
+      </dd>
+    </>
   );
 }
 

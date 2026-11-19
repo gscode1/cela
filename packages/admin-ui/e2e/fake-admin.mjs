@@ -46,6 +46,18 @@ export function createFakeAdmin() {
       )
       .map((p) => ({ name: p.name, version: 1 }));
   let shards = [];
+  // What `GET /admin/status` adds to the shard rows, and `GET /admin/egress/status` (the real ingest has no egress
+  // tables behind its in-memory settings database). `PUT /__fake/status` sets them and, left out, resets them.
+  let directSessions = 0;
+  const healthyEgress = () => ({
+    revision: 3,
+    ruleSets: 2,
+    rules: 4,
+    invalid: 0,
+    principals: { active: 2, withPodIp: 1, revoked: 3 },
+    proxy: { replicas: [{ name: "egress-proxy-0", revision: 3, state: "serving" }] },
+  });
+  let egressStatus = healthyEgress();
   const now = () => new Date().toISOString();
 
   /** id -> { owner, profile, deleted, entries, live, watchers, timers }: the session API, scripted (no model, no sandbox). */
@@ -444,11 +456,13 @@ export function createFakeAdmin() {
     return json(res, 405, { error: "method not allowed" });
   }
 
-  /** Test controls, local only: `PUT /__fake/status`, `PUT /__fake/profiles/{name}`, `PUT /__fake/mcp/{name}` (a stale write). */
+  /** Test controls, local only: `PUT /__fake/status` (`shards`, and optionally `directSessions` and `egress`), `PUT /__fake/profiles/{name}`, `PUT /__fake/mcp/{name}` (a stale write). */
   async function control(req, res, parts) {
     const body = await readBody(req);
     if (parts[1] === "status") {
       shards = body.shards;
+      directSessions = body.directSessions ?? 0;
+      egressStatus = body.egress ?? healthyEgress();
       return json(res, 200, { ok: true });
     }
     if (parts[1] === "profiles" && parts[2] !== undefined) {
@@ -511,10 +525,14 @@ export function createFakeAdmin() {
           ? {
               state: shards[0].networkPolicy,
               checkedAt: shards[0].networkPolicyCheckedAt ?? null,
+              detail: shards[0].networkPolicyDetail ?? null,
               requestedAt: shards[0].probeRequestedAt ?? null,
             }
           : null,
+        directSessions,
       });
+    else if (parts[1] === "egress" && parts[2] === "status" && req.method === "GET")
+      json(res, 200, egressStatus);
     else if (parts[1] === "status" && parts[2] === "probe" && req.method === "POST") {
       if (shards.length === 0)
         json(res, 503, { error: "shard 0 has not published a status row yet" });
