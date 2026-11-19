@@ -4,7 +4,8 @@
 #   phase4b per-session models, allowlist, terminal failure on rejected credentials; REAL_MODEL=1 adds two real
 #           OpenAI Codex turns through OneCLI (spend)
 #   phase4c optional repo workspace through OneCLI + a repo-scoped GitHub App token; needs REPO_A and REPO_B
-#           (owner/name, private, in the App installation), otherwise most tests SKIP. Not part of `all`.
+#           (owner/name, private, in the App installation), otherwise most tests SKIP. With the egress proxy (its
+#           default) the sandbox reaches GitHub through the proxy's OneCLI route (ADR 0037). Not part of `all`.
 #   mcp     native remote MCP tools through the OneCLI gateway (issues #39, #40): the suite adds DeepWiki to the catalog
 #           through the admin API (no restart), a scripted session calls tool_search and a DeepWiki tool, and disabling
 #           the server makes a new call return tool_unavailable. Needs the internet and the OneCLI host rule for
@@ -24,9 +25,11 @@
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1); it
 #           installs the chart once, so with phase3 in it every phase runs with the egress proxy
 #
-# The egress proxy (the chart's default, ADR 0038) is on for the suites that test the network, phase3 and browser (and
-# `all`, which has phase3), and off for the others, which test durability. EGRESS_PROXY_IMAGE is its image.
-#   EGRESS_PROXY=0     phase3 (and all) without the proxy: the explicit opt-out, the old direct sandbox egress (docs/e2e.md)
+# The egress proxy (the chart's default, ADR 0038) is on for the suites that test the network or credentials through it,
+# phase3, phase4c and browser (and `all`, which has phase3), and off for the others, which test durability.
+# EGRESS_PROXY_IMAGE is its image.
+#   EGRESS_PROXY=0     phase3, phase4c (and all) without the proxy: the explicit opt-out, the old direct sandbox egress
+#                      (docs/e2e.md)
 #
 # Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (the charts/pi-postgres release, the
 # external database of pi-durable), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
@@ -112,7 +115,7 @@ esac
 has_phase() { local p; for p in "${phases[@]}"; do [[ $p == "$1" ]] && return 0; done; return 1; }
 [[ ${EGRESS_PROXY:-} =~ ^[01]?$ ]] || { echo "EGRESS_PROXY must be unset, 0 or 1" >&2; exit 64; }
 egress_proxy=0
-if has_phase phase3 || has_phase browser; then egress_proxy=${EGRESS_PROXY:-1}; fi
+if has_phase phase3 || has_phase phase4c || has_phase browser; then egress_proxy=${EGRESS_PROXY:-1}; fi
 if has_phase browser && [[ $egress_proxy != 1 ]]; then echo "the browser suite needs the egress proxy: unset EGRESS_PROXY" >&2; exit 64; fi
 export EGRESS_PROXY=$egress_proxy # read by chart-values.py
 

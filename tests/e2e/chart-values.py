@@ -110,8 +110,8 @@ def main() -> None:
         # Only the console suite turns the admin console on (tests/e2e/run.sh console).
         "console": {"enabled": os.environ.get("CONSOLE_ENABLED") == "1"},
         # The chart turns the egress proxy on by default (ADR 0038, amendment of 2026-11-19). EGRESS_PROXY=1 (run.sh, for
-        # the suites that test the network: phase3 and browser) keeps it on; the other suites opt out, as they did before
-        # the default changed, because they test durability, not the network.
+        # the suites that test the network or credentials through it: phase3, phase4c and browser) keeps it on; the other
+        # suites opt out, as they did before the default changed, because they test durability, not the network.
         "egressProxy": {"enabled": False},
     }
     if os.environ.get("EGRESS_PROXY") == "1":
