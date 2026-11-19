@@ -133,6 +133,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
   - Recycle the Pod on interrupt, because `setsid` children escape. Done for every session, not only repo sessions
     ([ADR 0003](docs/decisions/0003-recycle-pod-on-interrupt.md)).
 - **Least privilege for OneCLI:** a project-scoped OneCLI key or a separate provisioner, never an admin key in the orchestrator. Strip secrets from bridge env.
+  Amended by [ADR 0042](docs/decisions/0042-onecli-admin-key-in-orchestrator.md): for the proof of concept the orchestrator keeps the admin key (and the GitHub App key) as an accepted risk, until OneCLI has scoped keys or the project goes multi-tenant.
 - **Identity:**
   - Session IDs are UUIDs.
   - Claims carry the session label and are adopted only on a label match.

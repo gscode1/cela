@@ -33,8 +33,8 @@ and ingest already learns the installed tools from it through `inbox.orchestrato
   when the provider is `openai-codex` and `PI_CODEX_ACCOUNT_ID` is set, or when it is `scripted`; `missing` when none does;
   `unknown` when there is no admin key or the listing fails (logged, never fatal). The hint is not proof (the key may be
   invalid, the agent may lack the grant); only the first turn proves a credential. It is never used to refuse a model, and it
-  depends on the orchestrator's OneCLI admin key, which issue #65 plans to move out; then it will become `unknown` or move
-  with the key. It is published at start and refreshed every 30 s (amendment below).
+  depends on the orchestrator's OneCLI admin key, which stays there for the proof of concept
+  ([0042](0042-onecli-admin-key-in-orchestrator.md)). It is published at start and refreshed every 30 s (amendment below).
 
 ## Consequences
 

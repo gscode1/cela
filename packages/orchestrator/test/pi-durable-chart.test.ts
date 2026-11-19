@@ -228,6 +228,26 @@ describe("orchestrator and ingest configuration", () => {
     expect(none.ONECLI_API_KEY).toBeUndefined();
   });
 
+  it("gives the OneCLI admin key to the orchestrator only, with every optional component on (ADR 0042)", () => {
+    const all = docs([
+      ...external,
+      "--set",
+      "onecli.external.adminKeySecret=adm",
+      "--set",
+      "egressProxy.enabled=true",
+      "--set",
+      "egressProxy.database.existingSecret=pi-egress-database",
+      "--set",
+      "egressProxy.binding.existingSecret=pi-egress-binding",
+      "--set",
+      "sandbox.flavours.browser.enabled=true",
+    ]);
+    const holders = all
+      .filter((d) => /"ONECLI_API_KEY"|"name":"adm"/.test(JSON.stringify(d)))
+      .map((d) => `${d.kind}/${d.metadata.name}`);
+    expect(holders).toEqual(["Deployment/pi-orchestrator"]);
+  });
+
   it("seeds the model settings from values and restarts the pods when they change", () => {
     const config = named(list, "ConfigMap", "pi-model-config");
     expect(config.data.PI_MODEL_PROVIDER).toBe("scripted");
