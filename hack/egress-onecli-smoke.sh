@@ -195,7 +195,7 @@ check "no binding and no session rule yet" "$facts" "bindings 0 rules 0 principa
 
 # ------------------------------------------------------------------ 2. the route
 echo "## 2. RepoAccess provisions the session; credentialed traffic goes sandbox -> proxy -> OneCLI -> origin"
-# The bundled OneCLI blocks every host that hack/onecli-host-rules.sh did not allow; the echo host needs an allow rule
+# A hardened OneCLI (ONECLI_HOSTS) blocks every host that was not allowed; the echo host then needs an allow rule (a no-op on the open default)
 # (created before the block rule, which is then re-created last). It is removed again at the end.
 driver allow-host "$echo_host" >/dev/null
 echo_allowed=1

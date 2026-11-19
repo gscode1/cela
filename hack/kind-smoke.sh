@@ -17,7 +17,8 @@
 # --onecli (for hack/kind-up.sh --onecli, the bundled OneCLI) adds, without any model call or credential:
 #   1b. the orchestrator's way through the gateway (hack/kind-gateway-check.mjs, inside the orchestrator pod): a CONNECT
 #       without a token is refused (407); with the agent token it is accepted, the TLS handshake verifies against the CA
-#       ConfigMap, and a host that is not allowed gets the gateway's own 403. The gateway log must show that agent
+#       ConfigMap, and a host is answered: on the open default (ADR 0043) by the host itself, and with ONECLI_HOSTS set (the
+#       hardened bootstrap, docs/onecli-host-rules.md) a host that is not allowed gets the gateway's own 403. The gateway log must show that agent
 #   1c. the management API (:10256) answers the orchestrator and not the ingest pod (NetworkPolicy)
 #   4b. in the sandbox: the gateway port is open and the API port is closed
 #
@@ -157,7 +158,9 @@ if [[ $onecli -eq 1 ]]; then
   log "the orchestrator routes through the OneCLI gateway (no model call)"
   gateway_js=$(cat "$root/hack/kind-gateway-check.mjs")
   # GATEWAY_CHECK_HOST=<an allowed host> (the real-model check, docs/model-credentials.md) sends the request to that host
-  # instead and only prints the answer: the 403 check below is for the default, a host that is not allowed.
+  # instead and only prints the answer. Without it example.com is asked: OneCLI is open by default (ADR 0043), so any HTTP answer
+  # but a 403 will do; with ONECLI_HOSTS set in this environment (the hardened path, hack/kind-up.sh got it too) the gateway
+  # must block it (the host is not on the list you chose, so keep example.com off it).
   out=$(k exec deploy/pi-orchestrator -c orchestrator -- env "GATEWAY_CHECK_HOST=${GATEWAY_CHECK_HOST:-example.com}" node --input-type=module -e "$gateway_js" 2>&1) || {
     printf '%s\n' "$out" >&2
     die "the gateway check failed"
@@ -167,7 +170,12 @@ if [[ $onecli -eq 1 ]]; then
   check "the gateway accepts the orchestrator's agent token" "$out" "connect-with-token=200"
   check "the gateway certificate verifies against the CA ConfigMap (issued by OneCLI)" "$out" "tls-verified=true issuer=OneCLI"
   if [[ -z ${GATEWAY_CHECK_HOST:-} ]]; then
-    check "the gateway answered for a host that is not allowed (policy block, nothing left the cluster)" "$out" "answer-status=403"
+    if [[ -n ${ONECLI_HOSTS:-} ]]; then
+      check "the gateway answered for a host that is not allowed (policy block, nothing left the cluster)" "$out" "answer-status=403"
+    else
+      check "the open gateway relayed the host and it answered" "$out" "answer-status=[0-9]{3}"
+      check "and it was not a policy block (no pi-block-all on an open install)" "$(grep -c 'answer-status=403' <<<"$out" || true)" "^0$"
+    fi
   fi
   echo "-- gateway log (agent and rule only):"
   logs=$(k logs deploy/onecli-gateway --tail=200 2>&1 | grep -E 'agent="pi-orchestrator"|BLOCKED' | tail -5) || true

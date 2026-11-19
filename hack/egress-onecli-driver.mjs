@@ -14,8 +14,9 @@
 //   copy-binding <from> <to>         (SQL) copy one session's sealed row onto another's: it must not open
 //   facts <session>                  counts: binding rows, session rules, live principal
 //   allow-host <host> | disallow-host <host>
-//                                    the bundled OneCLI blocks every host that hack/onecli-host-rules.sh did not allow
-//                                    (rule pi-block-all, created last). The echo host is not on that list: add an allow rule
+//                                    a hardened OneCLI (ONECLI_HOSTS, ADR 0043) blocks every host that was not allowed
+//                                    (rule pi-block-all, created last); the open default has no such rule and this is then
+//                                    harmless. The echo host is not on that list: add an allow rule
 //                                    for it and re-create the block rule after it (the order the script keeps), or remove it
 //   cleanup <session>                what the session delete and the sweep do, for a session that is already gone
 //   (hack/egress-bakeoff.sh, issue #264)

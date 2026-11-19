@@ -173,7 +173,7 @@ check "OneCLI's gateway runs without GATEWAY_DANGER_ACCEPT_INVALID_CERTS and GAT
 ca=$(k get configmap pi-onecli-ca -o jsonpath='{.data.ca\.pem}')
 [[ -n $ca ]] || die "no OneCLI CA in the ConfigMap pi-onecli-ca"
 
-# The bundled OneCLI blocks every host that hack/onecli-host-rules.sh did not allow: the test hosts need an allow rule.
+# A hardened OneCLI (ONECLI_HOSTS) blocks every host that was not allowed: the test hosts need an allow rule (a no-op when open).
 for h in "$http_host" "$echo_host" "$ws_host" "${bad_hosts[@]}"; do
   driver allow-host "$h" >/dev/null
   allowed_hosts+=("$h")
