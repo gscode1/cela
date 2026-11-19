@@ -1,6 +1,6 @@
 # 0041: The browser sandbox: a sandbox flavour with Chromium, two browser tools and a loopback proxy forwarder
 
-Status: accepted, 2026-11-18 (slice 9 of epic #50, issue #48). Builds on [0010](0010-session-profiles.md) (profiles),
+Status: accepted, 2026-11-18 (slice 9 of epic #50, issue #48). Amended by [0046](0046-patchright-browser.md): Patchright replaces Playwright CLI. Builds on [0010](0010-session-profiles.md) (profiles),
 [0011](0011-skills-in-postgres.md) (skills), [0030](0030-sandbox-sizes.md) (a template and a pool per size, the
 pattern reused here), [0034](0034-egress-rules.md) and [0036](0036-egress-principals.md) (rules, tokens, the proxy
 environment) and [0038](0038-network-modes.md) (modes; no sandbox policy is added).

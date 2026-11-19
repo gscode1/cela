@@ -14,7 +14,7 @@
 #           orchestrator.shards=2 (a second orchestrator Deployment) and ingest routes between the two. Not part of `all`
 #           (it adds a Deployment and takes about 20 minutes).
 #   browser the browser sandbox (issue #267, ADR 0041) on a gVisor cluster with a live model: the chart is installed with
-#           the egress proxy and sandbox.flavours.browser; a live openai-codex/gpt-6-luna session drives Playwright CLI and
+#           the egress proxy and sandbox.flavours.browser; a live openai-codex/gpt-6-luna session drives Patchright and
 #           agent-browser through OneCLI (a few real turns: spend), and scripted checks cover Chromium under gVisor and the
 #           denials. Needs BROWSER_SANDBOX_IMAGE and EGRESS_PROXY_IMAGE, the OneCLI secrets and the internet. Not part of `all`.
 #   console the admin console in a real browser (issue #143, docs/e2e.md "console suite"): the chart is installed with

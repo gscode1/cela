@@ -145,7 +145,7 @@ sandbox:
 
   # Sandbox flavours besides the default (docs/decisions/0041-browser-sandbox.md).
   flavours:
-    # The browser flavour: the sandbox image plus Chromium, Playwright CLI and agent-browser (images/sandbox-browser).
+    # The browser flavour: the sandbox image plus Chromium, Patchright and agent-browser (images/sandbox-browser).
     # On (the default): renders pi-env-browser[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and lets a
     # profile say `sandboxFlavour: browser`. Off: none of that exists and the API refuses the field. On is the default
     # (owner decision, ADR 0041 amendment of 2026-11-19); it needs images.sandboxBrowser and costs nothing until a session
