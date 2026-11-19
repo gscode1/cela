@@ -791,6 +791,11 @@ export interface Capabilities {
   models?: ModelCatalogEntry[];
   /** Per provider of the catalog, whether OneCLI holds a credential for it (a hint, ADR 0025). */
   modelProviders?: ModelProviderStatus[];
+  /**
+   * The OneCLI secrets an MCP server could name as its `onecliSecret`, by name only (ADR 0040 amendment); absent while
+   * unknown: no admin key, a failed listing at start, or an orchestrator that does not publish them.
+   */
+  onecliSecretNames?: string[];
 }
 
 export type CredentialState = "configured" | "missing" | "unknown";
@@ -823,11 +828,13 @@ export async function publishCapabilities(
   instance: string,
 ): Promise<void> {
   await pool.query(
-    `insert into inbox.orchestrator_capabilities (tools, extensions, instance, models, model_providers)
-     values ($1, $2, $3, $4, $5)
+    `insert into inbox.orchestrator_capabilities
+       (tools, extensions, instance, models, model_providers, onecli_secret_names)
+     values ($1, $2, $3, $4, $5, $6)
      on conflict (id) do update set tools = excluded.tools, extensions = excluded.extensions,
        instance = excluded.instance, models = excluded.models,
-       model_providers = excluded.model_providers, updated_at = clock_timestamp()`,
+       model_providers = excluded.model_providers,
+       onecli_secret_names = excluded.onecli_secret_names, updated_at = clock_timestamp()`,
     [
       JSON.stringify(capabilities.tools),
       JSON.stringify(capabilities.extensions),
@@ -836,6 +843,9 @@ export async function publishCapabilities(
       capabilities.modelProviders === undefined
         ? null
         : JSON.stringify(capabilities.modelProviders),
+      capabilities.onecliSecretNames === undefined
+        ? null
+        : JSON.stringify(capabilities.onecliSecretNames),
     ],
   );
 }
@@ -856,6 +866,22 @@ export async function publishModelProviders(
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Replaces only the OneCLI secret names an MCP server could name (ADR 0040 amendment), like `publishModelProviders`: a
+ * plain update, written only on a change. Returns whether it changed.
+ */
+export async function publishOnecliSecretNames(
+  pool: pg.Pool,
+  names: readonly string[],
+): Promise<boolean> {
+  const result = await pool.query(
+    `update inbox.orchestrator_capabilities set onecli_secret_names = $1::jsonb, updated_at = clock_timestamp()
+      where onecli_secret_names is distinct from $1::jsonb`,
+    [JSON.stringify(names)],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 /** What the orchestrator published; undefined if it never started against this database. */
 export async function readCapabilities(db: Db): Promise<Capabilities | undefined> {
   const { rows } = await db.query<{
@@ -863,7 +889,10 @@ export async function readCapabilities(db: Db): Promise<Capabilities | undefined
     extensions: unknown;
     models: unknown;
     model_providers: unknown;
-  }>("select tools, extensions, models, model_providers from inbox.orchestrator_capabilities");
+    onecli_secret_names: unknown;
+  }>(
+    "select tools, extensions, models, model_providers, onecli_secret_names from inbox.orchestrator_capabilities",
+  );
   const row = rows[0];
   if (row === undefined) return undefined;
   const strings = (value: unknown): string[] =>
@@ -893,5 +922,8 @@ export async function readCapabilities(db: Db): Promise<Capabilities | undefined
     extensions: strings(row.extensions),
     ...(models === undefined ? {} : { models }),
     ...(modelProviders === undefined ? {} : { modelProviders }),
+    ...(Array.isArray(row.onecli_secret_names)
+      ? { onecliSecretNames: strings(row.onecli_secret_names) }
+      : {}),
   };
 }
