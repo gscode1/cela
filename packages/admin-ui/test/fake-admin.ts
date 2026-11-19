@@ -41,7 +41,9 @@ export interface FakeAdmin {
   browserEnabled: boolean;
   /** The `GET /admin/models` answer (default view). */
   models: Record<string, unknown>;
-  mcp: { name: string; url: string; enabled: boolean }[];
+  mcp: ({ name: string; url: string; enabled: boolean } & Record<string, unknown>)[];
+  /** The `onecliSecrets` of `GET /admin/mcp-servers`; left out of the answer when undefined. */
+  mcpSecrets: { names: string[]; source: "orchestrator" | "none" } | undefined;
   skills: {
     name: string;
     currentVersion: number;
@@ -100,6 +102,7 @@ export function createFakeAdmin(): FakeAdmin {
       credentials: "configured",
     },
     mcp: [],
+    mcpSecrets: undefined,
     skills: [],
     writes: [],
     fetch: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
@@ -244,7 +247,12 @@ export function createFakeAdmin(): FakeAdmin {
         browserEnabled: admin.browserEnabled,
       });
     }
-    if (route === "/admin/mcp-servers") return reply(200, { servers: admin.mcp, invalid: [] });
+    if (route === "/admin/mcp-servers")
+      return reply(200, {
+        servers: admin.mcp,
+        invalid: [],
+        ...(admin.mcpSecrets === undefined ? {} : { onecliSecrets: admin.mcpSecrets }),
+      });
     if (route === "/admin/skills")
       return reply(200, { skills: admin.skills.map(({ name }) => ({ name })) });
     const skill = /^\/admin\/skills\/([^/]+)$/.exec(route);

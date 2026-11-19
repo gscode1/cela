@@ -40,7 +40,7 @@ describe("MCP limits for people", () => {
     expect(hostOf("not a url")).toBe("not a url");
   });
 
-  it("describes a history entry with field names and units, and leaves onecliSecret out", () => {
+  it("describes a history entry with field names and units, the OneCLI secret included", () => {
     const base = {
       url: "https://a.example.com/mcp",
       enabled: true,
@@ -59,7 +59,10 @@ describe("MCP limits for people", () => {
       new: { ...base, timeoutMs: 90_000, readOnly: false, onecliSecret: "x" },
     };
     expect(describeMcpChange(entry)).toBe(
-      "Access: read-only → can change state; Timeout: 60 s → 90 s",
+      "Access: read-only → can change state; Timeout: 60 s → 90 s; OneCLI secret: none → x",
+    );
+    expect(describeMcpChange({ ...entry, old: { ...base, onecliSecret: "x" }, new: base })).toBe(
+      "OneCLI secret: x → none",
     );
   });
 });

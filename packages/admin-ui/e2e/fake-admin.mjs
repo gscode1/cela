@@ -197,6 +197,8 @@ export function createFakeAdmin() {
       return json(res, 200, {
         servers: [...mcp.values()].map(mcpJson).sort((a, b) => a.name.localeCompare(b.name)),
         invalid: [],
+        // What a shard 0 orchestrator with a OneCLI admin key would publish (ADR 0040 amendment).
+        onecliSecrets: { names: ["github-mcp", "linear-mcp"], source: "orchestrator" },
       });
     if (name === "history") {
       const only = url.searchParams.get("name");

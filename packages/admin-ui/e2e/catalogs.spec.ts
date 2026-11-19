@@ -387,6 +387,49 @@ test.describe("MCP servers", () => {
     await expect(page.getByRole("definition")).toHaveCount(0);
   });
 
+  test("sets, shows and clears a server's OneCLI secret, warning on a name OneCLI did not list", async ({
+    page,
+    request,
+  }) => {
+    const name = unique("cred");
+    // Disabled: a credentialed server that is enabled would make the orchestrator look for the secret.
+    await putMcp(request, name, {
+      url: "https://cred.example.com/mcp",
+      readOnly: true,
+      enabled: false,
+    });
+    await signInAndGo(page, "/console/mcp-servers");
+    const row = page.getByTestId(`mcp-${name}`);
+    await row.getByRole("button", { name: "Edit" }).click();
+    const secret = page.getByRole("combobox", { name: "OneCLI secret (optional)" });
+    await expect(secret).toHaveValue("");
+    await expect(page.getByTestId("onecli-secret-names").locator("option")).toHaveCount(2);
+    await secret.fill("not-there");
+    await expect(page.getByText(/OneCLI did not list a secret named/)).toBeVisible();
+    await secret.fill("github-mcp");
+    await expect(page.getByText(/OneCLI did not list a secret named/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
+    await page.getByRole("button", { name: "Done" }).click();
+    await row.getByRole("button", { name: "Details" }).click();
+    await expect(page.getByRole("row").filter({ hasText: "OneCLI secret" })).toContainText(
+      "github-mcp",
+    );
+    await shot(page, "mcp-secret.png");
+
+    await row.getByRole("button", { name: "Edit" }).click();
+    await expect(secret).toHaveValue("github-mcp");
+    await secret.fill("");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { name: "Saved." })).toBeVisible();
+    await page.getByRole("button", { name: "Done" }).click();
+    await expect(row.getByRole("button", { name: "Details" })).toHaveCount(0);
+    await page.getByText("Recent changes").click();
+    const changes = page.getByRole("listitem").filter({ hasText: name });
+    await expect(changes.filter({ hasText: "OneCLI secret: none → github-mcp" })).toBeVisible();
+    await expect(changes.filter({ hasText: "OneCLI secret: github-mcp → none" })).toBeVisible();
+  });
+
   test("an edit that changes the URL asks the declaration again, in seconds and KB", async ({
     page,
     request,

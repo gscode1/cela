@@ -14,6 +14,7 @@ import { Time } from "@/components/time";
 import {
   deleteMcpServer,
   hostOf,
+  knownSecretNames,
   listMcpServers,
   mcpHistory,
   nonDefaultLimits,
@@ -162,7 +163,7 @@ function ServerRow({
   });
   const referencing = profiles === undefined ? undefined : profilesWithMcp(profiles, server.name);
   const limits = nonDefaultLimits(server);
-  const hasDetails = limits.length > 0 || server.source !== null;
+  const hasDetails = limits.length > 0 || server.source !== null || server.onecliSecret !== null;
   return (
     <Fragment>
       <tr data-testid={`mcp-${server.name}`}>
@@ -260,6 +261,14 @@ function ServerRow({
                     <dd>{value}</dd>
                   </Fragment>
                 ))}
+                {server.onecliSecret !== null && (
+                  <>
+                    <dt className="text-muted-foreground">OneCLI secret</dt>
+                    <dd className="break-all">
+                      <code>{server.onecliSecret}</code>
+                    </dd>
+                  </>
+                )}
                 {server.source !== null && (
                   <>
                     <dt className="text-muted-foreground">Source</dt>
@@ -338,6 +347,7 @@ export function McpServersPage() {
     void queryClient.invalidateQueries({ queryKey: ["mcp-history"] });
     void profiles.refetch();
   };
+  const secretNames = knownSecretNames(servers.data);
   const usedBy = (server: McpServer | undefined): boolean =>
     server !== undefined &&
     profiles.data !== undefined &&
@@ -414,13 +424,19 @@ export function McpServersPage() {
       </Card>
 
       {pending?.kind === "create" && (
-        <McpForm server={undefined} usedByProfiles={false} onClose={close} />
+        <McpForm
+          server={undefined}
+          usedByProfiles={false}
+          secretNames={secretNames}
+          onClose={close}
+        />
       )}
       {pending?.kind === "edit" && (
         <McpForm
           key={pending.server.name}
           server={pending.server}
           usedByProfiles={usedBy(pending.server)}
+          secretNames={secretNames}
           onClose={close}
         />
       )}

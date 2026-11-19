@@ -78,3 +78,111 @@ describe("McpForm", () => {
     ]);
   });
 });
+
+/** Renders the form against a fetch that records each PUT body and answers it as saved. */
+function renderForm(props: { server?: McpServer; secretNames?: readonly string[] }): {
+  puts: Record<string, unknown>[];
+} {
+  const puts: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((_path: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(init.body as string) as Record<string, unknown>;
+        puts.push(body);
+        return Promise.resolve(Response.json({ ...server(), ...body, revision: 2 }));
+      }
+      return Promise.resolve(Response.json({ error: "not found" }, { status: 404 }));
+    }),
+  );
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <AuthProvider>
+        <MemoryRouter>
+          <McpForm
+            server={props.server}
+            usedByProfiles={false}
+            {...(props.secretNames === undefined ? {} : { secretNames: props.secretNames })}
+            onClose={() => undefined}
+          />
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+  return { puts };
+}
+
+const NOT_LISTED = /OneCLI did not list a secret named/;
+
+describe("McpForm OneCLI secret", () => {
+  it("offers the published names and registers with the picked one", async () => {
+    const { puts } = renderForm({ secretNames: ["github-mcp", "linear-mcp"] });
+    const field = screen.getByRole("combobox", { name: "OneCLI secret (optional)" });
+    const options = [...screen.getByTestId("onecli-secret-names").querySelectorAll("option")];
+    expect(options.map((option) => option.value)).toEqual(["github-mcp", "linear-mcp"]);
+    await userEvent.type(screen.getByLabelText("Name"), "github");
+    await userEvent.type(screen.getByLabelText("URL"), "mcp.example.com/");
+    await userEvent.click(screen.getByLabelText("No, it only reads"));
+    await userEvent.type(field, "github-mcp");
+    expect(screen.queryByText(NOT_LISTED)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Register" }));
+    await screen.findByText("Saved.");
+    expect(puts).toEqual([
+      {
+        url: "https://mcp.example.com/",
+        readOnly: true,
+        enabled: true,
+        timeoutMs: 60_000,
+        maxOutputBytes: 24_576,
+        onecliSecret: "github-mcp",
+        expectedRevision: 0,
+      },
+    ]);
+  });
+
+  it("warns, but still saves, a typed name the list does not have", async () => {
+    const { puts } = renderForm({ server: server(), secretNames: ["github-mcp"] });
+    await userEvent.type(screen.getByLabelText("OneCLI secret (optional)"), "brand-new");
+    expect(screen.getByText(NOT_LISTED)).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    await screen.findByText("Saved.");
+    expect(puts).toEqual([{ onecliSecret: "brand-new", expectedRevision: 1 }]);
+  });
+
+  it("is a plain text field without a warning while the list is unknown", async () => {
+    const { puts } = renderForm({ server: server() });
+    const field = screen.getByLabelText("OneCLI secret (optional)");
+    expect(field).not.toHaveAttribute("list");
+    expect(screen.queryByTestId("onecli-secret-names")).toBeNull();
+    expect(screen.getByText(/secret names are not known here/)).toBeInTheDocument();
+    await userEvent.type(field, "anything");
+    expect(screen.queryByText(NOT_LISTED)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    expect(puts).toEqual([{ onecliSecret: "anything", expectedRevision: 1 }]);
+  });
+
+  it("refuses a name the API would refuse", async () => {
+    renderForm({ server: server(), secretNames: [] });
+    await userEvent.type(screen.getByLabelText("OneCLI secret (optional)"), "has space");
+    expect(screen.getByText(/the OneCLI secret name has at most 200/)).toBeInTheDocument();
+    expect(screen.queryByText(NOT_LISTED)).toBeNull();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("clearing a stored secret sends null; an unchanged one is not sent", async () => {
+    const { puts } = renderForm({
+      server: server({ onecliSecret: "github-mcp" }),
+      secretNames: ["github-mcp"],
+    });
+    const field = screen.getByLabelText("OneCLI secret (optional)");
+    expect(field).toHaveValue("github-mcp");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    await userEvent.clear(field);
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    expect(puts).toEqual([{ onecliSecret: null, expectedRevision: 1 }]);
+  });
+});

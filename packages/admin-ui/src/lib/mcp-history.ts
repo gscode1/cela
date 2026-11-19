@@ -2,13 +2,13 @@ import { kbText, secondsText } from "@/lib/api/mcp";
 import type { McpFields, McpHistoryEntry } from "@/lib/api/mcp";
 import { fieldLabel } from "@/lib/field-labels";
 
-/** `onecliSecret` is not shown anywhere in the console, so a change to it does not appear in the history either. */
 const SHOWN: readonly (keyof McpFields)[] = [
   "url",
   "enabled",
   "readOnly",
   "timeoutMs",
   "maxOutputBytes",
+  "onecliSecret",
 ];
 
 function valueText(field: keyof McpFields, value: McpFields[keyof McpFields]): string {
@@ -16,6 +16,7 @@ function valueText(field: keyof McpFields, value: McpFields[keyof McpFields]): s
   if (field === "maxOutputBytes") return kbText(Number(value));
   if (field === "enabled") return value === true ? "enabled" : "disabled";
   if (field === "readOnly") return value === true ? "read-only" : "can change state";
+  if (field === "onecliSecret") return value === null ? "none" : String(value);
   return String(value);
 }
 

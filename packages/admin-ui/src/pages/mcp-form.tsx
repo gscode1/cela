@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "@/auth";
 import { Alert } from "@/components/ui/alert";
@@ -20,6 +20,7 @@ import {
   putMcpServer,
   scaledProblem,
   secondsText,
+  secretRefProblem,
   TIMEOUT_FIELD,
   toTyped,
   urlProblem,
@@ -75,17 +76,75 @@ const sameUrl = (a: string, b: string): boolean => {
 };
 
 /**
+ * The optional OneCLI secret: a text field that offers the published names (a native combobox, so any name can still be
+ * typed). A typed name that is not in a known list is a warning, not an error: the list can be up to 30 s old. While
+ * the list is unknown it is a plain text field.
+ */
+function SecretField({
+  value,
+  names,
+  onChange,
+}: {
+  value: string;
+  names: readonly string[] | undefined;
+  onChange: (value: string) => void;
+}) {
+  const listId = useId();
+  const typed = value.trim();
+  const unlisted =
+    names !== undefined &&
+    typed !== "" &&
+    secretRefProblem(typed) === undefined &&
+    !names.includes(typed);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="mcp-secret">OneCLI secret (optional)</Label>
+      <Input
+        id="mcp-secret"
+        autoComplete="off"
+        {...(names === undefined ? {} : { list: listId })}
+        placeholder={names === undefined ? "secret name" : "pick or type a secret name"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {names !== undefined && (
+        <datalist id={listId} data-testid="onecli-secret-names">
+          {names.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      )}
+      <p className="text-xs text-muted-foreground">
+        The name of a secret in OneCLI, never its value. Sessions whose profile names this server
+        call it with this secret only; its host pattern must cover the server&apos;s host. Empty for
+        a server without credentials.
+        {names === undefined && " OneCLI's secret names are not known here: type the name."}
+      </p>
+      {unlisted && (
+        <Alert variant="warning">
+          OneCLI did not list a secret named <code>{typed}</code> at its last check (up to about 30
+          s ago). You can still save; sessions cannot use the server until the secret exists.
+        </Alert>
+      )}
+    </div>
+  );
+}
+
+/**
  * Register a server (`server` undefined) or edit one. The draft lives in this component, so a `409` leaves it as it is;
  * "Reload" fetches the stored server, shows it next to the draft and uses its revision for the next save.
  * `usedByProfiles`: whether a profile names this server, which decides if the saved message mentions sessions.
+ * `secretNames`: the OneCLI secret names to offer, undefined while unknown.
  */
 export function McpForm({
   server,
   usedByProfiles,
+  secretNames,
   onClose,
 }: {
   server: McpServer | undefined;
   usedByProfiles: boolean;
+  secretNames?: readonly string[] | undefined;
   onClose: () => void;
 }) {
   const { token } = useAuth();
@@ -100,6 +159,7 @@ export function McpForm({
     toTyped(server?.maxOutputBytes ?? MCP_LIMITS.maxOutputBytes.default, OUTPUT_FIELD.scale),
   );
   const [enabled, setEnabled] = useState(server?.enabled ?? true);
+  const [secret, setSecret] = useState(server?.onecliSecret ?? "");
   // On create nothing is preselected: `readOnly` must be a deliberate answer.
   const [readOnly, setReadOnly] = useState<Declared>(
     editing ? (server.readOnly ? "yes" : "no") : "",
@@ -128,7 +188,11 @@ export function McpForm({
   if (timeoutIssue !== undefined) problems.push(timeoutIssue);
   const outputIssue = scaledProblem(OUTPUT_FIELD, maxOutput);
   if (outputIssue !== undefined) problems.push(outputIssue);
+  const secretIssue = secretRefProblem(secret);
+  if (secretIssue !== undefined) problems.push(secretIssue);
   if (!readOnlyAnswered) problems.push("answer whether the server changes anything");
+  // Empty is no secret: the API's null, which also clears a stored one.
+  const onecliSecret = secret.trim() === "" ? null : secret.trim();
 
   const timeoutMs = fromTyped(timeout, TIMEOUT_FIELD.scale) ?? MCP_LIMITS.timeoutMs.default;
   const maxOutputBytes =
@@ -140,6 +204,8 @@ export function McpForm({
     if (maxOutputBytes !== base.maxOutputBytes && outputIssue === undefined)
       changes.maxOutputBytes = maxOutputBytes;
     if (mustReask || (readOnly === "yes") !== base.readOnly) changes.readOnly = readOnly === "yes";
+    if (onecliSecret !== base.onecliSecret && secretIssue === undefined)
+      changes.onecliSecret = onecliSecret;
   }
   const nothingChanged = editing && Object.keys(changes).length === 0;
 
@@ -156,6 +222,7 @@ export function McpForm({
               enabled,
               timeoutMs,
               maxOutputBytes,
+              ...(onecliSecret === null ? {} : { onecliSecret }),
             },
         editing ? baseRevision : CREATE_ONLY_REVISION,
       ),
@@ -250,6 +317,7 @@ export function McpForm({
               <p className="text-xs text-muted-foreground">Cuts longer tool output.</p>
             </div>
           </div>
+          <SecretField value={secret} names={secretNames} onChange={setSecret} />
           {!editing && (
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -306,8 +374,9 @@ export function McpForm({
               Stored now: <code>{stored.url}</code>, timeout {secondsText(stored.timeoutMs)}, max
               output {kbText(stored.maxOutputBytes)},{" "}
               {stored.readOnly ? "read-only" : "can change state"},{" "}
-              {stored.enabled ? "enabled" : "disabled"}. Saving again replaces these with your
-              draft.
+              {stored.enabled ? "enabled" : "disabled"}, OneCLI secret{" "}
+              {stored.onecliSecret === null ? "none" : <code>{stored.onecliSecret}</code>}. Saving
+              again replaces these with your draft.
             </Alert>
           )}
           {reload.isSuccess && reload.data === undefined && (
