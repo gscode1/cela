@@ -96,6 +96,9 @@ spec:
             - containerPort: 9090
           readinessProbe:
             httpGet: { path: /v1/health, port: 8080 }
+            # The Kubernetes default of 10 s adds up to 10 s to every claim and resume once sandboxd is healthy (issue #82).
+            # The probe is a local HTTP GET answered by sandboxd, so 1 s costs next to nothing.
+            periodSeconds: 1
           resources:
             {{- $limits := merge (dict "ephemeral-storage" $ephemeral) ($resources.limits | default dict) }}
             {{- toYaml (dict "requests" $resources.requests "limits" $limits) | nindent 12 }}
