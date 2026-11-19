@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -59,6 +60,7 @@ case "$1 $2" in
     if [[ " $* " == *" -A "* ]]; then echo 1; else echo deployment.apps/pi-ingest; echo deployment.apps/pi-orchestrator; fi; exit 0 ;;
   "get --raw")
     echo '{"resources":[{"name":"sandboxes"},{"name":"sandboxclaims"},{"name":"sandboxtemplates"},{"name":"sandboxwarmpools"}]}'; exit 0 ;;
+  "port-forward svc/pi-ingest") echo "Forwarding from 127.0.0.1:18999 -> 8080"; exit 0 ;;
   "exec deploy/pi-ingest")
     printf '%s' "$FAKE_STATUS"; exit "\${FAKE_STATUS_RC:-0}" ;;
 esac
@@ -74,6 +76,15 @@ if [[ $1 == template ]]; then exec "$REAL_HELM" "$@"; fi
 exit 0
 `,
   );
+  // The seed script itself is tested below against a fake API; here only whether and how install.sh calls it.
+  writeFileSync(
+    join(dir, "node"),
+    `#!/usr/bin/env bash
+printf 'node %s url=%s token=%s\\n' "$*" "$PI_API_URL" "$PI_API_TOKEN" >>"$FAKE_LOG"
+exit "\${FAKE_SEED_RC:-0}"
+`,
+  );
+  chmodSync(join(dir, "node"), 0o755);
   chmodSync(join(dir, "kubectl"), 0o755);
   chmodSync(join(dir, "helm"), 0o755);
 });
@@ -393,4 +404,132 @@ describe("hack/install.sh", () => {
     expect(run(["--values", join(dir, "missing.yaml")]).status).toBe(1);
     expect(log()).not.toMatch(/get namespace/);
   });
+
+  describe("browser profile seed (step 7)", () => {
+    const seedCalls = () =>
+      log()
+        .split("\n")
+        .filter((l) => l.startsWith("node "));
+    const noBrowser = ["--set", "sandbox.flavours.browser.enabled=false"];
+
+    it("seeds create-only through a port-forward with the first admin's token when the browser flavour is on", () => {
+      const r = run(base());
+      expect(r.status, r.stderr).toBe(0);
+      expect(seedCalls()).toHaveLength(1);
+      expect(seedCalls()[0]).toContain("seed-browser-profile.mjs --create-only");
+      expect(seedCalls()[0]).toContain("url=http://127.0.0.1:18999 token=x");
+      // the token is never printed
+      expect(r.stdout + r.stderr).not.toMatch(/token=x/);
+      expect(log().indexOf("helm upgrade")).toBeLessThan(log().indexOf("node "));
+    });
+
+    it("does not seed when the browser flavour is off", () => {
+      const r = run([...base(), ...noBrowser]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(seedCalls()).toHaveLength(0);
+      expect(r.stdout).toContain("the browser flavour is off");
+    });
+
+    it("does not seed with --no-seed-browser-profile", () => {
+      const r = run([...base(), "--no-seed-browser-profile"]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(seedCalls()).toHaveLength(0);
+      expect(r.stdout).toContain("skipped: --no-seed-browser-profile");
+    });
+
+    it("skips with a note, and still succeeds, when api-auth has no token for any admin", () => {
+      const r = run(base(), {
+        secrets: ["db-uri", "pi-egress-database", "api-auth"],
+        owners: "other",
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(seedCalls()).toHaveLength(0);
+      expect(r.stdout).toContain("api-auth has no token for any api.admins entry");
+    });
+
+    it("warns but does not fail the install when the seed fails", () => {
+      const r = run(base(), { env: { FAKE_SEED_RC: "1" } });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toContain("the browser profile was not seeded");
+    });
+  });
+});
+
+// hack/seed-browser-profile.mjs against a fake admin API: create-only never changes what exists.
+describe("hack/seed-browser-profile.mjs --create-only", () => {
+  const seed = join(root, "hack/seed-browser-profile.mjs");
+  const serve = async (hasProfile: boolean, hasSkills: boolean) => {
+    const requests: string[] = [];
+    const server = createServer((req, res) => {
+      requests.push(`${req.method ?? ""} ${req.url ?? ""}`);
+      req.resume();
+      const send = (status: number, body: unknown) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+      const url = req.url ?? "";
+      if (req.method === "GET" && url.startsWith("/admin/profiles/")) {
+        if (hasProfile) send(200, { currentVersion: 7, revision: 7 });
+        else send(404, {});
+      } else if (req.method === "GET" && url.startsWith("/admin/skills/")) {
+        if (hasSkills) send(200, { currentVersion: 3 });
+        else send(404, {});
+      } else if (req.method === "POST") send(201, { version: 1 });
+      else if (req.method === "PUT") send(201, { currentVersion: 1, versionCreated: true });
+      else send(500, {});
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    const run = () =>
+      new Promise<{ code: number | null; out: string }>((ok) => {
+        const child = spawn("node", [seed, "--create-only"], {
+          env: {
+            ...process.env,
+            PI_API_URL: `http://127.0.0.1:${String(port)}`,
+            PI_API_TOKEN: "t",
+          },
+        });
+        let out = "";
+        child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+        child.stderr.on("data", (d: Buffer) => (out += d.toString()));
+        child.on("close", (code) => ok({ code, out }));
+      });
+    return { requests, run, close: () => new Promise<void>((ok) => server.close(() => ok())) };
+  };
+
+  it("leaves an existing profile alone: no skill is published and no profile version is written", async () => {
+    const api = await serve(true, true);
+    try {
+      const r = await api.run();
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("profile browser v7 exists, kept");
+      expect(api.requests.filter((q) => /^(POST|PUT|DELETE)/.test(q))).toEqual([]);
+    } finally {
+      await api.close();
+    }
+  }, 20_000);
+
+  it("creates a missing profile and missing skills, and keeps an existing skill", async () => {
+    const api = await serve(false, false);
+    try {
+      const r = await api.run();
+      expect(r.code, r.out).toBe(0);
+      expect(api.requests).toContain("POST /admin/skills/playwright-cli/versions");
+      expect(api.requests).toContain("POST /admin/skills/agent-browser/versions");
+      expect(api.requests).toContain("PUT /admin/profiles/browser");
+    } finally {
+      await api.close();
+    }
+    const kept = await serve(false, true);
+    try {
+      const r = await kept.run();
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("skill playwright-cli v3 exists, kept");
+      expect(kept.requests.filter((q) => q.startsWith("POST"))).toEqual([]);
+      expect(kept.requests).toContain("PUT /admin/profiles/browser");
+    } finally {
+      await kept.close();
+    }
+  }, 20_000);
 });
