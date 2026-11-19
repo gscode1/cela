@@ -12,6 +12,15 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Docs-only pull requests skip this workflow (issue #277); check.yml still runs Prettier and the tests on them. Markdown
+    # under images/ and packages/ ships in images (BROWSER.md, the browser skills), so it still counts. Pushes to main always
+    # run, because hack/kind-up.sh pulls the images tagged with each main commit.
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "images/**"
+      - "packages/**"
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
