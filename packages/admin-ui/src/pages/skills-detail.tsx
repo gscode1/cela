@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useAuth } from "@/auth";
+import { Breadcrumb } from "@/components/breadcrumb";
 import { DeleteConfirm } from "@/components/delete-confirm";
 import { ProfileLinks } from "@/components/profile-ref-links";
 import { ReadOnlyNote } from "@/components/read-only-note";
@@ -9,7 +10,7 @@ import { Time } from "@/components/time";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
 import { listProfileRefs, profilesPinning, profilesPinningSkill } from "@/lib/api/profile-refs";
 import type { ProfileRef } from "@/lib/api/profile-refs";
@@ -70,18 +71,23 @@ function VersionRow({
     <Fragment>
       <tr data-testid={`version-${String(version.version)}`}>
         <Td className="whitespace-nowrap">
-          v{version.version} {current && <Badge>current</Badge>}
-        </Td>
-        <Td className="break-words">
-          {version.description} {version.disableModelInvocation && <Badge>manual only</Badge>}
+          v{version.version} {current && <Badge>current</Badge>}{" "}
+          {version.disableModelInvocation && <Badge>manual only</Badge>}
         </Td>
         <Td>
           <Time value={version.createdAt} />
           <span className="text-muted-foreground"> by {version.createdBy}</span>
         </Td>
         <Td className="whitespace-nowrap">
-          {version.files.length} {version.files.length === 1 ? "file" : "files"},{" "}
-          {formatBytes(version.size)}
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-expanded={panel === "files"}
+            onClick={() => toggle("files")}
+          >
+            {version.files.length} {version.files.length === 1 ? "file" : "files"},{" "}
+            {formatBytes(version.size)}
+          </Button>
         </Td>
         <Td>
           {pinnedBy === undefined ? (
@@ -94,14 +100,6 @@ function VersionRow({
         </Td>
         <Td>
           <span className="flex flex-wrap gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-expanded={panel === "files"}
-              onClick={() => toggle("files")}
-            >
-              Files
-            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -127,7 +125,7 @@ function VersionRow({
       </tr>
       {(panel !== undefined || downloadError !== undefined) && (
         <tr>
-          <Td colSpan={6} className="bg-muted/40">
+          <Td colSpan={5} className="bg-muted/40">
             {downloadError !== undefined && <Alert variant="destructive">{downloadError}</Alert>}
             {panel === "details" && (
               <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
@@ -220,12 +218,8 @@ export function SkillDetail() {
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Skill {name}</CardTitle>
-          <CardDescription>
-            <Link className="underline" to="/skills">
-              All skills
-            </Link>
-          </CardDescription>
+          <Breadcrumb items={[{ label: "Skills", to: "/skills" }, { label: name }]} />
+          <CardTitle>{name}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {mode === "readOnly" && <ReadOnlyNote what="Skills" />}
@@ -287,7 +281,6 @@ export function SkillDetail() {
               <thead>
                 <tr>
                   <Th>Version</Th>
-                  <Th>Description</Th>
                   <Th>Created</Th>
                   <Th>Files</Th>
                   <Th>Pinned by</Th>
