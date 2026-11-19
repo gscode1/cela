@@ -146,14 +146,14 @@ What it says: the claim (Pod ready) dominates; the bridge cold start is about 2 
 of plan.md, so #59 (shared bridge, done as ADR 0016) was mainly a memory change. `model` and `cap-wait` were near zero (scripted model, no
 bridge-cap contention).
 
-readinessProbe `periodSeconds` 10 against 1 (not measured yet, see #82: run.sh re-applies the template, so it needs an override first):
+readinessProbe `periodSeconds` 10 (Kubernetes default) against 1 (issue #82), 2026-11-19. A throwaway kind cluster (`hack/kind-up.sh --build --name pi-probe --no-expose`, runc, not gVisor, so absolute numbers differ from C2), the scripted model, one cold claim per fresh session (`echo hi`), n = 10 each, the same cluster upgraded in place between the two runs. Resumed was not measured. The template now has `periodSeconds: 1` fixed, with no chart value.
 
-| probe period | state   | n | claim p50 | claim p90 |
-| ------------ | ------- | - | --------- | --------- |
-| 10 s         | cold    | TODO | TODO   | TODO      |
-| 1 s          | cold    | TODO | TODO   | TODO      |
-| 10 s         | resumed | TODO | TODO   | TODO      |
-| 1 s          | resumed | TODO | TODO   | TODO      |
+| probe period | state | n  | claim p50 | claim p90 | claim min to max | claim mean |
+| ------------ | ----- | -- | --------- | --------- | ---------------- | ---------- |
+| 10 s         | cold  | 10 | 5.6 s     | 13.7 s    | 3.7 to 14.7 s    | 8.4 s      |
+| 1 s          | cold  | 10 | 5.4 s     | 5.6 s     | 3.7 to 7.3 s     | 5.2 s      |
+
+What it says: the p50 did not move (5.6 to 5.4 s, inside the spread). The gain is in the tail: with 10 s, 4 of 10 claims took 13.7 s or more (a Pod that turned healthy just after a probe waited most of a period); with 1 s the slowest was 7.3 s and the p90 fell by 8 s. The mean fell by 3.3 s. Pod start itself (about 3.7 s on kind) is untouched. The 1 s probe is one local HTTP GET per second per sandbox Pod answered by sandboxd. The issue's own rule (keep 1 s only if p50 improves by more than the spread) is not met on p50 alone; 1 s is kept for the tail and the mean, which n = 10 on one machine supports but does not prove.
 
 Bridge RSS per open session (same run, before ADR 0016, when each bridge was its own Node process): p50 about 126 MiB, peak 133 MiB, with up to 5 bridges open. Since ADR 0016 an open env costs about 11 MiB (measured 2026-11-17, see [scaling](scaling.md)).
 
