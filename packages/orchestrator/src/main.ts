@@ -40,6 +40,7 @@ import { createOrchestratorServer } from "./http.js";
 import type { Lifecycle } from "./http.js";
 import { INBOX_POOL_SIZE, InboxLoop } from "./inbox.js";
 import { checkRuntime } from "./runtime.js";
+import { mcpStatusRecorder } from "./mcp-status.js";
 import { clusterProbeIo } from "./netprobe-cluster.js";
 import { deleteProbePods } from "./netprobe-kube.js";
 import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
@@ -293,6 +294,7 @@ async function main(): Promise<void> {
     {
       catalog: mcpCatalog,
       mcpIdentity: mcpAccess,
+      mcpStatus: mcpStatusRecorder(pool, config.shard),
       conversationProfiles: () => liveConversationProfiles(pool, config.shard),
     },
   );

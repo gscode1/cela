@@ -311,3 +311,16 @@ export {
   SESSION_RULES_AUTHOR,
   sessionsWithRules,
 } from "./egress-session-rules.js";
+export {
+  clearMcpDiscovery,
+  discoveryView,
+  MAX_DISCOVERY_TOOL_NAMES,
+  readMcpDiscovery,
+  recordMcpDiscovery,
+} from "./mcp-discovery.js";
+export type {
+  McpDiscoveryOutcome,
+  McpDiscoveryReport,
+  McpDiscoveryView,
+  McpReachability,
+} from "./mcp-discovery.js";

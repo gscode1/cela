@@ -56,6 +56,17 @@ function canonicalJson(value: unknown): string {
 }
 
 /** `fetch` replaces the factory's own: the identity of a credentialed server's session (or its discovery). */
+/**
+ * What the orchestrator publishes about a server's discovery (ADR 0044): the latest outcome of each attempt, and the
+ * end of a server that left the catalog or was replaced. The message is raw: the recorder sanitizes it.
+ */
+export type McpStatusReport =
+  | { server: string; state: "ready"; toolNames: string[] }
+  | { server: string; state: "failed"; message: string }
+  | { server: string; state: "removed" };
+
+export type McpStatusSink = (report: McpStatusReport) => void;
+
 export type McpTransportFactory = (spec: McpServerSpec, fetch?: McpFetch) => McpTransport;
 
 /**
@@ -230,6 +241,7 @@ export class McpServer {
   #discovery: Promise<void> | undefined;
   /** Wakes the discovery's wait between two attempts (`nudge`). */
   #wake: (() => void) | undefined;
+  readonly #onStatus: McpStatusSink | undefined;
 
   constructor(
     spec: McpServerSpec,
@@ -238,7 +250,9 @@ export class McpServer {
     timings: McpTimings,
     previousSchemas: ReadonlyMap<string, string> = new Map(),
     identity?: McpIdentity,
+    onStatus?: McpStatusSink,
   ) {
+    this.#onStatus = onStatus;
     this.#identity = identity;
     this.#shared = new McpConnection(
       spec.name,
@@ -385,6 +399,11 @@ export class McpServer {
         this.extension = this.#buildExtension(tools);
         this.#registry.install(this.extension);
         log("mcp-tools-ready", { server: this.#spec.name, tools: tools.length });
+        this.#onStatus?.({
+          server: this.#spec.name,
+          state: "ready",
+          toolNames: tools.map((tool) => tool.name),
+        });
         return;
       } catch (error) {
         log("mcp-discovery-failed", {
@@ -392,6 +411,14 @@ export class McpServer {
           message: errorMessage(error),
           retryMs: delay,
         });
+        // Not after a retire: the server that replaces this one reports for the name now.
+        if (!this.#stopped()) {
+          this.#onStatus?.({
+            server: this.#spec.name,
+            state: "failed",
+            message: errorMessage(error),
+          });
+        }
         await this.#sleep(delay);
         delay = Math.min(delay * 2, this.#timings.retryMaxMs);
       }
@@ -499,13 +526,16 @@ export class McpTools {
   #closed = false;
 
   readonly #identity: McpIdentity | undefined;
+  readonly #onStatus: McpStatusSink | undefined;
 
   constructor(
     registry: Registry,
     transport: McpTransportFactory,
     timings: McpTimings = DEFAULT_MCP_TIMINGS,
     identity?: McpIdentity,
+    onStatus?: McpStatusSink,
   ) {
+    this.#onStatus = onStatus;
     this.#registry = registry;
     this.#transport = transport;
     this.#timings = timings;
@@ -535,6 +565,7 @@ export class McpTools {
       this.#servers.delete(name);
       this.#registry.uninstall(server.extension);
       this.#retire(server);
+      this.#onStatus?.({ server: name, state: "removed" });
       log("mcp-server-removed", { server: name });
     }
     for (const spec of wanted.values()) {
@@ -549,9 +580,14 @@ export class McpTools {
         this.#timings,
         current?.schemas,
         this.#identity,
+        this.#onStatus,
       );
       this.#servers.set(spec.name, server);
-      if (current !== undefined) this.#retire(current);
+      if (current !== undefined) {
+        this.#retire(current);
+        // The old outcome was about the old row (another URL, say): unknown until the new server has listed its tools.
+        this.#onStatus?.({ server: spec.name, state: "removed" });
+      }
       log(current === undefined ? "mcp-server-added" : "mcp-server-replaced", {
         server: spec.name,
       });

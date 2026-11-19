@@ -6,6 +6,21 @@ export interface CatalogSource {
   commit: string;
 }
 
+/**
+ * What the orchestrator last found when it listed the server's tools through the gateway (ADR 0044). `unknown`: no
+ * orchestrator has reported since it started; `disabled`: the server is not discovered at all.
+ */
+export interface McpDiscovery {
+  state: "ready" | "failed" | "disabled" | "unknown";
+  tools: number;
+  toolNames?: string[];
+  /** Sanitized and at most about 300 characters. */
+  error?: string;
+  checkedAt: string | null;
+  /** The shard whose report this is. */
+  shard?: number;
+}
+
 /** One MCP server as `GET /admin/mcp-servers` returns it, and as a `PUT` body may carry its fields. */
 export interface McpServer {
   name: string;
@@ -18,7 +33,9 @@ export interface McpServer {
   onecliSecret: string | null;
   revision: number;
   source: CatalogSource | null;
-  reachability: string;
+  reachability: "ok" | "failing" | "unknown";
+  /** Absent from an ingest older than ADR 0044: the same as unknown. */
+  discovery?: McpDiscovery;
   createdAt: string;
   createdBy: string;
   updatedAt: string;

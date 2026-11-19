@@ -112,6 +112,9 @@ export class FakeSettingsDb {
   /** Makes the next settings select throw, as a lost connection would. */
   failReads = false;
   readonly listeners = new Set<FakeListener>();
+  /** inbox.shard_status's published MCP discovery outcomes, by shard. */
+  mcpDiscovery: { shard: number; mcpDiscovery: Record<string, unknown> | null }[] = [];
+
   /** inbox.mcp_servers by name, and its history. */
   mcp = new Map<string, McpRow>();
   /** Advisory transaction locks by key, and the client that holds each. */
@@ -303,6 +306,9 @@ export class FakeSettingsDb {
       );
     }
     if (text.includes("from inbox.events where session_id")) return done([]);
+    if (text.includes("mcp_discovery as") && text.includes("from inbox.shard_status")) {
+      return done(this.mcpDiscovery.map((row) => ({ ...row })));
+    }
     if (text.includes("inbox.mcp_servers")) return this.#mcpQuery(text, params, done);
     if (/inbox\.skill/.test(text)) return this.#skillQuery(text, params, done);
     if (/inbox\.(profiles|profile_versions|orchestrator_capabilities|sessions)\b/.test(text)) {

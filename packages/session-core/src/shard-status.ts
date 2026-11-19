@@ -32,7 +32,7 @@ export async function startShardStatus(
     `insert into inbox.shard_status (shard, configured_runtime) values ($1, $2)
     on conflict (shard) do update set configured_runtime = excluded.configured_runtime,
     observed_runtime = null, network_policy = 'unknown', network_policy_checked_at = null,
-    network_policy_detail = null, probe_requested_at = null, updated_at = clock_timestamp()`,
+    network_policy_detail = null, probe_requested_at = null, mcp_discovery = '{}'::jsonb, updated_at = clock_timestamp()`,
     [shard, runtime],
   );
 }

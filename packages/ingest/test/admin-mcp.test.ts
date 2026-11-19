@@ -97,6 +97,7 @@ describe("admin MCP servers", () => {
       maxOutputBytes: 24_576,
       onecliSecret: null,
       reachability: "unknown",
+      discovery: { state: "unknown", tools: 0, checkedAt: null },
       createdBy: "alice",
     });
     const updated = await call(base, "alice", "PUT", "/admin/mcp-servers/demo", {
@@ -120,6 +121,52 @@ describe("admin MCP servers", () => {
     ).json()) as { history: { action: string; changedBy: string; old: unknown }[] };
     expect(history.history.map((h) => h.action)).toEqual(["update", "create"]);
     expect(history.history[1]?.old).toBeNull();
+  });
+
+  it("reports the orchestrator's discovery outcome per server (ADR 0044)", async () => {
+    const { base, db } = await start();
+    for (const name of ["good", "bad", "off", "silent"]) {
+      await call(base, "alice", "PUT", `/admin/mcp-servers/${name}`, {
+        ...DEMO,
+        enabled: name !== "off",
+      });
+    }
+    const at = "2026-11-19T10:00:00.000Z";
+    db.mcpDiscovery = [
+      {
+        shard: 0,
+        mcpDiscovery: {
+          good: { state: "ready", tools: 2, toolNames: ["a", "b"], checkedAt: at },
+          bad: {
+            state: "failed",
+            error: "mcp bad connect timed out after 15000 ms",
+            checkedAt: at,
+          },
+          off: { state: "ready", tools: 1, toolNames: ["x"], checkedAt: at },
+        },
+      },
+    ];
+    const list = (await (await call(base, "alice", "GET", "/admin/mcp-servers")).json()) as {
+      servers: { name: string; reachability: string; discovery: unknown }[];
+    };
+    const by = Object.fromEntries(list.servers.map((s) => [s.name, s]));
+    expect(by.good).toMatchObject({
+      reachability: "ok",
+      discovery: { state: "ready", tools: 2, toolNames: ["a", "b"], checkedAt: at, shard: 0 },
+    });
+    expect(by.bad).toMatchObject({
+      reachability: "failing",
+      discovery: {
+        state: "failed",
+        error: "mcp bad connect timed out after 15000 ms",
+        checkedAt: at,
+      },
+    });
+    expect(by.off).toMatchObject({ reachability: "unknown", discovery: { state: "disabled" } });
+    expect(by.silent).toMatchObject({ reachability: "unknown", discovery: { state: "unknown" } });
+    expect(await (await call(base, "alice", "GET", "/admin/mcp-servers/bad")).json()).toMatchObject(
+      { reachability: "failing" },
+    );
   });
 
   it("derives the egress rules of the catalog in the same transaction (ADR 0040)", async () => {

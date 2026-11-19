@@ -63,7 +63,9 @@ import {
   repoAllowed,
   readSettings,
   PROBE_SHARD,
+  readMcpDiscovery,
   readShardStatus,
+  discoveryView,
   requestNetworkProbe,
   updateSettings,
   beginDelete,
@@ -73,6 +75,7 @@ import {
   UUID,
 } from "@pi-durable-k8s/session-core";
 import type {
+  McpDiscoveryOutcome,
   ModelCatalogEntry,
   ModelProviderStatus,
   Authenticator,
@@ -915,14 +918,17 @@ async function handleAdminProfiles(
   sendJson(res, 405, { error: "method not allowed" });
 }
 
-function mcpServerJson(stored: StoredMcpServer) {
+function mcpServerJson(
+  stored: StoredMcpServer,
+  discovery: ReadonlyMap<string, ReadonlyMap<number, McpDiscoveryOutcome>>,
+) {
   return {
     ...stored.server,
     revision: stored.revision,
     source: stored.source,
-    // The admin API never probes the network (ADR 0009): whether the host is also allowed in the OneCLI rules and the
-    // egress policy is only seen when the orchestrator connects.
-    reachability: "unknown",
+    // Reachability is the orchestrator's own discovery outcome (ADR 0044), not a probe from ingest: the path that
+    // matters (gateway, host rules, egress policy) is only walked from the orchestrator.
+    ...discoveryView(stored.server.enabled, discovery.get(stored.server.name)),
     createdAt: stored.createdAt.toISOString(),
     createdBy: stored.createdBy,
     updatedAt: stored.updatedAt.toISOString(),
@@ -954,11 +960,12 @@ async function handleAdminMcpServers(
       return;
     }
     const catalog = await readMcpServers(deps.pool);
+    const discovery = await readMcpDiscovery(deps.pool);
     // The names an `onecliSecret` could take, as the orchestrator last listed them (ADR 0040 amendment): a picker's
     // list, never a check. `source: "none"` while unknown, which is not the same as an empty list.
     const names = (await readCapabilities(deps.pool))?.onecliSecretNames;
     sendJson(res, 200, {
-      servers: catalog.servers.map(mcpServerJson),
+      servers: catalog.servers.map((stored) => mcpServerJson(stored, discovery)),
       invalid: catalog.invalid,
       onecliSecrets:
         names === undefined ? { names: [], source: "none" } : { names, source: "orchestrator" },
@@ -992,7 +999,7 @@ async function handleAdminMcpServers(
       sendJson(res, 404, { error: "server not found" });
       return;
     }
-    sendJson(res, 200, mcpServerJson(found));
+    sendJson(res, 200, mcpServerJson(found, await readMcpDiscovery(deps.pool)));
     return;
   }
   if (method === "PUT") {
@@ -1024,7 +1031,11 @@ async function handleAdminMcpServers(
       sendJson(res, 400, { error: result });
       return;
     }
-    sendJson(res, result.created ? 201 : 200, mcpServerJson(result.stored));
+    sendJson(
+      res,
+      result.created ? 201 : 200,
+      mcpServerJson(result.stored, await readMcpDiscovery(deps.pool)),
+    );
     return;
   }
   if (method === "DELETE") {

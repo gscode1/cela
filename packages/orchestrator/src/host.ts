@@ -24,7 +24,7 @@ import { errorMessage, log } from "./log.js";
 import { joinInstructions } from "./repo-context.js";
 import type { Script } from "./model.js";
 import { httpTransportFactory, McpTools } from "./mcp.js";
-import type { McpIdentity, McpTimings, McpTransportFactory } from "./mcp.js";
+import type { McpIdentity, McpStatusSink, McpTimings, McpTransportFactory } from "./mcp.js";
 import { buildGatewayFetch, buildModels } from "./providers.js";
 import type { McpFetch } from "@earendil-works/pi-mcp";
 import { Sandboxes, WORKSPACE } from "./sandboxes.js";
@@ -100,6 +100,8 @@ export interface HostOptions {
   /** Whose grants a credentialed MCP server's requests carry (docs/decisions/0040-mcp-egress-flow.md). */
   mcpIdentity?: McpIdentity;
   mcpTimings?: McpTimings;
+  /** Receives each server's latest discovery outcome (ADR 0044); main.ts publishes it into the shard status row. */
+  mcpStatus?: McpStatusSink;
   /** Test seam: the coding extension to install (a later release with one more tool). Production passes nothing. */
   codingExtension?: Extension;
   /**
@@ -255,7 +257,13 @@ export class Host {
     // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
     // created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
-    const mcp = new McpTools(registry, mcpTransport, options.mcpTimings, options.mcpIdentity);
+    const mcp = new McpTools(
+      registry,
+      mcpTransport,
+      options.mcpTimings,
+      options.mcpIdentity,
+      options.mcpStatus,
+    );
     const toolSearch = createToolSearchExtension();
     registry.install(toolSearch);
     let unsubscribe = () => {};
