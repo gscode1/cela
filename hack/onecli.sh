@@ -2,7 +2,7 @@
 # Install the bundled OneCLI into one namespace (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md):
 #
 #   hack/onecli.sh [--namespace pi-durable] [--external-url http://localhost:10254] [--release onecli] [--timeout 10m]
-#                  [--expose-source-cidr A.B.C.D/32]
+#                  [--expose-source-cidr A.B.C.D/32] [--egress-proxy on|off] [--allow-open-without-proxy]
 #
 #   1. creates the Secrets that do not exist yet, never regenerating one (losing SECRET_ENCRYPTION_KEY makes every stored
 #      credential unreadable): onecli-database (DATABASE_URL of the `onecli` database and role) and onecli-secrets (the
@@ -12,6 +12,14 @@
 #   3. installs the upstream chart as its own release `onecli`, pinned by version and digest, with
 #      charts/pi-onecli/upstream-values.yaml (runner off, one replica, no Redis, no database of its own), and waits.
 #   4. runs hack/onecli-bootstrap.sh: account, admin key, orchestrator agent token, host rules, public CA ConfigMap.
+#
+# OneCLI is installed OPEN (docs/decisions/0043-open-onecli-defaults.md): the gateway may reach the RFC 1918 ranges on 443
+# (upstream value gateway.allowPrivateDestinations, and charts/pi-onecli gateway.privateHttps for the network). That is safe
+# only while sandboxes reach the gateway through the egress proxy, which never routes a private address to it. With
+# `--egress-proxy off` (hack/install.sh passes it when the pi-durable release has no proxy) sandboxes reach the gateway
+# directly and a repo session holds a OneCLI token, so the script installs the HARDENED values instead: no private
+# destinations, no private 443 rule. `--allow-open-without-proxy` acknowledges the risk and keeps them open. Standalone
+# runs default to `--egress-proxy on`, the chart's default.
 #
 # Every step is idempotent: a second run upgrades in place and the bootstrap reports changed=0.
 # The namespace must exist (hack/install.sh and hack/kind-up.sh create it with the restricted Pod Security labels).
@@ -44,9 +52,11 @@ release=onecli
 external_url=http://localhost:10254
 timeout=10m
 expose_cidr=""
+egress_proxy=on
+allow_open=0
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] [--external-url URL] [--release NAME] [--timeout 10m] [--expose-source-cidr A.B.C.D/32]" >&2
+  echo "usage: ${0##*/} [--namespace NS] [--external-url URL] [--release NAME] [--timeout 10m] [--expose-source-cidr A.B.C.D/32] [--egress-proxy on|off] [--allow-open-without-proxy]" >&2
   exit 64
 }
 die() {
@@ -62,6 +72,8 @@ while [[ $# -gt 0 ]]; do
   --release) [[ $# -ge 2 ]] || usage; release=$2; shift 2 ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   --expose-source-cidr) [[ $# -ge 2 ]] || usage; expose_cidr=$2; shift 2 ;;
+  --egress-proxy) [[ $# -ge 2 ]] || usage; egress_proxy=$2; shift 2 ;;
+  --allow-open-without-proxy) allow_open=1; shift ;;
   -h | --help) usage ;;
   *) usage ;;
   esac
@@ -70,6 +82,10 @@ done
 [[ $release =~ ^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$ ]] || die "bad release name '$release'"
 [[ $external_url =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die "bad --external-url '$external_url' (scheme, host and optional port, no path)"
 [[ -z $expose_cidr || $expose_cidr =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || die "bad --expose-source-cidr '$expose_cidr' (one IPv4 address as /32)"
+[[ $egress_proxy == on || $egress_proxy == off ]] || die "bad --egress-proxy '$egress_proxy' (on or off)"
+# Open unless the release has no proxy and nobody acknowledged it.
+open_values=1
+if [[ $egress_proxy == off && $allow_open -eq 0 ]]; then open_values=0; fi
 allow_insecure=false
 if [[ $external_url == http://* ]]; then
   case ${external_url#http://} in
@@ -132,14 +148,25 @@ fi
 
 # ------------------------------------------------------------------ 2. policies
 log "network policies (charts/pi-onecli)"
+if [[ $open_values -eq 1 ]]; then
+  [[ $egress_proxy == on ]] || echo "OneCLI: private destinations stay OPEN without an egress proxy (--allow-open-without-proxy): a sandbox can reach private HTTPS hosts through the gateway" >&2
+else
+  echo "OneCLI: no egress proxy in this release, so OneCLI is installed HARDENED (no private destinations; --allow-open-without-proxy keeps them open)" >&2
+fi
+hardened_policy=()
+hardened_gateway=()
+if [[ $open_values -eq 0 ]]; then
+  hardened_policy=(--set gateway.privateHttps.enabled=false)
+  hardened_gateway=(--set gateway.allowPrivateDestinations=)
+fi
 helm_ upgrade --install pi-onecli "$root/charts/pi-onecli" --namespace "$namespace" --set "release=$release" \
-  ${expose_cidr:+--set expose.enabled=true --set "expose.sourceCidr=$expose_cidr"} --wait --timeout "$timeout"
+  ${hardened_policy[@]+"${hardened_policy[@]}"} ${expose_cidr:+--set expose.enabled=true --set "expose.sourceCidr=$expose_cidr"} --wait --timeout "$timeout"
 
 # ------------------------------------------------------------------ 3. the upstream chart
 log "OneCLI $onecli_version (upstream chart, release $release)"
 helm_ upgrade --install "$release" "$onecli_chart:$onecli_version@$onecli_digest" --namespace "$namespace" \
   --values "$root/charts/pi-onecli/upstream-values.yaml" \
-  --set "externalUrl=$external_url" --set "allowInsecureExternalUrl=$allow_insecure" --wait --timeout "$timeout"
+  ${hardened_gateway[@]+"${hardened_gateway[@]}"} --set "externalUrl=$external_url" --set "allowInsecureExternalUrl=$allow_insecure" --wait --timeout "$timeout"
 # The api and gateway pods wait for the CA that a Job mints and restart themselves once: --wait covers it, the rollout
 # checks make a failure name the Deployment.
 for component in api web gateway; do

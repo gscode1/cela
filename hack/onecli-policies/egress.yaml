@@ -1,6 +1,9 @@
-# Example OneCLI egress: DNS, database and public HTTPS allowlist. Adapt dependencies before applying.
-# Private CIDR denies protect against DNS rebinding; verify their interaction with database endpoints.
-# Roll out in audit mode, inspect Hubble, then enforce. See README.md.
+# Example OneCLI egress, the OPEN default (docs/decisions/0043-open-onecli-defaults.md): DNS, database and TCP 443 to anything
+# outside the cluster (`world`), which includes the LAN. A LAN MCP server whose key OneCLI injects works; every other port to
+# the LAN, and every address inside the cluster, stays closed. 169.254.0.0/16 (cloud metadata) and 100.64.0.0/10 (CGNAT) are
+# denied outright. For an allowlist instead, apply egress-strict.yaml (same name: it replaces this policy, never both).
+# Pair it with the gateway's own allowPrivateDestinations (charts/pi-onecli/upstream-values.yaml); OneCLI refuses private
+# addresses without it. Adapt dependencies before applying. Roll out in audit mode, inspect Hubble, then enforce. See README.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -12,11 +15,8 @@ spec:
       app: onecli
   egressDeny:
     - toCIDRSet:
-        - cidr: 10.0.0.0/8
-        - cidr: 172.16.0.0/12
-        - cidr: 192.168.0.0/16
-        - cidr: 100.64.0.0/10
         - cidr: 169.254.0.0/16
+        - cidr: 100.64.0.0/10
   egress:
     - toEndpoints:
         - matchLabels:
@@ -36,24 +36,8 @@ spec:
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
-    - toFQDNs:
-        # Model providers (ChatGPT/Codex subscription, OpenAI API, OpenRouter).
-        - matchName: chatgpt.com
-        - matchPattern: "*.chatgpt.com"
-        - matchName: auth.openai.com
-        - matchName: api.openai.com
-        - matchName: openrouter.ai
-        # GitHub (Phase 4c clone and push).
-        - matchName: github.com
-        - matchName: api.github.com
-        - matchName: codeload.github.com
-        - matchName: objects.githubusercontent.com
-        # Package registries.
-        - matchName: registry.npmjs.org
-        - matchName: pypi.org
-        - matchName: files.pythonhosted.org
-        # Remote MCP servers called by the orchestrator (docs/decisions/0007-native-remote-mcp.md).
-        - matchName: mcp.deepwiki.com
+    - toEntities:
+        - world
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }

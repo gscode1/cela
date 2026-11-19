@@ -9,6 +9,14 @@ database:
     existingSecret: onecli-database # key DATABASE_URL
 runner:
   enabled: false # no hosted sandboxes: our sandboxes are agent-sandbox pods and only use the gateway
+# The gateway may reach private addresses on the RFC 1918 ranges (docs/decisions/0043-open-onecli-defaults.md): the
+# orchestrator calls admin-named MCP servers that live on a LAN, and OneCLI injects their key. CGNAT, link-local (metadata)
+# and loopback stay refused by OneCLI whatever this says. hack/onecli.sh empties it (hardened) when the release has no
+# egress proxy, because a sandbox then reaches the gateway directly. Empty it yourself to harden:
+#   --set gateway.allowPrivateDestinations=
+# The network policy (charts/pi-onecli gateway.privateHttps) admits these ranges on TCP 443 only.
+gateway:
+  allowPrivateDestinations: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 # One replica each is all the chart allows without Redis and an Enterprise license. Never an Ingress or HTTPRoute for
 # /auth: sign-up cannot be closed in OneCLI (docs/decisions/0022-bundled-onecli.md).
 ingress:

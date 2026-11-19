@@ -30,10 +30,14 @@
 # Bundled OneCLI needs its own database: ONECLI_DATABASE_URL, or the Secret pi-postgres-auth of charts/pi-postgres
 # (hack/onecli.sh).
 #
+# Bundled OneCLI is open by default (private HTTPS destinations, ADR 0043). When this release has NO egress proxy, sandboxes
+# reach the gateway directly, so the script installs the HARDENED OneCLI instead (hack/onecli.sh --egress-proxy off), unless
+# --onecli-allow-open-without-proxy acknowledges the risk.
+#
 # Inputs: --namespace/-n (default pi-durable), --values/-f (repeatable), --set (repeatable, passed to helm),
 # --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
 # http://localhost:10254, see hack/onecli.sh), --onecli-expose-cidr (kind only: passed to hack/onecli.sh as
-# --expose-source-cidr); KUBE_CONTEXT selects the kubectl and helm context (unset:
+# --expose-source-cidr), --onecli-allow-open-without-proxy (see below); KUBE_CONTEXT selects the kubectl and helm context (unset:
 # the current one); DATABASE_URL and EGRESS_DATABASE_URL as above.
 set -euo pipefail
 
@@ -46,9 +50,10 @@ values=()
 sets=()
 onecli_url=""
 onecli_expose_cidr=""
+onecli_allow_open=0
 
 usage() {
-  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL] [--onecli-expose-cidr A.B.C.D/32]" >&2
+  echo "usage: ${0##*/} [--namespace NS] --values FILE [--values FILE]... [--set key=value]... [--release NAME] [--timeout 10m] [--onecli-external-url URL] [--onecli-expose-cidr A.B.C.D/32] [--onecli-allow-open-without-proxy]" >&2
   exit 64
 }
 die() {
@@ -65,6 +70,7 @@ while [[ $# -gt 0 ]]; do
   --release) [[ $# -ge 2 ]] || usage; release=$2; shift 2 ;;
   --onecli-external-url) [[ $# -ge 2 ]] || usage; onecli_url=$2; shift 2 ;;
   --onecli-expose-cidr) [[ $# -ge 2 ]] || usage; onecli_expose_cidr=$2; shift 2 ;;
+  --onecli-allow-open-without-proxy) onecli_allow_open=1; shift ;;
   --timeout) [[ $# -ge 2 ]] || usage; timeout=$2; shift 2 ;;
   -h | --help) usage ;;
   *) usage ;;
@@ -251,7 +257,13 @@ if [[ $onecli_mode == bundled ]]; then
   # The release name is the one the chart derives its URLs from: PI_ONECLI_API is http://<release>-api.<ns>.svc:10256.
   onecli_release=$(rendered_value PI_ONECLI_API | sed -n 's#^http://\(.*\)-api\..*#\1#p')
   [[ -n $onecli_release ]] || die "could not read the OneCLI release name from the rendered chart"
+  # No EGRESS_DATABASE_URL in the render means no egress proxy (see above): OneCLI is then installed hardened.
+  onecli_proxy=on
+  [[ -n $egress_database_secret ]] || onecli_proxy=off
+  onecli_ack=""
+  [[ $onecli_allow_open -eq 0 ]] || onecli_ack=--allow-open-without-proxy
   KUBE_CONTEXT=$ctx "$root/hack/onecli.sh" --namespace "$namespace" --release "$onecli_release" --timeout "$timeout" \
+    --egress-proxy "$onecli_proxy" ${onecli_ack:+"$onecli_ack"} \
     ${onecli_url:+--external-url "$onecli_url"} ${onecli_expose_cidr:+--expose-source-cidr "$onecli_expose_cidr"}
 fi
 

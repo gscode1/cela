@@ -45,7 +45,8 @@ The bootstrap leaves three things in the namespace; no script prints a value:
 | Secret `pi-onecli` | `agent-token` (`aoc_`, the orchestrator's agent `pi-orchestrator`) |
 | ConfigMap `pi-onecli-ca` | `ca.pem`, the public gateway CA |
 
-It also writes the host allowlist ([OneCLI host rules](onecli-host-rules.md)): an allow rule per host, then `block *`.
+It writes no host rules by default: OneCLI is open ([ADR 0043](decisions/0043-open-onecli-defaults.md)). With `ONECLI_HOSTS` set it
+writes the host allowlist ([OneCLI host rules](onecli-host-rules.md)): an allow rule per host, then `block *`.
 The orchestrator gets only the `api-key` and `agent-token` keys and the CA, never the password.
 
 **Sign in to the dashboard on kind.** `hack/kind-up.sh` publishes the dashboard and the API on the host's loopback

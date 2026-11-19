@@ -1,0 +1,63 @@
+# STRICT variant of the OneCLI egress example (hardening, docs/decisions/0043-open-onecli-defaults.md): DNS, database and an
+# HTTPS FQDN allowlist, with every private range denied. Use it together with the host rules (ONECLI_HOSTS,
+# docs/onecli-host-rules.md) when OneCLI must reach nothing but the listed hosts; a LAN MCP server then cannot work.
+# It has the SAME metadata.name as egress.yaml (the open default): applying one replaces the other, never both. It is not in
+# kustomization.yaml. Keep the FQDN list in step with docs/onecli-host-rules.md and hack/onecli-host-rules.sh (a unit test
+# compares them). Adapt dependencies before applying; private CIDR denies protect against DNS rebinding, verify their
+# interaction with database endpoints. Roll out in audit mode, inspect Hubble, then enforce. See README.md.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: onecli-egress
+  namespace: onecli
+spec:
+  endpointSelector:
+    matchLabels:
+      app: onecli
+  egressDeny:
+    - toCIDRSet:
+        - cidr: 10.0.0.0/8
+        - cidr: 172.16.0.0/12
+        - cidr: 192.168.0.0/16
+        - cidr: 100.64.0.0/10
+        - cidr: 169.254.0.0/16
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: onecli
+            cnpg.io/cluster: onecli-db
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+    - toFQDNs:
+        # Model providers (ChatGPT/Codex subscription, OpenAI API, OpenRouter).
+        - matchName: chatgpt.com
+        - matchPattern: "*.chatgpt.com"
+        - matchName: auth.openai.com
+        - matchName: api.openai.com
+        - matchName: openrouter.ai
+        # GitHub (Phase 4c clone and push).
+        - matchName: github.com
+        - matchName: api.github.com
+        - matchName: codeload.github.com
+        - matchName: objects.githubusercontent.com
+        # Package registries.
+        - matchName: registry.npmjs.org
+        - matchName: pypi.org
+        - matchName: files.pythonhosted.org
+        # Remote MCP servers called by the orchestrator (docs/decisions/0007-native-remote-mcp.md).
+        - matchName: mcp.deepwiki.com
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

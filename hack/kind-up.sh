@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--no-egress-proxy] [--browser] [--no-expose]
+#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--browser] [--no-expose]
 #                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
@@ -45,6 +45,10 @@
 # scripted model still needs no credential; hack/kind-smoke.sh --onecli proves a session's orchestrator routes through the
 # gateway. A real model: docs/model-credentials.md.
 #
+# OneCLI is open by default (private HTTPS destinations, ADR 0043). With --no-egress-proxy sandboxes reach the gateway
+# directly, so --onecli then installs the HARDENED OneCLI (hack/install.sh passes --egress-proxy off to hack/onecli.sh);
+# --onecli-open-without-proxy acknowledges the risk and keeps it open.
+#
 # The egress proxy (epic #50, docs/decisions/0035-egress-proxy-runtime.md) is on by default, as in the chart (ADR 0038,
 # amendment of 2026-11-19): the bundled Postgres creates the read-only role pi_egress (auth.egressReader), hack/install.sh
 # makes the Secret pi-egress-database from its URI (EGRESS_DATABASE_URL, set here) and, with --onecli, the binding key
@@ -65,6 +69,7 @@ namespace=pi-durable
 timeout=10m
 build=0
 onecli=0
+onecli_open=0
 egress_proxy=1
 browser=0
 user_sets=()
@@ -78,7 +83,7 @@ verbose=0
 [[ -z ${CI:-} ]] || verbose=1 # a CI job log should hold everything
 
 usage() {
-  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--no-egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
+  echo "usage: ${0##*/} [--name CLUSTER] [--namespace NS] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--browser] [--no-expose] [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]" >&2
   echo "  env: IMAGE_TAG, ORCH_IMAGE, INGEST_IMAGE, SANDBOX_IMAGE, EGRESS_PROXY_IMAGE, IMAGE_REPO, NETPOL_ENFORCED=1, CI (implies --verbose)" >&2
   exit 64
 }
@@ -95,6 +100,7 @@ while [[ $# -gt 0 ]]; do
   -n | --namespace) [[ $# -ge 2 ]] || usage; namespace=$2; shift 2 ;;
   --build) build=1; shift ;;
   --onecli) onecli=1; shift ;;
+  --onecli-open-without-proxy) onecli_open=1; shift ;;
   --egress-proxy) egress_proxy=1; shift ;; # the default; kept so older commands still work
   --no-egress-proxy) egress_proxy=0; shift ;;
   --browser) browser=1; shift ;;
@@ -208,6 +214,7 @@ ref_sandbox_browser=${SANDBOX_BROWSER_IMAGE:-$repo/pi-sandbox-browser:$tag}
 set_args=()
 extra_args=()
 [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.mode=bundled)
+[[ $onecli_open -eq 0 ]] || extra_args+=(--onecli-allow-open-without-proxy)
 [[ $egress_proxy -eq 1 ]] || extra_args+=(--set egressProxy.enabled=false)
 [[ $cni == kindnet ]] || extra_args+=(--set networkPolicy.provider=cilium)
 add_image_sets() { # key ref: --set images.<key>.repository/tag/digest from a "repo:tag" or "repo@sha256:..." reference

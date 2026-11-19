@@ -43,8 +43,29 @@
     "gateway": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["egressInternet"],
-      "properties": { "egressInternet": { "type": "boolean" } }
+      "required": ["egressInternet", "privateHttps"],
+      "properties": {
+        "egressInternet": { "type": "boolean" },
+        "privateHttps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "except"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "except": {
+              "description": "Per RFC 1918 range, the CIDRs inside it that stay blocked (an ipBlock except must lie within its cidr).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+              "properties": {
+                "10.0.0.0/8": { "$ref": "#/definitions/cidrs" },
+                "172.16.0.0/12": { "$ref": "#/definitions/cidrs" },
+                "192.168.0.0/16": { "$ref": "#/definitions/cidrs" }
+              }
+            }
+          }
+        }
+      }
     },
     "expose": {
       "type": "object",
@@ -73,6 +94,10 @@
       "type": "string",
       "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/32$",
       "not": { "const": "0.0.0.0/32" }
+    },
+    "cidrs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$" }
     },
     "labels": {
       "type": "object",

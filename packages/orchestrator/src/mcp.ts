@@ -69,12 +69,22 @@ export interface McpIdentity {
   forConversation(conversationId: number, spec: McpServerSpec): Promise<McpFetch>;
 }
 
-/** The production transport: streamable HTTP through `fetch` (the gateway), no server-to-client stream. */
+/**
+ * A redirect fails the request instead of being followed. The gateway may reach private addresses
+ * (docs/decisions/0043-open-onecli-defaults.md) and an admin vetted the server's URL, not wherever that server points
+ * next, so a 30x must not carry our request, or a credential the gateway injects, to another host. Only the MCP
+ * transport is bound by this: model calls share the gateway fetch and keep its default.
+ */
+export function refuseRedirects(fetch: McpFetch): McpFetch {
+  return (input, init) => fetch(input, { ...init, redirect: "error" });
+}
+
+/** The production transport: streamable HTTP through `fetch` (the gateway), no server-to-client stream, no redirects. */
 export function httpTransportFactory(fetch: McpFetch): McpTransportFactory {
   return (spec, override) =>
     new StreamableHttpTransport({
       url: spec.url,
-      fetch: override ?? fetch,
+      fetch: refuseRedirects(override ?? fetch),
       openGetStream: false,
       maxMessageBytes: MCP_MAX_MESSAGE_BYTES,
     });

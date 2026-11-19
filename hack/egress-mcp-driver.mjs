@@ -6,6 +6,7 @@
 //
 //   rules                          the OneCLI org host rules in order: `<priority> <action> <name> <host patterns>`
 //   handmade <name> <host>         creates an allow rule by hand (an operator's), if no rule has that name
+//   ensure-block                   creates the terminal `block *` rule pi-block-all if there is none; prints `created` or `present`
 //   drop-rule <name>               deletes the rules with that name
 //   probe <host>                   CONNECT <host>:443 through the gateway with the orchestrator's own agent token: prints
 //                                  `blocked` for the gateway's 403, else `reachable <status>`
@@ -66,6 +67,17 @@ switch (command) {
     const rules = await admin.listHostRules();
     if (!rules.some((r) => r.name === a))
       await admin.createHostRule({ name: a, action: "allow", hostPattern: b });
+    break;
+  }
+  case "ensure-block": {
+    // The bundled OneCLI is open by default (ADR 0043): this smoke tests the hardened path, so it makes the terminal block
+    // itself, and prints `created` so that the script removes it again.
+    const rules = await admin.listHostRules();
+    if (rules.some((r) => r.name === "pi-block-all")) console.log("present");
+    else {
+      await admin.createHostRule({ name: "pi-block-all", action: "block", hostPattern: "*" });
+      console.log("created");
+    }
     break;
   }
   case "drop-rule":

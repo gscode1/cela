@@ -6,8 +6,9 @@
 //
 //   1. CONNECT without a token                      -> 407 (the gateway refuses an unknown caller)
 //   2. CONNECT example.com:443 with the token       -> 200, then a TLS handshake that VERIFIES against the CA in the
-//      ConfigMap (the certificate was minted by the OneCLI gateway), then GET / -> 403: the host is not on the allowlist
-//      (rule pi-block-all), answered by the gateway itself, so nothing left the cluster
+//      ConfigMap (the certificate was minted by the OneCLI gateway), then GET / -> whatever example.com says on the open
+//      default (ADR 0043: the gateway relays any host), or 403 when OneCLI is hardened with ONECLI_HOSTS (rule pi-block-all):
+//      the host is then not on the allowlist, and the gateway answers itself, so nothing left the cluster
 // With GATEWAY_CHECK_HOST=<allowed host>, check 2 targets it instead, and the answer is whatever that host says (the hook for
 // the real-model check, docs/model-credentials.md: no request is made unless you ask for one).
 import { readFileSync } from "node:fs";

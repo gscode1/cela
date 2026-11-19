@@ -31,10 +31,23 @@ dns:
 web:
   allowFrom: []
 
-# The gateway forwards to public model, GitHub and package hosts. Private, link-local, CGNAT and loopback ranges stay
-# blocked, as for sandboxes, so a rebinding host name cannot reach the cluster.
+# The gateway forwards to public model, GitHub and package hosts. Private (outside privateHttps below), link-local, CGNAT and
+# loopback ranges stay blocked, as for sandboxes.
 gateway:
   egressInternet: true
+  # Open by default (docs/decisions/0043-open-onecli-defaults.md): a SEPARATE rule admits the RFC 1918 ranges on TCP 443
+  # only, so an admin-named MCP server on the LAN is reachable while the kubelet (10250/10256), Postgres (5432), the kube API
+  # (6443) and the proxy ports (8080, 9090, 3128) stay closed on CNIs where an ipBlock matches pods. Needs egressInternet.
+  # hack/onecli.sh turns it off (with the gateway's own allowPrivateDestinations) when the pi-durable release has no egress
+  # proxy and nobody acknowledged it: a sandbox then reaches the gateway directly.
+  privateHttps:
+    enabled: true
+    # Per range, CIDRs inside it that stay blocked, for example the kube API and pod CIDRs of the cluster:
+    #   except: { 10.0.0.0/8: [10.96.0.0/12, 10.244.0.0/16] }
+    except:
+      10.0.0.0/8: []
+      172.16.0.0/12: []
+      192.168.0.0/16: []
 
 # kind only (hack/kind-up.sh sets it): NodePort Services for the dashboard and the management API, so a browser on the
 # machine that runs kind reaches them on localhost without `kubectl port-forward`. kind publishes the NodePorts on

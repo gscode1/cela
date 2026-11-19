@@ -140,7 +140,9 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
   not apply to it: a removed or disabled server's in-flight calls finish, the client is then closed, and a new call settles
   `tool_unavailable` (0009). Sandboxes' own tunnels to MCP hosts follow the rules of their sets as before.
 - A private MCP server (in the cluster) cannot be reached through OneCLI, which refuses private targets; it needs a different
-  design (a private rule for the sandbox is a separate matter).
+  design (a private rule for the sandbox is a separate matter). **Amended by [0043](0043-open-onecli-defaults.md): a private MCP
+  server on the LAN is now reachable through OneCLI** (RFC 1918, TCP 443 only), unless the install is hardened. An address inside
+  the cluster still is not, and a sandbox still never routes a private address via `route=onecli`.
 - The `*.suffix` form is sent to OneCLI as it is; whether it matches the bare domain there is not verified (we never send one).
 
 ## Consequences
@@ -197,3 +199,11 @@ returns it as `onecliSecrets: { names, source }`, admins only. The console offer
 still accepts any typed name. A name the list lacks gives a warning, not an error, because the list can be up to 30 s old. The
 orchestrator still checks the secret when it grants it (it must exist and cover the server's host). A separate admin route and a
 listing from ingest were rejected: the first adds a route for one field, and the second needs the OneCLI key in ingest.
+
+## Amendment: private MCP servers are reachable through OneCLI (issue #288, [0043](0043-open-onecli-defaults.md))
+
+The bundled OneCLI is now open by default: no terminal `block *` from the bootstrap, the gateway may reach the RFC 1918 ranges
+(`allowPrivateDestinations`), and its network policy admits them on TCP 443. An admin-registered MCP server that resolves to a LAN
+address, with its key injected by OneCLI, connects. The reconciler above is unchanged: it never creates a block where there is none,
+so without one its `pi-egress-allow-*` rules are harmless, and with a hardened install (a block, or `ONECLI_HOSTS`) it behaves as
+described. The MCP transport refuses redirects, so a 30x never moves a request or its injected key to another host.

@@ -109,6 +109,7 @@ send_script() { # session needle steps-json -> the results JSON
 }
 
 sessions=()
+made_block=0
 # Profiles keep a server from being deleted while their current version names it (ADR 0027): publish versions without it
 # first. Used at the start (a failed earlier run may have left servers) and at the end.
 reset_catalog() {
@@ -126,6 +127,7 @@ cleanup() {
   reset_catalog
   sleep 8
   driver drop-rule smoke-handmade-allow >/dev/null 2>&1
+  [[ $made_block -eq 0 ]] || driver drop-rule pi-block-all >/dev/null 2>&1
   driver drop-secret smoke-key-a >/dev/null 2>&1
   driver drop-secret smoke-key-b >/dev/null 2>&1
   exit $rc
@@ -140,6 +142,14 @@ ok "PI_ONECLI_HOST_RULES=reconcile"
 status=$(api_ok GET /admin/egress/status)
 jq -e '.proxy.replicas | map(select(.state == "serving")) | length >= 1' <<<"$status" >/dev/null || fail "no proxy replica is serving" "$status"
 ok "a proxy replica serves"
+# OneCLI is open by default (ADR 0043), so there is no gateway block to open doors in. This smoke tests the hardened
+# gateway: it makes the terminal block when the install has none, and removes it at the end.
+if [[ $(driver ensure-block) == created ]]; then
+  made_block=1
+  ok "no terminal block on this open OneCLI: made pi-block-all for this run (removed at the end)"
+else
+  ok "the terminal block pi-block-all is there (a hardened install)"
+fi
 
 # ------------------------------------------------------------------ 1. before
 echo "## 1. before: a clean slate, a hand-made rule, and mcp.deepwiki.com blocked at the gateway"

@@ -261,6 +261,51 @@ describe("hack/install.sh", () => {
     expect(log()).toContain("egressProxy.enabled=false");
   });
 
+  describe("bundled OneCLI follows the egress proxy (ADR 0043)", () => {
+    // The fake kubectl has no cluster to port-forward to, so the bootstrap at the end of hack/onecli.sh fails: only the helm
+    // calls before it matter here.
+    const bundled = () => [...base(), "--set", "onecli.mode=bundled"];
+    const opts = {
+      ns: "yes",
+      secrets: ["db-uri", "pi-egress-database", "onecli-database", "onecli-secrets"],
+    };
+    const onecliHelm = () =>
+      log()
+        .split("\n")
+        .filter((l) => /^helm .*upgrade --install (pi-onecli|onecli) /.test(l));
+
+    it("installs OneCLI open when the release has the egress proxy", () => {
+      run(bundled(), opts);
+      const calls = onecliHelm();
+      expect(calls).toHaveLength(2);
+      for (const call of calls) expect(call).not.toMatch(/privateHttps|allowPrivateDestinations/);
+    });
+
+    it("installs OneCLI hardened when the release has no proxy", () => {
+      const r = run([...bundled(), "--set", "egressProxy.enabled=false"], {
+        ...opts,
+        secrets: ["db-uri", "onecli-database", "onecli-secrets"],
+      });
+      const [policies, upstream] = onecliHelm();
+      expect(policies).toContain("--set gateway.privateHttps.enabled=false");
+      expect(upstream).toContain("--set gateway.allowPrivateDestinations= ");
+      expect(r.stderr).toContain("HARDENED");
+    });
+
+    it("keeps it open without a proxy only when the operator acknowledges it", () => {
+      const r = run(
+        [...bundled(), "--set", "egressProxy.enabled=false", "--onecli-allow-open-without-proxy"],
+        {
+          ...opts,
+          secrets: ["db-uri", "onecli-database", "onecli-secrets"],
+        },
+      );
+      for (const call of onecliHelm())
+        expect(call).not.toMatch(/privateHttps|allowPrivateDestinations/);
+      expect(r.stderr).toContain("stay OPEN");
+    });
+  });
+
   it("rejects a DATABASE_URL that is not a postgres URI", () => {
     const r = run(base(), { secrets: [], env: { DATABASE_URL: "mysql://x" } });
     expect(r.status).toBe(1);
