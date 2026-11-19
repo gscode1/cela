@@ -245,6 +245,7 @@ describe("MCP servers page", () => {
     });
     renderApp("/mcp-servers");
     await signIn("alice-token");
+    await userEvent.click(await screen.findByRole("button", { name: "Details" }));
     const link = await screen.findByRole("link", { name: "Try in playground" });
     expect(link).toHaveAttribute("href", "/playground?mcp=demo");
   });
