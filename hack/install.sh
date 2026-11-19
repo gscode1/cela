@@ -6,9 +6,10 @@
 #   1. renders the chart with your values first (a bad value stops here, before the cluster is touched)
 #   2. creates the namespace with the restricted Pod Security labels when it does not exist (helm --create-namespace
 #      would set none)
-#   3. creates the Secrets the chart references and that do not exist yet: sandboxd-auth and api-auth. Existing
-#      Secrets are never changed or regenerated (D8): losing the sandboxd master breaks every existing sandbox. Secret
-#      values are written from a private temp file and are never printed.
+#   3. creates the Secrets the chart references and that do not exist yet: sandboxd-auth, api-auth and, with the egress
+#      proxy and OneCLI, pi-egress-binding (the key that seals OneCLI tokens for the proxy). Existing Secrets are never
+#      changed or regenerated (D8): losing the sandboxd master breaks every existing sandbox. Secret values are written
+#      from a private temp file and are never printed.
 #   4. runs hack/agent-sandbox.sh external (read-only check; the controller and CRDs are cluster-wide and are never
 #      installed or changed here)
 #   4b. with onecli.mode=bundled: runs hack/onecli.sh (policies, the upstream OneCLI chart, the bootstrap), so that the
@@ -19,6 +20,13 @@
 #
 # The database stays external: the Secret named by database.external.existingSecret must exist, or DATABASE_URL (a
 # postgres:// URI) in the environment creates it once. OneCLI is bundled (onecli.mode=bundled, step 4b), external or off.
+#
+# The egress proxy is on by default (docs/decisions/0038-network-modes.md, amendment of 2026-11-19). Unless your values
+# name them, its Secrets are pi-egress-database and pi-egress-binding (a values file of this script's own, passed before
+# yours, so yours win). The database Secret holds the URI of the proxy's read-only role pi_egress, which only a database
+# admin can create (CREATE ROLE; charts/pi-postgres does it with auth.egressReader.enabled, see docs/network-policy.md):
+# it must exist, or EGRESS_DATABASE_URL (a postgres:// URI of that role) creates it once; otherwise the script stops
+# before installing. --set egressProxy.enabled=false opts out (sandboxes then reach the internet directly, unfiltered).
 # Bundled OneCLI needs its own database: ONECLI_DATABASE_URL, or the Secret pi-postgres-auth of charts/pi-postgres
 # (hack/onecli.sh).
 #
@@ -26,7 +34,7 @@
 # --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
 # http://localhost:10254, see hack/onecli.sh), --onecli-expose-cidr (kind only: passed to hack/onecli.sh as
 # --expose-source-cidr); KUBE_CONTEXT selects the kubectl and helm context (unset:
-# the current one); DATABASE_URL as above.
+# the current one); DATABASE_URL and EGRESS_DATABASE_URL as above.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -78,14 +86,21 @@ done
 ctx=${KUBE_CONTEXT:-}
 k() { kubectl ${ctx:+--context="$ctx"} -n "$namespace" "$@"; }
 kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
-helm_values_args=()
-for f in ${values[@]+"${values[@]}"}; do helm_values_args+=(--values "$f"); done
-for s in ${sets[@]+"${sets[@]}"}; do helm_values_args+=(--set "$s"); done
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 # Secret values only ever live in files created under this umask.
 umask 077
+
+# Names for the egress proxy's Secrets, which the chart leaves empty so that a plain `helm install` without them fails to
+# render. First, so the user's --values and --set win. Ignored when the proxy is off.
+cat >"$tmp/defaults.yaml" <<'YAML'
+egressProxy:
+  database: { existingSecret: pi-egress-database }
+  binding: { existingSecret: pi-egress-binding }
+YAML
+helm_values_args=(--values "$tmp/defaults.yaml")
+for f in ${values[@]+"${values[@]}"}; do helm_values_args+=(--values "$f"); done
+for s in ${sets[@]+"${sets[@]}"}; do helm_values_args+=(--set "$s"); done
 
 # ------------------------------------------------------------------ 1. render
 log "render the chart"
@@ -105,6 +120,11 @@ sandboxd_secret=$(secret_ref PI_SANDBOX_MASTER_KEY)
 api_secret=$(secret_ref PI_API_TOKENS)
 database_secret=$(secret_ref PI_DURABLE_DATABASE_URL)
 admins=$(rendered_value PI_API_ADMINS)
+# Empty when the egress proxy is off; the binding Secret only with OneCLI (the chart mounts it only then).
+egress_database_secret=$(secret_ref EGRESS_DATABASE_URL)
+egress_binding_secret=$(awk '/- name: egress-binding$/ { f = 1; next } f && /secretName:/ { print $2; exit }' "$rendered")
+egress_binding_key=$(awk '/- name: egress-binding$/ { f = 1; next }
+  f && /items:/ { match($0, /key: [^ ,}]+/); print substr($0, RSTART + 5, RLENGTH - 5); exit }' "$rendered")
 shards=$(rendered_value PI_ORCH_SHARDS)
 [[ -n $sandboxd_secret && -n $api_secret && -n $database_secret && -n $admins && -n $shards ]] ||
   die "could not read the Secret names and admins from the rendered chart"
@@ -187,6 +207,36 @@ else
   die "Secret $database_secret (the database URI) does not exist in $namespace. Create it, for example:
   kubectl -n $namespace create secret generic $database_secret --from-file=uri=<file holding the postgres:// URI>
 or run again with DATABASE_URL set. Nothing was installed."
+fi
+if [[ -z $egress_database_secret ]]; then
+  echo "egress proxy: off (egressProxy.enabled=false): sandboxes reach the internet directly, unfiltered"
+elif secret_exists "$egress_database_secret"; then
+  echo "$egress_database_secret: exists (the egress proxy's read-only database role)"
+elif [[ -n ${EGRESS_DATABASE_URL:-} ]]; then
+  case $EGRESS_DATABASE_URL in postgres://* | postgresql://*) ;; *) die "EGRESS_DATABASE_URL must be a postgres:// URI" ;; esac
+  egress_uri_key=$(awk '/name: EGRESS_DATABASE_URL$/ { f = 1; next }
+    f && /secretKeyRef/ { match($0, /key: [^ ,}]+/); print substr($0, RSTART + 5, RLENGTH - 5); exit }' "$rendered")
+  printf '%s' "$EGRESS_DATABASE_URL" >"$tmp/egress-uri"
+  create_secret "$egress_database_secret" "${egress_uri_key:-uri}" "$tmp/egress-uri"
+  echo "$egress_database_secret: created from EGRESS_DATABASE_URL"
+else
+  # The role cannot be made here: CREATE ROLE needs a database admin, and the app's user is not one (ADR 0035).
+  die "the egress proxy is on (the default) and Secret $egress_database_secret (the URI of its read-only database role) does not exist in $namespace.
+Create the role pi_egress once as a database admin (charts/pi-postgres: auth.egressReader.enabled=true; any other Postgres:
+docs/network-policy.md), then the Secret, for example:
+  kubectl -n $namespace create secret generic $egress_database_secret --from-file=uri=<file holding the postgres:// URI of pi_egress>
+or run again with EGRESS_DATABASE_URL set. To install without the proxy, pass --set egressProxy.enabled=false (sandboxes
+then reach the internet directly, unfiltered and unaudited). Nothing was installed."
+fi
+if [[ -n $egress_binding_secret ]]; then
+  if secret_exists "$egress_binding_secret"; then
+    echo "$egress_binding_secret: exists, kept"
+  else
+    # 32 random bytes, base64: the AES-256-GCM key of the OneCLI tokens in egress.bindings (ADR 0037).
+    openssl rand -base64 32 | tr -d '\n' >"$tmp/binding-key"
+    create_secret "$egress_binding_secret" "${egress_binding_key:-key}" "$tmp/binding-key"
+    echo "$egress_binding_secret: created (key ${egress_binding_key:-key}, seals OneCLI tokens for the egress proxy). Back it up: without it the stored bindings cannot be opened"
+  fi
 fi
 
 # ------------------------------------------------------------------ 4. agent-sandbox
