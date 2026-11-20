@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, SessionApi, type PostedEvent, type SessionSummary } from "../src/api.js";
 import type { McpConfig } from "../src/config.js";
-import { createServer, SERVER_NAME, SERVER_VERSION } from "../src/server.js";
+import { createServer, SERVER_NAME, SERVER_VERSION, serverInstructions } from "../src/server.js";
 import { assistant, FakeApi } from "./fake-api.js";
 
 const TIMEOUT = 15_000;
@@ -103,6 +103,26 @@ describe("tools", () => {
     expect(SERVER_NAME).toBe("cela");
     expect(SERVER_VERSION).toBe(pkg.version);
     expect(client.getServerVersion()?.name).toBe("cela");
+  });
+
+  it("sends short server instructions that tell the workflow", { timeout: TIMEOUT }, () => {
+    const text = client.getInstructions() ?? "";
+    const words = text.split(/\s+/).length;
+    expect(words).toBeGreaterThanOrEqual(150);
+    expect(words).toBeLessThanOrEqual(250);
+    for (const phrase of [
+      "run_task",
+      "done:false",
+      "cursor",
+      "delete_session",
+      "allowlist",
+      "untrusted",
+    ]) {
+      expect(text, phrase).toContain(phrase);
+    }
+    // Admin tools are not registered here, so they are not recommended either.
+    expect(text).not.toContain("admin_");
+    expect(serverInstructions({ apiUrl: fake.url, token: fake.token, maxSessions: 1 })).toBe(text);
   });
 
   it("start_session then send_message dedups on idempotencyKey", { timeout: TIMEOUT }, async () => {

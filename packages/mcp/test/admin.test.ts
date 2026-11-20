@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProfileDefinition } from "@cela/session-core";
 import { PROFILE_DEFINITION_SHAPE } from "../src/admin.js";
 import { parseConfig } from "../src/config.js";
-import { createServer } from "../src/server.js";
+import { createServer, serverInstructions } from "../src/server.js";
 
 const base = { PI_API_URL: "https://example.test", PI_API_TOKEN: "session-secret" };
 
@@ -237,6 +237,18 @@ describe("admin mode", { timeout: 10_000 }, () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it("points to the admin tools for discovery only when they exist", () => {
+    const admin = parseConfig({
+      ...base,
+      PI_MCP_ADMIN: "true",
+      PI_API_ADMIN_TOKEN: "admin-secret",
+    });
+    expect(serverInstructions(admin)).toContain("admin_list_profiles");
+    expect(serverInstructions(admin)).toContain("admin_get_settings");
+    expect(serverInstructions(admin).split(/\s+/).length).toBeLessThanOrEqual(250);
+    expect(serverInstructions(parseConfig(base))).not.toContain("admin_");
   });
 
   it("admin_get_profile sends a version's definition only when it differs from the top-level one", async () => {
