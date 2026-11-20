@@ -15,6 +15,8 @@ export const CA_FILE = `${CA_DIR}/ca.pem`;
 /** System roots plus the OneCLI CA. Hosts the gateway only tunnels (no injection) still present real certificates. */
 export const CA_BUNDLE = `${CA_DIR}/bundle.pem`;
 const SYSTEM_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+/** What `gh` sends until OneCLI swaps in the real header; deliberately not shaped like a GitHub token. */
+export const GH_TOKEN_PLACEHOLDER = "onecli-injects-the-token";
 
 const CLONE_TIMEOUT_S = 600;
 
@@ -66,12 +68,18 @@ export function buildShellEnv(input: { gateway: string; token: Redacted }): Reco
  * What a repo session's commands need besides a proxy: the OneCLI CA (it MITMs the credentialed hosts, whichever proxy
  * the traffic enters through), git's non-interactive switches and the commit identity. No proxy variable and no
  * credential: the egress proxy environment (`buildEgressEnv`) adds the proxy, with the egress token only.
+ *
+ * `GH_TOKEN` is a placeholder, not a credential: `gh` refuses to call the API without a token, and OneCLI replaces the
+ * `Authorization` header on `api.github.com` with the session's real one. Python's requests (and pip) ignore
+ * `SSL_CERT_FILE`, hence `REQUESTS_CA_BUNDLE`.
  */
 export function buildWorkspaceEnv(): Record<string, string> {
   return {
     SSL_CERT_FILE: CA_BUNDLE,
     GIT_SSL_CAINFO: CA_BUNDLE,
+    REQUESTS_CA_BUNDLE: CA_BUNDLE,
     NODE_EXTRA_CA_CERTS: CA_FILE,
+    GH_TOKEN: GH_TOKEN_PLACEHOLDER,
     GIT_TERMINAL_PROMPT: "0",
     GIT_AUTHOR_NAME: "pi agent",
     GIT_AUTHOR_EMAIL: "pi-agent@users.noreply.github.com",

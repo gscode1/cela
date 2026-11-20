@@ -86,6 +86,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [MCP adapter for coding agents](docs/mcp-adapter.md)
 - [Model credentials through OneCLI](docs/model-credentials.md)
 - [Repository workspaces](docs/repo-workspace.md)
+- [The default sandbox image and its tools](docs/sandbox-image.md)
 - [Scaling: one orchestrator per schema shard](docs/scaling.md)
 - [Timing and memory metrics](docs/metrics.md)
 - [End-to-end suites, one namespace per run](docs/e2e.md)
