@@ -1,0 +1,68 @@
+# Releases the MCP adapter (packages/mcp, ADR 0051). Pushing a tag `mcp-vX.Y.Z` builds and tests the package, packs the npm
+# tarball and the MCPB bundle for Claude Desktop, smoke-tests both and attaches them to a GitHub Release. Nothing goes to
+# the npm registry or GitHub Packages: both need a token to install.
+name: mcp-release
+
+on:
+  push:
+    tags: ["mcp-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Check that the tag, package.json and the manifest agree
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#mcp-v}
+          pkg=$(node -p 'require("./packages/mcp/package.json").version')
+          manifest=$(node -p 'require("./packages/mcp/manifest.json").version')
+          echo "tag $version, package.json $pkg, manifest.json $manifest"
+          [ "$version" = "$pkg" ] && [ "$version" = "$manifest" ] || { echo "::error::version mismatch"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build and test
+        run: |
+          pnpm --filter "@cela/mcp..." build
+          pnpm --filter @cela/mcp test
+      - name: Pack the npm tarball and the MCPB bundle
+        run: packages/mcp/scripts/release-build.sh dist-release
+      - name: Smoke test the tarball (npx) and the bundle
+        run: |
+          mkdir smoke
+          cp "dist-release/cela-mcp-$VERSION.tgz" smoke/
+          (cd smoke && node ../packages/mcp/scripts/smoke.mjs "$VERSION" npx -y "./cela-mcp-$VERSION.tgz")
+          mkdir smoke/bundle
+          unzip -q "dist-release/cela-mcp-$VERSION.mcpb" -d smoke/bundle
+          node packages/mcp/scripts/smoke.mjs "$VERSION" node smoke/bundle/dist/main.js
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          base="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          cat > notes.md <<NOTES
+          Claude Code:
+
+              claude mcp add cela -e PI_API_URL=<ingest url> -e PI_API_TOKEN=<token> -- npx -y ${base}/cela-mcp-${VERSION}.tgz
+
+          Claude Desktop: download \`cela-mcp-${VERSION}.mcpb\`, double-click it and fill in the settings.
+
+          See [docs/mcp-adapter.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${TAG}/docs/mcp-adapter.md).
+          NOTES
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" --verify-tag --title "cela-mcp $VERSION" --notes-file notes.md "${flags[@]}" \
+            "dist-release/cela-mcp-$VERSION.tgz" "dist-release/cela-mcp-$VERSION.mcpb"
