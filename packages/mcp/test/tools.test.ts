@@ -239,6 +239,21 @@ describe("tools", () => {
     expect(fake.requestsTo("POST", "/sessions")).toHaveLength(posts);
   });
 
+  it("delete_session frees a slot of the cap", { timeout: TIMEOUT }, async () => {
+    await close();
+    await setup(1);
+    const id = sid(await call("start_session", {}));
+    expect((await call("run_task", { text: "x" })).isError).toBe(true);
+    // A session this process did not create must not free a slot.
+    const foreign = fake.addSession();
+    expect((await call("delete_session", { sessionId: foreign.id })).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBe(true);
+    expect((await call("delete_session", { sessionId: id })).isError).toBeUndefined();
+    expect((await call("delete_session", { sessionId: id })).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBe(true);
+  });
+
   it("a failed create does not use up the cap", { timeout: TIMEOUT }, async () => {
     await close();
     await setup(1);

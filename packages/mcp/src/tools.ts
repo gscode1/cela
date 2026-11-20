@@ -108,16 +108,25 @@ export function registerTools(
   config: McpConfig,
   opts: ToolOptions = {},
 ): void {
-  // Sessions this process created or is about to create (reserved before the request).
-  let created = 0;
+  // The cap counts sessions this process holds: the ids it created and has not deleted, plus creates in flight
+  // (reserved before the request, so concurrent calls cannot overshoot).
+  const held = new Set<string>();
+  let inFlight = 0;
   const reserve = (): boolean => {
-    if (created >= config.maxSessions) return false;
-    created += 1;
+    if (held.size + inFlight >= config.maxSessions) return false;
+    inFlight += 1;
     return true;
+  };
+  const track = (id: string): void => {
+    inFlight -= 1;
+    held.add(id);
+  };
+  const createFailed = (): void => {
+    inFlight -= 1;
   };
   const capError = (): ToolResult =>
     fail(
-      `this server already created ${String(config.maxSessions)} sessions (PI_MCP_MAX_SESSIONS); delete sessions or restart it`,
+      `this server already holds ${String(config.maxSessions)} sessions (PI_MCP_MAX_SESSIONS); delete_session frees a slot`,
     );
 
   const waitResult = (r: WaitResult): Record<string, unknown> => ({ ...r });
@@ -140,9 +149,10 @@ export function registerTools(
       if (!reserve()) return capError();
       try {
         const session = await api.createSession(createInput(args));
+        track(session.sessionId);
         return ok({ ...session });
       } catch (error) {
-        created -= 1;
+        createFailed();
         return failFrom(error);
       }
     },
@@ -288,6 +298,7 @@ export function registerTools(
     async (args) => {
       try {
         const { status } = await api.deleteSession(args.sessionId);
+        held.delete(args.sessionId);
         return ok({ sessionId: args.sessionId, status });
       } catch (error) {
         return failFrom(error);
@@ -321,9 +332,10 @@ export function registerTools(
       try {
         id = (await api.createSession(createInput(args), remaining())).sessionId;
       } catch (error) {
-        created -= 1;
+        createFailed();
         return failFrom(error);
       }
+      track(id);
       try {
         await api.postEvent(id, { kind: "message", text: args.text }, remaining());
         const result = await waitForSession(api, { sessionId: id, deadline }, opts.wait);
