@@ -53,12 +53,14 @@ export interface SessionStatus {
   answer?: string;
 }
 
+// Thinking and tool calls are not what the model said to the user: tool calls surface as `calls`, thinking is dropped.
+// Images keep a marker so a user or toolResult message with only an image is not empty.
 function contentText(content: Message["content"]): string {
   if (typeof content === "string") return content;
   return content
     .map((block) => {
       if (block.type === "text") return block.text;
-      return block.type === "toolCall" ? "" : `[${block.type}]`;
+      return block.type === "toolCall" || block.type === "thinking" ? "" : `[${block.type}]`;
     })
     .join("");
 }
