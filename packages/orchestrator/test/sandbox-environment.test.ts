@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SessionRow } from "@cela/session-core";
-import { environmentFacts, FLAVOUR_FACTS, renderEnvironment } from "../src/sandbox-environment.ts";
+import {
+  environmentFacts,
+  FLAVOUR_FACTS,
+  renderEnvironment,
+  SANDBOX_HOME,
+} from "../src/sandbox-environment.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const dockerfile = (name: string): string =>
@@ -54,7 +59,6 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
 
   it("match what each image ships", () => {
     const base = dockerfile("sandbox");
-    expect(base).toContain(`HOME=${String(FLAVOUR_FACTS.default.home)}`);
     for (const pkg of [
       "git",
       "curl",
@@ -71,14 +75,25 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
     expect(base).toContain("COPY --from=pi-env /usr/local/bin/node /usr/local/bin/node");
 
     const browser = dockerfile("sandbox-browser");
-    // No HOME of its own: uid 1000 has no passwd entry, so HOME is the unwritable `/`.
-    expect(FLAVOUR_FACTS.browser.home).toBeNull();
-    expect(browser).not.toMatch(/\bHOME=/);
     expect(browser).not.toMatch(/apt-get install[^&]*\bcurl\b/);
     expect(FLAVOUR_FACTS.browser.tools).not.toMatch(/\b(curl|gh|python3)\b/);
     for (const tool of ["pi-browser", "patchright-run", "agent-browser", "/usr/local/bin/node"]) {
       expect(browser).toContain(tool);
     }
     expect(browser).toContain("/usr/local/share/pi-browser/BROWSER.md");
+  });
+
+  it("match the user both images run as: pi, uid and gid 1000, with a writable home (issue #324)", () => {
+    for (const name of ["sandbox", "sandbox-browser"]) {
+      const text = dockerfile(name);
+      expect(text, name).toContain(`HOME=${SANDBOX_HOME}`);
+      expect(text, name).toContain(`useradd -U -u 1000 -d ${SANDBOX_HOME} -M -s /bin/bash pi`);
+      expect(text, name).toContain('test "$(id -u pi):$(id -g pi)" = 1000:1000');
+      expect(text, name).toContain(`install -d -o 1000 -g 1000 ${SANDBOX_HOME}`);
+      expect(text.trimEnd().endsWith("USER 1000:1000"), name).toBe(true);
+    }
+    expect(renderEnvironment({ flavour: "browser", repo: null, network: "proxied" })).toContain(
+      `HOME (${SANDBOX_HOME})`,
+    );
   });
 });

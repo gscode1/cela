@@ -32,7 +32,9 @@ layers do not count against the sandbox's `ephemeralStorage` limit.
 The agent is told the facts below in its instructions ([ADR 0049](decisions/0049-sandbox-environment-instructions.md),
 `FLAVOUR_FACTS` in `packages/orchestrator/src/sandbox-environment.ts`): a change to the tools must change that text too.
 
-Commands run as uid 1000, which has no passwd entry and no root, so nothing can be installed with apt at run time.
+Commands run as user `pi` (uid and gid 1000, home `/home/pi`, issue #324) without root, so nothing can be installed with apt at
+run time. The passwd entry matters: Node's `os.userInfo()`, Python's `pwd` and `getpass`, `whoami` and ssh fail for a uid
+that has none. The browser image has the same user and `HOME`.
 
 | Variable | Value | Why |
 | --- | --- | --- |
