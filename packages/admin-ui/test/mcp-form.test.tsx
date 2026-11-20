@@ -77,6 +77,52 @@ describe("McpForm", () => {
       { timeoutMs: 60_000, expectedRevision: 2 },
     ]);
   });
+
+  it("after a reload on conflict, shows and saves only the fields this admin edited", async () => {
+    // Bob lowered max output to 2 KB after this form opened; this admin only edits the timeout.
+    const latest = server({ maxOutputBytes: 2048, revision: 2, updatedBy: "bob" });
+    const puts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          const body = JSON.parse(init.body as string) as { expectedRevision?: number };
+          puts.push(body);
+          return Promise.resolve(
+            body.expectedRevision === 2
+              ? Response.json({ ...latest, ...body, revision: 3 })
+              : Response.json({ error: "stale" }, { status: 409 }),
+          );
+        }
+        if (path === "/admin/mcp-servers")
+          return Promise.resolve(Response.json({ servers: [latest], invalid: [] }));
+        return Promise.resolve(Response.json({ error: "not found" }, { status: 404 }));
+      }),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <MemoryRouter>
+            <McpForm server={server()} usedByProfiles={false} onClose={() => undefined} />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    const timeout = screen.getByLabelText("Timeout (seconds)");
+    await userEvent.clear(timeout);
+    await userEvent.type(timeout, "45");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reload the stored server" }));
+    await screen.findByText(/Stored now/);
+    expect(timeout).toHaveValue("45");
+    expect(screen.getByLabelText("Max output (KB)")).toHaveValue("2");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    expect(puts).toEqual([
+      { timeoutMs: 45_000, expectedRevision: 1 },
+      { timeoutMs: 45_000, expectedRevision: 2 },
+    ]);
+  });
 });
 
 /** Renders the form against a fetch that records each PUT body and answers it as saved. */
