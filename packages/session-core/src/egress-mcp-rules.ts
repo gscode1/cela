@@ -2,7 +2,8 @@ import net from "node:net";
 import type pg from "pg";
 import { validateEgressRule } from "./egress-rules.js";
 import type { EgressRuleSpec } from "./egress-rules.js";
-import { writeWithin } from "./egress-store.js";
+import { lockCatalog } from "./deletion.js";
+import { inTransaction, writeWithin } from "./egress-store.js";
 import type { McpServerConfig } from "./mcp-servers.js";
 import { readMcpServers } from "./mcp-servers.js";
 
@@ -229,4 +230,23 @@ export async function syncMcpRulesFromCatalog(client: pg.PoolClient, by: string)
     catalog.servers.map((stored) => stored.server),
     by === "" ? MCP_RULES_AUTHOR : by,
   );
+}
+
+/**
+ * Brings `mcp-catalog` in line with the catalog outside a catalog write: ingest runs it once after its migrations (ADR
+ * 0040, amendment). Migration 029 creates the set empty and a catalog PUT that changes nothing never syncs, so a server
+ * stored before 029 would otherwise never get a rule. It takes the catalog lock first, then the egress lock like every
+ * writer, so replicas starting together queue behind each other and the later ones find nothing to change: a set that
+ * already matches writes no rule, no revision and no NOTIFY. Returns what it derived.
+ */
+export async function backfillMcpCatalogRules(pool: pg.Pool): Promise<DerivedMcpRules> {
+  return inTransaction(pool, async (client) => {
+    await lockCatalog(client, "exclusive");
+    const catalog = await readMcpServers(client);
+    return syncMcpRules(
+      client,
+      catalog.servers.map((stored) => stored.server),
+      MCP_RULES_AUTHOR,
+    );
+  });
 }

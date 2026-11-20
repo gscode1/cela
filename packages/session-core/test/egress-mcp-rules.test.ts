@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  backfillMcpCatalogRules,
   deriveMcpRules,
   MCP_RULE_SET,
   mcpRuleNote,
@@ -14,8 +15,10 @@ import {
   updateRuleSet,
 } from "../src/egress-store.ts";
 import type { McpServerConfig } from "../src/mcp-servers.ts";
+import { putMcpServer } from "../src/mcp-servers.ts";
 import { AdminConflictError } from "../src/revision.ts";
 import { FakeEgressDb } from "./fake-egress-db.ts";
+import { FakeSettingsDb } from "./fake-settings-db.ts";
 
 const server = (
   name: string,
@@ -187,6 +190,80 @@ describe("syncMcpRules", () => {
       { name: MCP_RULE_SET, system: true, applies_to_all: false },
     ]);
     expect(db.rules).toHaveLength(1);
+  });
+});
+
+describe("backfillMcpCatalogRules", () => {
+  /** A catalog written before migration 029: servers stored without any rule, the set seeded empty. */
+  async function legacy(): Promise<FakeSettingsDb> {
+    const db = new FakeSettingsDb();
+    db.egress.ruleSets.push(...seeded().ruleSets);
+    db.egress.revisions.push({ revision: 1, changed_by: "migration 029" });
+    const pool = db.asPool();
+    const put = async (name: string, body: Record<string, unknown>) => {
+      const stored = await putMcpServer(pool, name, { readOnly: true, ...body }, "alice");
+      if (typeof stored === "string") throw new Error(stored);
+    };
+    await put("searxng", { url: "https://mcp-searxng.example.com/mcp" });
+    await put("docs", { url: "https://docs.example.com/mcp", onecliSecret: "docs-key" });
+    await put("off", { url: "https://off.example.com/mcp", enabled: false });
+    await put("raw", { url: "https://10.0.0.5/mcp" });
+    return db;
+  }
+
+  it("writes the rules of servers that predate the set, once, under one revision", async () => {
+    const db = await legacy();
+    expect(db.egress.rules).toEqual([]);
+    const derived = await backfillMcpCatalogRules(db.asPool());
+    expect(derived.skipped).toMatchObject([{ server: "raw" }]);
+    expect(db.egress.rules.map((r) => [r.rule_set, r.host, r.route, r.created_by]).sort()).toEqual([
+      [MCP_RULE_SET, "docs.example.com", "onecli", "mcp-catalog"],
+      [MCP_RULE_SET, "mcp-searxng.example.com", "direct", "mcp-catalog"],
+    ]);
+    expect(db.egress.revision).toBe(2);
+    expect(db.egress.notifications).toEqual(["2"]);
+    expect(db.egress.history.map((h) => h.changed_by)).toEqual(["mcp-catalog", "mcp-catalog"]);
+  });
+
+  it("is idempotent: a second run, or a replica starting later, changes nothing", async () => {
+    const db = await legacy();
+    const pool = db.asPool();
+    await Promise.all([backfillMcpCatalogRules(pool), backfillMcpCatalogRules(pool)]);
+    const rules = JSON.stringify(db.egress.rules);
+    expect(db.egress.rules).toHaveLength(2);
+    expect(db.egress.revision).toBe(2);
+    await backfillMcpCatalogRules(pool);
+    expect(JSON.stringify(db.egress.rules)).toBe(rules);
+    expect(db.egress.revision).toBe(2);
+    expect(db.egress.notifications).toEqual(["2"]);
+    expect(db.egress.history).toHaveLength(2);
+  });
+
+  it("writes nothing for a catalog that already has its rules or is empty", async () => {
+    const db = new FakeSettingsDb();
+    db.egress.ruleSets.push(...seeded().ruleSets);
+    db.egress.revisions.push({ revision: 1, changed_by: "migration 029" });
+    await backfillMcpCatalogRules(db.asPool());
+    expect(db.egress.revision).toBe(1);
+    expect(db.egress.notifications).toEqual([]);
+  });
+
+  it("waits for a catalog write in flight instead of racing it", async () => {
+    const db = await legacy();
+    const pool = db.asPool();
+    const order: string[] = [];
+    const held = await pool.connect();
+    await held.query("begin");
+    await held.query("select pg_advisory_xact_lock(hashtext($1))", ["catalog"]);
+    const backfill = backfillMcpCatalogRules(pool).then(() => order.push("backfill"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(db.egress.rules).toEqual([]);
+    order.push("released");
+    await held.query("commit");
+    held.release();
+    await backfill;
+    expect(order).toEqual(["released", "backfill"]);
+    expect(db.egress.rules).toHaveLength(2);
   });
 });
 
