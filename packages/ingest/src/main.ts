@@ -1,5 +1,6 @@
 import {
   applyMigrations,
+  backfillMcpCatalogRules,
   createPool,
   errorMessage,
   seedSettings,
@@ -58,6 +59,9 @@ async function main(): Promise<void> {
               "PI_MODEL_*, PI_SESSION_*_BUDGET and PI_REPO_ALLOWLIST differ from the settings table; the table wins",
           });
         }
+        // Servers stored before migration 029 have no rule in `mcp-catalog` until a catalog write syncs them (ADR 0040).
+        const derived = await backfillMcpCatalogRules(pool);
+        for (const skipped of derived.skipped) log("mcp-catalog-skipped", skipped);
         await settings.start();
         schemaReady = true;
         log("migrated", { instance: config.instance });
