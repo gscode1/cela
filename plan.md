@@ -1,4 +1,4 @@
-# pi-durable-k8s: Self-Hosted Durable Pi Agents on Kubernetes
+# cela: Self-Hosted Durable Pi Agents on Kubernetes (formerly pi-durable-k8s)
 
 Status: proof of concept; phases 1 to 4c done. Results below are historical observations in one example test environment.
 Scope: proof of concept. Production hardening is out of scope and listed at the end.
@@ -158,7 +158,7 @@ Requirement: a NetworkPolicy-enforcing CNI. The supplied Cilium policies also us
 - **Capacity:** each session had its own Node bridge (about 12 s start, serialized, about 95 MiB). Since [ADR 0016](docs/decisions/0016-in-process-broker.md) (issue #59, slice 1) the bridge runs in an in-process broker and pi-env spawns only a thin `node:net` relay; measured 2026-11-17: 115-147 MiB idle orchestrator and about 11 MiB per open env, and the cap on open bridges is now derived from the memory limit ([ADR 0018](docs/decisions/0018-derived-bridge-cap.md), [scaling](docs/scaling.md), [metrics](docs/metrics.md)).
 
 **Enforcement result (2026-11-16):**
-- Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all pi-durable-poc endpoints enforce in both directions.
+- Cilium v1.20.4 runs with `enable-policy: default` and audit mode off, and all cela-dev endpoints enforce in both directions.
 - The isolation test PASSES for real: orchestrator, Postgres, other sandboxes, the kube API and the OneCLI API/web are BLOCKED from a sandbox. The OneCLI gateway and public internet are reachable. (This run predates the egress proxy; with the proxy, the default since 2026-11-19, a sandbox reaches only the proxy, [ADR 0038](docs/decisions/0038-network-modes.md).)
 - Phases 1, 3, 4 and 4b, including a real Codex run, are green under enforcement.
 - Open:
@@ -290,7 +290,7 @@ Split by where the code ends up, not by phase.
 | Repo | Contents | When |
 |---|---|---|
 | Fork of `pi-durable-postgres` (`gscode1/pi-durable-postgres`) | Port to current Pi Durable, published to npm as `@gscode1/pi-durable-postgres`; also proposed upstream (PR #20 open) | Phase 2 |
-| Main repo `pi-durable-k8s` (own) | Orchestrator, pi-env bridge, session API, sandbox image, manifests, tests | Phase 1 onward |
+| Main repo `cela` (own) | Orchestrator, pi-env bridge, session API, sandbox image, manifests, tests | Phase 1 onward |
 | Fork of `agent-sandbox` | Example or sandboxd change | Phase 5, only when contributing |
 
 The main repo consumes the adapter fork as a pinned npm dependency (exact version).
@@ -308,7 +308,7 @@ packages/
   browser-proxy/    # loopback forwarder in the browser sandbox (ADR 0041)
   admin-ui/         # admin console, served by ingest under /console/
   vendor/           # Agent Sandbox TS SDK, built from a pinned commit
-charts/             # pi-durable (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
+charts/             # cela (app), pi-postgres (bundled database), pi-onecli (bundled gateway)
 hack/               # install.sh, kind scripts, operator scripts (secrets, OneCLI CA and host rules), onecli-policies/
 images/             # build.sh, orchestrator/, ingest/, sandbox/ (pi-env daemon), sandbox-browser/, e2e-driver/, egress-proxy/
 docs/               # API, scaling, metrics, e2e, decisions/ (ADRs)
@@ -335,4 +335,4 @@ Extract `sandbox-env` into its own package once it passes the env conformance su
 include workspace dependencies, vendored code and SQL migrations; the driver includes its scripts and Phase 1 tests.
 Deployments use built images instead of runtime code uploads. Every shard Deployment uses the chart's image values and needs no
 shared-code node affinity. Build/push images explicitly, then set the digests in your values file as described in
-[image builds](images/README.md), the [chart README](charts/pi-durable/README.md) and [e2e](docs/e2e.md).
+[image builds](images/README.md), the [chart README](charts/cela/README.md) and [e2e](docs/e2e.md).

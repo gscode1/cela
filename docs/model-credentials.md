@@ -22,7 +22,7 @@ orchestrator (pi-ai, apiKey = placeholder)
   `onecli-managed-placeholder` and ignores the real environment. The gateway replaces the SDK's key (spike Q7), so a
   model call works with no provider key in the orchestrator's environment.
 - **The token.** `ONECLI_AGENT_TOKEN` comes from Secret `pi-onecli` (key `agent-token`), delivered by the
-  ExternalSecret (example: `charts/pi-durable/examples/external-secrets.yaml`) from `secret-store` (remote key `pi-onecli`, property
+  ExternalSecret (example: `charts/cela/examples/external-secrets.yaml`) from `secret-store` (remote key `pi-onecli`, property
   `agent-token`). It is wrapped in `Redacted`, which prints as `[redacted]` in JSON, string conversion and
   `console.log`. The bridge launcher allows only a short list of variables, so the token, `NO_PROXY` and any proxy
   setting never reach a bridge (tested). The orchestrator refuses to start with a real provider in the allowlist and no
@@ -54,7 +54,7 @@ The orchestrator gets only the `api-key` and `agent-token` keys and the CA, neve
 so there is nothing to forward. Open `http://localhost:10254/auth/login` and use the login from the Secret:
 
 ```sh
-NS=pi-durable; CTX=kind-pi-durable
+NS=cela; CTX=kind-cela
 open http://localhost:10254/auth/login        # sign in, paste the password; the agent pi-orchestrator is listed
 kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.email}' | base64 -d; echo
 kubectl --context $CTX -n $NS get secret pi-onecli-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy   # macOS; xclip -selection clipboard on Linux
@@ -67,7 +67,7 @@ Ingress. Forward both ports (the dashboard calls the API at `localhost:10256`, s
 login from the Secret:
 
 ```sh
-NS=pi-durable; CTX=kind-pi-durable            # your namespace and kubectl context
+NS=cela; CTX=kind-cela            # your namespace and kubectl context
 kubectl --context $CTX -n $NS port-forward svc/onecli-web 10254:10254 &
 kubectl --context $CTX -n $NS port-forward svc/onecli-api 10256:10256 &
 kubectl --context $CTX -n $NS port-forward svc/onecli-gateway 10255:10255 &   # only for the dashboard's proxy and CA hints
@@ -143,7 +143,7 @@ sandbox tool call, through the gateway, with no provider credential in the orche
    allowlist `openai-codex/gpt-6.1-terra,openai-codex/gpt-6.1-sol,scripted/scripted-1,scripted/scripted-2`. Pick a
    model per session with `POST /sessions {provider, model}`. In pi-ai's list `gpt-6-luna` is the cheapest
    ($0.10/$0.50 per million tokens), then `gpt-6.1-terra` ($1/$5), then `gpt-6.1-sol` and `gpt-6-sol` ($2/$10).
-5. **Deploy:** `hack/fetch-onecli-ca.sh`, configure your built image digests in your values file ([chart README](../charts/pi-durable/README.md)), `hack/install.sh`, then
+5. **Deploy:** `hack/fetch-onecli-ca.sh`, configure your built image digests in your values file ([chart README](../charts/cela/README.md)), `hack/install.sh`, then
    restart orchestrator and ingest. Gateway line for a model call (redacted): `INFO session{peer=<pod ip> host=chatgpt.com:443
    lane=Mitm workspace_id=.. org_id=.. agent="pi-orchestrator" ..}: server: CONNECT`. A `WARN ... error=serving MITM
    connection` after a stream ends is normal here.
@@ -183,11 +183,11 @@ recoverable and nothing leaks.
 1. **OneCLI agent for the orchestrator** (your dashboard, or the API with an `oc_` key): create
    an agent, for example identifier `pi-orchestrator`, and grant it **only** the model-provider secrets (`Codex subscription`). Never grant a GitHub connection to it. Copy its access token (`aoc_...`).
 2. **Secret in your store:** securely supply the token under the remote key/property referenced by
-   `charts/pi-durable/examples/external-secrets.yaml` (example: `pi-onecli` / `agent-token`). Adapt `secretStoreRef` and `remoteRef`
+   `charts/cela/examples/external-secrets.yaml` (example: `pi-onecli` / `agent-token`). Adapt `secretStoreRef` and `remoteRef`
    to your backend. Alternatively omit the ExternalSecret and provision target Secret `pi-onecli`, key `agent-token`,
    with your secret-management tool. Do not put tokens in shell history or manifests.
 3. Apply the ExternalSecret and run `hack/install.sh` (it installs `pi-model-config` with the chart), then
-   `hack/fetch-onecli-ca.sh`. Check `kubectl -n pi-durable-poc get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
+   `hack/fetch-onecli-ca.sh`. Check `kubectl -n cela-dev get externalsecret pi-onecli` is Ready. (e2e run namespaces get the same ExternalSecrets from the same store, `docs/e2e.md`.)
 4. **Gateway egress.** OneCLI v2 still relays any public host by default. Add org rules that allow the model hosts and
    block the rest (`docs/research/onecli-v2-recheck.md`, section 2).
 5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).

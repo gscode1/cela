@@ -127,7 +127,7 @@ no secret: the operator's token goes from the browser to `/admin/*` only. Other 
   `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` and
   `Referrer-Policy: no-referrer`. The console contains no inline script or style.
 - Reach it by port-forward or a route restricted to operators; ingest does not rate-limit failed sign-ins
-  ([chart README](../charts/pi-durable/README.md#admin-console)).
+  ([chart README](../charts/cela/README.md#admin-console)).
 
 ## Event lifecycle
 
@@ -259,7 +259,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
 - Session ids are random UUIDs (v4), never sequential. The owner is stored per session as `owner` (the token
   entry's name) and `owner_subject` (the stable identity: `static:<owner>` for static tokens, issuer + subject for
   OIDC later); the owner check compares the subject.
-- Every SandboxClaim carries the label `pi-durable-k8s/session-id: <session UUID>`. The orchestrator creates the
+- Every SandboxClaim carries the label `cela/session-id: <session UUID>`. The orchestrator creates the
   claim with that label, and adopts an existing claim of the same name only if the label matches. A claim with the
   right name and another or no label is refused, and never deleted by session deletion. (Claims that predate this
   label are therefore not adopted; the claim name `pi-conv-<conversation id>` alone proves nothing.)

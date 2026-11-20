@@ -20,8 +20,8 @@
 - Severity: low
 - Confidence: high
 - Location: tests/e2e/run-phase1.sh:46
-- What happens: Setting `NAMESPACE` to anything other than `pi-durable-poc` causes runner creation to fail because `runner-pod.yaml` explicitly specifies `pi-durable-poc`, conflicting with the namespace passed to kubectl.
-- Evidence: `k create -f "$here/runner-pod.yaml"`; the manifest sets `namespace: pi-durable-poc`.
+- What happens: Setting `NAMESPACE` to anything other than `cela-dev` causes runner creation to fail because `runner-pod.yaml` explicitly specifies `cela-dev`, conflicting with the namespace passed to kubectl.
+- Evidence: `k create -f "$here/runner-pod.yaml"`; the manifest sets `namespace: cela-dev`.
 - Fix idea: Remove the hard-coded namespace from the runner manifest or render it using the selected namespace.
 
 END-OF-REPORT

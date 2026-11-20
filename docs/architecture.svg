@@ -39,7 +39,7 @@
   <rect width="1410" height="1000" fill="#ffffff"/>
 
   <!-- Title -->
-  <text class="t" x="40" y="48">pi-durable-k8s</text>
+  <text class="t" x="40" y="48">cela</text>
   <text class="s" x="40" y="76">Run AI coding agents on your own Kubernetes cluster. Each session gets an agent that never loses its work and a</text>
   <text class="s" x="40" y="96">private sandbox to run commands in, and it never sees a password or API key.</text>
   <!-- Legend: what this repository builds -->

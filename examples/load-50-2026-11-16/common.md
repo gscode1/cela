@@ -1,4 +1,4 @@
-You are doing a focused bug hunt on ONE file of the repository cloned at /workspace/repo (pi-durable-k8s: durable Pi agents on Kubernetes; README.md has the overview).
+You are doing a focused bug hunt on ONE file of the repository cloned at /workspace/repo (cela: durable Pi agents on Kubernetes; README.md has the overview).
 
 Rules:
 
