@@ -9,7 +9,12 @@ import { join } from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Redacted } from "../src/onecli.ts";
-import { buildShellEnv, prepareWorkspace, WorkspaceLostError } from "../src/workspace.ts";
+import {
+  buildShellEnv,
+  GH_TOKEN_PLACEHOLDER,
+  prepareWorkspace,
+  WorkspaceLostError,
+} from "../src/workspace.ts";
 
 const TOKEN = "aoc_0123456789abcdef";
 const git = (cwd: string, ...args: string[]): string =>
@@ -35,6 +40,12 @@ describe("buildShellEnv", () => {
     expect(env.GIT_CONFIG_KEY_0).toBe("http.proxyAuthMethod");
     expect(env.GIT_CONFIG_VALUE_0).toBe("basic");
     expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.REQUESTS_CA_BUNDLE).toBe("/workspace/.onecli/bundle.pem");
+  });
+
+  it("gives gh a placeholder token that OneCLI replaces, not one shaped like a GitHub token", () => {
+    expect(env.GH_TOKEN).toBe(GH_TOKEN_PLACEHOLDER);
+    expect(env.GH_TOKEN).not.toMatch(/^(gh[pousr]_|github_pat_)/);
   });
 
   it("holds no GitHub token and no orchestrator secret", () => {
