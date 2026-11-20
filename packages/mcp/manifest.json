@@ -1,0 +1,96 @@
+{
+  "manifest_version": "0.3",
+  "name": "cela-mcp",
+  "display_name": "cela",
+  "version": "1.0.0",
+  "description": "Run tasks in durable, sandboxed agent sessions on a cela deployment through its session API.",
+  "long_description": "A stdio MCP server for the cela session API. It starts a durable agent session with its own sandbox and workspace, sends it a task and returns the result. It only calls your cela ingest over HTTPS with your token: it has no database access and holds no model or GitHub credential. Read-only admin tools and profile writes are off unless you turn them on in the settings.",
+  "author": {
+    "name": "gscode1",
+    "url": "https://github.com/gscode1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gscode1/cela.git"
+  },
+  "homepage": "https://github.com/gscode1/cela/blob/main/docs/mcp-adapter.md",
+  "documentation": "https://github.com/gscode1/cela/blob/main/docs/mcp-adapter.md",
+  "support": "https://github.com/gscode1/cela/issues",
+  "license": "MIT",
+  "keywords": ["cela", "agents", "sandbox", "sessions"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/main.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/main.js"],
+      "env": {
+        "PI_API_URL": "${user_config.api_url}",
+        "PI_API_TOKEN": "${user_config.api_token}",
+        "PI_MCP_ADMIN": "${user_config.admin_enabled}",
+        "PI_API_ADMIN_TOKEN": "${user_config.admin_token}",
+        "PI_MCP_ADMIN_WRITES": "${user_config.admin_writes}",
+        "PI_MCP_MAX_SESSIONS": "${user_config.max_sessions}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "run_task", "description": "Create a session, send a task and wait for the result." },
+    { "name": "start_session", "description": "Start a durable session with its own sandbox." },
+    { "name": "send_message", "description": "Queue a message for a session." },
+    { "name": "wait", "description": "Wait for the agent and return its text after a cursor." },
+    { "name": "get_session", "description": "Show a session's status, failure and event counts." },
+    { "name": "cancel", "description": "Ask the running turn to stop." },
+    { "name": "delete_session", "description": "Delete a session and its workspace." }
+  ],
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=22.19.0" }
+  },
+  "user_config": {
+    "api_url": {
+      "type": "string",
+      "title": "Session API URL",
+      "description": "Base URL of your cela ingest, for example https://cela.example.com. Must be https, except for a loopback host such as http://localhost:8080.",
+      "required": true
+    },
+    "api_token": {
+      "type": "string",
+      "title": "Session API token",
+      "description": "Your session API token. Kept in the OS keychain. Use the token of an owner who is not an admin.",
+      "sensitive": true,
+      "required": true
+    },
+    "admin_enabled": {
+      "type": "boolean",
+      "title": "Enable admin tools",
+      "description": "Add read-only admin tools (profiles, skills, MCP servers, egress rule sets, settings). Needs the admin token below.",
+      "default": false,
+      "required": false
+    },
+    "admin_token": {
+      "type": "string",
+      "title": "Admin API token",
+      "description": "Admin bearer token, different from the session token. Only used when admin tools are enabled. Kept in the OS keychain.",
+      "sensitive": true,
+      "default": "",
+      "required": false
+    },
+    "admin_writes": {
+      "type": "boolean",
+      "title": "Enable profile writes",
+      "description": "Add tools that create, change and delete profiles. Needs admin tools enabled.",
+      "default": false,
+      "required": false
+    },
+    "max_sessions": {
+      "type": "number",
+      "title": "Session limit",
+      "description": "Most sessions this process may create, so a looping agent cannot start sandboxes without end.",
+      "default": 20,
+      "min": 1,
+      "required": false
+    }
+  }
+}
