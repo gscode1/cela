@@ -25,7 +25,8 @@ session ran without the repo's own instructions.
   wrapper.)
 - **Order.** Profile instructions, then project instructions, then the skills catalog. This is Pi's order: its
   `buildSystemPromptSections` puts the appended system prompt (our profile instructions) first, then `project_context`,
-  then `skills`.
+  then `skills`. Since [ADR 0049](0049-sandbox-environment-instructions.md) the sandbox facts sit between the profile
+  instructions and the project instructions, from the same builder (`composeInstructions`).
 - **Same hook.** Read in the same pass as repo skills (`SessionService.#refreshRepoContext`, ADR 0014): after the clone and
   at each new message, only while the sandbox is already open, applied with one `configure({ instructions })` that writes
   nothing when the text is unchanged; a failure logs and keeps the instructions. The instructions are rebuilt from the

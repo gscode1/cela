@@ -29,6 +29,9 @@ layers do not count against the sandbox's `ephemeralStorage` limit.
 
 ## Runtime layout
 
+The agent is told the facts below in its instructions ([ADR 0049](decisions/0049-sandbox-environment-instructions.md),
+`FLAVOUR_FACTS` in `packages/orchestrator/src/sandbox-environment.ts`): a change to the tools must change that text too.
+
 Commands run as uid 1000, which has no passwd entry and no root, so nothing can be installed with apt at run time.
 
 | Variable | Value | Why |
