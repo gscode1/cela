@@ -6,6 +6,7 @@ import type { ProfileDefinition, SessionRow } from "@cela/session-core";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
+import type { CreateExtras } from "../src/host.ts";
 import { PermanentError, SessionService } from "../src/sessions.ts";
 import { SkillIntegrityError } from "../src/skills.ts";
 
@@ -56,7 +57,7 @@ describe("the skill catalog in a conversation's instructions", () => {
       instructions: "Be brief.",
       skills: [{ name: "pdf", version: 1, digest: DIGEST }],
     };
-    const id = await host.createConversation(MODEL, definition, CATALOG);
+    const id = await host.createConversation(MODEL, definition, { catalog: CATALOG });
     const text = (await host.instructionsOf(id)) ?? "";
     expect(text.startsWith("Be brief.\n\nThe following skills provide")).toBe(true);
     expect(text).toContain("Summarise a PDF");
@@ -65,7 +66,7 @@ describe("the skill catalog in a conversation's instructions", () => {
 
   it("is the whole instructions of a profile that has none of its own, and is absent for a profile without skills", async () => {
     const host = await openHost();
-    const only = await host.createConversation(MODEL, {}, CATALOG);
+    const only = await host.createConversation(MODEL, {}, { catalog: CATALOG });
     expect(await host.instructionsOf(only)).toBe(CATALOG);
     const plain = await host.createConversation(MODEL, { instructions: "Be brief." });
     expect(await host.instructionsOf(plain)).toBe("Be brief.");
@@ -82,8 +83,8 @@ describe("the skill catalog in a conversation's instructions", () => {
         location: `/workspace/.skills/csv/${"b".repeat(64)}/SKILL.md`,
       },
     ]);
-    const a = await host.createConversation(MODEL, {}, CATALOG);
-    const b = await host.createConversation(MODEL, {}, other);
+    const a = await host.createConversation(MODEL, {}, { catalog: CATALOG });
+    const b = await host.createConversation(MODEL, {}, { catalog: other });
     const c = await host.createConversation(MODEL, {});
     expect(await host.instructionsOf(a)).not.toContain("csv");
     expect(await host.instructionsOf(b)).not.toContain("pdf");
@@ -157,16 +158,19 @@ describe("SessionService creates the conversation with the catalog", () => {
     });
 
   it("passes the snapshot's catalog to the host, so the instructions pin the digest of the session's version", async () => {
-    const created: [ProfileDefinition, string | undefined][] = [];
+    const created: [ProfileDefinition, CreateExtras][] = [];
     const host = {
-      createConversation: (_m: unknown, definition: ProfileDefinition, catalog?: string) => {
-        created.push([definition, catalog]);
+      createConversation: (_m: unknown, definition: ProfileDefinition, extra: CreateExtras) => {
+        created.push([definition, extra]);
         return Promise.resolve(1);
       },
     } as unknown as Host;
     const svc = service(host, { catalogFor: () => Promise.resolve(CATALOG) });
     expect(await svc.ensureConversation(row())).toBe(1);
-    expect(created).toEqual([[snapshot, CATALOG]]);
+    expect(created.map(([definition, extra]) => [definition, extra.catalog])).toEqual([
+      [snapshot, CATALOG],
+    ]);
+    expect(created[0]?.[1].environment).toContain("<sandbox_environment>");
     svc.stop();
   });
 
