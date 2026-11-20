@@ -38,6 +38,28 @@ export type WorkspaceEnv = Pick<
 export class WorkspaceLostError extends Error {}
 
 /**
+ * The clone failed because the repository or the requested branch does not exist (or is not visible to the GitHub
+ * App). Retrying cannot fix it, so the session fails at once. The message is fixed text built from the session's own
+ * `repo` and `branch`; git's stderr is never copied into it, as it can carry URLs with credentials.
+ */
+export class CloneTargetNotFoundError extends Error {
+  constructor(spec: RepoSpec, what: "branch" | "repository") {
+    super(
+      what === "branch"
+        ? `branch "${spec.branch ?? ""}" does not exist in ${spec.repo}`
+        : `repository ${spec.repo} does not exist or is not accessible to the GitHub App`,
+    );
+  }
+}
+
+/** Reads git's stderr for the two "does not exist" outcomes of `git clone`; anything else is left transient. */
+function notFoundIn(stderr: string): "branch" | "repository" | undefined {
+  if (/Remote branch .* not found in upstream/i.test(stderr)) return "branch";
+  if (/repository\b.*\bnot found/i.test(stderr)) return "repository";
+  return undefined;
+}
+
+/**
  * Environment of one repo session's tool commands, handed to pi-env as `shellEnv`: it is added to the remote
  * environment of every command of that session's env, and of no other session's.
  *
@@ -217,6 +239,8 @@ async function clone(
   );
   if (run.exitCode !== 0) {
     await env.remove(p.cloneTmp, { recursive: true, force: true }, context);
+    const missing = notFoundIn(tail);
+    if (missing !== undefined) throw new CloneTargetNotFoundError(spec, missing);
     throw new Error(`git clone failed (exit ${String(run.exitCode)}): ${tail.trim()}`);
   }
   await must(env.renameFile(p.cloneTmp, p.repo, context), "move the clone into place");

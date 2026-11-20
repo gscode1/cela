@@ -50,8 +50,7 @@ names and reused (the GitHub token is re-minted and the secret value rotated), `
 the clone, `markWorkspaceReady` is an upsert of one column.
 
 Outcomes are as before, recorded by the same code (`#recordFailure`) on the pool instead of the claim's client:
-`PermanentError` (refused access, lost workspace, repo not configured) ends the row `failed` (the lost-workspace and
-refused-access cases fail the session too); anything else bumps `attempts`, leaves the row `pending` with the error,
+`PermanentError` (refused access, lost workspace, a repository or branch that does not exist, repo not configured) ends the row `failed` (the lost-workspace, refused-access and missing-repository-or-branch cases fail the session too); anything else bumps `attempts`, leaves the row `pending` with the error,
 and stops that session's batch so later rows cannot overtake it (the claim still applies rows that precede the failed
 input, such as a `cancel`). The fifth failed attempt ends the row.
 
