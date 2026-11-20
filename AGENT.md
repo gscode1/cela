@@ -2,7 +2,7 @@
 
 ## Project
 
-cela (Polish for *cell*; every session runs in its own): a proof of concept for running Pi Durable agents on a Kubernetes cluster. Agent state is stored in PostgreSQL (the bundled `charts/pi-postgres` or any Postgres reachable by URI). Tools run in a per-session gVisor sandbox (kubernetes-sigs/agent-sandbox) with a workspace PVC, through a `pi-env` bridge. Sessions are served by a small session API. Stack: TypeScript (Node). License: MIT.
+cela (Polish for a *cage*, a locked cell: every session runs locked in its own): a proof of concept for running Pi Durable agents on a Kubernetes cluster. Agent state is stored in PostgreSQL (the bundled `charts/pi-postgres` or any Postgres reachable by URI). Tools run in a per-session gVisor sandbox (kubernetes-sigs/agent-sandbox) with a workspace PVC, through a `pi-env` bridge. Sessions are served by a small session API. Stack: TypeScript (Node). License: MIT.
 
 Read `plan.md` first. It holds the goal, decisions, architecture, phases and repo layout. Then read `README.md` and `docs/` once they exist. Use the terms in `plan.md` (orchestrator, shard, sandbox-env, broker, SandboxClaim, session API) in code. Do not invent synonyms.
 

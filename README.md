@@ -1,6 +1,6 @@
 # cela: sandboxed, durable Pi agents on Kubernetes
 
-_cela_ — Polish for _cell_; every session runs in its own.
+_cela_ — Polish for a cage, a locked cell: every session runs locked in its own.
 
 Run [Pi Durable](https://github.com/earendil-works/pi) coding agents on your own Kubernetes cluster.
 
