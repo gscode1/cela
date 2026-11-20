@@ -10,7 +10,7 @@ tell "the upstream framework" from "this project" in code, docs and commands. Th
 
 ## Decision
 
-- **Name:** `cela`. It is Polish for *cell*: every session runs in its own sandbox.
+- **Name:** `cela`. It is Polish for a *cage*, a locked cell: every session runs locked in its own sandbox.
 - **Mapping:**
   - npm scope `@pi-durable-k8s/*` becomes `@cela/*`; the root package is `cela`; the MCP bin `pi-durable-mcp` is `cela-mcp` and
     its server name is `cela`.
