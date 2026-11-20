@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InboxEvent, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
+import { renderEnvironment } from "../src/sandbox-environment.ts";
 import { SessionService } from "../src/sessions.ts";
 import type { WorkspaceEnv } from "../src/workspace.ts";
 
@@ -136,6 +137,12 @@ function service(host: Host = fakeHost(), admin: (typeof ADMIN)[] = [ADMIN]): Se
 }
 
 const ON: ProfileDefinition = { instructions: "Be brief.", repoSkills: true };
+// The service runs without the egress proxy, so the sandbox facts say direct.
+const ENV = renderEnvironment({
+  flavour: "default",
+  repo: { repo: "acme/widgets" },
+  network: "direct",
+});
 
 describe("repo skills at each new message", () => {
   it("flag off: no extra sandbox call beyond the clone step, and no write", async () => {
@@ -154,7 +161,7 @@ describe("repo skills at each new message", () => {
     const svc = service();
     await svc.prepare(message, session(ON));
     const text = instructions.get(7) ?? "";
-    expect(text.startsWith("Be brief.\n\nThe following skills provide")).toBe(true);
+    expect(text.startsWith(`Be brief.\n\n${ENV}\n\nThe following skills provide`)).toBe(true);
     expect(text.match(/<available_skills>/g)).toHaveLength(1);
     expect(text).toContain("Admin PDF");
     expect(text).not.toContain("Repo PDF");
@@ -218,7 +225,7 @@ describe("repo skills at each new message", () => {
     expect(instructions.get(7)).toContain("Edit CSV");
     await rm(join(root, ".pi"), { recursive: true });
     await svc.prepare(message, session({ repoSkills: true }));
-    expect(instructions.get(7)).toBeUndefined();
+    expect(instructions.get(7)).toBe(ENV);
     svc.stop();
   });
 
@@ -234,7 +241,7 @@ describe("repo skills at each new message", () => {
 describe("repo context (AGENTS.md) at each new message", () => {
   const CONTEXT_ON: ProfileDefinition = { instructions: "Be brief.", repoContext: true };
 
-  it("orders profile instructions, project instructions, then the skills catalog, as Pi does", async () => {
+  it("orders profile instructions, sandbox facts, project instructions, then the skills catalog", async () => {
     await put("AGENTS.md", "Use pnpm.");
     await put(".pi/skills/csv/SKILL.md", skill("Edit CSV"));
     const svc = service();
@@ -242,9 +249,10 @@ describe("repo context (AGENTS.md) at each new message", () => {
     const text = instructions.get(7) ?? "";
     const at = (needle: string): number => text.indexOf(needle);
     expect(at("Be brief.")).toBe(0);
+    expect(at(ENV)).toBeGreaterThan(at("Be brief."));
     expect(
       at('<project_instructions path="/workspace/repo/AGENTS.md">\nUse pnpm.'),
-    ).toBeGreaterThan(at("Be brief."));
+    ).toBeGreaterThan(at("</sandbox_environment>"));
     expect(at("<available_skills>")).toBeGreaterThan(at("</project_instructions>"));
     svc.stop();
   });
@@ -305,7 +313,7 @@ describe("repo context (AGENTS.md) at each new message", () => {
     failScan = false;
     await rm(join(root, "AGENTS.md"));
     await svc.prepare(message, session(CONTEXT_ON));
-    expect(instructions.get(7)).toBe("Be brief.");
+    expect(instructions.get(7)).toBe(`Be brief.\n\n${ENV}`);
     svc.stop();
   });
 });
