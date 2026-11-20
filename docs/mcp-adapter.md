@@ -22,6 +22,11 @@ setting has a default, because an unset one could otherwise reach the server as 
 **Use the token of an owner who is not in `PI_API_ADMINS`.** In the default mode, an admin token also
 works on the admin API, and a coding agent with a shell can read its own MCP config.
 
+A configuration error (for example `PI_API_ADMIN_TOKEN` equal to `PI_API_TOKEN`) is written to stderr, and the server
+also answers the client's first request (normally `initialize`) with a JSON-RPC error, `-32603` and
+`cela-mcp configuration error: <message>`, then exits 1. The message names the variable, never a value. Without a
+request (stdin closed, or 5 seconds) it just exits 1.
+
 ## Install
 
 Each release (`mcp-vX.Y.Z` on the [releases page](https://github.com/gscode1/cela/releases)) has two assets, built by
@@ -143,3 +148,8 @@ the next version, with no merge, so fields you omit revert to their defaults and
 `expectedRevision`. Read the profile first; a 409 means reload before retrying. Delete requires the profile to be
 disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. No other admin writes
 are exposed. Only enable this mode for trusted clients: a shell-capable agent can read its environment.
+
+## Troubleshooting
+
+If the server does not start, read the configuration error: the client shows it as the `initialize` error, or in the
+logs. In Claude Desktop the reason is in the extension's log, `~/Library/Logs/Claude/mcp-server-<name>.log`.

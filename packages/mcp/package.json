@@ -1,6 +1,6 @@
 {
   "name": "@cela/mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Stdio MCP server that exposes the session API (and nothing else) to MCP clients.",
   "license": "MIT",
   "repository": {
