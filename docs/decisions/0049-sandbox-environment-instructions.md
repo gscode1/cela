@@ -17,7 +17,7 @@ The orchestrator appends a `<sandbox_environment>` block to every new conversati
 (`packages/orchestrator/src/sandbox-environment.ts`). It is built from the session row and the deployment, never from the
 sandbox:
 
-- uid 1000 without root, `/workspace` persistent and the rest not, what is writable (`HOME` only where the image sets one),
+- user `pi` (uid 1000) without root, `/workspace` persistent and the rest not, what is writable (`/workspace`, `/tmp`, `HOME`),
   no apt;
 - the flavour's tools (`FLAVOUR_FACTS`, pinned against each Dockerfile by `test/sandbox-environment.test.ts`);
 - the repository and the branch it was **cloned from** (the agent may switch), or that none is checked out;

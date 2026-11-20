@@ -37,3 +37,11 @@ post its PR comment, although its GitHub App token allowed it.
 - A workspace PVC now also holds tool caches. They count against the PVC size, and deleting `/workspace/.cache` is safe.
 - `pip install` into the system Python is refused (PEP 668): agents use a venv.
 - Verified locally; the repository-session check through the proxy is the `tools` test of `tests/e2e/run.sh phase4c`.
+
+## Amendment: a passwd entry for uid 1000 (2026-11-20, issue #324)
+
+`HOME` alone was not enough: code that looks the user up ignores it. A renovate session on gscode1/pi-tick could not run
+its tests because they read the passwd home with Node's `os.userInfo()`, which fails for a uid without an entry (as do
+Python's `pwd`, `whoami` and ssh). Both sandbox images now add user `pi`, uid and gid 1000, home `/home/pi`, shell
+`/bin/bash`, and the build checks the ids. The browser image also sets `HOME=/home/pi`, so the sandbox facts of ADR 0049
+say the same for both flavours.
