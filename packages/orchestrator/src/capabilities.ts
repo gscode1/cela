@@ -30,11 +30,15 @@ export async function publishAndCheckProfiles(
     for (const bad of catalog.invalid) log("profile-invalid", bad);
     const unresolved: string[] = [];
     for (const profile of catalog.profiles) {
-      // MCP servers are checked at use (a catalog change needs no restart): only the tools are resolved here.
-      const message = checkProfileNames(
-        { ...profile.definition, mcpServers: [] },
-        { tools: capabilities.tools, mcpServers: [] },
-      );
+      // MCP servers are checked at use (a catalog change needs no restart): only the tools are resolved here. The
+      // deployment-level fields (flavour, network mode, sizes) are ingest's to enforce at write; the orchestrator does
+      // not know them, so a check that included them would report every browser, direct or sized profile as unresolved.
+      const definition: ProfileDefinition = { ...profile.definition, mcpServers: [] };
+      delete definition.sandboxFlavour;
+      delete definition.networkMode;
+      delete definition.sandboxSize;
+      delete definition.sandboxSizes;
+      const message = checkProfileNames(definition, { tools: capabilities.tools, mcpServers: [] });
       if (message !== undefined) {
         unresolved.push(profile.name);
         log("profile-unresolved", { profile: profile.name, message });
