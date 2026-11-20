@@ -72,9 +72,16 @@ export function parseConfig(env: Record<string, string | undefined>): McpConfig 
   let admin: McpConfig["admin"];
   if (enabled) {
     const adminToken = env.PI_API_ADMIN_TOKEN?.trim();
-    if (adminToken === undefined || adminToken === "") throw new ConfigError("PI_API_ADMIN_TOKEN is required");
-    if (!/^[\x21-\x7e]+$/.test(adminToken)) throw new ConfigError("PI_API_ADMIN_TOKEN contains characters not allowed in a bearer token");
+    if (adminToken === undefined || adminToken === "")
+      throw new ConfigError("PI_API_ADMIN_TOKEN is required");
+    if (!/^[\x21-\x7e]+$/.test(adminToken))
+      throw new ConfigError("PI_API_ADMIN_TOKEN contains characters not allowed in a bearer token");
     admin = { token: adminToken, writes };
   }
-  return { apiUrl, token, maxSessions: parseMaxSessions(env.PI_MCP_MAX_SESSIONS), ...(admin === undefined ? {} : { admin }) };
+  return {
+    apiUrl,
+    token,
+    maxSessions: parseMaxSessions(env.PI_MCP_MAX_SESSIONS),
+    ...(admin === undefined ? {} : { admin }),
+  };
 }
