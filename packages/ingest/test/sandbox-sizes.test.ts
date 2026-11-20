@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { SettingsCache, parseSandboxSizes, seedSettings } from "@pi-durable-k8s/session-core";
-import type { SandboxSizes, Settings } from "@pi-durable-k8s/session-core";
+import { SettingsCache, parseSandboxSizes, seedSettings } from "@cela/session-core";
+import type { SandboxSizes, Settings } from "@cela/session-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createIngestServer } from "../src/server.ts";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";

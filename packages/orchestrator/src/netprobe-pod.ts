@@ -1,9 +1,9 @@
 import type { V1Pod } from "@kubernetes/client-node";
-import { NETWORK_MODE_LABEL } from "@pi-durable-k8s/session-core";
+import { NETWORK_MODE_LABEL } from "@cela/session-core";
 
 /** Ties a probe Pod to the orchestrator that made it, for the cleanup of leftovers. */
-export const PROBE_LABEL = "pi-durable-k8s/netprobe";
-/** The label every NetworkPolicy for sandboxes selects (charts/pi-durable/templates/sandbox/template.yaml). */
+export const PROBE_LABEL = "cela/netprobe";
+/** The label every NetworkPolicy for sandboxes selects (charts/cela/templates/sandbox/template.yaml). */
 export const SANDBOX_NAME_LABEL = "app.kubernetes.io/name";
 export const SANDBOX_NAME = "pi-sandbox";
 /** Hard stop in case the orchestrator dies mid-probe; its next start also deletes leftovers. */

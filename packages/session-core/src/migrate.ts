@@ -3,7 +3,7 @@ import type pg from "pg";
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url);
 /** Serialises concurrent starters (several ingest replicas plus the orchestrator). */
-const LOCK_KEY = "pi-durable-k8s:inbox-migrate";
+const LOCK_KEY = "cela:inbox-migrate";
 /**
  * How long DDL may wait for a lock. ALTER TABLE queues for ACCESS EXCLUSIVE and, while queued, blocks every other
  * query on the table; the orchestrator's inbox drain holds row locks for minutes while it prepares a repo workspace.

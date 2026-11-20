@@ -1,4 +1,4 @@
-# Installs pi-durable on a kind cluster (kindnet, runc, bundled Postgres, scripted model; docs/install-plan.md section 8)
+# Installs cela on a kind cluster (kindnet, runc, bundled Postgres, scripted model; docs/install-plan.md section 8)
 # through hack/kind-up.sh and runs hack/kind-smoke.sh. The images are built IN this job for linux/amd64 from the commit under
 # test and loaded into the node (--build), not pulled from ghcr.io: the job does not wait for the images workflow, works for
 # fork pull requests (no registry write) and tests exactly this commit. The multi-arch publish stays in images.yml.
@@ -68,16 +68,16 @@ jobs:
       - name: Dump the cluster state
         if: failure()
         run: |
-          ctx=kind-pi-durable
+          ctx=kind-cela
           kubectl --context "$ctx" get nodes,pods,pvc,sandboxclaims,sandboxes -A -o wide || true
-          kubectl --context "$ctx" -n pi-durable describe pods || true
-          for pod in $(kubectl --context "$ctx" -n pi-durable get pods -o name); do
+          kubectl --context "$ctx" -n cela describe pods || true
+          for pod in $(kubectl --context "$ctx" -n cela get pods -o name); do
             echo "::group::logs $pod"
-            kubectl --context "$ctx" -n pi-durable logs "$pod" --all-containers --tail=300 || true
+            kubectl --context "$ctx" -n cela logs "$pod" --all-containers --tail=300 || true
             echo "::endgroup::"
           done
           kubectl --context "$ctx" -n agent-sandbox-system logs deploy/agent-sandbox-controller --tail=200 || true
-          kubectl --context "$ctx" -n pi-durable get events --sort-by=.lastTimestamp || true
+          kubectl --context "$ctx" -n cela get events --sort-by=.lastTimestamp || true
 
   kind-cilium:
     if: github.event_name != 'pull_request'
@@ -108,15 +108,15 @@ jobs:
       - name: Dump the cluster state
         if: failure()
         run: |
-          ctx=kind-pi-durable
+          ctx=kind-cela
           kubectl --context "$ctx" get nodes,pods,pvc,sandboxclaims,sandboxes -A -o wide || true
-          kubectl --context "$ctx" -n pi-durable describe pods || true
-          for pod in $(kubectl --context "$ctx" -n pi-durable get pods -o name); do
+          kubectl --context "$ctx" -n cela describe pods || true
+          for pod in $(kubectl --context "$ctx" -n cela get pods -o name); do
             echo "::group::logs $pod"
-            kubectl --context "$ctx" -n pi-durable logs "$pod" --all-containers --tail=300 || true
+            kubectl --context "$ctx" -n cela logs "$pod" --all-containers --tail=300 || true
             echo "::endgroup::"
           done
           kubectl --context "$ctx" -n agent-sandbox-system logs deploy/agent-sandbox-controller --tail=200 || true
           kubectl --context "$ctx" -n kube-system get pods -l k8s-app=cilium -o wide || true
           kubectl --context "$ctx" -n kube-system logs ds/cilium --tail=200 || true
-          kubectl --context "$ctx" -n pi-durable get events --sort-by=.lastTimestamp || true
+          kubectl --context "$ctx" -n cela get events --sort-by=.lastTimestamp || true

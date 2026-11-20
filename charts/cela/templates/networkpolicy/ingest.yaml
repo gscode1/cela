@@ -10,7 +10,7 @@ kind: NetworkPolicy
 metadata:
   name: ingest-allow-clients-ingress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -32,7 +32,7 @@ kind: NetworkPolicy
 metadata:
   name: ingest-allow-expose-ingress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -51,7 +51,7 @@ kind: NetworkPolicy
 metadata:
   name: ingest-allow-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -59,7 +59,7 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        {{- include "pi-durable.databaseTo" . | trim | nindent 8 }}
+        {{- include "cela.databaseTo" . | trim | nindent 8 }}
       ports:
         - { protocol: TCP, port: {{ .Values.database.external.egress.port }} }
     - to:

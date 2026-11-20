@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelProviderStatus } from "@pi-durable-k8s/session-core";
+import type { ModelProviderStatus } from "@cela/session-core";
 import { ModelCredentialsLoop, oneCliSecretsView } from "../src/capabilities.ts";
 import { loadConfig } from "../src/config.ts";
 import { mcpSecretCandidates, secretName } from "../src/onecli-names.ts";

@@ -1,10 +1,5 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import {
-  buildSkillCatalog,
-  parseFrontmatter,
-  SKILL_ENTRY,
-  SKILL_LIMITS,
-} from "@pi-durable-k8s/session-core";
+import { buildSkillCatalog, parseFrontmatter, SKILL_ENTRY, SKILL_LIMITS } from "@cela/session-core";
 import type { FileInfo } from "@earendil-works/pi-durable/env";
 import { log } from "./log.js";
 import { REPO_DIR } from "./workspace.js";

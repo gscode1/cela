@@ -94,7 +94,7 @@ bundled() {
   fi
 
   echo "applying agent-sandbox $VERSION (server-side)"
-  k apply --server-side --field-manager=pi-durable-install -f "$tmp/manifest.yaml"
+  k apply --server-side --field-manager=cela-install -f "$tmp/manifest.yaml"
   for entry in "${KINDS[@]}"; do
     IFS='|' read -r group plural _ <<<"$entry"
     k wait --for=condition=Established --timeout=60s "crd/$plural.$group"

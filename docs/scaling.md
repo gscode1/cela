@@ -15,10 +15,10 @@ Conversation ids repeat across shards (each schema mints from 2); `(shard, conve
 
 ## Add a shard
 
-With the Helm chart ([charts/pi-durable](../charts/pi-durable/README.md)), raise the value; never lower it:
+With the Helm chart ([charts/cela](../charts/cela/README.md)), raise the value; never lower it:
 
 ```bash
-helm upgrade pi-durable charts/pi-durable -n <ns> -f local/values.yaml --set orchestrator.shards=2
+helm upgrade cela charts/cela -n <ns> -f local/values.yaml --set orchestrator.shards=2
 kubectl -n <ns> rollout status deployment/pi-orchestrator-1
 ```
 

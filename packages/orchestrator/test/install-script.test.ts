@@ -152,7 +152,7 @@ describe("hack/install.sh", () => {
       calls.indexOf("helm upgrade"),
     );
     expect(calls).toMatch(
-      /^helm upgrade --install pi-durable .*charts\/pi-durable --namespace demo --values .*values\.yaml --wait --timeout 10m$/m,
+      /^helm upgrade --install cela .*charts\/cela --namespace demo --values .*values\.yaml --wait --timeout 10m$/m,
     );
     expect(calls).not.toContain("--create-namespace");
     expect(calls).toMatch(/get --raw \/apis\/agents\.x-k8s\.io\/v1beta1/);

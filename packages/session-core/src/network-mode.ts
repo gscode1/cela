@@ -13,7 +13,7 @@ export type NetworkMode = (typeof NETWORK_MODES)[number];
 export const DEFAULT_NETWORK_MODE: NetworkMode = "proxied";
 
 /** The label the SandboxTemplate bakes into its Pods and the NetworkPolicies select on. */
-export const NETWORK_MODE_LABEL = "pi-durable.dev/network-mode";
+export const NETWORK_MODE_LABEL = "cela.dev/network-mode";
 
 export const isNetworkMode = (value: unknown): value is NetworkMode =>
   typeof value === "string" && (NETWORK_MODES as readonly string[]).includes(value);

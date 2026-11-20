@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chartsDir } from "./support/helm.js";
 
-// The values tests/e2e/run.sh gives the pi-durable chart (tests/e2e/chart-values.py) must pass the chart's schema in
+// The values tests/e2e/run.sh gives the cela chart (tests/e2e/chart-values.py) must pass the chart's schema in
 // every shape of a run, so a change to either side fails here and not on a cluster.
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 const root = resolve(import.meta.dirname, "../../..");
@@ -38,7 +38,7 @@ const values = (shards: number, env: Record<string, string> = {}): string => {
   return file;
 };
 const render = (file: string): string =>
-  execFileSync("helm", ["template", "rel", join(chartsDir, "pi-durable"), "-n", "ns", "-f", file], {
+  execFileSync("helm", ["template", "rel", join(chartsDir, "cela"), "-n", "ns", "-f", file], {
     encoding: "utf8",
     timeout: 60_000,
   });

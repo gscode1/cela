@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Delete orphaned e2e run namespaces: tests/e2e/sweep.sh [max-age-hours]   (default SWEEP_MAX_AGE_HOURS or 6)
 # A run namespace is deleted by tests/e2e/run.sh itself; this catches the ones a killed run, a lost laptop or KEEP_NS=1
-# left behind. A namespace qualifies only if ALL of these hold, so the long-lived pi-durable-poc can never match:
+# left behind. A namespace qualifies only if ALL of these hold, so the long-lived cela-dev can never match:
 #   - its name starts with pi-e2e-
-#   - it carries the label pi-durable-e2e=true (set by run.sh when it creates the namespace)
+#   - it carries the label cela-e2e=true (set by run.sh when it creates the namespace)
 #   - it was created more than max-age hours ago (a run is bounded to 1 h per suite by the Job's activeDeadlineSeconds)
 # SWEEP_EXCLUDE=<namespace> never deletes that namespace (run.sh sets it to its own, so re-running a kept one works).
 # DRY_RUN=1 only lists them. KUBE_CONTEXT picks the cluster (default: the current context).
@@ -16,7 +16,7 @@ kc() { kubectl ${ctx:+--context="$ctx"} "$@"; }
 
 exclude=${SWEEP_EXCLUDE:-}
 cutoff=$(($(date +%s) - hours * 3600))
-list=$(kc get namespaces -l pi-durable-e2e=true -o json)
+list=$(kc get namespaces -l cela-e2e=true -o json)
 old=$(jq -r --argjson cutoff "$cutoff" --arg exclude "$exclude" '
   .items[]
   | select(.metadata.name | startswith("pi-e2e-"))

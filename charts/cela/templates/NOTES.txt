@@ -1,4 +1,4 @@
-pi-durable is installed in namespace {{ .Release.Namespace }}: {{ .Values.orchestrator.shards }} orchestrator shard(s), ingest (the session API), the sandbox template pi-env-template.
+cela is installed in namespace {{ .Release.Namespace }}: {{ .Values.orchestrator.shards }} orchestrator shard(s), ingest (the session API), the sandbox template pi-env-template.
 
   Database:      Secret {{ .Values.database.external.existingSecret }} (external, not managed here)
   OneCLI:        {{ .Values.onecli.mode }}{{ if eq .Values.onecli.mode "disabled" }} (scripted models only){{ end }}

@@ -12,8 +12,8 @@ const env = {
 
 describe("shard schema", () => {
   it("keeps today's schema for shard 0 and derives <schema>_s<k> for the others", () => {
-    expect(shardSchema("pi_durable", 0)).toBe("pi_durable");
-    expect(shardSchema("pi_durable", 1)).toBe("pi_durable_s1");
+    expect(shardSchema("cela", 0)).toBe("cela");
+    expect(shardSchema("cela", 1)).toBe("cela_s1");
     expect(shardSchema("public", 12)).toBe("public_s12");
   });
 

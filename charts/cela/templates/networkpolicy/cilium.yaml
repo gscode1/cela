@@ -11,7 +11,7 @@ kind: CiliumNetworkPolicy
 metadata:
   name: orchestrator-egress-kube-apiserver
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   endpointSelector:
     matchLabels:
@@ -30,9 +30,9 @@ kind: CiliumNetworkPolicy
 metadata:
   name: dns-egress-kube-dns-only
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
-  {{- if include "pi-durable.networkCutover" . }}
+  {{- if include "cela.networkCutover" . }}
   endpointSelector:
     matchExpressions:
       - { key: app.kubernetes.io/name, operator: NotIn, values: [pi-sandbox] }
@@ -58,7 +58,7 @@ kind: CiliumNetworkPolicy
 metadata:
   name: orchestrator-egress-github-api
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   endpointSelector:
     matchLabels:

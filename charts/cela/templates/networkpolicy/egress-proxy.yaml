@@ -14,7 +14,7 @@ kind: NetworkPolicy
 metadata:
   name: egress-proxy-allow-clients-ingress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -37,7 +37,7 @@ kind: NetworkPolicy
 metadata:
   name: egress-proxy-allow-database-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -45,7 +45,7 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        {{- include "pi-durable.databaseTo" . | trim | nindent 8 }}
+        {{- include "cela.databaseTo" . | trim | nindent 8 }}
       ports:
         - { protocol: TCP, port: {{ .Values.database.external.egress.port }} }
 ---
@@ -57,7 +57,7 @@ kind: NetworkPolicy
 metadata:
   name: egress-proxy-allow-internet-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -91,7 +91,7 @@ spec:
         {{- range $e.publicPorts }}
         - { protocol: TCP, port: {{ . }} }
         {{- end }}
-{{- if include "pi-durable.egressOnecliRoute" . }}
+{{- if include "cela.egressOnecliRoute" . }}
 ---
 # Egress to the OneCLI gateway port only, the proxy's one upstream for route=onecli (ADR 0037). The management API is
 # another port of the same pod and stays unreachable. The gateway has to admit the proxy on its side: the bundled release
@@ -102,7 +102,7 @@ kind: NetworkPolicy
 metadata:
   name: egress-proxy-allow-onecli-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -110,9 +110,9 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        {{- include "pi-durable.onecliTo" . | nindent 8 }}
+        {{- include "cela.onecliTo" . | nindent 8 }}
       ports:
-        - { protocol: TCP, port: {{ include "pi-durable.urlPort" (include "pi-durable.onecli" . | fromJson).gatewayUrl }} }
+        - { protocol: TCP, port: {{ include "cela.urlPort" (include "cela.onecli" . | fromJson).gatewayUrl }} }
 {{- end }}
 {{- range $i, $p := $e.privateEgress }}
 ---
@@ -123,7 +123,7 @@ kind: NetworkPolicy
 metadata:
   name: egress-proxy-allow-private-egress-{{ $i }}
   labels:
-    {{- include "pi-durable.labels" $ | nindent 4 }}
+    {{- include "cela.labels" $ | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -157,7 +157,7 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-allow-egress-proxy-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:

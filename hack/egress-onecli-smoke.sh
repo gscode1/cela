@@ -3,7 +3,7 @@
 # docs/decisions/0037-egress-onecli-route.md):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy
-#   hack/egress-onecli-smoke.sh [--name pi-egress] [--namespace pi-durable] [--echo-host httpbingo.org]
+#   hack/egress-onecli-smoke.sh [--name pi-egress] [--namespace cela] [--echo-host httpbingo.org]
 #   hack/kind-down.sh --name pi-egress
 #
 # A throwaway cluster has no GitHub App, so no real repo session can be made. The script makes a plain session and runs the
@@ -12,7 +12,7 @@
 # github.com and api.github.com, with a fake GitHub that mints a dummy token. Everything after that is the real chain:
 # sandbox -> egress proxy -> OneCLI gateway -> the internet. api.github.com answers 401 "Bad credentials" only when an
 # Authorization header arrives (the dummy token OneCLI injects), which proves the injection; <echo-host> returns the headers
-# it received, which shows what an origin sees. The script refuses the cluster pi-durable and any context that is not kind.
+# it received, which shows what an origin sees. The script refuses the cluster cela and any context that is not kind.
 # Tokens and keys are never printed (a token that must move goes through a variable and a pipe). Every check prints
 # `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still runs.
 #
@@ -30,7 +30,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 echo_host=httpbingo.org
 owner=${PI_SMOKE_OWNER:-admin}
 
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 [[ $echo_host =~ ^[a-z0-9.-]+$ ]] || die "bad echo host"
 for tool in kubectl node base64; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
@@ -108,7 +108,7 @@ driver_js=$(cat "$root/hack/egress-onecli-driver.mjs")
 driver() { k exec -i deploy/pi-orchestrator -- node --input-type=module -e "$driver_js" "$@"; }
 pod_of() {
   local claim
-  claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
+  claim=$(k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
   [[ -n $claim ]] || fail "no SandboxClaim for session $1"
   echo "$claim"
 }
@@ -210,7 +210,7 @@ cred=$(sed -n 's/^echo-credential //p' <<<"$prov")
 [[ -n $cred ]] || fail "the driver did not report the echo credential"
 facts=$(driver facts "$sa")
 check "a binding and the session rules exist for A" "$facts" "bindings 1 rules 3 principal-live 1"
-dump=$(k exec deploy/pi-orchestrator -- node --input-type=module -e 'const {createPool}=await import("/app/node_modules/@pi-durable-k8s/session-core/dist/index.js"); const {loadConfig}=await import("/app/dist/config.js"); const c=loadConfig(process.env); const p=createPool(c.databaseUrl,"smoke",1,c.databaseTls); const r=await p.query("select session_id, key_id, encode(nonce,\x27hex\x27) as nonce, length(ciphertext) as len, encode(ciphertext,\x27hex\x27) as ct from egress.bindings"); console.log(JSON.stringify(r.rows)); await p.end()')
+dump=$(k exec deploy/pi-orchestrator -- node --input-type=module -e 'const {createPool}=await import("/app/node_modules/@cela/session-core/dist/index.js"); const {loadConfig}=await import("/app/dist/config.js"); const c=loadConfig(process.env); const p=createPool(c.databaseUrl,"smoke",1,c.databaseTls); const r=await p.query("select session_id, key_id, encode(nonce,\x27hex\x27) as nonce, length(ciphertext) as len, encode(ciphertext,\x27hex\x27) as ct from egress.bindings"); console.log(JSON.stringify(r.rows)); await p.end()')
 printf '%s\n' "$dump" | node -e 'const rows = JSON.parse(require("fs").readFileSync(0, "utf8")); for (const r of rows) console.log(`  binding row: ${r.session_id} key ${r.key_id} nonce ${r.nonce} ciphertext ${r.len} bytes (${r.ct.slice(0, 16)}...)`)'
 check "the stored binding is ciphertext (no aoc_ in the table)" "$(grep -c 'aoc_' <<<"$dump" || true)" "^0$"
 
@@ -265,7 +265,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: smoke-proxy-label
-  labels: { app.kubernetes.io/name: pi-egress-proxy, app.kubernetes.io/part-of: pi-durable-smoke }
+  labels: { app.kubernetes.io/name: pi-egress-proxy, app.kubernetes.io/part-of: cela-smoke }
 spec:
   automountServiceAccountToken: false
   securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }

@@ -9,13 +9,8 @@ import {
   recordSessionUsage,
   validateProfileDefinition,
   writeTombstone,
-} from "@pi-durable-k8s/session-core";
-import type {
-  InboxEvent,
-  ModelChoice,
-  ProfileDefinition,
-  SessionRow,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { InboxEvent, ModelChoice, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { terminalFailure, TOKEN_BUDGET_EXHAUSTED } from "./failure.js";
 import type { RunOutcome } from "./failure.js";
 import { GithubDeniedError } from "./github-app.js";

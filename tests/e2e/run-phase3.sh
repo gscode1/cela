@@ -427,7 +427,7 @@ count_denied() { printf '%s\n' "$2" | grep -v -E "^(${3:-onecli-gateway}|interne
 # (the probes below), so this checks the second layer: a token that leaks is good for one sandbox only.
 auth_codes() { # orchestrator-pod claim-a claim-b -> JSON of status codes
   k exec "$1" -c orchestrator -- node --input-type=module -e '
-    import { deriveSandboxToken as derive, sandboxTokenSha256 as sha } from "@pi-durable-k8s/sandbox-env";
+    import { deriveSandboxToken as derive, sandboxTokenSha256 as sha } from "@cela/sandbox-env";
     const [a, b] = process.argv.slice(1);
     const master = process.env.PI_SANDBOX_MASTER_KEY ?? "";
     const ta = derive(master, a), tb = derive(master, b);
@@ -575,8 +575,8 @@ conn example.com; conn kubernetes.default.svc.cluster.local'
   assert "CONNECT github.com:443 through the proxy succeeds (github-public allows it)" grep -Eq '^github.com HTTP/1.[01] 200' <<<"$text"
   assert "CONNECT example.com:443 (no rule) is denied by the proxy" grep -Eq '^example.com HTTP/1.[01] 4[0-9][0-9]' <<<"$text"
   assert "CONNECT to the Kubernetes API's name is denied by the proxy" grep -Eq '^kubernetes.default.svc.cluster.local HTTP/1.[01] 4[0-9][0-9]' <<<"$text"
-  pod=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$id" -o jsonpath='{.items[0].metadata.name}')
-  assert "the sandbox Pod is labelled network-mode proxied" test "$(k get pod "$pod" -o jsonpath='{.metadata.labels.pi-durable\.dev/network-mode}')" = proxied
+  pod=$(k get sandboxclaims -l "cela/session-id=$id" -o jsonpath='{.items[0].metadata.name}')
+  assert "the sandbox Pod is labelled network-mode proxied" test "$(k get pod "$pod" -o jsonpath='{.metadata.labels.cela\.dev/network-mode}')" = proxied
   note "EVIDENCE egress-proxy-runtime: sandbox $pod runs with runtimeClassName=$(k get pod "$pod" -o jsonpath='{.spec.runtimeClassName}')"
   ingest_api alice PUT "/admin/profiles/$prof" '{"enabledForNew":false}' >/dev/null 2>&1 || true
 }

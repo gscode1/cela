@@ -175,7 +175,7 @@ describe("hack/kind-up.sh localhost ports", () => {
     // Never 0.0.0.0: the host's other interfaces must not reach them.
     for (const m of mappings) expect(m[3]).toBe("127.0.0.1");
     expect(text).not.toMatch(/0\.0\.0\.0/);
-    const ingest = readFileSync(join(root, "charts/pi-durable/values.yaml"), "utf8");
+    const ingest = readFileSync(join(root, "charts/cela/values.yaml"), "utf8");
     expect(ingest).toMatch(/nodePort: 30080/);
     const onecli = readFileSync(join(root, "charts/pi-onecli/values.yaml"), "utf8");
     expect(onecli).toMatch(/nodePorts: \{ web: 30254, api: 30256 \}/);
@@ -332,7 +332,7 @@ describe("hack/kind-down.sh", () => {
 
 describe("kind values and workflow", () => {
   it("keep the invariants the smoke test and the docs rely on", () => {
-    const values = readFileSync(join(root, "charts/pi-durable/values-kind.yaml"), "utf8");
+    const values = readFileSync(join(root, "charts/cela/values-kind.yaml"), "utf8");
     expect(values).toMatch(/^ {2}runtimeClassName: ""/m);
     expect(values).toMatch(/^ {2}allowInsecureRuntime: true/m);
     expect(values).toMatch(/^ {2}provider: standard/m);

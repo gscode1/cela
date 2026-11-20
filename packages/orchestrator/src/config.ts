@@ -1,5 +1,5 @@
-import { loadDatabaseTls, loadModelPolicy } from "@pi-durable-k8s/session-core";
-import type { DatabaseTls, ModelPolicy } from "@pi-durable-k8s/session-core";
+import { loadDatabaseTls, loadModelPolicy } from "@cela/session-core";
+import type { DatabaseTls, ModelPolicy } from "@cela/session-core";
 import { memoryLimitBytes, resolveBridgeCap } from "./bridge-cap.js";
 import type { BridgeCapSource } from "./bridge-cap.js";
 import { GITHUB_APP_DIR } from "./github-app.js";

@@ -153,7 +153,7 @@ t_call() {
   assert_jq "the DeepWiki call returned a real result" "$res" '.results[1] | (.isError|not) and (.text|length>50)'
   note "result excerpt: $(jq -r '.results[1].text' <<<"$res" | head -c 200 | tr '\n' ' ')"
   # ADR 0007 / 0003: no sandbox was needed, so no claim exists for this session and no exec marker was set.
-  assert_eq "no SandboxClaim was created for the session" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$id" -o name | wc -l | tr -d ' ')"
+  assert_eq "no SandboxClaim was created for the session" 0 "$(k get sandboxclaims -l "cela/session-id=$id" -o name | wc -l | tr -d ' ')"
   assert_eq "no exec-in-flight marker" "0" "$(sql "select count(*) from inbox.sessions where id='$id' and exec_in_flight_at is not null" 2>/dev/null || echo 0)"
 }
 

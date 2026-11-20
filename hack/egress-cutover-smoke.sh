@@ -4,11 +4,11 @@
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy \
 #     --set security.allowDirectSandboxEgress=true
-#   hack/egress-cutover-smoke.sh [--name pi-egress] [--namespace pi-durable]
+#   hack/egress-cutover-smoke.sh [--name pi-egress] [--namespace cela]
 #   hack/kind-down.sh --name pi-egress
 #
 # It creates profiles and sessions (named smoke-*), runs Helm upgrades that switch the direct gate off and on again, and
-# re-runs the isolation probe, so it refuses the cluster pi-durable and any context that is not a kind cluster. The APIs are
+# re-runs the isolation probe, so it refuses the cluster cela and any context that is not a kind cluster. The APIs are
 # called from inside an ingest pod (hack/kind-client.mjs): no API token leaves the cluster. Egress tokens are never printed.
 # Every check prints `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still runs.
 #
@@ -35,7 +35,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 owner=${PI_SMOKE_OWNER:-admin}
 
 usage() {
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions and runs Helm upgrades. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions and runs Helm upgrades. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl helm node; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 kubectl config get-contexts -o name | grep -qx -- "$ctx" || die "no kubectl context $ctx (kind cluster $name)"
@@ -116,7 +116,7 @@ script_json() { node -e 'console.log(JSON.stringify({ steps: [{ bash: process.ar
 sandbox() { kc ask "$1" "$(script_json "$2" "$3")" "$2" 600 | grep '^TOOL ' | tail -1; }
 claim_of() { # session -> its SandboxClaim (also the Sandbox and the Pod name)
   local claim
-  claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
+  claim=$(k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
   [[ -n $claim ]] || fail "no SandboxClaim for session $1"
   echo "$claim"
 }
@@ -138,7 +138,7 @@ cleanup() {
     api DELETE "/admin/profiles/$p?expectedRevision=$rev" >/dev/null 2>&1
   done
   if [[ $(k get deploy pi-ingest -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_ALLOW_DIRECT_SANDBOX_EGRESS")].value}' 2>/dev/null) != "$gate_was" ]]; then
-    helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+    helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
       --set "security.allowDirectSandboxEgress=$gate_was" --wait --timeout 5m >/dev/null 2>&1
   fi
   exit $rc
@@ -161,7 +161,7 @@ if [[ -n $(k get ciliumnetworkpolicy dns-egress-kube-dns-only --ignore-not-found
   cdns_sel=$(k get ciliumnetworkpolicy dns-egress-kube-dns-only -o jsonpath='{.spec.endpointSelector}')
   check "dns-egress-kube-dns-only leaves sandboxes out" "$cdns_sel" 'NotIn.*pi-sandbox'
 fi
-modes=$(k get sandboxtemplates -o jsonpath='{range .items[*]}{.metadata.name}={.spec.podTemplate.metadata.labels.pi-durable\.dev/network-mode}{"\n"}{end}')
+modes=$(k get sandboxtemplates -o jsonpath='{range .items[*]}{.metadata.name}={.spec.podTemplate.metadata.labels.cela\.dev/network-mode}{"\n"}{end}')
 check "every proxied template has the label" "$(grep -v direct <<<"$modes")" 'pi-env-template-s=proxied'
 check "the direct templates have the direct label" "$modes" 'pi-env-direct-template-s=direct'
 for pool in pi-env-direct-pool pi-env-direct-pool-s pi-env-pool-s; do
@@ -198,9 +198,9 @@ sandbox "$sx" "up-x-$m" "true" >/dev/null
 sandbox "$sd" "up-d-$m" "true" >/dev/null
 pod_x=$(claim_of "$sx")
 pod_d=$(claim_of "$sd")
-[[ $(k get pod "$pod_x" -o jsonpath='{.metadata.labels.pi-durable\.dev/network-mode}') == proxied ]] || fail "the proxied session's Pod is not labelled proxied"
-[[ $(k get pod "$pod_d" -o jsonpath='{.metadata.labels.pi-durable\.dev/network-mode}') == direct ]] || fail "the direct session's Pod is not labelled direct"
-ok "the Pods carry pi-durable.dev/network-mode proxied and direct"
+[[ $(k get pod "$pod_x" -o jsonpath='{.metadata.labels.cela\.dev/network-mode}') == proxied ]] || fail "the proxied session's Pod is not labelled proxied"
+[[ $(k get pod "$pod_d" -o jsonpath='{.metadata.labels.cela\.dev/network-mode}') == direct ]] || fail "the direct session's Pod is not labelled direct"
+ok "the Pods carry cela.dev/network-mode proxied and direct"
 [[ $(k get sandboxclaim "$pod_x" -o jsonpath='{.spec.warmPoolRef.name}') == pi-env-pool-s ]] || fail "the proxied claim does not use pi-env-pool-s"
 [[ $(k get sandboxclaim "$pod_d" -o jsonpath='{.spec.warmPoolRef.name}') == pi-env-direct-pool-s ]] || fail "the direct claim does not use pi-env-direct-pool-s"
 ok "the claims use pi-env-pool-s and pi-env-direct-pool-s"
@@ -304,7 +304,7 @@ check "the probe has no DNS control (a proxied sandbox has no DNS)" "$detail" '"
 
 # ------------------------------------------------------------------ 6. the gate off
 echo "## 6. security.allowDirectSandboxEgress=false"
-helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
   --set security.allowDirectSandboxEgress=false --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-ingest --timeout=300s >/dev/null
 [[ -z $(k get networkpolicy sandbox-direct-allow-egress --ignore-not-found -o name) ]] || fail "the direct policy still exists with the gate off"
@@ -325,7 +325,7 @@ ok "a session of the stored direct profile is a 400 with the gate off"
 sleep 10
 out=$(sandbox "$sd" "off-d-$m" "$probes_fn t ip443 1.1.1.1 443; d; echo; echo END")
 check "the running direct sandbox lost the internet and DNS with its policy (fail closed)" "$out" 'ip443=B dns=B'
-helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
   --set security.allowDirectSandboxEgress=true --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-ingest --timeout=300s >/dev/null
 sleep 10

@@ -13,8 +13,8 @@ import {
   sessionsWithRules,
   setPrincipalPodIp,
   validateProfileDefinition,
-} from "@pi-durable-k8s/session-core";
-import type { SessionRow } from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { SessionRow } from "@cela/session-core";
 import type pg from "pg";
 import { log } from "./log.js";
 import { Redacted } from "./onecli.js";

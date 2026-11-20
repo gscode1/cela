@@ -2,11 +2,11 @@
 # Live check of the egress proxy on a THROWAWAY kind cluster (epic #50, slice 3, docs/decisions/0035-egress-proxy-runtime.md):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --egress-proxy
-#   hack/egress-smoke.sh [--name pi-egress] [--namespace pi-durable]
+#   hack/egress-smoke.sh [--name pi-egress] [--namespace cela]
 #   hack/kind-down.sh --name pi-egress
 #
 # It changes egress rules, runs a Helm upgrade and scales the bundled Postgres down and up, so it refuses the cluster
-# pi-durable and any context that is not a kind cluster. Test pods live in the namespace pi-egress-test (admitted to the proxy
+# cela and any context that is not a kind cluster. Test pods live in the namespace pi-egress-test (admitted to the proxy
 # by kind-up.sh --egress-proxy), which the script creates and deletes. The admin API is called from inside an ingest pod, so
 # no token leaves the cluster or reaches a log. Every check prints `ok: ...` or `FAIL: ...` and the first failure stops the
 # run (the cleanup still runs). The checks:
@@ -25,7 +25,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 test_ns=pi-egress-test
 owner=${PI_SMOKE_OWNER:-admin}
 
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script scales Postgres down and changes egress rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script scales Postgres down and changes egress rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl helm node; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 kubectl config get-contexts -o name | grep -qx -- "$ctx" || die "no kubectl context $ctx (kind cluster $name)"
@@ -107,7 +107,7 @@ cleanup() {
   [[ $open_web_was_all != false ]] || api PUT /admin/egress/rule-sets/open-web '{"appliesToAll":false}' >/dev/null 2>&1
   [[ -z $(k get statefulset pi-postgres -o jsonpath='{.spec.replicas}' 2>/dev/null | grep -x 0) ]] || k scale statefulset pi-postgres --replicas=1 >/dev/null 2>&1
   kubectl --context "$ctx" delete namespace "$test_ns" --ignore-not-found --wait=false >/dev/null 2>&1
-  [[ $restore_auth -eq 0 ]] || helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+  [[ $restore_auth -eq 0 ]] || helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
     --set egressProxy.requireAuth=true --wait --timeout 5m >/dev/null 2>&1
   exit $rc
 }
@@ -119,7 +119,7 @@ trap cleanup EXIT
 if [[ $(k get deploy pi-egress-proxy -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="EGRESS_REQUIRE_AUTH")].value}') == true ]]; then
   echo "## egressProxy.requireAuth=false for this run (test pods have no token)"
   restore_auth=1
-  helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+  helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
     --set egressProxy.requireAuth=false --wait --timeout 5m >/dev/null
 fi
 
@@ -239,7 +239,7 @@ sleep 8
 got=$(via "http://$target_host:8080")
 [[ ! $got =~ ^200\  ]] || fail "the private target answered before privateEgress admitted it ('$got')"
 ok "with the private rule but without privateEgress the proxy cannot connect (the network layer refuses: '$got')"
-helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
   --set "egressProxy.privateEgress[0].namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=$test_ns" \
   --set "egressProxy.privateEgress[0].ports[0]=8080" --wait --timeout 5m >/dev/null
 wait_via "the private target is reachable once privateEgress admits its namespace" "http://$target_host:8080" '^200 200$' 30

@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/sandbox-env",
+  "name": "@cela/sandbox-env",
   "private": true,
   "version": "0.0.0",
   "description": "pi-env bridge over the Agent Sandbox commands.start() stdio channel.",

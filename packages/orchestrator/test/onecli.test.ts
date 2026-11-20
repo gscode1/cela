@@ -59,9 +59,9 @@ describe("NO_PROXY matching", () => {
   it("keeps the cluster, the Kubernetes API and Postgres off the gateway", () => {
     expect(bypass("https://kubernetes.default.svc/api")).toBe(true);
     expect(bypass("https://kubernetes.default/api")).toBe(true);
-    expect(bypass("http://sandbox-x.pi-durable-poc.svc:8888/")).toBe(true);
+    expect(bypass("http://sandbox-x.cela-dev.svc:8888/")).toBe(true);
     expect(bypass("http://pi-pg-rw:5432/")).toBe(true);
-    expect(bypass("http://pi-pg-rw.pi-durable-poc.svc.cluster.local:5432/")).toBe(true);
+    expect(bypass("http://pi-pg-rw.cela-dev.svc.cluster.local:5432/")).toBe(true);
     expect(bypass("http://10.43.0.1:443/")).toBe(true);
     expect(bypass("http://db:5432/")).toBe(true);
   });

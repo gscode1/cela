@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One command from nothing to a running pi-durable on a local kind cluster (docs/install-plan.md section 7, D9):
+# One command from nothing to a running cela on a local kind cluster (docs/install-plan.md section 7, D9):
 #
-#   hack/kind-up.sh [--name pi-durable] [--namespace pi-durable] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--no-browser] [--no-expose]
+#   hack/kind-up.sh [--name cela] [--namespace cela] [--build] [--onecli] [--onecli-open-without-proxy] [--no-egress-proxy] [--no-browser] [--no-expose]
 #                   [--cni kindnet|cilium] [--set key=value]... [--timeout 10m] [--verbose]
 #
 # Output: one line per step; what the steps print (kind, helm, kubectl, the sub-scripts) goes to a log file and is shown
@@ -20,7 +20,7 @@
 #      NetworkPolicy source each: the IPv4 gateway of the Docker network `kind`, as a /32 (docker network inspect),
 #      which is where the host's localhost connections arrive from. Sandboxes are not admitted
 #      (docs/decisions/0022-bundled-onecli.md, addendum). --no-expose: no mappings, no Services, port-forward as before
-#   6. hack/install.sh with charts/pi-durable/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
+#   6. hack/install.sh with charts/cela/values-kind.yaml: runc (allowInsecureRuntime), kindnet with the standard
 #      network policies, the egress proxy (the chart's default), OneCLI disabled (or, with --onecli, bundled: install.sh
 #      runs hack/onecli.sh first), the scripted model only
 #      (install.sh also seeds the `browser` profile and its skills, create-only, unless --no-browser or the proxy is off)
@@ -30,7 +30,7 @@
 #      warnings and the next steps. An endpoint that does not answer fails the run after the summary
 #
 # --cni cilium (issue #139) creates the cluster without kindnet (networking.disableDefaultCNI), installs Cilium (chart
-# version pinned below, from helm.cilium.io) and installs pi-durable with networkPolicy.provider=cilium. kindnet does not
+# version pinned below, from helm.cilium.io) and installs cela with networkPolicy.provider=cilium. kindnet does not
 # filter traffic to hostNetwork Pods (API server, kubelet), so the isolation probe reports not-enforced there; Cilium does,
 # so on this lane the probe must report enforced: NETPOL_ENFORCED defaults to 1 and hack/kind-smoke.sh fails a sandbox
 # that reaches the node. Slower to start (Cilium's images, about two minutes) and the node needs the images from quay.io.
@@ -67,8 +67,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-name=${KIND_CLUSTER_NAME:-pi-durable}
-namespace=pi-durable
+name=${KIND_CLUSTER_NAME:-cela}
+namespace=cela
 timeout=10m
 build=0
 onecli=0
@@ -180,7 +180,7 @@ on_exit() {
   } >&2
 }
 trap on_exit EXIT
-[[ -z $log_file ]] || printf '%spi-durable on kind: cluster %s, namespace %s%s  %s(log: %s)%s\n\n' \
+[[ -z $log_file ]] || printf '%scela on kind: cluster %s, namespace %s%s  %s(log: %s)%s\n\n' \
   "$bold" "$name" "$namespace" "$off" "$dim" "$log_file" "$off"
 
 # ------------------------------------------------------------------ 1. tools
@@ -419,9 +419,9 @@ if [[ $egress_proxy -eq 1 ]]; then
   [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.hostRules.reconcile=true)
 fi
 
-# ------------------------------------------------------------------ 6. pi-durable
-step "install pi-durable$([[ $onecli -eq 0 ]] || echo ' and OneCLI') (hack/install.sh)"
-KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/pi-durable/values-kind.yaml" \
+# ------------------------------------------------------------------ 6. cela
+step "install cela$([[ $onecli -eq 0 ]] || echo ' and OneCLI') (hack/install.sh)"
+KUBE_CONTEXT=$ctx "$root/hack/install.sh" --namespace "$namespace" --values "$root/charts/cela/values-kind.yaml" \
   ${set_args[@]+"${set_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} ${user_sets[@]+"${user_sets[@]}"} --timeout "$timeout"
 unset DATABASE_URL pi_password EGRESS_DATABASE_URL
 
@@ -501,7 +501,7 @@ if [[ $expose -eq 1 ]]; then
 else
   where="through kubectl port-forward, see below"
 fi
-printf '\n%spi-durable is up%s on kind cluster %s (context %s, namespace %s, CNI %s) in %sm%ss, %s\n\n' \
+printf '\n%scela is up%s on kind cluster %s (context %s, namespace %s, CNI %s) in %sm%ss, %s\n\n' \
   "$bold" "$off" "$name" "$ctx" "$namespace" "$cni" "$((total / 60))" "$((total % 60))" "$where"
 row "Admin console" "http://localhost:8080/console/" "$console_state"
 row "Session API" "http://localhost:8080" "$api_state"

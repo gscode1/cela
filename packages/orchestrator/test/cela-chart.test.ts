@@ -10,12 +10,12 @@ import {
   type Obj,
 } from "./support/helm.js";
 
-// charts/pi-durable (install slice 4, docs/install-plan.md): every mode renders, the runtime guard holds, nothing is
+// charts/cela (install slice 4, docs/install-plan.md): every mode renders, the runtime guard holds, nothing is
 // cluster-scoped or a CRD or a CNPG resource, and the network-policy isolation invariants hold on the rendered output.
 // Parsed YAML has no static shape; every field read below is asserted on.
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions */
 
-const chart = "pi-durable";
+const chart = "cela";
 // NOTES.txt is printed by an install, not by `helm template`: render it with `helm install --dry-run=client`.
 const execNotes = (args: string[]): string =>
   execFileSync(
@@ -211,7 +211,7 @@ describe("orchestrator and ingest configuration", () => {
     const ingest = envOf(named(list, "Deployment", "pi-ingest"));
     expect(Object.keys(ingest).filter((n) => /ONECLI|MASTER|GITHUB/.test(n))).toEqual([]);
     expect(text).not.toMatch(/\b(lookup|randAlphaNum|genCA)\b/);
-    expect(text).not.toMatch(/pi-durable-poc|longhorn/);
+    expect(text).not.toMatch(/cela-dev|longhorn/);
   });
 
   it("wires the optional OneCLI and GitHub references, as optional", () => {
@@ -743,7 +743,7 @@ describe("bundled OneCLI (install slice 10, ADR 0022)", () => {
     expect(orchestrator.spec.template.spec.volumes).toEqual([
       { name: "onecli-ca", configMap: { name: "pi-onecli-ca", optional: false } },
     ]);
-    expect(orchestrator.metadata.annotations["pi-durable/onecli-mode"]).toBe("bundled");
+    expect(orchestrator.metadata.annotations["cela/onecli-mode"]).toBe("bundled");
   });
 
   it("follows the release name and the object names in values", () => {
@@ -1425,8 +1425,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
   const excludesSandboxes = (selector: Obj): boolean =>
     JSON.stringify(selector.matchExpressions) ===
     JSON.stringify([{ key: "app.kubernetes.io/name", operator: "NotIn", values: ["pi-sandbox"] }]);
-  const modeOf = (t: Obj): string =>
-    t.spec.podTemplate.metadata.labels["pi-durable.dev/network-mode"];
+  const modeOf = (t: Obj): string => t.spec.podTemplate.metadata.labels["cela.dev/network-mode"];
 
   describe("without the egress proxy (the cutover is off)", () => {
     const list = docs([...external, ...proxyOff]);
@@ -1528,7 +1527,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
         const direct = named(list, "NetworkPolicy", "sandbox-direct-allow-egress").spec;
         expect(direct.podSelector.matchLabels).toEqual({
           "app.kubernetes.io/name": "pi-sandbox",
-          "pi-durable.dev/network-mode": "direct",
+          "cela.dev/network-mode": "direct",
         });
       });
 
@@ -1585,7 +1584,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
         );
         expect(templates.filter((t) => modeOf(t) === "proxied")).toHaveLength(5);
         for (const t of templates) {
-          expect(t.metadata.labels["pi-durable.dev/network-mode"]).toBe(modeOf(t));
+          expect(t.metadata.labels["cela.dev/network-mode"]).toBe(modeOf(t));
         }
         const pools = ofKind(list, "SandboxWarmPool").filter((p) =>
           p.metadata.name.startsWith("pi-env-direct-pool"),
@@ -1717,8 +1716,8 @@ describe("browser flavour (ADR 0041)", () => {
       .metadata.labels;
     expect(labels).toMatchObject({
       "app.kubernetes.io/name": "pi-sandbox",
-      "pi-durable.dev/network-mode": "proxied",
-      "pi-durable.dev/sandbox-flavour": "browser",
+      "cela.dev/network-mode": "proxied",
+      "cela.dev/sandbox-flavour": "browser",
     });
   });
 
@@ -1730,7 +1729,7 @@ describe("browser flavour (ADR 0041)", () => {
     expect(templates).toHaveLength(20);
     expect(
       named(list, "SandboxTemplate", "pi-env-browser-direct-template-s").spec.podTemplate.metadata
-        .labels["pi-durable.dev/network-mode"],
+        .labels["cela.dev/network-mode"],
     ).toBe("direct");
     // Direct pools keep no warm Pods, for either flavour.
     expect(named(list, "SandboxWarmPool", "pi-env-browser-direct-pool-m").spec.replicas).toBe(0);

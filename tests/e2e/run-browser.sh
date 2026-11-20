@@ -102,7 +102,7 @@ sbx() {
   jq -e '.found==true' <<<"$res" >/dev/null || { note "no answer from the scripted session: $(cut -c1-400 <<<"$res")"; return 1; }
   jq -r '.results[-1].text' <<<"$res"
 }
-claim_of() { k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}'; }
+claim_of() { k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}'; }
 # The sandbox's own exec, for what the test reads outside a model's tool call.
 sandbox_sh() { # claim shell-command
   local pod=$1

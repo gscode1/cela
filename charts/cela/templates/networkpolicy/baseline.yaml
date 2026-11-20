@@ -8,7 +8,7 @@ kind: NetworkPolicy
 metadata:
   name: default-deny-all
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
@@ -20,9 +20,9 @@ kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
-  {{- if include "pi-durable.networkCutover" . }}
+  {{- if include "cela.networkCutover" . }}
   podSelector:
     matchExpressions:
       - { key: app.kubernetes.io/name, operator: NotIn, values: [pi-sandbox] }

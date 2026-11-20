@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildSkillCatalog, SKILL_LIMITS } from "@pi-durable-k8s/session-core";
+import { buildSkillCatalog, SKILL_LIMITS } from "@cela/session-core";
 import {
   CONTEXT_LIMIT,
   joinInstructions,

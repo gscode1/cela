@@ -3,10 +3,10 @@ import {
   parseAdmins,
   parseSandboxSizes,
   settingsFromEnv,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import { parseConsoleCatalogs } from "./console.js";
 import type { ConsoleCatalogs } from "./console.js";
-import type { DatabaseTls, SandboxSizes, Settings } from "@pi-durable-k8s/session-core";
+import type { DatabaseTls, SandboxSizes, Settings } from "@cela/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
 export interface IngestConfig {

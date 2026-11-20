@@ -1,7 +1,7 @@
 import { defineExtension, defineTool, MemoryStorage } from "@earendil-works/pi-durable";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
+import type { InboxEvent, SessionRow } from "@cela/session-core";
 import { loadConfig } from "../src/config.ts";
 import { AbortWaitTimeoutError, Host } from "../src/host.ts";
 import { SessionService } from "../src/sessions.ts";

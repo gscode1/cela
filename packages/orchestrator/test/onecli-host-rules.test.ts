@@ -1,7 +1,7 @@
 import type pg from "pg";
 import { describe, expect, it } from "vitest";
-import { syncMcpRules, MCP_RULE_SET } from "@pi-durable-k8s/session-core";
-import type { McpServerConfig } from "@pi-durable-k8s/session-core";
+import { syncMcpRules, MCP_RULE_SET } from "@cela/session-core";
+import type { McpServerConfig } from "@cela/session-core";
 import { FakeEgressDb } from "../../session-core/test/fake-egress-db.ts";
 import { OneCliAdmin } from "../src/onecli-admin.ts";
 import {
@@ -108,7 +108,7 @@ describe("desiredHosts", () => {
       rule({ host: "expired.example.com", route: "onecli", expires_at: "2026-01-01T00:00:00Z" }),
       rule({ host: "session.example.com", route: "onecli", rule_set: null, session_id: "s1" }),
     );
-    const { readEgress } = await import("@pi-durable-k8s/session-core");
+    const { readEgress } = await import("@cela/session-core");
     const wanted = desiredHosts(await readEgress(db.asPool()), NOW);
     expect([...wanted.keys()].sort()).toEqual([
       "*.suffix.example.com",

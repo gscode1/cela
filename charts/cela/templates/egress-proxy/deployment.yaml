@@ -11,7 +11,7 @@ metadata:
   name: pi-egress-proxy
   labels:
     app.kubernetes.io/name: pi-egress-proxy
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   replicas: {{ $e.replicas }}
   strategy:
@@ -24,13 +24,13 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: pi-egress-proxy
-        app.kubernetes.io/part-of: pi-durable
+        app.kubernetes.io/part-of: cela
     spec:
       # No Kubernetes API access: the proxy needs none, and it is the one component a sandbox talks to.
       automountServiceAccountToken: false
       serviceAccountName: pi-egress-proxy
       securityContext:
-        {{- include "pi-durable.podSecurityContext" . | nindent 8 }}
+        {{- include "cela.podSecurityContext" . | nindent 8 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -46,7 +46,7 @@ spec:
                     app.kubernetes.io/name: pi-egress-proxy
       containers:
         - name: egress-proxy
-          image: {{ include "pi-durable.image" (dict "name" "egressProxy" "image" .Values.images.egressProxy) }}
+          image: {{ include "cela.image" (dict "name" "egressProxy" "image" .Values.images.egressProxy) }}
           imagePullPolicy: {{ .Values.images.egressProxy.pullPolicy }}
           env:
             - name: POD_NAME
@@ -73,11 +73,11 @@ spec:
             - { name: EGRESS_STALE_AFTER, value: {{ $e.rules.staleAfter | quote }} }
             # What no rule can open: these names are resolved at start and every 30 s, the database host of the URI
             # and the Kubernetes API's ClusterIP (KUBERNETES_SERVICE_HOST) are added by the proxy itself.
-            - { name: EGRESS_PLATFORM_HOSTS, value: {{ include "pi-durable.egressPlatformHosts" . | quote }} }
-            - { name: EGRESS_PLATFORM_CIDRS, value: {{ include "pi-durable.egressPlatformCidrs" . | quote }} }
-            {{- if include "pi-durable.egressOnecliRoute" . }}
+            - { name: EGRESS_PLATFORM_HOSTS, value: {{ include "cela.egressPlatformHosts" . | quote }} }
+            - { name: EGRESS_PLATFORM_CIDRS, value: {{ include "cela.egressPlatformCidrs" . | quote }} }
+            {{- if include "cela.egressOnecliRoute" . }}
             # route=onecli: the one upstream the proxy dials for it, and the key that opens the sessions' OneCLI tokens.
-            - { name: EGRESS_UPSTREAM_ADDR, value: {{ include "pi-durable.onecliGatewayAddr" . | quote }} }
+            - { name: EGRESS_UPSTREAM_ADDR, value: {{ include "cela.onecliGatewayAddr" . | quote }} }
             - { name: EGRESS_BINDING_KEY_FILE, value: /etc/pi-egress-binding/key }
             {{- end }}
             - { name: EGRESS_LISTEN, value: ":3128" }
@@ -97,23 +97,23 @@ spec:
           resources:
             {{- toYaml $e.resources | nindent 12 }}
           securityContext:
-            {{- include "pi-durable.containerSecurityContext" . | nindent 12 }}
+            {{- include "cela.containerSecurityContext" . | nindent 12 }}
             readOnlyRootFilesystem: true
-          {{- if or (include "pi-durable.databaseTlsEnabled" .) (include "pi-durable.egressOnecliRoute" .) }}
+          {{- if or (include "cela.databaseTlsEnabled" .) (include "cela.egressOnecliRoute" .) }}
           volumeMounts:
-            {{- if include "pi-durable.databaseTlsEnabled" . }}
-            {{- include "pi-durable.databaseTlsMount" . | nindent 12 }}
+            {{- if include "cela.databaseTlsEnabled" . }}
+            {{- include "cela.databaseTlsMount" . | nindent 12 }}
             {{- end }}
-            {{- if include "pi-durable.egressOnecliRoute" . }}
+            {{- if include "cela.egressOnecliRoute" . }}
             - { name: egress-binding, mountPath: /etc/pi-egress-binding, readOnly: true }
             {{- end }}
           {{- end }}
-      {{- if or (include "pi-durable.databaseTlsEnabled" .) (include "pi-durable.egressOnecliRoute" .) }}
+      {{- if or (include "cela.databaseTlsEnabled" .) (include "cela.egressOnecliRoute" .) }}
       volumes:
-        {{- if include "pi-durable.databaseTlsEnabled" . }}
-        {{- include "pi-durable.databaseTlsVolume" . | nindent 8 }}
+        {{- if include "cela.databaseTlsEnabled" . }}
+        {{- include "cela.databaseTlsVolume" . | nindent 8 }}
         {{- end }}
-        {{- if include "pi-durable.egressOnecliRoute" . }}
+        {{- if include "cela.egressOnecliRoute" . }}
         # Both the proxy and the orchestrators mount this key, never a sandbox. Required: a pod that cannot open
         # bindings must not start and silently deny every onecli connection.
         - name: egress-binding

@@ -3,11 +3,11 @@
 # docs/decisions/0036-egress-principals.md):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --egress-proxy
-#   hack/egress-session-smoke.sh [--name pi-egress] [--namespace pi-durable]
+#   hack/egress-session-smoke.sh [--name pi-egress] [--namespace cela]
 #   hack/kind-down.sh --name pi-egress
 #
 # It creates sessions, rules and profiles (named smoke-*), checks the chart's sandbox-to-proxy NetworkPolicy and runs a Helm upgrade that turns the proxy off and on again,
-# so it refuses the cluster pi-durable and any context that is not a kind cluster. It calls the APIs from inside an ingest
+# so it refuses the cluster cela and any context that is not a kind cluster. It calls the APIs from inside an ingest
 # pod (hack/kind-client.mjs): no API token leaves the cluster. Egress tokens are never printed: the sandbox's proxy
 # variables are shown with the password masked, and a token that has to move between two Pods goes through a shell variable
 # and a pipe. Every check prints `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still runs.
@@ -24,7 +24,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 owner=${PI_SMOKE_OWNER:-admin}
 
 usage() {
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions and turns the proxy off and on. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions and turns the proxy off and on. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl helm node base64; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 kubectl config get-contexts -o name | grep -qx -- "$ctx" || die "no kubectl context $ctx (kind cluster $name)"
@@ -104,7 +104,7 @@ conn() { exec 3<>/dev/tcp/$ph/$pp || { echo "$1 noconnect"; return; }; printf "C
 mask='sed -E "s#(://x:)[^@]*@[0-9.]+:3128#\1***@P#"'
 pod_of() { # session -> the sandbox Pod's name (the claim and the Sandbox share a name)
   local claim
-  claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
+  claim=$(k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
   [[ -n $claim ]] || fail "no SandboxClaim for session $1"
   echo "$claim"
 }
@@ -288,7 +288,7 @@ check "the deleted session's token is still refused afterwards" "$again" "github
 
 # ------------------------------------------------------------------ 6. the proxy off
 echo "## 6. egressProxy.enabled=false changes nothing for a new session"
-helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
   --set egressProxy.enabled=false --set security.allowDirectSandboxEgress=false --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
 [[ -z $(k get deploy pi-orchestrator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PI_EGRESS_PROXY_URL")].value}') ]] || fail "the orchestrator still has PI_EGRESS_PROXY_URL"
@@ -303,7 +303,7 @@ check "git reaches github.com directly, as before" "$out" "[0-9a-f]{40} +HEAD"
 counts_after=$(api GET /admin/egress/status | jq_ 'j.principals')
 [[ $counts_off == "$counts_after" ]] || fail "a principal was created for a session with the proxy off ($counts_off -> $counts_after)"
 ok "no principal was created for it ($counts_after)"
-helm --kube-context "$ctx" upgrade pi-durable "$root/charts/pi-durable" --namespace "$namespace" --reuse-values \
+helm --kube-context "$ctx" upgrade cela "$root/charts/cela" --namespace "$namespace" --reuse-values \
   --set egressProxy.enabled=true --set "security.allowDirectSandboxEgress=$gate_before" --wait --timeout 5m >/dev/null
 k rollout status deploy/pi-orchestrator --timeout=300s >/dev/null
 ok "the proxy is switched on again"

@@ -28,7 +28,7 @@ export function SignIn() {
     <main className="mx-auto flex min-h-screen max-w-md items-center px-4">
       <Card className="w-full">
         <CardHeader>
-          <CardTitle>pi-durable console</CardTitle>
+          <CardTitle>cela console</CardTitle>
           <CardDescription>
             Sign in with your owner token. It stays in this tab&apos;s memory and is asked for again
             after a reload.

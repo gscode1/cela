@@ -16,10 +16,10 @@ credential and never calls `/admin/*`. Design and trade-offs: [ADR 0031](decisio
 **Use the token of an owner who is not in `PI_API_ADMINS`.** The adapter has no admin tools, but an admin token also
 works on the admin API, and a coding agent with a shell can read its own MCP config.
 
-Build it once with `pnpm --filter @pi-durable-k8s/mcp build`, then register `packages/mcp/dist/main.js`. For Claude Code:
+Build it once with `pnpm --filter @cela/mcp build`, then register `packages/mcp/dist/main.js`. For Claude Code:
 
 ```bash
-claude mcp add pi-durable -e PI_API_URL=http://localhost:8080 -e PI_API_TOKEN=<token> -- node /path/to/pi-durable-k8s/packages/mcp/dist/main.js
+claude mcp add cela -e PI_API_URL=http://localhost:8080 -e PI_API_TOKEN=<token> -- node /path/to/cela/packages/mcp/dist/main.js
 ```
 
 Other clients take the same command, arguments and environment in their MCP server config. Logs go to stderr; stdout is

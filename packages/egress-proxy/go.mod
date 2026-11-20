@@ -1,4 +1,4 @@
-module github.com/gscode1/pi-durable-k8s/egress-proxy
+module github.com/gscode1/cela/egress-proxy
 
 go 1.27
 

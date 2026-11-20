@@ -1,8 +1,8 @@
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildSkillCatalog } from "@pi-durable-k8s/session-core";
-import type { ProfileDefinition, SessionRow } from "@pi-durable-k8s/session-core";
+import { buildSkillCatalog } from "@cela/session-core";
+import type { ProfileDefinition, SessionRow } from "@cela/session-core";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";

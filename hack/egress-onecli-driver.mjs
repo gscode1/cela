@@ -41,7 +41,7 @@ import {
   ensureSessionOneCliRules,
   SESSION_RULES_AUTHOR,
   parseBindingKey,
-} from "/app/node_modules/@pi-durable-k8s/session-core/dist/index.js";
+} from "/app/node_modules/@cela/session-core/dist/index.js";
 
 const [command, session, extra, ...more] = process.argv.slice(1);
 const config = loadConfig(process.env);
@@ -211,8 +211,7 @@ try {
       break;
     }
     case "unbind": {
-      const { deleteBinding } =
-        await import("/app/node_modules/@pi-durable-k8s/session-core/dist/index.js");
+      const { deleteBinding } = await import("/app/node_modules/@cela/session-core/dist/index.js");
       console.log(`unbound ${(await deleteBinding(pool, session)) ? "yes" : "was-absent"}`);
       break;
     }

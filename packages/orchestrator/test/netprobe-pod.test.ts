@@ -19,12 +19,12 @@ const pod = buildProbePod({
 describe("isolation probe Pod", () => {
   it("carries the sandbox label, so every sandbox NetworkPolicy applies to it, and the sandbox runtime class", () => {
     expect(pod.metadata?.labels?.["app.kubernetes.io/name"]).toBe("pi-sandbox");
-    expect(pod.metadata?.labels?.["pi-durable-k8s/netprobe"]).toBe("0");
+    expect(pod.metadata?.labels?.["cela/netprobe"]).toBe("0");
     expect(pod.spec?.runtimeClassName).toBe("gvisor");
   }, 1000);
 
   it("wears the proxied mode label: the strictest position, so one probe covers both modes", () => {
-    expect(pod.metadata?.labels?.["pi-durable.dev/network-mode"]).toBe("proxied");
+    expect(pod.metadata?.labels?.["cela.dev/network-mode"]).toBe("proxied");
   }, 1000);
 
   it("meets the restricted Pod Security level and holds nothing but its plan", () => {

@@ -17,4 +17,4 @@
 - Severity (verified): low
 - Location (verified): tests/e2e/run-phase1.sh:21,46; tests/e2e/runner-pod.yaml:6
 - Duplicate of: none
-- Reasoning: `k` runs `kubectl -n "$ns"` and `runner-pod.yaml` hard-codes `namespace: pi-durable-poc`; with `NAMESPACE` set otherwise, `kubectl create -f` errors on the namespace mismatch. Test-only knob, and the whole e2e setup (RBAC, SA, template) is tied to that namespace anyway.
+- Reasoning: `k` runs `kubectl -n "$ns"` and `runner-pod.yaml` hard-codes `namespace: cela-dev`; with `NAMESPACE` set otherwise, `kubectl create -f` errors on the namespace mismatch. Test-only knob, and the whole e2e setup (RBAC, SA, template) is tied to that namespace anyway.

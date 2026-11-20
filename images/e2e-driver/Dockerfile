@@ -5,8 +5,8 @@ RUN npm install --global pnpm@12.21.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter "@pi-durable-k8s/sandbox-env..." build \
- && pnpm --filter @pi-durable-k8s/sandbox-env deploy --prod=false /out
+RUN pnpm --filter "@cela/sandbox-env..." build \
+ && pnpm --filter @cela/sandbox-env deploy --prod=false /out
 
 # kubectl is a static binary; use the same version as the existing driver.
 FROM docker.io/alpine/k8s:1.36.2@sha256:44ef4942e171939b9c665a4a84beb80e2dcdb9a24330d4651cfdfd2e9deecc47 AS tools

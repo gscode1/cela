@@ -29,7 +29,7 @@ Errors name the variable and the file (for example a CA file that is not mounted
 
 ## Chart
 
-`charts/pi-durable` value `database.tls`: `mode`, `existingSecret` (a Secret in the release namespace), `caKey`
+`charts/cela` value `database.tls`: `mode`, `existingSecret` (a Secret in the release namespace), `caKey`
 (default `ca.crt`), `certKey` and `keyKey` (optional mutual TLS). The Secret is mounted read-only at
 `/etc/pi-database-tls` in both Deployments, only the keys that are used. With mode `disable` (default) nothing is
 set or mounted. `charts/pi-postgres` serves TLS with `tls.existingSecret` (and only TLS from outside the Pod with
@@ -37,6 +37,6 @@ set or mounted. `charts/pi-postgres` serves TLS with `tls.existingSecret` (and o
 
 ```sh
 kubectl -n <ns> create secret generic pi-database-ca --from-file=ca.crt=ca.crt
-helm upgrade pi-durable charts/pi-durable -n <ns> --reuse-values \
+helm upgrade cela charts/cela -n <ns> --reuse-values \
   --set database.tls.mode=verify-full --set database.tls.existingSecret=pi-database-ca
 ```

@@ -1,4 +1,4 @@
-import { deriveSandboxToken } from "@pi-durable-k8s/sandbox-env";
+import { deriveSandboxToken } from "@cela/sandbox-env";
 import { describe, expect, it } from "vitest";
 import { bridgeCommand, bridgeEnv } from "../src/bridge-launcher.ts";
 

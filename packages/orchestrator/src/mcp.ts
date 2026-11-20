@@ -10,8 +10,8 @@ import {
 import type { CallToolResult, McpFetch, McpTransport, Tool } from "@earendil-works/pi-mcp";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { Extension, Registry, ToolRegistration } from "@earendil-works/pi-durable";
-import { mcpServersEqual } from "@pi-durable-k8s/session-core";
-import type { McpServerConfig } from "@pi-durable-k8s/session-core";
+import { mcpServersEqual } from "@cela/session-core";
+import type { McpServerConfig } from "@cela/session-core";
 import { errorMessage, log } from "./log.js";
 
 /**
@@ -154,7 +154,7 @@ class McpConnection {
 
   async #connect(): Promise<McpClient> {
     const client = new McpClient({
-      name: "pi-durable-k8s",
+      name: "cela",
       version: "0.0.0",
       requestTimeoutMs: this.#requestTimeoutMs,
     });

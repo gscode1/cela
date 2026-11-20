@@ -73,7 +73,7 @@ import {
   sendJson,
   summarize,
   UUID,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import type {
   McpDiscoveryOutcome,
   ModelCatalogEntry,
@@ -91,7 +91,7 @@ import type {
   StoredMcpServer,
   StoredProfile,
   StoredSettings,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import { parseEventBody } from "./events.js";
 import { log } from "./log.js";
 

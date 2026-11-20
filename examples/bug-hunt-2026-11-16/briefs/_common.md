@@ -1,4 +1,4 @@
-You are doing a focused bug hunt on the repository cloned at /workspace/repo (pi-durable-k8s: durable Pi agents on Kubernetes; read /workspace/repo/README.md first for orientation).
+You are doing a focused bug hunt on the repository cloned at /workspace/repo (cela: durable Pi agents on Kubernetes; read /workspace/repo/README.md first for orientation).
 
 Rules:
 - Static review only. Node is not installed in this sandbox, so you cannot run the tests; use bash, grep, sed, find and git to read code.

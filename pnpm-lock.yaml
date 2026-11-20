@@ -280,7 +280,7 @@ importers:
 
   packages/ingest:
     dependencies:
-      '@pi-durable-k8s/session-core':
+      '@cela/session-core':
         specifier: workspace:*
         version: link:../session-core
     devDependencies:
@@ -321,6 +321,12 @@ importers:
 
   packages/orchestrator:
     dependencies:
+      '@cela/sandbox-env':
+        specifier: workspace:*
+        version: link:../sandbox-env
+      '@cela/session-core':
+        specifier: workspace:*
+        version: link:../session-core
       '@earendil-works/chord':
         specifier: 1.5.2
         version: 1.5.2(ws@8.23.0)
@@ -339,12 +345,6 @@ importers:
       '@kubernetes/client-node':
         specifier: 2.0.0
         version: 2.0.0(bare-buffer@3.7.2)
-      '@pi-durable-k8s/sandbox-env':
-        specifier: workspace:*
-        version: link:../sandbox-env
-      '@pi-durable-k8s/session-core':
-        specifier: workspace:*
-        version: link:../session-core
       undici:
         specifier: 8.12.4
         version: 8.12.4

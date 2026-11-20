@@ -118,7 +118,7 @@ Procedure for a clean sample (use a dedicated test cluster):
 
 ## Experiment: sandbox readinessProbe period
 
-`charts/pi-durable/templates/sandbox/template.yaml` has a `readinessProbe` on `/v1/health` with the Kubernetes default `periodSeconds: 10`.
+`charts/cela/templates/sandbox/template.yaml` has a `readinessProbe` on `/v1/health` with the Kubernetes default `periodSeconds: 10`.
 A Pod that becomes healthy just after a probe waits up to 10 s to be marked Ready, so `claim` (cold and resume) may carry
 up to 10 s of probe delay. Hypothesis: with `periodSeconds: 1` (and `initialDelaySeconds: 0`), the `claim` span drops by
 about 5 s on average (half a period) and `sandbox-to-exec` by the same.

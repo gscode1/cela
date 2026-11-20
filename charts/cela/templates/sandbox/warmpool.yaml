@@ -35,10 +35,10 @@ kind: SandboxWarmPool
 metadata:
   name: {{ $p.name }}
   labels:
-    {{- include "pi-durable.labels" $root | nindent 4 }}
-    pi-durable.dev/sandbox-size: {{ $p.size }}
-    pi-durable.dev/network-mode: {{ $p.mode }}
-    pi-durable.dev/sandbox-flavour: {{ $p.flavour }}
+    {{- include "cela.labels" $root | nindent 4 }}
+    cela.dev/sandbox-size: {{ $p.size }}
+    cela.dev/network-mode: {{ $p.mode }}
+    cela.dev/sandbox-flavour: {{ $p.flavour }}
 spec:
   {{- /* The unsized pools keep no warm Pods: they would duplicate the default size's pool. */}}
   {{- $replicas := ternary $browser.warmPoolReplicas (index $root.Values.sandbox.sizes $p.size).warmPoolReplicas (eq $p.flavour "browser") }}

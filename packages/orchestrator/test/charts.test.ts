@@ -188,13 +188,12 @@ describe("chart pi-postgres", () => {
       (r: Obj) => r._from[0].podSelector.matchLabels["app.kubernetes.io/name"],
     );
     expect(names).toEqual(["pi-orchestrator", "pi-ingest", "onecli", "pi-egress-proxy"]);
-    const custom = docs([
-      "--set-json",
-      'networkPolicy.clientSelectors=[{"pi-durable-e2e":"true"}]',
-    ]).find((d) => d.kind === "NetworkPolicy");
+    const custom = docs(["--set-json", 'networkPolicy.clientSelectors=[{"cela-e2e":"true"}]']).find(
+      (d) => d.kind === "NetworkPolicy",
+    );
     expect(custom?.spec.ingress).toHaveLength(1);
     expect(custom?.spec.ingress[0]._from[0].podSelector.matchLabels).toEqual({
-      "pi-durable-e2e": "true",
+      "cela-e2e": "true",
     });
   });
 

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Platform is the set of addresses that belong to the platform itself and that no rule can open: the pi-durable
+// Platform is the set of addresses that belong to the platform itself and that no rule can open: the cela
 // namespace's Services (the database, the orchestrators, ingest, the OneCLI API) and the Kubernetes API. It is not
 // something the rules or the private tier can express, because a private rule with a wide cidr (10.0.0.0/8) would
 // otherwise reach them.

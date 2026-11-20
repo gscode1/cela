@@ -1,4 +1,6 @@
-# pi-durable-k8s
+# cela: sandboxed, durable Pi agents on Kubernetes
+
+_cela_ — Polish for _cell_; every session runs in its own.
 
 Run [Pi Durable](https://github.com/earendil-works/pi) coding agents on your own Kubernetes cluster.
 
@@ -72,7 +74,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 | `packages/browser-proxy`               | Loopback forwarder in the browser sandbox: adds the session's egress token to Chromium's CONNECTs ([ADR 0041](docs/decisions/0041-browser-sandbox.md)) |
 | `packages/vendor/agent-sandbox-client` | Vendored, pinned agent-sandbox TypeScript SDK (Apache-2.0)                                                                                             |
 | `images/`                              | Multi-arch builds: app, egress proxy, sandbox, browser sandbox and e2e driver                                                                          |
-| `charts/`                              | Helm charts: `pi-durable` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)                                        |
+| `charts/`                              | Helm charts: `cela` (the app), `pi-postgres` (bundled database), `pi-onecli` (bundled credential gateway)                                              |
 | `hack/`                                | `install.sh`, the kind scripts and the operator scripts (secrets, OneCLI CA and host rules)                                                            |
 | `tests/e2e`                            | End-to-end suites that run as in-cluster Jobs                                                                                                          |
 | `examples/`                            | Load-test and bug-hunt scripts; historical results in [lab notes](docs/lab-notes.md)                                                                   |
@@ -99,7 +101,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 ## Quick start on kind
 
 One command gives you the whole stack on a laptop, with no cluster, credentials or model account: a kind cluster, the
-agent-sandbox controller, a bundled Postgres, and `pi-durable` on the scripted model (the message text is the script, see
+agent-sandbox controller, a bundled Postgres, and `cela` on the scripted model (the message text is the script, see
 the [session API](docs/session-api.md)). It needs docker, kind 0.24 or newer, helm 4, kubectl and openssl.
 
 ```sh
@@ -133,16 +135,16 @@ policies from one address (the Docker gateway of the kind network, a /32) and no
 run `hack/kind-down.sh` first. On kind a sandbox can still reach the node's own ports (API server, kubelet) without
 credentials: kindnet cannot filter that. `hack/kind-up.sh --cni cilium` creates the cluster with Cilium instead, where the
 probe must report `enforced` and the smoke test fails if a sandbox reaches the node (slower to start; issue #139). The
-cluster is named `pi-durable` (`--name` or `KIND_CLUSTER_NAME`) and every command uses its own `kind-<name>` context, never
+cluster is named `cela` (`--name` or `KIND_CLUSTER_NAME`) and every command uses its own `kind-<name>` context, never
 your current one. **Not for real use:** the sandboxes run under runc, not gVisor
-([values-kind.yaml](charts/pi-durable/values-kind.yaml)). kindnet blocks the sandbox's access to Postgres and the
+([values-kind.yaml](charts/cela/values-kind.yaml)). kindnet blocks the sandbox's access to Postgres and the
 orchestrator, but not to hostNetwork Pods (the Kubernetes API server, kubelet, etcd), so the probe reports `not-enforced`
 on kind because the `kube-api` target is reachable; the smoke test accepts that one finding and fails on any other.
 CI runs this on every pull request, and the Cilium lane on main, nightly and by hand ([workflow](.github/workflows/kind.yml)).
 
 ## Deploy on your cluster
 
-The app is the Helm chart [`charts/pi-durable`](charts/pi-durable/README.md), installed with `hack/install.sh`
+The app is the Helm chart [`charts/cela`](charts/cela/README.md), installed with `hack/install.sh`
 ([install plan](docs/install-plan.md)).
 
 Prerequisites (separate from the chart): the **agent-sandbox controller with extensions** (v1.0.11; `hack/agent-sandbox.sh
@@ -154,12 +156,12 @@ for your nodes (amd64 and arm64 are supported, [build instructions](images/READM
 
 ```sh
 # values.yaml: your image digests, database.external (Secret with the URI + egress selector), onecli, models
-KUBE_CONTEXT=your-context hack/install.sh --namespace pi-durable --values local/values.yaml
+KUBE_CONTEXT=your-context hack/install.sh --namespace cela --values local/values.yaml
 ```
 
 It creates the namespace with the restricted Pod Security labels and the missing `sandboxd-auth` and `api-auth` Secrets,
 installs the chart and prints the runtime and network-policy state from `GET /admin/status`. Read the
-[chart README](charts/pi-durable/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
+[chart README](charts/cela/README.md) for the values, [credentials](docs/model-credentials.md) for OneCLI and
 [network policy](docs/network-policy.md) for the isolation rules.
 
 **Sandbox network.** With the egress proxy (`egressProxy.enabled`, the default) a sandbox reaches it and nothing else (no DNS, no direct

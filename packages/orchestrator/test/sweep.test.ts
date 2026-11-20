@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SessionRef } from "@pi-durable-k8s/session-core";
+import type { SessionRef } from "@cela/session-core";
 import { planSweep } from "../src/sweep.ts";
 import type { SweepInput } from "../src/sweep.ts";
 

@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Invariants of the per-run e2e namespace (docs/e2e.md, issue #69). No cluster is touched: kubectl is a stub.
 const root = resolve(import.meta.dirname, "../../..");
-const poc = "pi-durable-poc";
+const poc = "cela-dev";
 
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((name) => {
@@ -22,7 +22,7 @@ const walk = (dir: string): string[] =>
     return statSync(path).isDirectory() ? walk(path) : [path];
   });
 
-describe("nothing outside the long-lived defaults names pi-durable-poc", () => {
+describe("nothing outside the long-lived defaults names cela-dev", () => {
   // The scripts in hack/ (some moved there from the old deploy/) and the e2e files. The examples of policies applied separately in
   // the OneCLI namespace (hack/onecli-policies) name it on purpose. Markdown documents these defaults; it is not applied.
   const files = [...walk(join(root, "hack")), ...walk(join(root, "tests/e2e"))]
@@ -81,10 +81,10 @@ describe("tests/e2e/run.sh and sweep.sh safety", { timeout: 30_000 }, () => {
   const hoursAgo = (h: number) =>
     new Date(Date.now() - h * 3600_000).toISOString().replace(/\.\d+Z$/, "Z");
   const ns = (name: string, ageHours: number) => ({
-    metadata: { name, creationTimestamp: hoursAgo(ageHours), labels: { "pi-durable-e2e": "true" } },
+    metadata: { name, creationTimestamp: hoursAgo(ageHours), labels: { "cela-e2e": "true" } },
   });
 
-  it("sweep deletes only pi-e2e-* namespaces older than the limit, never pi-durable-poc", () => {
+  it("sweep deletes only pi-e2e-* namespaces older than the limit, never cela-dev", () => {
     const items = [
       ns("pi-e2e-old111", 9),
       ns("pi-e2e-new222", 1),
@@ -99,7 +99,7 @@ describe("tests/e2e/run.sh and sweep.sh safety", { timeout: 30_000 }, () => {
     expect(r.status, r.stderr).toBe(0);
     const deletes = calls().filter((c) => c.includes("delete namespace"));
     expect(deletes).toEqual(["delete namespace pi-e2e-old111 --ignore-not-found --wait=false"]);
-    expect(calls().find((c) => c.includes("get namespaces"))).toContain("-l pi-durable-e2e=true");
+    expect(calls().find((c) => c.includes("get namespaces"))).toContain("-l cela-e2e=true");
   });
 
   it("sweep with DRY_RUN=1 deletes nothing", () => {

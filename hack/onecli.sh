@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the bundled OneCLI into one namespace (docs/install-plan.md slice 10, docs/decisions/0022-bundled-onecli.md):
 #
-#   hack/onecli.sh [--namespace pi-durable] [--external-url http://localhost:10254] [--release onecli] [--timeout 10m]
+#   hack/onecli.sh [--namespace cela] [--external-url http://localhost:10254] [--release onecli] [--timeout 10m]
 #                  [--expose-source-cidr A.B.C.D/32] [--egress-proxy on|off] [--allow-open-without-proxy]
 #
 #   1. creates the Secrets that do not exist yet, never regenerating one (losing SECRET_ENCRYPTION_KEY makes every stored
@@ -16,7 +16,7 @@
 # OneCLI is installed OPEN (docs/decisions/0043-open-onecli-defaults.md): the gateway may reach the RFC 1918 ranges on 443
 # (upstream value gateway.allowPrivateDestinations, and charts/pi-onecli gateway.privateHttps for the network). That is safe
 # only while sandboxes reach the gateway through the egress proxy, which never routes a private address to it. With
-# `--egress-proxy off` (hack/install.sh passes it when the pi-durable release has no proxy) sandboxes reach the gateway
+# `--egress-proxy off` (hack/install.sh passes it when the cela release has no proxy) sandboxes reach the gateway
 # directly and a repo session holds a OneCLI token, so the script installs the HARDENED values instead: no private
 # destinations, no private 443 rule. `--allow-open-without-proxy` acknowledges the risk and keeps them open. Standalone
 # runs default to `--egress-proxy on`, the chart's default.
@@ -47,7 +47,7 @@ onecli_chart=oci://ghcr.io/onecli/charts/onecli
 onecli_version=2.20.0
 onecli_digest=sha256:0e67ea2b3311ff30868b851dc2e5622f6febd8a82855fed8fb9524e3522063ba
 
-namespace=pi-durable
+namespace=cela
 release=onecli
 external_url=http://localhost:10254
 timeout=10m

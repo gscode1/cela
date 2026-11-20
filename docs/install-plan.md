@@ -1,6 +1,6 @@
 # Installation plan: Helm on any cluster, kind in one command
 
-Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/pi-durable`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126), slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)) slice 11a (database TLS; issue #132) and slice 11b (`deploy/` removed; issue #141). Slice 11 is done, except a green `DB_TLS=1` e2e run on a cluster. The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
+Status: accepted plan, 2026-11-17 (issue #104, [ADR 0020](decisions/0020-helm-install.md)). Implemented: slice 1 (isolation honesty), slice 2 (images), slice 3 (names from config), slice 4 (`charts/cela`, `hack/install.sh`, e2e installs the chart; issue #119), slice 5 (the lab stack reinstalled from the charts, 2026-11-17, issue #124; see [lab notes](lab-notes.md)), slice 6a (`charts/pi-postgres`), slice 6b (e2e on `charts/pi-postgres`, issue #125), slice 7 (`hack/agent-sandbox.sh`), slice 8 (`hack/kind-up.sh` and the kind PR job; issue #131), slice 9 (isolation probe; issue #126), slice 10 (bundled OneCLI; issue #136, [ADR 0022](decisions/0022-bundled-onecli.md)) slice 11a (database TLS; issue #132) and slice 11b (`deploy/` removed; issue #141). Slice 11 is done, except a green `DB_TLS=1` e2e run on a cluster. The rest is planned. It folds in a review by two `gpt-6.1-sol` sessions that
 ran on a lab cluster against `main` at `9f52ebc` (section 11) and a second review of the merged plan by Claude Fable 5.2 (section 12). Decisions that survive review go to `docs/decisions/` as ADRs in the
 PRs that implement them.
 
@@ -19,7 +19,7 @@ must run in a fixed order:
 | OneCLI (own namespace, own Postgres) | by hand or GitOps | not in this repo; agent token, admin key, CA and host rules are manual |
 
 Before slice 2, secret/CA setup and code-upload scripts preceded `kubectl apply -k deploy`. Slice 2 replaces runtime code upload with multi-arch application images. Many names are fixed: namespace
-`pi-durable-poc`, `pi-pg-rw`/`pi-pg-app`, `onecli.onecli:10255/10256`, `cnpg.io/cluster=pi-pg` selectors,
+`cela-dev`, `pi-pg-rw`/`pi-pg-app`, `onecli.onecli:10255/10256`, `cnpg.io/cluster=pi-pg` selectors,
 admin `alice`. The sandbox image was arm64-only before slice 2; `images/build.sh` now builds both architectures. (#101 already removed the
 storage class from the base and made the OneCLI CA fetch configurable.)
 
@@ -38,7 +38,7 @@ storage class from the base and made the OneCLI CA fetch configurable.)
 
 | # | Decision | Choice | Why |
 |---|---|---|---|
-| D1 | Packaging | Chart **`pi-durable`** holds the app only: orchestrator shards, ingest, sandbox template/pool, RBAC, policies. The other parts are **separate releases**: `charts/pi-postgres` (bundled Postgres), the upstream OneCLI chart, and the agent-sandbox release manifest. One install command (`hack/install.sh`, also used by the kind script) installs them in order. Every part has the same modes: `bundled \| external`, and OneCLI also `disabled` (scripted model only) | One command does not need one release. Uninstalling the app must never uninstall a credential gateway, a database or cluster-wide CRDs |
+| D1 | Packaging | Chart **`cela`** holds the app only: orchestrator shards, ingest, sandbox template/pool, RBAC, policies. The other parts are **separate releases**: `charts/pi-postgres` (bundled Postgres), the upstream OneCLI chart, and the agent-sandbox release manifest. One install command (`hack/install.sh`, also used by the kind script) installs them in order. Every part has the same modes: `bundled \| external`, and OneCLI also `disabled` (scripted model only) | One command does not need one release. Uninstalling the app must never uninstall a credential gateway, a database or cluster-wide CRDs |
 | D2 | Images | Digest-pinned multi-arch images for orchestrator, ingest, sandbox and the e2e driver. Runtime code upload, its PVC and its ConfigMap are removed in slice 2 | A chart cannot push code onto a PVC. Without the shared RWO code volume, shards also no longer need to share a node |
 | D3 | Database | Drop CNPG from the package. Default: a bundled single Postgres StatefulSet (evaluation, no HA, no backup). Production: `database.external` (any Postgres, CNPG included) through a Secret with the URI. Direct or session-mode connections only, never transaction pooling | Our needs are small. The CNPG features we lose (failover, backups, certificates) were not configured in `deploy/postgres.yaml` anyway: one instance, no backups |
 | D4 | OneCLI | Use the **upstream OneCLI chart** (`oci://ghcr.io/onecli/charts/onecli`, v2.20.0, Apache-2.0) as a separate release, `runner.enabled=false`, one replica, no Redis. Its own Postgres is off (`database.enabled=false`); `database.external.existingSecret` points at a Secret with `DATABASE_URL` for a separate **database and role `onecli`** on our Postgres instance, not a schema in ours. The chart also requires `externalUrl` (https, or `allowInsecureExternalUrl=true` for port-forward trials) and `secrets.existingSecret` or `secrets.generate.enabled`. Its Services are `<release>-gateway:10255` and `<release>-api:10256`. `onecli.mode: external` points at an existing gateway; `disabled` runs the scripted model only | Upstream already packages it. Its hosted-agent runner duplicates our orchestrator. Redis is needed only for multi-replica (licensed) setups. A separate database keeps its Prisma migrations apart from ours |
@@ -51,13 +51,13 @@ storage class from the base and made the OneCLI CA fetch configurable.)
 ## 4. Layout
 
 ```
-charts/pi-durable/           # the app chart (D1)
+charts/cela/           # the app chart (D1)
   values.yaml, values.schema.json
   templates/{orchestrator,ingest,sandbox,networkpolicy}/, NOTES.txt
-charts/pi-durable/values-kind.yaml  # a cluster's own values file lives in local/ (git-ignored)
+charts/cela/values-kind.yaml  # a cluster's own values file lives in local/ (git-ignored)
 charts/pi-postgres/          # bundled Postgres: StatefulSet, Service, init of both databases and roles
 hack/install.sh              # namespace + PSA labels -> Secrets -> agent-sandbox -> pi-postgres -> onecli
-                             # -> onecli bootstrap -> pi-durable -> read /admin/status
+                             # -> onecli bootstrap -> cela -> read /admin/status
 hack/kind-up.sh, hack/kind-down.sh, hack/kind-config.yaml
 images/{orchestrator,ingest,sandbox,e2e-driver}/
 ```
@@ -119,7 +119,7 @@ github: { app: { existingSecret: "" } }              # optional; repo sessions o
   API-key path can read `ONECLI_SECRET_*`.
 - **OneCLI CA.** OneCLI's chart creates its gateway CA in Secret `<release>-gateway-ca`, with key and certificate
   together. The bootstrap (which can read that Secret) copies only the public certificate to ConfigMap `pi-onecli-ca`,
-  key `ca.pem`, which `charts/pi-durable` mounts (bundled mode). `hack/fetch-onecli-ca.sh` stays for an external
+  key `ca.pem`, which `charts/cela` mounts (bundled mode). `hack/fetch-onecli-ca.sh` stays for an external
   OneCLI. The orchestrator reads the CA once at start, so a rotation needs a restart.
 - **Multi-arch sandbox.** Implemented in slice 2: select the pi-env binary by `TARGETARCH`, with a verified checksum per architecture (see `images/README.md`).
 - **Policies rewritten, not just templated.** Replace the CNPG selectors and the CNPG operator rules
@@ -223,7 +223,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - Ingest refuses to start when sessions exist on a shard it has no route for.
    - Done when: `grep` finds none of these names as code defaults outside tests; `pnpm check` and `run.sh smoke` pass.
 4. **Chart with external everything, and `install.sh`.**
-   - `charts/pi-durable` with external DB, external OneCLI and external agent-sandbox; `values.schema.json`; NOTES.txt
+   - `charts/cela` with external DB, external OneCLI and external agent-sandbox; `values.schema.json`; NOTES.txt
      with the runtime and policy warnings. `hack/install.sh` creates the namespace with PSA labels and the Secrets, then
      installs.
    - Both policy providers; `standard` includes the kube API egress rule.
@@ -246,7 +246,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
    - Done when: `hack/kind-up.sh` passes on an arm64 Mac and in amd64 CI, including the smoke steps of section 7, in
      under 15 minutes in CI.
    - Status: implemented (issue #131): `hack/kind-up.sh`, `hack/kind-down.sh`, `hack/kind-config.yaml` (one node, kindnet,
-     pinned node image), `charts/pi-durable/values-kind.yaml`, `hack/kind-smoke.sh` and `.github/workflows/kind.yml`.
+     pinned node image), `charts/cela/values-kind.yaml`, `hack/kind-smoke.sh` and `.github/workflows/kind.yml`.
      Choices: the CI job builds the three images for linux/amd64 itself and `kind load`s them (`--build`) instead of waiting
      for `images.yml`: no ordering between workflows, it works for fork PRs, and it tests exactly the commit. A local run
      pulls the published images of HEAD (`IMAGE_TAG`, `ORCH_IMAGE`, ...) or builds with `--build`. The smoke test covers
@@ -301,7 +301,7 @@ Each slice follows AGENT.md: issue, branch, `pnpm check`, PR. "Done when" is the
     - 11b (done, issue #141): `deploy/` is removed. The manifests and `add-shard.sh` the charts replaced are deleted; the
       scripts that e2e and the external-OneCLI path still call moved to `hack/` (`gen-secret.sh`, `gen-api-secret.sh`,
       `fetch-onecli-ca.sh`, `onecli-host-rules.sh`, `agent-ruleset.sh` and `.json`, removed later by issue #160, `onecli-policies/`); the ExternalSecret
-      examples are in `charts/pi-durable/examples/`; the image build notes are `images/README.md`. The pod-security,
+      examples are in `charts/cela/examples/`; the image build notes are `images/README.md`. The pod-security,
       image-build and e2e-namespace tests read the rendered charts or `hack/`; the stub-kubectl test of `add-shard.sh` went with it.
     - Done when: e2e passes against an external Postgres that requires TLS (done, see 11a); no doc points at a removed
       script (done).
@@ -346,7 +346,7 @@ move, no Helm adoption of kustomize objects.
 
 ## 11. Review by two Sol sessions
 
-Two sessions ran on our own stack in a lab cluster (`pi-durable-poc`, `openai-codex/gpt-6.1-sol`, reasoning high). Each cloned the
+Two sessions ran on our own stack in a lab cluster (`cela-dev`, `openai-codex/gpt-6.1-sol`, reasoning high). Each cloned the
 public repo into its gVisor sandbox and was told not to push. Session A reviewed packaging and dependencies; session
 B reviewed runtime, isolation, kind and tests. I checked their main claims in the code and in OneCLI v2.20.0 before
 using them above.

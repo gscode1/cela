@@ -17,7 +17,7 @@ over those runs. An interactive dashboard login was not covered. This is one env
 ### Five AI agents hunt bugs in their own platform
 
 A live run on 2026-11-16: five durable Pi agent sessions, each in its own gVisor sandbox with a fresh clone of this
-repository, reviewed one area of pi-durable-k8s for bugs. The platform they ran on is the code they reviewed.
+repository, reviewed one area of cela for bugs. The platform they ran on is the code they reviewed.
 
 Everything here is real output. Nothing was edited except the summaries in this file.
 
@@ -77,7 +77,7 @@ Two problems showed up only because real sessions ran. No agent reported them.
    - Ingest only starts its HTTP server after migrating, so `/healthz` did not answer and the liveness probe killed
      the pod, over and over.
 
-   The fix ([gscode1/pi-durable-k8s#4](https://github.com/gscode1/pi-durable-k8s/pull/4)) records applied migrations
+   The fix ([gscode1/cela#4](https://github.com/gscode1/cela/pull/4)) records applied migrations
    and runs no DDL when the schema is current. It also uses a short `lock_timeout` when a migration does run, and
    serves `/healthz` before migrating. ADR 0005 has the details.
 
@@ -140,9 +140,9 @@ that fails without it, then run on the lab cluster (phase 4: 15 e2e tests, phase
 
 | PR                                                       | Fixes                                                                                                                                                                                                                                                                                                    |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [#21](https://github.com/gscode1/pi-durable-k8s/pull/21) | Deletes retry with backoff until done, and a repeated `DELETE` re-queues a failed one (the high one). The server's delete key can no longer be taken by a client id. Event admission is one conditional insert. No session-row update inside the batch transaction. A failed session's abort is retried. |
-| [#15](https://github.com/gscode1/pi-durable-k8s/pull/15) | Repo clones go through the tracked sandbox env. A failed pod recycle is retried before the next call, never skipped. A closed connection gives up its start-gate turn. SSE backpressure removes its listeners.                                                                                           |
-| [#17](https://github.com/gscode1/pi-durable-k8s/pull/17) | `push-code.sh` always scales back and swaps code only after a good extract. Secret scripts pass values through private files, not argv. Host-rules update creates allow rules before touching the block rule and restores it on failure. Test cleanup only drops rows of deleted sessions.               |
+| [#21](https://github.com/gscode1/cela/pull/21) | Deletes retry with backoff until done, and a repeated `DELETE` re-queues a failed one (the high one). The server's delete key can no longer be taken by a client id. Event admission is one conditional insert. No session-row update inside the batch transaction. A failed session's abort is retried. |
+| [#15](https://github.com/gscode1/cela/pull/15) | Repo clones go through the tracked sandbox env. A failed pod recycle is retried before the next call, never skipped. A closed connection gives up its start-gate turn. SSE backpressure removes its listeners.                                                                                           |
+| [#17](https://github.com/gscode1/cela/pull/17) | `push-code.sh` always scales back and swaps code only after a good extract. Secret scripts pass values through private files, not argv. Host-rules update creates allow rules before touching the block rule and restores it on failure. Test cleanup only drops rows of deleted sessions.               |
 
 Checked live after #21: a message using the id `delete:<session>` followed by `DELETE` reached `deleted` in 3 s. A
 message and a delete sent back to back finished in 3 s with no statement timeout. An event posted after the delete got
@@ -153,10 +153,10 @@ long time, or more than 24 h of unsettled runs.
 
 Found along the way, not by the hunt:
 
-- [#4](https://github.com/gscode1/pi-durable-k8s/pull/4): the ingest crash loop described above.
-- [#6](https://github.com/gscode1/pi-durable-k8s/pull/6): the public-release cleanup had broken the e2e entry point for
+- [#4](https://github.com/gscode1/cela/pull/4): the ingest crash loop described above.
+- [#6](https://github.com/gscode1/cela/pull/6): the public-release cleanup had broken the e2e entry point for
   an empty `KUBE_CONTEXT`.
-- [#22](https://github.com/gscode1/pi-durable-k8s/pull/22): two flaky unit tests, 5 failures in 36 full-suite runs
+- [#22](https://github.com/gscode1/cela/pull/22): two flaky unit tests, 5 failures in 36 full-suite runs
   before, 0 in 24 after. One was a test deleting a directory while a Host still wrote to it. The other was a real
   nondeterministic error message.
 
@@ -182,7 +182,7 @@ per-session OneCLI agents gone after 11 s.
 
 ```sh
 # needs an adapted test stack, an owner token in the ingest pods, and a reachable model
-REPO=owner/repo NAMESPACE=pi-durable-poc examples/bug-hunt-2026-11-16/run-hunt2.sh      # creates the missing sessions, follows them, writes raw/
+REPO=owner/repo NAMESPACE=cela-dev examples/bug-hunt-2026-11-16/run-hunt2.sh      # creates the missing sessions, follows them, writes raw/
 ```
 
 ### Files
@@ -298,10 +298,10 @@ All 46 confirmed findings were fixed the same day, plus the plausible ones whose
 
 | PR                                                       | Area                                                                                                                                         |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [#31](https://github.com/gscode1/pi-durable-k8s/pull/31) | e2e tests and deploy scripts: assertions that never asserted, cleanup traps, a lock against concurrent code pushes, reproducible ingest tars |
-| [#32](https://github.com/gscode1/pi-durable-k8s/pull/32) | Input validation: model pairs, `.lock` branch names, tokens with whitespace, NUL characters, ingest config                                   |
-| [#33](https://github.com/gscode1/pi-durable-k8s/pull/33) | Lifecycle: atomic delete start, OneCLI agent kept on transient errors, sweep order, GitHub rate limits retried instead of failing a session  |
-| [#34](https://github.com/gscode1/pi-durable-k8s/pull/34) | Orchestrator and bridge: streams during delete, no launcher process holding the master key, start gate freed on bridge failure               |
+| [#31](https://github.com/gscode1/cela/pull/31) | e2e tests and deploy scripts: assertions that never asserted, cleanup traps, a lock against concurrent code pushes, reproducible ingest tars |
+| [#32](https://github.com/gscode1/cela/pull/32) | Input validation: model pairs, `.lock` branch names, tokens with whitespace, NUL characters, ingest config                                   |
+| [#33](https://github.com/gscode1/cela/pull/33) | Lifecycle: atomic delete start, OneCLI agent kept on transient errors, sweep order, GitHub rate limits retried instead of failing a session  |
+| [#34](https://github.com/gscode1/cela/pull/34) | Orchestrator and bridge: streams during delete, no launcher process holding the master key, start gate freed on bridge failure               |
 
 The four PRs were merged into one branch and run on the lab cluster before merging: phase 4 (15 tests), phase 4b with
 the real model, phase 4c (repo sessions) and phase 3 (sandbox loss, isolation, restart, double owner, long command)
@@ -319,7 +319,7 @@ The two medium findings left open are plausible, not confirmed: an unknown OneCL
 
 ```sh
 # a cluster set up from deploy/, an owner token in the ingest pods, a reachable model
-REPO=owner/repo NAMESPACE=pi-durable-poc examples/load-50-2026-11-16/run-load.sh
+REPO=owner/repo NAMESPACE=cela-dev examples/load-50-2026-11-16/run-load.sh
 ```
 
 `create-all.mjs` embeds the 50 briefs. Regenerate it from `files.txt` and `common.md` to point it at other files.
@@ -338,8 +338,8 @@ REPO=owner/repo NAMESPACE=pi-durable-poc examples/load-50-2026-11-16/run-load.sh
 
 ### The lab stack reinstalled from the charts (install slice 5, issue #124)
 
-The namespace `pi-durable-poc` of the example cluster (context `admin@c2`, Cilium, gVisor, Longhorn) was deleted and
-recreated from `charts/pi-durable` and `charts/pi-postgres` by `hack/install.sh`, following
+The namespace `cela-dev` of the example cluster (context `admin@c2`, Cilium, gVisor, Longhorn) was deleted and
+recreated from `charts/cela` and `charts/pi-postgres` by `hack/install.sh`, following
 [install plan](install-plan.md) section 9a. The agent-sandbox controller, OneCLI and the CloudNativePG operator stayed as
 they were: the operator Deployment (`postgres-system`) and its 11 CRDs had the same generation and image before and
 after (checked), and no step touched them.

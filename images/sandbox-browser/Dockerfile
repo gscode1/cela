@@ -21,8 +21,8 @@ WORKDIR /src
 RUN npm install --global pnpm@12.21.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
-RUN pnpm install --frozen-lockfile --filter @pi-durable-k8s/browser-proxy... \
- && pnpm --filter @pi-durable-k8s/browser-proxy build
+RUN pnpm install --frozen-lockfile --filter @cela/browser-proxy... \
+ && pnpm --filter @cela/browser-proxy build
 
 # Exact versions from the lockfile (patchright 1.64.3 pins patchright-core 1.64.3, whose Chromium is the one both tools
 # drive).

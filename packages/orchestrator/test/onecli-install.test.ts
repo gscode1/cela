@@ -217,7 +217,7 @@ describe("hack/install.sh and hack/kind-up.sh", () => {
     expect(kindUp).toContain("--set onecli.mode=bundled");
     expect(kindUp).toMatch(/--onecli\) onecli=1/);
     // The default install still has OneCLI disabled.
-    expect(readFileSync(join(root, "charts/pi-durable/values-kind.yaml"), "utf8")).toMatch(
+    expect(readFileSync(join(root, "charts/cela/values-kind.yaml"), "utf8")).toMatch(
       /^ {2}mode: disabled/m,
     );
   });

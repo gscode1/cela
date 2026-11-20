@@ -1,5 +1,5 @@
 # Network policies for the bundled OneCLI (docs/decisions/0022-bundled-onecli.md). They exist from the first minute, before
-# charts/pi-durable (and its namespace-wide default deny) is installed, because OneCLI's management API accepts a sign-up
+# charts/cela (and its namespace-wide default deny) is installed, because OneCLI's management API accepts a sign-up
 # from anyone who can reach it and nothing in OneCLI can turn that off.
 
 # The Helm release name of the upstream OneCLI chart. Its pods carry app.kubernetes.io/instance=<release>.
@@ -12,7 +12,7 @@ clients:
   orchestrator: { app.kubernetes.io/name: pi-orchestrator }
   sandbox: { app.kubernetes.io/name: pi-sandbox }
   bootstrap: { app.kubernetes.io/name: pi-onecli-bootstrap }
-  # The egress proxy of charts/pi-durable (ADR 0037): it chains route=onecli connections to the gateway with the session's
+  # The egress proxy of charts/cela (ADR 0037): it chains route=onecli connections to the gateway with the session's
   # OneCLI token. Admitted on the gateway port only. With the proxy on, sandboxes no longer need the gateway themselves.
   egressProxy: { app.kubernetes.io/name: pi-egress-proxy }
 
@@ -38,7 +38,7 @@ gateway:
   # Open by default (docs/decisions/0043-open-onecli-defaults.md): a SEPARATE rule admits the RFC 1918 ranges on TCP 443
   # only, so an admin-named MCP server on the LAN is reachable while the kubelet (10250/10256), Postgres (5432), the kube API
   # (6443) and the proxy ports (8080, 9090, 3128) stay closed on CNIs where an ipBlock matches pods. Needs egressInternet.
-  # hack/onecli.sh turns it off (with the gateway's own allowPrivateDestinations) when the pi-durable release has no egress
+  # hack/onecli.sh turns it off (with the gateway's own allowPrivateDestinations) when the cela release has no egress
   # proxy and nobody acknowledged it: a sandbox then reaches the gateway directly.
   privateHttps:
     enabled: true

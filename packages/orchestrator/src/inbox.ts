@@ -1,6 +1,6 @@
 import type pg from "pg";
-import { errorMessage, getSession, toEvent } from "@pi-durable-k8s/session-core";
-import type { EventDbRow, InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
+import { errorMessage, getSession, toEvent } from "@cela/session-core";
+import type { EventDbRow, InboxEvent, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import { PermanentError } from "./sessions.js";
 

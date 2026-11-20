@@ -2,14 +2,14 @@
 Object names are fixed on purpose (see values.yaml): policies, e2e suites and ingest's routing select on them.
 */}}
 
-{{- define "pi-durable.labels" -}}
-app.kubernetes.io/part-of: pi-durable
+{{- define "cela.labels" -}}
+app.kubernetes.io/part-of: cela
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{/* image reference: repository[:tag][@digest]; takes (dict "name" "orchestrator" "image" .Values.images.orchestrator) */}}
-{{- define "pi-durable.image" -}}
+{{- define "cela.image" -}}
 {{- $ref := required (printf "images.%s.repository is required" .name) .image.repository -}}
 {{- if not (or .image.tag .image.digest) -}}
 {{- fail (printf "images.%s: set a tag or a digest (images/build.sh prints them; CI publishes them)" .name) -}}
@@ -20,7 +20,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{/* The port of an http(s) URL: explicit, else 443 for https and 80 for http. Host names only (no IPv6 literals). */}}
-{{- define "pi-durable.urlPort" -}}
+{{- define "cela.urlPort" -}}
 {{- $u := urlParse . -}}
 {{- if contains ":" $u.host -}}{{- last (splitList ":" $u.host) -}}
 {{- else if eq $u.scheme "https" -}}443
@@ -28,7 +28,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 {{- end -}}
 
-{{- define "pi-durable.onecliEnabled" -}}
+{{- define "cela.onecliEnabled" -}}
 {{- if ne .Values.onecli.mode "disabled" -}}true{{- end -}}
 {{- end -}}
 
@@ -37,7 +37,7 @@ The OneCLI settings the other templates use, as JSON (read it with `include ... 
 they are, or, for the bundled release (hack/onecli.sh, same namespace), the names that release and its bootstrap
 produce. One place, so the two modes cannot drift apart.
 */}}
-{{- define "pi-durable.onecli" -}}
+{{- define "cela.onecli" -}}
 {{- if eq .Values.onecli.mode "bundled" -}}
 {{- $b := .Values.onecli.bundled -}}
 {{- $ns := .Release.Namespace -}}
@@ -48,7 +48,7 @@ produce. One place, so the two modes cannot drift apart.
 {{- end -}}
 
 {{/* Providers that need no OneCLI (config.ts LOCAL_PROVIDERS). */}}
-{{- define "pi-durable.remoteProviders" -}}
+{{- define "cela.remoteProviders" -}}
 {{- $remote := list -}}
 {{- $all := append .Values.models.allowlist (printf "%s/%s" .Values.models.default.provider .Values.models.default.id) -}}
 {{- range $all -}}
@@ -62,7 +62,7 @@ produce. One place, so the two modes cannot drift apart.
 Everything that must be true for the chart to render. Schema checks come first (values.schema.json); these are the
 rules a schema cannot say well, and they also hold under --skip-schema-validation.
 */}}
-{{- define "pi-durable.validate" -}}
+{{- define "cela.validate" -}}
 {{- if and .Values.security.allowDirectSandboxEgress (not .Values.egressProxy.enabled) -}}
 {{- fail "security.allowDirectSandboxEgress needs egressProxy.enabled: without the egress proxy every sandbox already has the open internet (the network cutover is off), so there is no direct mode to allow (docs/decisions/0038-network-modes.md)" -}}
 {{- end -}}
@@ -97,7 +97,7 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- fail "onecli.mode is bundled: onecli.bundled needs release, caConfigMap, agentTokenSecret and adminKeySecret" -}}
 {{- end -}}
 {{- else if eq .Values.onecli.mode "disabled" -}}
-{{- $remote := include "pi-durable.remoteProviders" . -}}
+{{- $remote := include "cela.remoteProviders" . -}}
 {{- if $remote -}}
 {{- fail (printf "onecli.mode is disabled but models name the provider(s) %s, which need the OneCLI gateway. Use scripted models only, or set onecli.mode=external." $remote) -}}
 {{- end -}}
@@ -141,14 +141,14 @@ Names the egress proxy resolves and blocks as "the platform" (ADR 0035): the nam
 orchestrator shard, the OneCLI API and gateway when in the cluster) and the kubernetes Service. The database host and
 the Kubernetes API's ClusterIP are added by the proxy from its own URI and environment. Comma separated.
 */}}
-{{- define "pi-durable.egressPlatformHosts" -}}
+{{- define "cela.egressPlatformHosts" -}}
 {{- $ns := .Release.Namespace -}}
 {{- $hosts := list (printf "pi-ingest.%s.svc" $ns) "kubernetes.default.svc" -}}
 {{- range $shard := until (int .Values.orchestrator.shards) -}}
 {{- $hosts = append $hosts (printf "%s.%s.svc" (ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0)) $ns) -}}
 {{- end -}}
 {{- if ne .Values.onecli.mode "disabled" -}}
-{{- $o := include "pi-durable.onecli" . | fromJson -}}
+{{- $o := include "cela.onecli" . | fromJson -}}
 {{- range (list $o.apiUrl $o.gatewayUrl) -}}
 {{- $hosts = append $hosts (first (splitList ":" (urlParse .).host)) -}}
 {{- end -}}
@@ -157,30 +157,30 @@ the Kubernetes API's ClusterIP are added by the proxy from its own URI and envir
 {{- end -}}
 
 {{/* The OneCLI route of the egress proxy (ADR 0037) exists when the proxy and OneCLI are both on. */}}
-{{- define "pi-durable.egressOnecliRoute" -}}
+{{- define "cela.egressOnecliRoute" -}}
 {{- if and .Values.egressProxy.enabled (ne .Values.onecli.mode "disabled") }}true{{ end -}}
 {{- end }}
 
 {{/* host:port of the OneCLI gateway, the one upstream of the proxy. */}}
-{{- define "pi-durable.onecliGatewayAddr" -}}
-{{- $o := include "pi-durable.onecli" . | fromJson -}}
-{{- printf "%s:%s" (first (splitList ":" (urlParse $o.gatewayUrl).host)) (include "pi-durable.urlPort" $o.gatewayUrl) -}}
+{{- define "cela.onecliGatewayAddr" -}}
+{{- $o := include "cela.onecli" . | fromJson -}}
+{{- printf "%s:%s" (first (splitList ":" (urlParse $o.gatewayUrl).host)) (include "cela.urlPort" $o.gatewayUrl) -}}
 {{- end }}
 
 {{/* Addresses the egress proxy blocks as the platform: the operator's cidrs, the API server addresses and the database's cidrs. */}}
-{{- define "pi-durable.egressPlatformCidrs" -}}
+{{- define "cela.egressPlatformCidrs" -}}
 {{- concat .Values.egressProxy.platform.cidrs .Values.networkPolicy.kubeApiCidrs .Values.database.external.egress.cidrs | uniq | join "," -}}
 {{- end -}}
 
 {{/* A restricted container-level security context (ADR 0019); the Pod sets user, group and seccomp. */}}
-{{- define "pi-durable.containerSecurityContext" -}}
+{{- define "cela.containerSecurityContext" -}}
 allowPrivilegeEscalation: false
 privileged: false
 capabilities:
   drop: [ALL]
 {{- end -}}
 
-{{- define "pi-durable.podSecurityContext" -}}
+{{- define "cela.podSecurityContext" -}}
 runAsNonRoot: true
 runAsUser: 1000
 runAsGroup: 1000
@@ -190,7 +190,7 @@ seccompProfile:
 {{- end -}}
 
 {{/* NetworkPolicy `to` entries for the database (pod selector and/or CIDRs). */}}
-{{- define "pi-durable.databaseTo" -}}
+{{- define "cela.databaseTo" -}}
 {{- $e := .Values.database.external.egress -}}
 {{- if $e.podSelector }}
 - podSelector:
@@ -209,8 +209,8 @@ seccompProfile:
 {{- end -}}
 
 {{/* NetworkPolicy `to` entry for the OneCLI pods. */}}
-{{- define "pi-durable.onecliTo" -}}
-{{- $o := include "pi-durable.onecli" . | fromJson -}}
+{{- define "cela.onecliTo" -}}
+{{- $o := include "cela.onecli" . | fromJson -}}
 - namespaceSelector:
     matchLabels:
       kubernetes.io/metadata.name: {{ $o.namespace }}
@@ -224,12 +224,12 @@ Database TLS (database.tls). The Secret is mounted read-only at /etc/pi-database
 projected, so a client key in a shared Secret is not mounted when mTLS is off. Without `optional` a missing Secret keeps
 the pod from starting, which is wanted: a pod that cannot verify the server must not start.
 */}}
-{{- define "pi-durable.databaseTlsEnabled" -}}
+{{- define "cela.databaseTlsEnabled" -}}
 {{- /* verify-full with the system roots and no client cert needs no files, so no volume. */}}
 {{- if and (ne .Values.database.tls.mode "disable") (or .Values.database.tls.caKey .Values.database.tls.certKey) }}true{{ end -}}
 {{- end }}
 
-{{- define "pi-durable.databaseTlsEnv" -}}
+{{- define "cela.databaseTlsEnv" -}}
 {{- $tls := .Values.database.tls }}
 {{- /* disable sets nothing: the URI keeps its own sslmode, as before this value existed. */}}
 {{- if ne $tls.mode "disable" }}
@@ -244,11 +244,11 @@ the pod from starting, which is wanted: a pod that cannot verify the server must
 {{- end }}
 {{- end }}
 
-{{- define "pi-durable.databaseTlsMount" -}}
+{{- define "cela.databaseTlsMount" -}}
 - { name: database-tls, mountPath: /etc/pi-database-tls, readOnly: true }
 {{- end }}
 
-{{- define "pi-durable.databaseTlsVolume" -}}
+{{- define "cela.databaseTlsVolume" -}}
 - name: database-tls
   secret:
     secretName: {{ .Values.database.tls.existingSecret }}
@@ -265,15 +265,15 @@ the pod from starting, which is wanted: a pod that cannot verify the server must
 
 {{/*
 The network cutover (ADR 0038): with the egress proxy on, a sandbox reaches the proxy and nothing else, unless its Pod
-carries pi-durable.dev/network-mode=direct (only possible with security.allowDirectSandboxEgress). Without the proxy the
+carries cela.dev/network-mode=direct (only possible with security.allowDirectSandboxEgress). Without the proxy the
 sandbox policies are the ones from before the cutover.
 */}}
-{{- define "pi-durable.networkCutover" -}}
+{{- define "cela.networkCutover" -}}
 {{- if .Values.egressProxy.enabled }}true{{ end -}}
 {{- end -}}
 
 {{/* Where a direct sandbox may connect: the public internet minus every address that is ours (ADR 0038). */}}
-{{- define "pi-durable.sandboxInternetTo" -}}
+{{- define "cela.sandboxInternetTo" -}}
 - ipBlock:
     cidr: 0.0.0.0/0
     except:

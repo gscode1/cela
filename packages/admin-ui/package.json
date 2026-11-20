@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/admin-ui",
+  "name": "@cela/admin-ui",
   "private": true,
   "version": "0.0.0",
   "description": "The admin console: a React single-page app that ingest serves under /console/ and that talks to /admin/* with an operator's bearer token.",

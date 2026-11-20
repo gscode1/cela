@@ -1,4 +1,4 @@
-# pi-durable
+# cela
 
 The Pi Durable app on Kubernetes ([install plan](../../docs/install-plan.md), D1, [ADR 0020](../../docs/decisions/0020-helm-install.md)):
 the orchestrator (one Deployment per shard), ingest (the session API), the sandbox template and warm pool, namespace-scoped
@@ -46,12 +46,12 @@ database:
     existingSecret: pi-database             # key uri: postgres://... (or DATABASE_URL=... for install.sh to create it once)
     egress: { namespace: databases, podSelector: { app.kubernetes.io/name: postgres } }
 YAML
-EGRESS_DATABASE_URL=... KUBE_CONTEXT=my-cluster hack/install.sh --namespace pi-durable --values local/values.yaml
+EGRESS_DATABASE_URL=... KUBE_CONTEXT=my-cluster hack/install.sh --namespace cela --values local/values.yaml
 ```
 
 With Helm directly (create the namespace and the Secrets yourself first, and name the proxy's:
 `egressProxy.database.existingSecret` and, with OneCLI, `egressProxy.binding.existingSecret`; the chart refuses to render
-without them): `helm upgrade --install pi-durable charts/pi-durable -n pi-durable -f local/values.yaml`.
+without them): `helm upgrade --install cela charts/cela -n cela -f local/values.yaml`.
 
 One release per namespace: object names are fixed (`pi-orchestrator`, `pi-ingest`, `pi-env-template`, `pi-env-pool`, their `-<size>` variants,
 `sandboxd-auth`, `api-auth`) because the policies, ingest's shard routing and the e2e suites select on them. One install
@@ -114,7 +114,7 @@ responses carry `Cache-Control: no-store`, a CSP of `default-src 'self'; frame-a
 
 Access:
 
-- Prefer a localhost port-forward: `kubectl -n pi-durable port-forward svc/pi-ingest 8080:8080`, then open
+- Prefer a localhost port-forward: `kubectl -n cela port-forward svc/pi-ingest 8080:8080`, then open
   `http://localhost:8080/console/`.
 - `ingest.httpRoute` or `ingest.ingress` publishes ingest on a hostname (see [Routes](#routes)). A NetworkPolicy cannot filter by path: if ingest is also reachable by ordinary
   clients through your ingress, that ingress must route `/console` and `/admin` only through operator access (a
@@ -215,15 +215,15 @@ sessions on a shard without a route. Never put an HPA on a shard.
 Read the state:
 
 ```sh
-kubectl -n pi-durable port-forward svc/pi-ingest 8080:8080 &
-TOKEN=$(kubectl -n pi-durable get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p')
+kubectl -n cela port-forward svc/pi-ingest 8080:8080 &
+TOKEN=$(kubectl -n cela get secret api-auth -o jsonpath='{.data.tokens}' | base64 -d | sed -n 's/^admin://p')
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" localhost:8080/admin/status/probe   # run the isolation probe again
 ```
 
 ## Tests
 
-`packages/orchestrator/test/pi-durable-chart.test.ts` renders every mode (cilium/standard, OneCLI bundled/external/disabled,
+`packages/orchestrator/test/cela-chart.test.ts` renders every mode (cilium/standard, OneCLI bundled/external/disabled,
 insecure runtime, one and three shards), checks the runtime guard, the kinds, the network-policy invariants and the
 schema. `pod-security.test.ts` checks the rendered pods against the restricted profile. `tests/e2e/run.sh` installs this
 chart for every run.

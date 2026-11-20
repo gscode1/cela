@@ -146,7 +146,7 @@ build, and a reload after an upgrade is enough.
 
 ## Admin credentials and login
 
-V1 uses the existing named bearer tokens. In the [Helm chart](../charts/pi-durable/README.md), `api.admins` lists the
+V1 uses the existing named bearer tokens. In the [Helm chart](../charts/cela/README.md), `api.admins` lists the
 owners allowed to call `/admin/*`, and `api.existingSecret` (default `api-auth`) holds one `owner:token` line per
 owner. `hack/install.sh` creates that Secret with a token for each `api.admins` name, and warns about an admin without
 a token when the Secret already exists. Use one name per operator. The token also carries that owner's session API

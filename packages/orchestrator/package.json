@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/orchestrator",
+  "name": "@cela/orchestrator",
   "private": true,
   "version": "0.0.0",
   "description": "Pi Durable host: Postgres storage, inbox consumer, SSE streams, one sandbox per conversation, scripted model.",
@@ -19,8 +19,8 @@
     "@earendil-works/pi-mcp": "1.5.2",
     "@gscode1/pi-durable-postgres": "0.3.0",
     "@kubernetes/client-node": "2.0.0",
-    "@pi-durable-k8s/sandbox-env": "workspace:*",
-    "@pi-durable-k8s/session-core": "workspace:*",
+    "@cela/sandbox-env": "workspace:*",
+    "@cela/session-core": "workspace:*",
     "undici": "8.12.4"
   },
   "devDependencies": {

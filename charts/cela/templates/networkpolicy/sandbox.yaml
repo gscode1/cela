@@ -4,7 +4,7 @@ Invariant: a sandbox never reaches ours: not the orchestrator, ingest, the datab
 management API or another sandbox. What it may reach beyond that depends on the network cutover (ADR 0038):
 - egressProxy.enabled (cutover on): the egress proxy port 3128 and nothing else (sandbox-allow-egress-proxy-egress, in
   egress-proxy.yaml): no DNS, no OneCLI gateway, no internet. Fail closed: a Pod without the mode label, or with an
-  unknown one, is a proxied sandbox. A Pod labelled pi-durable.dev/network-mode=direct (its template exists only with
+  unknown one, is a proxied sandbox. A Pod labelled cela.dev/network-mode=direct (its template exists only with
   security.allowDirectSandboxEgress) additionally gets DNS and the public internet (sandbox-direct-allow-egress).
 - no egress proxy: DNS (allow-dns-egress), the OneCLI gateway port and the public internet, as before the cutover.
 */ -}}
@@ -14,7 +14,7 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-default-deny
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -27,7 +27,7 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-allow-orchestrator-ingress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -41,7 +41,7 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 9090 }
-{{- if not (include "pi-durable.networkCutover" .) }}
+{{- if not (include "cela.networkCutover" .) }}
 {{- if ne .Values.onecli.mode "disabled" }}
 ---
 # Egress: the OneCLI gateway port only (the management API is another port of the same pod and stays unreachable).
@@ -51,7 +51,7 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-allow-onecli-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -59,9 +59,9 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        {{- include "pi-durable.onecliTo" . | nindent 8 }}
+        {{- include "cela.onecliTo" . | nindent 8 }}
       ports:
-        - { protocol: TCP, port: {{ include "pi-durable.urlPort" (include "pi-durable.onecli" . | fromJson).gatewayUrl }} }
+        - { protocol: TCP, port: {{ include "cela.urlPort" (include "cela.onecli" . | fromJson).gatewayUrl }} }
 {{- end }}
 ---
 # Egress: direct public internet (decision 2026-11-15: package installs for every session). Private, CGNAT,
@@ -74,7 +74,7 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-allow-internet-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -82,11 +82,11 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        {{- include "pi-durable.sandboxInternetTo" . | nindent 8 }}
+        {{- include "cela.sandboxInternetTo" . | nindent 8 }}
 {{- else if .Values.security.allowDirectSandboxEgress }}
 ---
 # Direct mode (security.allowDirectSandboxEgress, ADR 0038): the sandboxes whose Pod carries
-# pi-durable.dev/network-mode=direct get what every sandbox had before the cutover, DNS and the public internet, with no
+# cela.dev/network-mode=direct get what every sandbox had before the cutover, DNS and the public internet, with no
 # rule and no audit. Private, CGNAT, link-local/metadata and loopback ranges and networkPolicy.sandbox.extraEgressExcept
 # stay blocked, so the cluster, the node network, the platform and other sandboxes remain unreachable. Not the OneCLI
 # gateway: a direct sandbox has no credential injection. Additive to the proxy-only policy of every sandbox.
@@ -95,12 +95,12 @@ kind: NetworkPolicy
 metadata:
   name: sandbox-direct-allow-egress
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: pi-sandbox
-      pi-durable.dev/network-mode: direct
+      cela.dev/network-mode: direct
   policyTypes: [Egress]
   egress:
     - to:
@@ -114,5 +114,5 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        {{- include "pi-durable.sandboxInternetTo" . | nindent 8 }}
+        {{- include "cela.sandboxInternetTo" . | nindent 8 }}
 {{- end }}

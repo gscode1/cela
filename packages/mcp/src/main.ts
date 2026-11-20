@@ -9,7 +9,7 @@ try {
   config = parseConfig(process.env);
 } catch (error) {
   if (error instanceof ConfigError) {
-    process.stderr.write(`pi-durable-mcp: ${error.message}\n`);
+    process.stderr.write(`cela-mcp: ${error.message}\n`);
     process.exit(1);
   }
   throw error;

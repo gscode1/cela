@@ -12,7 +12,7 @@ spec:
   ingress:
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: pi-durable-poc
+            k8s:io.kubernetes.pod.namespace: cela-dev
             app.kubernetes.io/name: pi-orchestrator
       toPorts:
         - ports:
@@ -20,7 +20,7 @@ spec:
             - { port: "10256", protocol: TCP }
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: pi-durable-poc
+            k8s:io.kubernetes.pod.namespace: cela-dev
             app.kubernetes.io/name: pi-sandbox
       toPorts:
         - ports:
@@ -28,7 +28,7 @@ spec:
     # Trusted e2e namespaces (only cluster operators may assign this label).
     - fromEndpoints:
         - matchLabels:
-            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            k8s:io.cilium.k8s.namespace.labels.cela-e2e: "true"
             app.kubernetes.io/name: pi-orchestrator
       toPorts:
         - ports:
@@ -36,7 +36,7 @@ spec:
             - { port: "10256", protocol: TCP }
     - fromEndpoints:
         - matchLabels:
-            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            k8s:io.cilium.k8s.namespace.labels.cela-e2e: "true"
             app.kubernetes.io/name: pi-sandbox
       toPorts:
         - ports:
@@ -44,7 +44,7 @@ spec:
     # The egress proxy of an e2e run: the route=onecli upstream of repo sessions (ADR 0037), gateway only.
     - fromEndpoints:
         - matchLabels:
-            k8s:io.cilium.k8s.namespace.labels.pi-durable-e2e: "true"
+            k8s:io.cilium.k8s.namespace.labels.cela-e2e: "true"
             app.kubernetes.io/name: pi-egress-proxy
       toPorts:
         - ports:

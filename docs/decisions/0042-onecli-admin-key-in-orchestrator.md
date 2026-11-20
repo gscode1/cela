@@ -40,7 +40,7 @@ Why:
 What holds:
 
 - Only the orchestrator Deployment gets the admin key; no other workload or sandbox template references it
-  (`packages/orchestrator/test/pi-durable-chart.test.ts`, "gives the OneCLI admin key to the orchestrator only").
+  (`packages/orchestrator/test/cela-chart.test.ts`, "gives the OneCLI admin key to the orchestrator only").
 - The key is optional: without `adminKeySecret` the features above are off (repository sessions are refused, a
   credentialed MCP server is unavailable, the reconciler does not run, the credential hint is `unknown`).
 - Operators should treat the orchestrator as holding admin access to OneCLI and the GitHub App: restrict who can exec

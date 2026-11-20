@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gscode1/pi-durable-k8s/egress-proxy/internal/egress"
+	"github.com/gscode1/cela/egress-proxy/internal/egress"
 	"github.com/stripe/smokescreen/v2/pkg/smokescreen"
 )
 

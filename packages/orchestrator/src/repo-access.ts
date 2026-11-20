@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type pg from "pg";
-import { markWorkspaceReady, setOneCliObjects } from "@pi-durable-k8s/session-core";
-import type { SessionRow } from "@pi-durable-k8s/session-core";
+import { markWorkspaceReady, setOneCliObjects } from "@cela/session-core";
+import type { SessionRow } from "@cela/session-core";
 import { loadGithubApp, mintInstallationToken } from "./github-app.js";
 import type { FetchLike } from "./github-app.js";
 import { log } from "./log.js";

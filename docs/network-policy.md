@@ -1,14 +1,14 @@
-# Network policy for pi-durable-poc
+# Network policy for cela-dev
 
-Status: plan.md records these policies as enforced on the example test cluster since 2026-11-16 (Cilium v1.20.4, audit mode off, all pi-durable-poc
+Status: plan.md records these policies as enforced on the example test cluster since 2026-11-16 (Cilium v1.20.4, audit mode off, all cela-dev
 endpoints enforced in both directions; "Enforcement result"). The repo applies them too: every e2e run installs the chart (`networkPolicy.provider: cilium`) into its namespace
 (`tests/e2e/run.sh`). The sections below were written before that run: the apply order and
 rollback still describe the procedure, and "UNVERIFIED" marks what the run did not record separately.
 
-The Helm chart [`charts/pi-durable`](../charts/pi-durable/README.md) renders the same policy set from
+The Helm chart [`charts/cela`](../charts/cela/README.md) renders the same policy set from
 `templates/networkpolicy/` (`networkPolicy.provider: cilium` adds the Cilium policies; `standard` replaces the
 `kube-apiserver` entity with an orchestrator egress rule to the API server, `networkPolicy.kubeApiCidrs` or TCP 443/6443 to any;
-the database and OneCLI selectors are values; `packages/orchestrator/test/pi-durable-chart.test.ts` checks the invariants below on the rendered
+the database and OneCLI selectors are values; `packages/orchestrator/test/cela-chart.test.ts` checks the invariants below on the rendered
 output). The kustomize form in `deploy/` that this document first described is gone (install slice 11b).
 The Postgres is the bundled `charts/pi-postgres` (or a database you run): CNPG is no longer part of the install
 ([install-plan D3](install-plan.md)) and no CNPG policy is rendered. The bundled database has one policy, named after its
@@ -19,9 +19,9 @@ Files:
 
 | Path | What | Applied by |
 |---|---|---|
-| `charts/pi-durable/templates/networkpolicy/` | default-deny both ways, DNS, per-workload allows, sandbox policies; with `provider: cilium` also kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `helm install` / `hack/install.sh` (the Cilium policies need the Cilium CRDs) |
+| `charts/cela/templates/networkpolicy/` | default-deny both ways, DNS, per-workload allows, sandbox policies; with `provider: cilium` also kube-apiserver entity egress, DNS to kube-dns, orchestrator FQDN egress to `api.github.com` | `helm install` / `hack/install.sh` (the Cilium policies need the Cilium CRDs) |
 | `charts/pi-postgres/templates/networkpolicy.yaml` | the bundled database: ingress from the `clientSelectors` only | the `pi-postgres` release |
-| `tests/e2e/deploy/` | test-only policies of the e2e driver (and the CiliumNetworkPolicies in `tests/e2e/deploy/cilium`), see `docs/e2e.md` | `tests/e2e/run.sh`, next to the chart, in every run namespace `pi-e2e-<id>` (label `pi-durable-e2e=true`) |
+| `tests/e2e/deploy/` | test-only policies of the e2e driver (and the CiliumNetworkPolicies in `tests/e2e/deploy/cilium`), see `docs/e2e.md` | `tests/e2e/run.sh`, next to the chart, in every run namespace `pi-e2e-<id>` (label `cela-e2e=true`) |
 | `hack/onecli-policies/` | `onecli` namespace ingress and egress of an external OneCLI: `egress.yaml` is open (TCP 443 to the world), `egress-strict.yaml` is the FQDN allowlist (hardening, never both); the bundled one has its own in `charts/pi-onecli` | your OneCLI deployment manager, see its README |
 | `hack/onecli-host-rules.sh`, `docs/onecli-host-rules.md` | optional hardening: OneCLI v2 `allow ...` then `block *` (also `ONECLI_HOSTS` in the bootstrap) | by hand, operator machine |
 
@@ -29,9 +29,9 @@ Files:
 
 | Workload | Selector | Source |
 |---|---|---|
-| orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `charts/pi-durable/templates/orchestrator/`, `tests/e2e/runner-pod.yaml` |
-| ingest | `app.kubernetes.io/name=pi-ingest` | `charts/pi-durable/templates/ingest/` |
-| sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `charts/pi-durable/templates/sandbox/template.yaml` |
+| orchestrator (also every shard Deployment `pi-orchestrator-<k>`, `e2e-runner`, `pi-orchestrator-b`) | `app.kubernetes.io/name=pi-orchestrator` | `charts/cela/templates/orchestrator/`, `tests/e2e/runner-pod.yaml` |
+| ingest | `app.kubernetes.io/name=pi-ingest` | `charts/cela/templates/ingest/` |
+| sandboxes (incl. warm pool) | `app.kubernetes.io/name=pi-sandbox` | `charts/cela/templates/sandbox/template.yaml` |
 | Postgres (bundled) | `app.kubernetes.io/name=pi-postgres` (the chart's selector labels) | `charts/pi-postgres/templates/` |
 | e2e driver Job | `app.kubernetes.io/name=e2e-driver` | `tests/e2e/job.yaml.tpl` |
 | OneCLI | ns `onecli`, `app=onecli` (one pod: web 10254, gateway 10255, api 10256) | example selector; verify locally |
@@ -39,7 +39,7 @@ Files:
 | CoreDNS | ns `kube-system`, `k8s-app=kube-dns` | example selector; verify locally |
 
 These selectors are configuration, not required installation names. Set them in your values file
-(see the [chart README](../charts/pi-durable/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
+(see the [chart README](../charts/cela/README.md)); Envoy is optional. Private CIDRs below are standard reserved ranges,
 not one cluster's LAN. Add any other non-public cluster/node ranges used in your environment with `networkPolicy.sandbox.extraEgressExcept` (IPv4 and IPv6 CIDRs, appended to the `except` lists of `sandbox-allow-internet-egress` or, with the proxy on, `sandbox-direct-allow-egress`): a public Kubernetes API endpoint, global IPv6 node and pod ranges, an external Postgres or OneCLI on a public IP, NAT64 `64:ff9b::/96`.
 
 Namespaces are matched with `kubernetes.io/metadata.name`.
@@ -64,13 +64,13 @@ Everything not listed is denied (`default-deny-all`, both directions). "S" = sta
 | sandbox | OneCLI gateway | 10255 | credentialed traffic of repo sessions **only when the egress proxy is off**; with the proxy on the rule is not rendered (ADR 0038) | S sandbox-allow-onecli-egress (proxy off) |
 | sandbox | public internet (not 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8, plus `networkPolicy.sandbox.extraEgressExcept`) | any | package installs, **only when the egress proxy is off** (decision 2026-11-15, reversed by ADR 0038 for the proxy on) | S sandbox-allow-internet-egress (proxy off) |
 | sandbox | egress proxy | 3128 | the whole egress of a proxied sandbox: every session's tool traffic with a per-session token (ADR 0036, 0037, 0038), see below | S sandbox-allow-egress-proxy-egress (with `egressProxy.enabled`) |
-| direct sandbox (`pi-durable.dev/network-mode=direct`) | CoreDNS; public internet (same exceptions as above) | 53; any | opt-in per profile, behind `security.allowDirectSandboxEgress`: no rules, no audit (ADR 0038) | S sandbox-direct-allow-egress |
+| direct sandbox (`cela.dev/network-mode=direct`) | CoreDNS; public internet (same exceptions as above) | 53; any | opt-in per profile, behind `security.allowDirectSandboxEgress`: no rules, no audit (ADR 0038) | S sandbox-direct-allow-egress |
 | egress proxy | OneCLI gateway | 10255 (gateway port only) | the proxy's one upstream: `route=onecli` tunnels carry the session's OneCLI token (ADR 0037); the management API port stays closed | S egress-proxy-allow-onecli-egress (proxy and OneCLI on) |
 | egress proxy (ingress side) | | | OneCLI's gateway admits `app.kubernetes.io/name=pi-egress-proxy` on 10255 | S onecli-gateway-allow-ingress (`charts/pi-onecli`, `clients.egressProxy`) |
 | every pod but a sandbox (with the proxy on; all pods with it off) | CoreDNS | 53 UDP/TCP | name resolution | S allow-dns-egress, C dns-egress-kube-dns-only |
 | `networkPolicy.clientSelectors` pods of the `pi-postgres` release (orchestrator, ingest, OneCLI) | Postgres | 5432 | (ingress side) | S `<pi-postgres fullname>` (`charts/pi-postgres`) |
-| pi-durable-poc orchestrator | OneCLI gateway, API | 10255, 10256 | (ingress side, `onecli` ns) | C onecli-ingress |
-| pi-durable-poc sandboxes | OneCLI gateway | 10255 only | (ingress side) | C onecli-ingress |
+| cela-dev orchestrator | OneCLI gateway, API | 10255, 10256 | (ingress side, `onecli` ns) | C onecli-ingress |
+| cela-dev sandboxes | OneCLI gateway | 10255 only | (ingress side) | C onecli-ingress |
 | Envoy Gateway proxies | OneCLI web, gateway, API | 10254, 10255, 10256 | optional ingress-controller example; replace selectors or use port-forward | C onecli-ingress |
 | OneCLI pod | CoreDNS | 53 (with DNS proxy rule) | FQDN allowlist needs Cilium to see lookups | C onecli-egress |
 | OneCLI pod | `onecli/onecli-db` (example; patch for your database) | 5432 | OneCLI database | C onecli-egress |
@@ -86,7 +86,7 @@ Rows marked "(ingress side)" repeat a flow from the receiving end and add no rul
 ## Sandboxes: network modes and the cutover
 
 [ADR 0038](decisions/0038-network-modes.md), epic #50 slice 6; it reverses the 2026-11-15 "open internet for every session".
-What a sandbox may reach depends on `egressProxy.enabled` (the cutover) and on the Pod's `pi-durable.dev/network-mode` label,
+What a sandbox may reach depends on `egressProxy.enabled` (the cutover) and on the Pod's `cela.dev/network-mode` label,
 which its SandboxTemplate bakes in (one template and warm pool per size and mode: `pi-env-pool-<size>` proxied,
 `pi-env-direct-pool-<size>` direct).
 
@@ -102,7 +102,7 @@ which its SandboxTemplate bakes in (one template and warm pool per size and mode
 
 Fail closed. With the proxy on, the base policy `sandbox-allow-egress-proxy-egress` selects every sandbox Pod whatever its
 labels, so a Pod without the label, or with an unknown mode, has the proxy port and nothing else. The additive policy
-`sandbox-direct-allow-egress` selects `pi-durable.dev/network-mode=direct` and adds DNS and the public internet with the same
+`sandbox-direct-allow-egress` selects `cela.dev/network-mode=direct` and adds DNS and the public internet with the same
 `except` ranges as before. `allow-dns-egress` and the Cilium `dns-egress-kube-dns-only` exclude sandboxes
 (`app.kubernetes.io/name NotIn [pi-sandbox]`), and `sandbox-allow-onecli-egress` is not rendered. With the proxy off the
 chart renders today's policies unchanged (so an upgrade does not cut the internet), `security.allowDirectSandboxEgress` is
@@ -147,16 +147,16 @@ in `direct` the internet works (the IP, the port, IPv6 where the node has it, DN
 and platform addresses and the OneCLI gateway still fail.
 
 **Browser sandboxes** ([ADR 0041](decisions/0041-browser-sandbox.md)) add no policy. A browser Pod wears the same
-`app.kubernetes.io/name=pi-sandbox` and `pi-durable.dev/network-mode` labels as any sandbox (plus
-`pi-durable.dev/sandbox-flavour=browser`, which no policy selects on), so a proxied browser reaches the egress proxy on 3128 and
+`app.kubernetes.io/name=pi-sandbox` and `cela.dev/network-mode` labels as any sandbox (plus
+`cela.dev/sandbox-flavour=browser`, which no policy selects on), so a proxied browser reaches the egress proxy on 3128 and
 nothing else: Chromium sends everything to a forwarder on 127.0.0.1 inside the Pod, which tunnels through the proxy. No DNS, no
 UDP. `hack/browser-smoke.sh` shows the cluster, platform, OneCLI, metadata and LAN addresses refused.
 
 ## Assumptions to check before applying
 
 - **Postgres client selectors.** `charts/pi-postgres` admits only the pods named in its `networkPolicy.clientSelectors`
-  (the pi-durable pods and, for the bundled OneCLI, `app.kubernetes.io/name=onecli`); a client that is missing there is
-  refused at the database, not by a pi-durable policy.
+  (the cela pods and, for the bundled OneCLI, `app.kubernetes.io/name=onecli`); a client that is missing there is
+  refused at the database, not by a cela policy.
 - **Ingest clients.** The example allows Envoy Gateway proxies; replace selectors for your ingress controller. If clients will come from the LAN directly (a LoadBalancer
   Service) or another namespace, add a `from` entry to `ingest-allow-clients-ingress`.
 - **Kube API.** Both 443 (the Service port) and 6443 (the node endpoint) are allowed; which one Cilium evaluates depends on
@@ -174,11 +174,11 @@ Enforcement starts per pod the moment any policy selects it, so the safe route i
 
 1. Preconditions: Cilium is the CNI on every node, `kubectl get crd ciliumnetworkpolicies.cilium.io` works, DNS and
    the database are healthy, and a baseline `tests/e2e/run.sh phase3` passes (isolation KNOWN-FAIL on flannel).
-2. Put the pi-durable-poc endpoints in policy audit mode (Cilium agent: `cilium-dbg endpoint config <id>
+2. Put the cela-dev endpoints in policy audit mode (Cilium agent: `cilium-dbg endpoint config <id>
    PolicyAuditMode=Enabled`, for each pod in the namespace, or Cilium's cluster-wide `policy-audit-mode` during the window).
 3. `hack/install.sh` with `networkPolicy.provider: cilium` (the chart applies the Cilium policies with the rest). Dry check:
-   `helm template pi-durable charts/pi-durable -f <values> | kubectl apply --dry-run=client -f -`.
-4. Run the e2e suites (phase3, phase4, phase4b with `REAL_MODEL=1` once) and watch `hubble observe -n pi-durable-poc
+   `helm template cela charts/cela -f <values> | kubectl apply --dry-run=client -f -`.
+4. Run the e2e suites (phase3, phase4, phase4b with `REAL_MODEL=1` once) and watch `hubble observe -n cela-dev
    --verdict AUDIT`. Every AUDIT entry is a missing allow: fix the policy first.
 5. Disable audit mode (enforce). Re-run phase3: isolation must PASS. `NETPOL_ENFORCED=1` (makes absent enforcement a FAIL,
    not KNOWN-FAIL) is read only by `run-phase3.sh`; `tests/e2e/run.sh` and `job.yaml.tpl` do not forward it to the driver Job,
@@ -194,7 +194,7 @@ Fast, per layer, in reverse order:
 - Host rules (a hardened install only; the default has none): delete `pi-block-all` through the API (restores relaying of public hosts).
 - OneCLI policies: remove them with your OneCLI deployment manager (for plain kubectl:
   `kubectl -n onecli delete cnp onecli-ingress onecli-egress`).
-- pi-durable-poc, whole set (does not touch Pods or data):
+- cela-dev, whole set (does not touch Pods or data):
   ```sh
   kubectl -n <ns> delete ciliumnetworkpolicy orchestrator-egress-kube-apiserver dns-egress-kube-dns-only orchestrator-egress-github-api
   kubectl -n <ns> delete networkpolicy default-deny-all allow-dns-egress sandbox-default-deny \
@@ -249,13 +249,13 @@ it never gates readiness, sessions or tools.
   `POST /admin/status/probe`. Ingest cannot reach Kubernetes, so that route only sets `probe_requested_at` on shard 0's
   row; the orchestrator polls it every 5 s, claims it atomically, and runs at most one probe at a time. A request while a
   probe runs is answered `202 {"requested": false, "state": "running"}`.
-- **How.** A short-lived Pod (`pi-netprobe-<shard>-<id>`, label `pi-durable-k8s/netprobe`) with the label
+- **How.** A short-lived Pod (`pi-netprobe-<shard>-<id>`, label `cela/netprobe`) with the label
   `app.kubernetes.io/name=pi-sandbox`, so every policy that selects sandboxes applies to it. It runs the orchestrator's own
   image (`node`, already pullable), the sandbox runtime class, the restricted Pod Security profile, no service account
   token, no volume, a 120 s `activeDeadlineSeconds`, and is deleted when the probe ends. Leftovers are deleted at the
   next start. It is a plain Pod, not a SandboxClaim: no PVC, no per-sandbox token and no warm-pool slot, and the
   network position is the same (same label, namespace and runtime). With the egress proxy on it also wears
-  `pi-durable.dev/network-mode=proxied`, the strictest position (ADR 0038): whatever it cannot reach, a direct sandbox cannot
+  `cela.dev/network-mode=proxied`, the strictest position (ADR 0038): whatever it cannot reach, a direct sandbox cannot
   reach either, so one probe covers both modes.
 - **Denied targets** (IP addresses, resolved by the orchestrator, so DNS is not a variable): Postgres, the orchestrator's
   Service IP and its Pod IP, the Kubernetes API (`KUBERNETES_SERVICE_HOST`), the OneCLI management API (when OneCLI is
@@ -286,7 +286,7 @@ it never gates readiness, sessions or tools.
 
 With `onecli.mode: bundled` the OneCLI pods run in the app's namespace and `charts/pi-onecli` (release `pi-onecli`,
 installed by `hack/onecli.sh` before the upstream chart) supplies their policies ([ADR 0022](decisions/0022-bundled-onecli.md)).
-They hold from the first minute, before `pi-durable` and its namespace-wide `default-deny-all` exist. Pods are selected by
+They hold from the first minute, before `cela` and its namespace-wide `default-deny-all` exist. Pods are selected by
 the upstream chart's labels (`app.kubernetes.io/name=onecli`, `instance=<release>`, `component`).
 
 | From | To | Port | Why |
@@ -363,7 +363,7 @@ does not match Pod or Service addresses with a `cidr` rule, so use selectors for
 The proxy needs two Secrets and a role. The database Secret (`egressProxy.database.existingSecret`; `hack/install.sh` names
 it `pi-egress-database` and creates it from `EGRESS_DATABASE_URL`) holds the URI of the read-only role `pi_egress`, which
 only a database admin can create: `auth.egressReader.enabled=true` with charts/pi-postgres, otherwise once by hand (the
-statements are in `egressProxy.database` of [values.yaml](../charts/pi-durable/values.yaml)). With OneCLI the binding key
+statements are in `egressProxy.database` of [values.yaml](../charts/cela/values.yaml)). With OneCLI the binding key
 (`egressProxy.binding.existingSecret`, `pi-egress-binding`) seals the OneCLI tokens; `hack/install.sh` creates it once.
 The chart refuses to render with the proxy on and either name empty. The database must admit the proxy's pods on 5432
 (charts/pi-postgres does, `networkPolicy.clientSelectors`).

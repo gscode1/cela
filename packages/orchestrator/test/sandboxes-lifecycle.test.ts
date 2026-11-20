@@ -14,7 +14,7 @@ const sandboxEnv = vi.hoisted(() => ({
   ensureClaim: vi.fn(),
 }));
 vi.mock("../src/kube.ts", () => kube);
-vi.mock("@pi-durable-k8s/sandbox-env", () => ({
+vi.mock("@cela/sandbox-env", () => ({
   ENV: { masterKey: "PI_SANDBOX_MASTER_KEY" },
   SANDBOXD_TOKEN_SHA256_ENV: "SANDBOXD_AUTH_TOKEN_SHA256",
   deriveSandboxToken: () => "token",

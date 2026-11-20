@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/egress-proxy",
+  "name": "@cela/egress-proxy",
   "private": true,
   "version": "0.0.0",
   "description": "Session egress proxy: Stripe Smokescreen chained to OneCLI. A Go module, wired into pnpm check by these scripts.",

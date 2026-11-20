@@ -98,7 +98,7 @@ checkout root) into the instructions, before the skills catalog.
 
 A session token has `contents: write` (and `pull_requests: write`) on its repository, and GitHub cannot scope a token by ref.
 Whatever the repository does not protect, the agent can push to, force-push, delete or merge into, and so can a prompt
-injection in what it reads. pi-durable does not impose a branch policy on the repository ([ADR 0027](decisions/0027-no-agent-branch-ruleset.md)):
+injection in what it reads. cela does not impose a branch policy on the repository ([ADR 0027](decisions/0027-no-agent-branch-ruleset.md)):
 protect the branches that matter with GitHub's own branch protection or rulesets. A sensible minimum for `main` and release
 branches:
 

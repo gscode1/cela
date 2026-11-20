@@ -3,7 +3,7 @@
 # results in docs/research/egress-bakeoff.md):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy
-#   hack/egress-bakeoff.sh [--name pi-egress] [--namespace pi-durable] [--skip-revoke]
+#   hack/egress-bakeoff.sh [--name pi-egress] [--namespace cela] [--skip-revoke]
 #   hack/kind-down.sh --name pi-egress
 #
 # Two real sessions, A and B, each with a OneCLI agent, a sealed binding and session rules (hack/egress-onecli-driver.mjs, run in
@@ -21,14 +21,14 @@
 #   6. credential echo: the origin echoes the injected credential and the sandbox reads it
 #   7. redirects: the credential stays with its host; a redirect to a denied host is refused by the proxy
 #
-# The script refuses the cluster pi-durable and any context that is not kind. A check prints `ok: ...` or `FAIL: ...` and the run
+# The script refuses the cluster cela and any context that is not kind. A check prints `ok: ...` or `FAIL: ...` and the run
 # goes on (a bake-off wants every observation); `note:` lines are observations that carry no verdict. The exit status is 1 when
 # any check failed. Tokens and keys are never printed. The cleanup (sessions, OneCLI agents, secrets and allow rules) always runs.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 owner=${PI_SMOKE_OWNER:-admin}
 skip_revoke=0
 http_host=httpbingo.org
@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl node base64 openssl; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 contexts=$(kubectl config get-contexts -o name)
@@ -114,7 +114,7 @@ driver_js=$(cat "$root/hack/egress-onecli-driver.mjs")
 driver() { k exec -i deploy/pi-orchestrator -- node --input-type=module -e "$driver_js" "$@"; }
 pod_of() {
   local claim
-  claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
+  claim=$(k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
   [[ -n $claim ]] || die "no SandboxClaim for session $1"
   echo "$claim"
 }

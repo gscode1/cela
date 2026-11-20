@@ -3,11 +3,11 @@
 # THROWAWAY kind cluster (epic #50 slice 8, docs/decisions/0040-mcp-egress-flow.md, issue #42):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy
-#   hack/egress-mcp-smoke.sh [--name pi-egress] [--namespace pi-durable]
+#   hack/egress-mcp-smoke.sh [--name pi-egress] [--namespace cela]
 #   hack/kind-down.sh --name pi-egress
 #
 # It needs the internet (DeepWiki is a real public MCP server, httpbingo.org echoes request headers) and no real credential:
-# the secrets it makes in OneCLI hold dummy values. The script refuses the cluster pi-durable and any context that is not
+# the secrets it makes in OneCLI hold dummy values. The script refuses the cluster cela and any context that is not
 # kind, makes only objects with the prefix `smoke-` (servers, profiles, sessions, OneCLI secrets and rules) and removes
 # them at the end. A key or token is never printed. Every check prints `ok: ...` or `FAIL: ...`; the first failure stops
 # the run, the cleanup still runs. The OneCLI host rule for mcp.deepwiki.com that the bundled bootstrap made is removed at
@@ -26,7 +26,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 owner=${PI_SMOKE_OWNER:-admin}
 limit_ms=10000
 
@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl node jq; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 # A deleted server name is never created again (ADR 0027), so every run uses fresh names. No hyphen in them: the tool name is
@@ -236,7 +236,7 @@ check "explain with the naming profile says so" "$(api_ok POST /admin/egress/exp
 check "and says not for the profile that does not" "$(api_ok POST /admin/egress/explain '{"host":"mcp.deepwiki.com","profile":"coding"}')" '"namedByProfile":false'
 # The sandbox's own connection: the proxy judges it by the session's rule sets; the derived set applies to nobody.
 send_script "$s_with" sbx-done '[{"bash":"printf %s \"$HTTPS_PROXY\" > /workspace/.egress-url","timeout":60}]' >/dev/null
-claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$s_with" -o jsonpath='{.items[0].metadata.name}')
+claim=$(k get sandboxclaims -l "cela/session-id=$s_with" -o jsonpath='{.items[0].metadata.name}')
 [[ -n $claim ]] || fail "no SandboxClaim for the session"
 conn_fn='ph=${HTTPS_PROXY#*@}; pp=${ph##*:}; ph=${ph%:*}; tok=${HTTPS_PROXY#http://x:}; tok=${tok%%@*}; auth=$(printf "x:%s" "$tok" | base64 -w0);
 exec 3<>/dev/tcp/$ph/$pp || { echo noconnect; exit 0; }; printf "CONNECT mcp.deepwiki.com:443 HTTP/1.1\r\nHost: mcp.deepwiki.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n" "$auth" >&3; read -t 15 -r line <&3; echo "${line%$(printf "\r")}"'
