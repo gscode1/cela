@@ -37,6 +37,11 @@ export interface SessionSummary {
   events: { pending: number; submitted: number; failed: number };
 }
 
+/** Ingest's answer to a delete: "deleting" while cleanup runs, "deleted" once it is done. */
+export interface DeletedSession {
+  status: "deleting" | "deleted";
+}
+
 export type SessionEventInput = { kind: "message"; text: string; sourceEventId?: string };
 
 export interface PostedEvent {
@@ -98,8 +103,8 @@ export class SessionApi {
     return this.#json<PostedEvent>("POST", `${sessionPath(sessionId)}/events`, 202, event, signal);
   }
 
-  async deleteSession(sessionId: string, signal?: AbortSignal): Promise<void> {
-    await this.#json("DELETE", sessionPath(sessionId), 202, undefined, signal);
+  async deleteSession(sessionId: string, signal?: AbortSignal): Promise<DeletedSession> {
+    return this.#json<DeletedSession>("DELETE", sessionPath(sessionId), 202, undefined, signal);
   }
 
   /**

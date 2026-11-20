@@ -57,6 +57,28 @@ function describeError(error: unknown): string {
   return "internal error";
 }
 
+/** Like admin tools: `{error, status?}`, plus `retryAfter` (seconds) on a 503 that carried the header. */
+function failFrom(error: unknown, extra: Record<string, unknown> = {}): ToolResult {
+  const http =
+    error instanceof ApiError && error.status !== 0
+      ? {
+          status: error.status,
+          ...(error.status === 503 && error.retryAfter !== undefined
+            ? { retryAfter: error.retryAfter }
+            : {}),
+        }
+      : {};
+  return fail(describeError(error), { ...http, ...extra });
+}
+
+const timeoutSec = z
+  .number()
+  .int()
+  .min(1)
+  .max(50)
+  .optional()
+  .describe("Seconds to wait, 1 to 50, default 45.");
+
 const sessionId = z.string().describe("Session id (UUID) returned by start_session.");
 const createFields = {
   profile: z.string().optional().describe("Profile name; the server default when absent."),
@@ -121,7 +143,7 @@ export function registerTools(
         return ok({ ...session });
       } catch (error) {
         created -= 1;
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -166,7 +188,7 @@ export function registerTools(
         });
         return ok({ sessionId: args.sessionId, ...posted });
       } catch (error) {
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -183,7 +205,7 @@ export function registerTools(
           .number()
           .optional()
           .describe("The cursor of the previous result; absent reads from the start."),
-        timeoutSec: z.number().optional().describe("Seconds to wait, 1 to 50, default 45."),
+        timeoutSec,
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
@@ -202,7 +224,7 @@ export function registerTools(
         );
         return ok(waitResult(result));
       } catch (error) {
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -220,7 +242,7 @@ export function registerTools(
       try {
         return ok({ ...(await api.getSession(args.sessionId)) });
       } catch (error) {
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -244,7 +266,7 @@ export function registerTools(
         const posted = await api.postEvent(args.sessionId, { kind: "cancel" });
         return ok({ sessionId: args.sessionId, ...posted });
       } catch (error) {
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -254,7 +276,7 @@ export function registerTools(
     {
       title: "Delete session",
       description:
-        "Destructive: delete the session and drop its workspace. Work that was not pushed is lost. Deletion is asynchronous.",
+        "Destructive: delete the session and drop its workspace. Work that was not pushed is lost. Returns status deleting while cleanup is in progress or deleted when it is done; call get_session to follow it.",
       inputSchema: z.object({ sessionId }),
       annotations: {
         readOnlyHint: false,
@@ -265,10 +287,10 @@ export function registerTools(
     },
     async (args) => {
       try {
-        await api.deleteSession(args.sessionId);
-        return ok({ sessionId: args.sessionId, deleted: true });
+        const { status } = await api.deleteSession(args.sessionId);
+        return ok({ sessionId: args.sessionId, status });
       } catch (error) {
-        return fail(describeError(error));
+        return failFrom(error);
       }
     },
   );
@@ -282,7 +304,7 @@ export function registerTools(
       inputSchema: z.object({
         text: z.string().describe("The task for the agent."),
         ...createFields,
-        timeoutSec: z.number().optional().describe("Seconds to wait, 1 to 50, default 45."),
+        timeoutSec,
       }),
       annotations: {
         readOnlyHint: false,
@@ -300,14 +322,14 @@ export function registerTools(
         id = (await api.createSession(createInput(args), remaining())).sessionId;
       } catch (error) {
         created -= 1;
-        return fail(describeError(error));
+        return failFrom(error);
       }
       try {
         await api.postEvent(id, { kind: "message", text: args.text }, remaining());
         const result = await waitForSession(api, { sessionId: id, deadline }, opts.wait);
         return ok(waitResult(result));
       } catch (error) {
-        return fail(describeError(error), { sessionId: id });
+        return failFrom(error, { sessionId: id });
       }
     },
   );

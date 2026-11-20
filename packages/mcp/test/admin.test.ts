@@ -193,4 +193,47 @@ describe("admin mode", { timeout: 10_000 }, () => {
       await server.close();
     }
   });
+
+  it("admin_get_profile trims versions in the adapter", async () => {
+    const body = {
+      name: "coding",
+      revision: 3,
+      versions: [{ version: 3 }, { version: 2 }, { version: 1 }],
+    };
+    const fetcher = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify(body), { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const config = parseConfig({
+      ...base,
+      PI_MCP_ADMIN: "true",
+      PI_API_ADMIN_TOKEN: "admin-secret",
+    });
+    const server = createServer(config);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      const get = async (versions?: number): Promise<Record<string, unknown>> =>
+        (
+          await client.callTool({
+            name: "admin_get_profile",
+            arguments: { name: "coding", ...(versions === undefined ? {} : { versions }) },
+          })
+        ).structuredContent as Record<string, unknown>;
+      expect((await get()).versions).toHaveLength(3);
+      expect((await get(2)).versions).toEqual([{ version: 3 }, { version: 2 }]);
+      expect((await get(0)).versions).toEqual([]);
+      expect((await get(2)).revision).toBe(3);
+      const bad = await client.callTool({
+        name: "admin_get_profile",
+        arguments: { name: "coding", versions: -1 },
+      });
+      expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });

@@ -85,6 +85,8 @@ export class FakeApi {
   /** When set, every request is answered with a 307 to this URL. */
   redirectTo: string | undefined;
   /** Status of the next `POST /sessions` instead of creating one (e.g. 400). */
+  /** The status a DELETE answers with; ingest says "deleting" while cleanup is still running. */
+  deleteStatus: "deleting" | "deleted" = "deleted";
   failNextCreate: { status: number; error: string } | undefined;
   readonly #sessions = new Map<string, Internal>();
   readonly #sourceEvents = new Map<string, { sessionId: string; eventId: string }>();
@@ -263,7 +265,7 @@ export class FakeApi {
     }
     if (parts.length === 2 && method === "DELETE") {
       if (session.status !== "deleted") this.pushDeleted(session.id);
-      json(res, 202, { sessionId: session.id, status: "deleted" });
+      json(res, 202, { sessionId: session.id, status: this.deleteStatus });
       return;
     }
     if (parts[2] === "events" && method === "POST") {
