@@ -30,7 +30,7 @@ import type { McpAccess } from "./mcp-access.js";
 import type { RepoAccess } from "./repo-access.js";
 import type { TurnTimings } from "./timing.js";
 import type { EgressPrincipals } from "./egress.js";
-import { WorkspaceLostError } from "./workspace.js";
+import { CloneTargetNotFoundError, WorkspaceLostError } from "./workspace.js";
 import { SkillIntegrityError } from "./skills.js";
 import type { SkillLibrary } from "./skills.js";
 import { RunWatcher } from "./watcher.js";
@@ -447,7 +447,7 @@ export class SessionService {
 
   /**
    * Provisions the repo session's GitHub access and makes sure its clone exists. What no retry can fix ends the input
-   * for good (and, for a lost workspace or refused access, the session): the agent must not run a turn in a workspace
+   * for good (and, for a lost workspace, refused access or a repository or branch that does not exist, the session): the agent must not run a turn in a workspace
    * that is not the one the user asked for. Anything else throws as is, so the inbox retries it.
    */
   async #prepareRepo(session: SessionRow, conversationId: number): Promise<void> {
@@ -463,6 +463,11 @@ export class SessionService {
       if (error instanceof GithubDeniedError) {
         const failure =
           "GitHub refused access to the repository: is the GitHub App installed on it?";
+        await this.#failSession(session.id, conversationId, failure);
+        throw new PermanentError(failure);
+      }
+      if (error instanceof CloneTargetNotFoundError) {
+        const failure = `Cannot clone: ${error.message}`;
         await this.#failSession(session.id, conversationId, failure);
         throw new PermanentError(failure);
       }

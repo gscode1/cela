@@ -13,6 +13,7 @@ import {
   buildShellEnv,
   GH_TOKEN_PLACEHOLDER,
   prepareWorkspace,
+  CloneTargetNotFoundError,
   WorkspaceLostError,
 } from "../src/workspace.ts";
 
@@ -178,6 +179,28 @@ describe("prepareWorkspace against a fake proxy", () => {
     expect(existsSync(join(root, "repo"))).toBe(false);
   });
 
+  it("reports a branch that does not exist as a typed error without git's stderr", async () => {
+    const error = await run({ branch: "no-such-branch" }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloneTargetNotFoundError);
+    const message = (error as Error).message;
+    expect(message).toBe('branch "no-such-branch" does not exist in octo/hello');
+    expect(message).not.toContain("http");
+    expect(existsSync(join(root, ".clone-tmp"))).toBe(false);
+  });
+
+  it("reports a repository that does not exist as a typed error without git's stderr", async () => {
+    const error = await prepareWorkspace(
+      env,
+      { repo: "octo/missing" },
+      { ca, sessionId: "s-1", wasReady: false, root, gitBase: "http://git.example.test" },
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloneTargetNotFoundError);
+    expect((error as Error).message).toBe(
+      "repository octo/missing does not exist or is not accessible to the GitHub App",
+    );
+    expect((error as Error).message).not.toContain("http");
+  });
+
   it("leaves nothing behind when the clone fails", async () => {
     const wrong = new NodeExecutionEnv({
       cwd: root,
@@ -187,13 +210,14 @@ describe("prepareWorkspace against a fake proxy", () => {
         GIT_CONFIG_SYSTEM: "/dev/null",
       },
     });
-    await expect(
-      prepareWorkspace(
-        wrong,
-        { repo: "octo/hello" },
-        { ca, sessionId: "s-1", wasReady: false, root, gitBase: "http://git.example.test" },
-      ),
-    ).rejects.toThrow(/git clone failed/);
+    const attempt = prepareWorkspace(
+      wrong,
+      { repo: "octo/hello" },
+      { ca, sessionId: "s-1", wasReady: false, root, gitBase: "http://git.example.test" },
+    );
+    await expect(attempt).rejects.toThrow(/git clone failed/);
+    // A network error is not "does not exist": it stays a plain, transient Error.
+    await expect(attempt).rejects.not.toBeInstanceOf(CloneTargetNotFoundError);
     expect(existsSync(join(root, "repo"))).toBe(false);
     expect(existsSync(join(root, ".clone-tmp"))).toBe(false);
     expect(existsSync(join(root, ".pi-workspace.json"))).toBe(false);

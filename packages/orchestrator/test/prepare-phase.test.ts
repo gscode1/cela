@@ -5,7 +5,7 @@ import { InboxLoop } from "../src/inbox.ts";
 import { GithubDeniedError } from "../src/github-app.ts";
 import type { Host } from "../src/host.ts";
 import { PermanentError, SessionService } from "../src/sessions.ts";
-import { WorkspaceLostError } from "../src/workspace.ts";
+import { CloneTargetNotFoundError, WorkspaceLostError } from "../src/workspace.ts";
 import type { RepoAccess } from "../src/repo-access.ts";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -350,10 +350,12 @@ const message: InboxEvent = {
 
 function service(prepare: () => Promise<void>) {
   const calls = { prepare: 0, submit: 0, failed: 0 };
+  const failures: unknown[] = [];
   const pool = {
-    query: (sql: string) => {
+    query: (sql: string, params?: unknown[]) => {
       if (sql.includes("set status = 'failed'")) {
         calls.failed += 1;
+        failures.push(params?.[1]);
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
@@ -385,7 +387,7 @@ function service(prepare: () => Promise<void>) {
     turnBudget: () => 5,
     repos,
   });
-  return { svc, calls };
+  return { svc, calls, failures };
 }
 
 describe("SessionService.prepare", () => {
@@ -431,6 +433,32 @@ describe("SessionService.prepare", () => {
       await expect(svc.prepare(message, sessionRow())).rejects.toBeInstanceOf(PermanentError);
       expect(calls.failed).toBe(1);
     }
+  });
+
+  it("fails the session at once, with a fixed message, when the branch or repository does not exist", async () => {
+    for (const [what, text] of [
+      ["branch", 'Cannot clone: branch "nope" does not exist in octo/hello'],
+      [
+        "repository",
+        "Cannot clone: repository octo/hello does not exist or is not accessible to the GitHub App",
+      ],
+    ] as const) {
+      const { svc, calls, failures } = service(() =>
+        Promise.reject(new CloneTargetNotFoundError({ repo: "octo/hello", branch: "nope" }, what)),
+      );
+      await expect(svc.prepare(message, sessionRow())).rejects.toBeInstanceOf(PermanentError);
+      expect(calls.failed).toBe(1);
+      expect(failures).toEqual([text]);
+    }
+  });
+
+  it("keeps a plain clone failure (network error) transient: no session failure", async () => {
+    const { svc, calls } = service(() =>
+      Promise.reject(new Error("git clone failed (exit 128): Could not resolve host")),
+    );
+    const error = await svc.prepare(message, sessionRow()).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(PermanentError);
+    expect(calls.failed).toBe(0);
   });
 
   it("neither prepares nor runs an input queued in front of a delete (session deleting)", async () => {
