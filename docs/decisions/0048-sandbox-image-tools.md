@@ -45,3 +45,11 @@ its tests because they read the passwd home with Node's `os.userInfo()`, which f
 Python's `pwd`, `whoami` and ssh). Both sandbox images now add user `pi`, uid and gid 1000, home `/home/pi`, shell
 `/bin/bash`, and the build checks the ids. The browser image also sets `HOME=/home/pi`, so the sandbox facts of ADR 0049
 say the same for both flavours.
+
+## Amendment: tini as PID 1 (2026-11-20, issue #327)
+
+`sandboxd` is PID 1 of the sandbox container and never reaps orphans, so every process whose parent exited stayed a
+zombie for the life of the Pod. Code that kills a process group and checks a descendant with `kill(pid, 0)` saw it alive
+(three gscode1/pi-tick lifecycle tests failed in the sandbox and passed under Docker), and long sessions leaked PIDs. Both
+sandbox images now install `tini` and set `ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sandboxd"]`: tini reaps
+orphans and forwards signals to `sandboxd`. The chart passes only `args`, so it needs no change; a test keeps it that way.

@@ -18,6 +18,7 @@ not ship the tools below. Decision: [ADR 0048](decisions/0048-sandbox-image-tool
 | `curl`, `jq`, `unzip` | curl 7.88.1, jq 1.6, UnZip 6.00 | bookworm apt |
 | `rg` (ripgrep) | ripgrep 13.0.0 | bookworm apt (issue #326: agents reach for it first) |
 | `gh` | 2.103.3 | release `.deb` from `github.com/cli/cli`, by architecture and SHA-256 |
+| `tini` | 0.19.0 | bookworm apt; PID 1, runs `sandboxd` and reaps orphaned processes (issue #327) |
 | `ca-certificates` | | bookworm apt |
 
 Versions are the ones the pinned sources gave on 2026-11-20. The apt packages follow bookworm at build time; Node, `pi-env`

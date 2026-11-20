@@ -43,7 +43,7 @@ COPY --from=gh /${TARGETARCH}.deb /tmp/gh.deb
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git ca-certificates curl jq ripgrep unzip build-essential python3 python3-pip python3-venv /tmp/gh.deb \
+      git ca-certificates curl jq ripgrep tini unzip build-essential python3 python3-pip python3-venv /tmp/gh.deb \
  && rm -rf /var/lib/apt/lists/* /tmp/gh.deb \
  && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
@@ -53,4 +53,8 @@ RUN apt-get update \
  && test "$(id -u pi):$(id -g pi)" = 1000:1000 \
  && install -d -o 1000 -g 1000 /home/pi
 COPY --from=pi-env --chmod=0755 /pi-env /usr/local/bin/pi-env
+# sandboxd never reaps orphans: as PID 1 it would keep every zombie for the life of the Pod, and process-group code that
+# checks a killed descendant with kill(pid, 0) would see it alive (issue #327). tini reaps them and forwards signals to
+# sandboxd. The chart passes only args, so this ENTRYPOINT is what runs.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sandboxd"]
 USER 1000:1000
