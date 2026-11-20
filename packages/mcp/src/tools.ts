@@ -213,6 +213,8 @@ export function registerTools(
         sessionId,
         cursor: z
           .number()
+          .int()
+          .min(1)
           .optional()
           .describe("The cursor of the previous result; absent reads from the start."),
         timeoutSec,

@@ -154,6 +154,12 @@ describe("tools", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  it("declares the cursor as a positive integer in the schema", { timeout: TIMEOUT }, async () => {
+    const wait = (await client.listTools()).tools.find((t) => t.name === "wait");
+    const props = wait?.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.cursor).toMatchObject({ type: "integer", minimum: 1 });
+  });
+
   it("run_task returns sessionId and text", { timeout: TIMEOUT }, async () => {
     const answered = answerWhenPosted("the answer");
     const r = await call("run_task", { text: "do it", timeoutSec: 10 });
