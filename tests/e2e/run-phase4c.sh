@@ -17,6 +17,10 @@
 #   scope         the GitHub App installation covers REPO_B (a read-only token scoped to B is minted in the orchestrator
 #                 and revoked at once; without that the next check would prove nothing), and the token for REPO_A
 #                 cannot read REPO_B (`git ls-remote`, read only) while it can reach REPO_A
+#   tools         (proxy on) a repo session on a profile with the `packages` rules uses the default image's tools
+#                 through the proxy: node 22, `npm ci`, pnpm through corepack, a venv and `pip install`, curl to
+#                 api.github.com for REPO_A (only the OneCLI-injected token can read it), and gh: a PR on a test branch
+#                 of REPO_A, a comment on it, then the PR closed and the branch deleted (docs/sandbox-image.md)
 #   delete        after DELETE the OneCLI agent and both secrets are gone and the tombstone is completed; with the
 #                 proxy on, the binding and the session's rules are gone too
 #
@@ -315,6 +319,40 @@ t_clone_push() {
   assert_eq "no github.com tunnel of the session went direct or was denied" 0 "$(proxy_github_count "$id" '.allow != true or .decision_reason != "allowed, route onecli"')"
 }
 
+# The default sandbox image's tools through the egress proxy (issue #318, docs/sandbox-image.md). A session of its own,
+# on a profile that adds the `packages` rules (npm, PyPI); github.com and api.github.com reach OneCLI through the
+# session's own rules. The PR it opens on REPO_A is closed and its branch deleted at the end of the same script.
+t_tools() {
+  local prof out id gh_branch="$branch-gh"
+  need_repos || return 3
+  if [[ $proxied != 1 ]]; then
+    note "SKIPPED: the egress proxy is off (EGRESS_PROXY=0); this test checks the tools through the proxy"
+    return 3
+  fi
+  prof=e2e-tools-$(printf '%04x' "$RANDOM")
+  out=$(api alice PUT "/admin/profiles/$prof" '{"definition":{"egressRuleSets":["packages"]}}')
+  assert_jq "a profile $prof with the packages rules is created" "$out" '.status==200 or .status==201'
+  out=$(api alice POST /sessions "$(jq -nc --arg r "$REPO_A" --arg p "$prof" '{provider:"scripted", model:"scripted-1", repo:$r, profile:$p}')")
+  assert_jq "a repo session on it is created" "$out" '.status==201 and .body.repo!=null'
+  id=$(jq -r .body.sessionId <<<"$out")
+  echo "$id" >>"$sessions_file"
+  send "$id" tools-finished \
+    "node -v | grep -q '^v22[.]' && echo NODE_O''K" \
+    "rm -rf /tmp/npm-e2e && mkdir /tmp/npm-e2e && cd /tmp/npm-e2e && npm init -y >/dev/null && npm install --no-audit --no-fund is-number@7.0.0 >/dev/null && rm -rf node_modules && npm ci --no-audit --no-fund >/dev/null && test -f node_modules/is-number/package.json && echo NPM_CI_O''K" \
+    "cd /tmp && pnpm -v && echo PNPM_O''K" \
+    "python3 -m venv /tmp/venv-e2e && /tmp/venv-e2e/bin/pip install -q six==1.17.0 && /tmp/venv-e2e/bin/python -c 'import six' && echo PIP_O''K" \
+    "curl -fsS -o /dev/null https://api.github.com/repos/$REPO_A && echo CURL_O''K" \
+    "cd /workspace/repo && git checkout -q -b $gh_branch && git commit -q --allow-empty -m 'e2e gh $run_id' && git push -q origin HEAD:refs/heads/$gh_branch && gh pr create --head $gh_branch --title 'pi e2e $run_id' --body 'Opened and closed by the phase4c e2e suite.' >/dev/null && gh pr comment $gh_branch --body 'pi e2e comment' >/dev/null && echo GH_PR_COMMENT_O''K" \
+    "cd /workspace/repo && { gh pr close $gh_branch --delete-branch >/dev/null 2>&1 || git push -q origin --delete $gh_branch; } && echo GH_CLEANUP_O''K"
+  assert_eq "the session ran its script" found "$(answer_has alice "$id" tools-finished 600)"
+  local needle
+  for needle in NODE_OK NPM_CI_OK PNPM_OK PIP_OK CURL_OK GH_PR_COMMENT_OK GH_CLEANUP_OK; do
+    assert_eq "tool output has $needle" found "$(stream_has alice "$id" "$needle" 20)"
+  done
+  api alice DELETE "/sessions/$id" >/dev/null 2>&1 || true
+  api alice PUT "/admin/profiles/$prof" '{"enabledForNew":false}' >/dev/null 2>&1 || true
+}
+
 t_restart_skip() {
   need_repo_session || return 3
   # Scale 0 -> 1 rather than rollout restart: the driver may scale but not patch Deployments.
@@ -373,7 +411,7 @@ t_delete() {
 }
 
 # ---------------------------------------------------------------- driver
-# no-repo and clone-push use their own sessions and run side by side. The rest is one chain on the shared repo session
+# no-repo, clone-push and tools use their own sessions and run side by side. The rest is one chain on the shared repo session
 # that clone-push creates (restart-skip, then scope, then delete, which ends it), and restart-skip scales the
 # orchestrator: serial, in this order, after them.
 [[ ${mode:-cluster} == local ]] || e2e_db_start
@@ -381,7 +419,7 @@ proxied=0
 if egress_proxy_on; then proxied=1; fi
 note "egress proxy: $([[ $proxied == 1 ]] && echo "on (the repo session reaches GitHub through the proxy's OneCLI route)" || echo "off (EGRESS_PROXY=0: the sandbox uses the OneCLI gateway directly)")"
 
-e2e_parallel no-repo:t_no_repo clone-push:t_clone_push
+e2e_parallel no-repo:t_no_repo clone-push:t_clone_push tools:t_tools
 e2e_serial restart-skip t_restart_skip
 e2e_serial scope t_scope
 e2e_serial delete t_delete
