@@ -58,6 +58,34 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(log()).toMatch(/-t pi-sandbox-browser:0\.0\.0-[a-f0-9]+/);
   });
 
+  it("ships the default sandbox's tools from pinned sources, as a non-root user (ADR 0048)", () => {
+    const base = readFileSync(join(root, "images/sandbox/Dockerfile"), "utf8");
+    expect(base.trimEnd().endsWith("USER 1000:1000")).toBe(true);
+    // Node from the digest-pinned Node stage: bookworm's own nodejs is v18.
+    expect(base).toContain("COPY --from=pi-env /usr/local/bin/node /usr/local/bin/node");
+    // gh: one release, a checksum per architecture.
+    expect(
+      base.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/github\.com\/cli\/cli\/releases\/download\/v2\.103\.3\//g,
+      ),
+    ).toHaveLength(2);
+    for (const pkg of [
+      "python3-venv",
+      "python3-pip",
+      "build-essential",
+      "curl",
+      "jq",
+      "unzip",
+      "git",
+    ]) {
+      expect(base).toMatch(new RegExp(`apt-get install[\\s\\S]*\\b${pkg}\\b`));
+    }
+    // Writable home; caches on the workspace PVC, not the ephemeral-storage-limited root filesystem.
+    expect(base).toContain("HOME=/home/pi");
+    expect(base).toContain("npm_config_cache=/workspace/.cache/npm");
+    expect(base).toContain("COREPACK_HOME=/workspace/.cache/corepack");
+  });
+
   it("keeps the browser image on the sandbox's pi-env, pinned tools and a non-root user", () => {
     const base = readFileSync(join(root, "images/sandbox/Dockerfile"), "utf8");
     const browser = readFileSync(join(root, "images/sandbox-browser/Dockerfile"), "utf8");
