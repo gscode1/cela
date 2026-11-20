@@ -7,17 +7,16 @@ import { REPO_DIR } from "./workspace.js";
  * (no tokens, addresses or timestamps), so the text never changes under a running conversation.
  */
 
+/** The home of user `pi` (uid 1000) in both images, and their HOME. Pinned against the Dockerfiles by a test. */
+export const SANDBOX_HOME = "/home/pi";
+
 /** What each flavour's image ships, as the agent should read it. Pinned against the Dockerfiles by a test. */
-export const FLAVOUR_FACTS: Readonly<
-  Record<SandboxFlavour, { home: string | null; tools: string }>
-> = {
+export const FLAVOUR_FACTS: Readonly<Record<SandboxFlavour, { tools: string }>> = {
   default: {
-    home: "/home/pi",
     tools:
       "git, gh, curl, jq, unzip, node 22 with npm, npx and corepack (pnpm, yarn), python3 with pip and venv, gcc and make",
   },
   browser: {
-    home: null,
     tools:
       "git, node 22, a headless Chromium with pi-browser, patchright-run and agent-browser (usage: /usr/local/share/pi-browser/BROWSER.md)",
   },
@@ -40,11 +39,7 @@ export function environmentFacts(session: SessionRow, proxyOn: boolean): Environ
 }
 
 export function renderEnvironment(facts: EnvironmentFacts): string {
-  const { home, tools } = FLAVOUR_FACTS[facts.flavour];
-  const writable =
-    home === null
-      ? "Writable: /workspace and /tmp. HOME is not writable."
-      : `Writable: /workspace, /tmp and HOME (${home}).`;
+  const { tools } = FLAVOUR_FACTS[facts.flavour];
   const repo =
     facts.repo === null
       ? "Repository: none is checked out, and /workspace starts empty."
@@ -57,9 +52,9 @@ export function renderEnvironment(facts: EnvironmentFacts): string {
       : "Network: direct internet access; private and cluster addresses are blocked.";
   return [
     "<sandbox_environment>",
-    "Your tool commands run in an isolated Linux sandbox as uid 1000, without root.",
+    "Your tool commands run in an isolated Linux sandbox as user pi (uid 1000), without root.",
     "- Working directory: /workspace, a persistent volume. Everything outside it may be lost when the sandbox is suspended or replaced.",
-    `- ${writable} Nothing can be installed with apt.`,
+    `- Writable: /workspace, /tmp and HOME (${SANDBOX_HOME}). Nothing can be installed with apt.`,
     `- Tools: ${tools}.`,
     `- ${repo}`,
     `- ${network}`,

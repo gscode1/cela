@@ -21,7 +21,8 @@ ADD --checksum=sha256:cac3ff84b60b68e64cca69f31f303210c26320361cc3286b773655d422
 FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
 ARG TARGETARCH
 USER root
-# uid 1000 has no passwd entry, so HOME would be the unwritable `/`. Caches go to the workspace PVC: they survive a restart
+# Commands run as uid 1000, user `pi` (added below): tools that look the user up (Node `os.userInfo()`, Python `pwd`,
+# `whoami`, ssh) need a passwd entry, and HOME must be writable. Caches go to the workspace PVC: they survive a restart
 # and do not count against the sandbox's small ephemeral-storage limit. node-gyp takes the headers copied below instead of
 # downloading them from nodejs.org, which no egress rule set allows.
 ENV HOME=/home/pi \
@@ -48,6 +49,8 @@ RUN apt-get update \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
  && corepack enable --install-directory /usr/local/bin pnpm yarn \
+ && useradd -U -u 1000 -d /home/pi -M -s /bin/bash pi \
+ && test "$(id -u pi):$(id -g pi)" = 1000:1000 \
  && install -d -o 1000 -g 1000 /home/pi
 COPY --from=pi-env --chmod=0755 /pi-env /usr/local/bin/pi-env
 USER 1000:1000

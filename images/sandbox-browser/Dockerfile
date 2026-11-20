@@ -39,7 +39,10 @@ ADD --checksum=sha256:34be55c2b92d8d199fb9d1d62a905ee5b6ac5b1f3e8c24e5b20597f370
 FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
 ARG TARGETARCH
 USER root
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+# Commands run as uid 1000, user `pi` (added below): tools that look the user up need a passwd entry, and HOME must be
+# writable (images/sandbox/Dockerfile, issue #324).
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    HOME=/home/pi
 COPY --from=tools /opt/browser-tools /opt/browser-tools
 COPY --from=tools /usr/local/bin/node /usr/local/bin/node
 # Chromium's system libraries come from Patchright's own list (Playwright's, for this distribution); the browser is the one
@@ -52,7 +55,10 @@ RUN apt-get update \
  && node /opt/browser-tools/node_modules/patchright/cli.js install --no-shell chromium \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
  && chmod -R a+rX /opt/ms-playwright \
- && ln -s "$(find /opt/ms-playwright -maxdepth 3 -type f -name chrome | head -n 1)" /usr/local/bin/pi-chromium
+ && ln -s "$(find /opt/ms-playwright -maxdepth 3 -type f -name chrome | head -n 1)" /usr/local/bin/pi-chromium \
+ && useradd -U -u 1000 -d /home/pi -M -s /bin/bash pi \
+ && test "$(id -u pi):$(id -g pi)" = 1000:1000 \
+ && install -d -o 1000 -g 1000 /home/pi
 COPY --from=pi-env --chmod=0755 /pi-env /usr/local/bin/pi-env
 COPY --from=agent-browser --chmod=0755 /${TARGETARCH} /opt/agent-browser/agent-browser
 COPY --from=forwarder /src/packages/browser-proxy/dist /opt/browser-proxy/dist
