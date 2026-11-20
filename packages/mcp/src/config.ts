@@ -76,6 +76,9 @@ export function parseConfig(env: Record<string, string | undefined>): McpConfig 
       throw new ConfigError("PI_API_ADMIN_TOKEN is required");
     if (!/^[\x21-\x7e]+$/.test(adminToken))
       throw new ConfigError("PI_API_ADMIN_TOKEN contains characters not allowed in a bearer token");
+    // The point of a second token is that the session tools never hold admin rights (ADR 0050).
+    if (adminToken === token)
+      throw new ConfigError("PI_API_ADMIN_TOKEN must differ from PI_API_TOKEN");
     admin = { token: adminToken, writes };
   }
   return {

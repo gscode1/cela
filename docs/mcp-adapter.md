@@ -68,9 +68,10 @@ reaches a sandbox with web egress.
 
 ## Optional admin tools
 
-Set `PI_MCP_ADMIN=true` and `PI_API_ADMIN_TOKEN` to expose `admin_list_profiles`, `admin_get_profiles`,
-`admin_list_skills`, `admin_get_skills`, `admin_list_mcp_servers`, `admin_get_mcp_servers`,
-`admin_list_egress_rule_sets`, `admin_get_egress_rule_sets`, and `admin_get_settings`. Get tools take `name`.
+Set `PI_MCP_ADMIN=true` and `PI_API_ADMIN_TOKEN` (an admin's token, different from `PI_API_TOKEN`) to expose
+`admin_list_profiles`, `admin_get_profile`, `admin_list_skills`, `admin_get_skill`, `admin_list_mcp_servers`,
+`admin_get_mcp_server`, `admin_list_egress_rule_sets`, `admin_get_egress_rule_set` and `admin_get_settings`. Get tools
+take `name`.
 Responses are untrusted. These tools can expose deployment configuration to the client.
 
 With `PI_MCP_ADMIN_WRITES=true`, `admin_put_profile` accepts `name`, `expectedRevision`, optional `definition`

@@ -14,6 +14,9 @@ describe("admin mode", { timeout: 10_000 }, () => {
     expect(() => parseConfig({ ...base, PI_MCP_ADMIN: "true" })).toThrow("PI_API_ADMIN_TOKEN");
     expect(() => parseConfig({ ...base, PI_MCP_ADMIN_WRITES: "true" })).toThrow("PI_MCP_ADMIN");
     expect(() => parseConfig({ ...base, PI_MCP_ADMIN: "yes" })).toThrow("PI_MCP_ADMIN");
+    expect(() =>
+      parseConfig({ ...base, PI_MCP_ADMIN: "true", PI_API_ADMIN_TOKEN: "session-secret" }),
+    ).toThrow("must differ");
   });
 
   it.each([
@@ -74,12 +77,12 @@ describe("admin mode", { timeout: 10_000 }, () => {
     await client.connect(b);
     try {
       for (const tool of [
-        "admin_get_profiles",
-        "admin_get_mcp_servers",
-        "admin_get_egress_rule_sets",
-        "admin_get_skills",
+        "admin_get_profile",
+        "admin_get_mcp_server",
+        "admin_get_egress_rule_set",
+        "admin_get_skill",
       ]) {
-        const max = tool === "admin_get_skills" ? 64 : 32;
+        const max = tool === "admin_get_skill" ? 64 : 32;
         const valid = await client.callTool({ name: tool, arguments: { name: "a".repeat(max) } });
         expect(valid.isError).not.toBe(true);
         const invalid = await client.callTool({
@@ -97,6 +100,33 @@ describe("admin mode", { timeout: 10_000 }, () => {
         expect(invalid.isError).toBe(true);
       }
       expect(fetcher).toHaveBeenCalledTimes(4);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("refuses a redirect and a non-JSON answer without leaking either token", async () => {
+    const fetcher = vi.fn((_url: string, init: RequestInit) => {
+      expect(init.redirect).toBe("error");
+      return Promise.resolve(new Response("<html>admin-secret</html>", { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const config = parseConfig({
+      ...base,
+      PI_MCP_ADMIN: "true",
+      PI_API_ADMIN_TOKEN: "admin-secret",
+    });
+    const server = createServer(config);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      const result = await client.callTool({ name: "admin_get_settings", arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("not JSON");
+      expect(JSON.stringify(result)).not.toContain("admin-secret");
     } finally {
       await client.close();
       await server.close();
@@ -126,7 +156,7 @@ describe("admin mode", { timeout: 10_000 }, () => {
       expect(tools.filter((tool) => tool.name.startsWith("admin_")).length).toBe(writes ? 11 : 9);
       expect(tools.some((tool) => tool.name === "admin_put_profile")).toBe(writes);
       const result = await client.callTool({
-        name: "admin_get_profiles",
+        name: "admin_get_profile",
         arguments: { name: "coding" },
       });
       expect(JSON.stringify(result)).not.toContain("admin-secret");
