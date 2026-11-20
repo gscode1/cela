@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProfileDefinition } from "@cela/session-core";
+import { PROFILE_DEFINITION_SHAPE } from "../src/admin.js";
 import { parseConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -231,6 +233,118 @@ describe("admin mode", { timeout: 10_000 }, () => {
         arguments: { name: "coding", versions: -1 },
       });
       expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("admin_get_profile sends a version's definition only when it differs from the top-level one", async () => {
+    const definition = { tools: ["read"], instructions: "x" };
+    const body = {
+      name: "coding",
+      currentVersion: 2,
+      definition,
+      versions: [
+        { version: 2, definition: { ...definition }, createdBy: "a" },
+        { version: 1, definition: { tools: ["read", "bash"] }, createdBy: "a" },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+    const server = createServer(
+      parseConfig({ ...base, PI_MCP_ADMIN: "true", PI_API_ADMIN_TOKEN: "admin-secret" }),
+    );
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      const result = await client.callTool({
+        name: "admin_get_profile",
+        arguments: { name: "coding" },
+      });
+      expect(result.structuredContent).toMatchObject({
+        definition,
+        versions: [
+          { version: 2, createdBy: "a" },
+          { version: 1, definition: { tools: ["read", "bash"] } },
+        ],
+      });
+      const versions = (result.structuredContent as { versions: object[] }).versions;
+      expect(versions[0]).not.toHaveProperty("definition");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("admin_put_profile definition schema", { timeout: 10_000 }, () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("has exactly the fields of session-core's ProfileDefinition", () => {
+    // `Record<keyof ProfileDefinition, true>` fails to compile when the type gains or loses a field.
+    const fields: Record<keyof ProfileDefinition, true> = {
+      tools: true,
+      modelTools: true,
+      instructions: true,
+      defaultModel: true,
+      reasoning: true,
+      turnBudget: true,
+      tokenBudget: true,
+      mcpServers: true,
+      skills: true,
+      repoSkills: true,
+      repoContext: true,
+      sandboxSize: true,
+      sandboxSizes: true,
+      egressRuleSets: true,
+      networkMode: true,
+      sandboxFlavour: true,
+    };
+    expect(Object.keys(PROFILE_DEFINITION_SHAPE).sort()).toEqual(Object.keys(fields).sort());
+    for (const [key, field] of Object.entries(PROFILE_DEFINITION_SHAPE)) {
+      expect(field.description, key).toBeTruthy();
+    }
+  });
+
+  it("types the known fields and passes unknown ones on for ingest to judge", async () => {
+    const fetcher = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetcher);
+    const server = createServer(
+      parseConfig({
+        ...base,
+        PI_MCP_ADMIN: "true",
+        PI_API_ADMIN_TOKEN: "admin-secret",
+        PI_MCP_ADMIN_WRITES: "true",
+      }),
+    );
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      const put = (definition: unknown) =>
+        client.callTool({
+          name: "admin_put_profile",
+          arguments: { name: "coding", expectedRevision: 1, definition },
+        });
+      expect((await put({ tools: "read" })).isError).toBe(true);
+      expect((await put({ reasoning: "extreme" })).isError).toBe(true);
+      expect(fetcher).not.toHaveBeenCalled();
+      expect((await put({ tools: ["read"], futureField: 1 })).isError).toBeUndefined();
+      expect(fetcher).toHaveBeenLastCalledWith(
+        "https://example.test/admin/profiles/coding",
+        expect.objectContaining({
+          body: JSON.stringify({
+            expectedRevision: 1,
+            definition: { tools: ["read"], futureField: 1 },
+          }),
+        }),
+      );
     } finally {
       await client.close();
       await server.close();
