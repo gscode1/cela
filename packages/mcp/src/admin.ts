@@ -13,13 +13,18 @@ const CATALOG_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const profileName = z
   .string()
   .regex(CATALOG_NAME)
-  .refine((value) => value !== "new");
-const skillName = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+  .refine((value) => value !== "new")
+  .describe("Profile name.");
+const skillName = z
+  .string()
+  .regex(/^[a-z][a-z0-9-]{0,63}$/)
+  .describe("Skill name.");
 const mcpServerName = z
   .string()
   .regex(CATALOG_NAME)
-  .refine((value) => value !== "history");
-const ruleSetName = z.string().regex(CATALOG_NAME);
+  .refine((value) => value !== "history")
+  .describe("MCP server name.");
+const ruleSetName = z.string().regex(CATALOG_NAME).describe("Rule set name.");
 const MAX_REVISION = 2147483647;
 const names = (what: string): z.ZodOptional<z.ZodArray<z.ZodString>> =>
   z.array(z.string()).optional().describe(what);
@@ -192,8 +197,16 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
   server.registerTool(
     "admin_get_profile",
     {
-      description: `Get one profile: its revision (needed by put and delete), definition and version history, newest first. A version's definition is sent only when it differs from the top-level one; versions limits the history to the newest n, 0 for none. ${untrusted}`,
-      inputSchema: z.object({ name: profileName, versions: z.number().int().min(0).optional() }),
+      description: `Get one profile: its revision (needed by put and delete), definition and version history, newest first. A version's definition is sent only when it differs from the top-level one. ${untrusted}`,
+      inputSchema: z.object({
+        name: profileName,
+        versions: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("How many of the newest versions to return; 0 for none. Absent: all."),
+      }),
       annotations: readAnnotation,
     },
     async (args, extra) => {
@@ -269,7 +282,12 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
       description: `Delete a profile at its current revision. It must be disabled (enabledForNew false) and not the default profile; running sessions keep their snapshot, and the name cannot be created again. ${untrusted}`,
       inputSchema: z.object({
         name: profileName,
-        expectedRevision: z.number().int().min(1).max(MAX_REVISION),
+        expectedRevision: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_REVISION)
+          .describe("The profile's current revision."),
       }),
       annotations: {
         readOnlyHint: false,
