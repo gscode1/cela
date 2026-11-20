@@ -50,7 +50,7 @@ COPY --from=tools /usr/local/bin/node /usr/local/bin/node
 # browser.
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends git ca-certificates tini \
  && node /opt/browser-tools/node_modules/patchright/cli.js install-deps chromium \
  && node /opt/browser-tools/node_modules/patchright/cli.js install --no-shell chromium \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
@@ -70,4 +70,6 @@ COPY --chmod=0755 images/sandbox-browser/files/pi-browser /usr/local/bin/pi-brow
 COPY --chmod=0755 images/sandbox-browser/files/patchright-run /usr/local/bin/patchright-run
 COPY --chmod=0755 images/sandbox-browser/files/agent-browser /usr/local/bin/agent-browser
 COPY images/sandbox-browser/files/BROWSER.md /usr/local/share/pi-browser/BROWSER.md
+# PID 1 must reap orphans; sandboxd does not (images/sandbox/Dockerfile, issue #327).
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sandboxd"]
 USER 1000:1000

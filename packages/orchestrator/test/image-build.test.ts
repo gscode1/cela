@@ -75,6 +75,7 @@ describe("image delivery replaces mutable code uploads", () => {
       "build-essential",
       "curl",
       "jq",
+      "ripgrep",
       "unzip",
       "git",
     ]) {
@@ -125,6 +126,21 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(policy.DownloadDirectory).toBe("/workspace/downloads");
     expect(policy.QuicAllowed).toBe(false);
     expect(policy.DnsOverHttpsMode).toBe("off");
+  });
+
+  it("runs sandboxd under tini in both sandbox images, so orphans are reaped (issue #327)", () => {
+    for (const name of ["sandbox", "sandbox-browser"]) {
+      const text = readFileSync(join(root, "images", name, "Dockerfile"), "utf8");
+      expect(text, name).toMatch(/apt-get install[^&]*\btini\b/);
+      expect(text, name).toContain('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sandboxd"]');
+    }
+    // The chart must not replace the ENTRYPOINT: sandboxd gets args only.
+    const template = readFileSync(
+      join(root, "charts/cela/templates/sandbox/template.yaml"),
+      "utf8",
+    );
+    const container = template.slice(template.indexOf("- name: sandboxd"));
+    expect(container.slice(0, container.indexOf("ports:"))).not.toMatch(/\bcommand:/);
   });
 
   it("accepts build flags without an image target", () => {
