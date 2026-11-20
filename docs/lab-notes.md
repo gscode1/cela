@@ -2,7 +2,7 @@
 
 These are dated observations from **one example arm64 test environment**, not deployment prerequisites or a runbook.
 Measured numbers and findings are retained for comparison; they are not capacity guarantees. Use the current
-[deploy guide](../deploy/README.md) and [e2e suites](e2e.md) on your own cluster.
+[install plan](install-plan.md) and [e2e suites](e2e.md) on your own cluster.
 Raw transcripts, resource logs and failed-start logs were dropped: they duplicated old source and cluster state.
 The summaries below retain their measured results.
 
@@ -318,7 +318,7 @@ The two medium findings left open are plausible, not confirmed: an unknown OneCL
 ### Reproduce
 
 ```sh
-# a cluster set up from deploy/, an owner token in the ingest pods, a reachable model
+# a cluster set up with hack/install.sh, an owner token in the ingest pods, a reachable model
 REPO=owner/repo NAMESPACE=cela-dev examples/load-50-2026-11-16/run-load.sh
 ```
 
@@ -356,8 +356,8 @@ after (checked), and no step touched them.
 - **Delete.** The namespace was gone in about 30 s (Sandbox finalizers completed). Both storage classes reclaim with
   `Delete`, so no Released PV was left.
 - **Install.** `pi-postgres` release (`longhorn-static`, 10 Gi) with random secrets created beforehand; URI Secret
-  `pi-database`; the three ExternalSecrets from `deploy/` (all `SecretSynced` in seconds); the `onecli-ca` ConfigMap from
-  `deploy/fetch-onecli-ca.sh` (the chart does not create it); then `hack/install.sh` with the lab values: external OneCLI
+  `pi-database`; the three ExternalSecrets (then in `deploy/`, now `charts/cela/examples/external-secrets.yaml`; all `SecretSynced` in seconds); the `onecli-ca` ConfigMap from
+  `fetch-onecli-ca.sh` (now `hack/fetch-onecli-ca.sh`; the chart does not create it); then `hack/install.sh` with the lab values: external OneCLI
   (`onecli.onecli:10256` and `:10255`, prefix `pi-session-`), `networkPolicy.provider: cilium`,
   `sandbox.storageClass: longhorn-single`, `api.admins: [alice]`. `bob` has no token on the new `api-auth` (the chart creates
   tokens for the admins only).
@@ -368,3 +368,15 @@ after (checked), and no step touched them.
   sandbox exists), `networkPolicy=unknown`. A real session (profile `implementer`, `openai-codex/gpt-6.1-sol`, reasoning
   `low`, no repo) answered "ok" through OneCLI, and a second message ran a bash tool in a gVisor sandbox. `run.sh smoke` and
   `phase4b` passed.
+
+## reinstall-2026-11-20
+
+The lab stack was reinstalled once more, after the rename to cela ([ADR 0047](decisions/0047-rename-to-cela.md)).
+
+- The old namespace `pi-durable-poc` was deleted.
+- A fresh install into `cela-dev`, with images built from `main` at 820eda4.
+- The settings tables were restored from a backup, as on 2026-11-17.
+- The OneCLI ingress policy was updated in the lab's GitOps repo to admit the new namespace (install plan section 9a).
+- `cela-dev` is now managed by Argo CD from the GitOps repo: the apps `cela-dev-secret`, `cela-dev-postgres` and
+  `cela-dev`. The chart is pinned to a commit and the values live in that repo, so `hack/install.sh` is no longer used
+  for this namespace.
