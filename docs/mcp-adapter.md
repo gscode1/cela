@@ -54,7 +54,7 @@ instead of the `npx` command.
    assets and creates the release. A version with a suffix (`1.1.0-rc.1`) becomes a pre-release.
 
 To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, then
-`node packages/mcp/scripts/smoke.mjs X.Y.Z npx -y ./cela-mcp-X.Y.Z.tgz` from the directory with the tarball.
+`node packages/mcp/scripts/smoke.mjs X.Y.Z npx -y ./cela-mcp-X.Y.Z.tgz` from a directory outside the repository that holds the tarball (inside it, npm resolves `./` against the repo's `package.json`).
 
 ## Tools
 

@@ -41,12 +41,14 @@ jobs:
         run: packages/mcp/scripts/release-build.sh dist-release
       - name: Smoke test the tarball (npx) and the bundle
         run: |
-          mkdir smoke
-          cp "dist-release/cela-mcp-$VERSION.tgz" smoke/
-          (cd smoke && node ../packages/mcp/scripts/smoke.mjs "$VERSION" npx -y "./cela-mcp-$VERSION.tgz")
-          mkdir smoke/bundle
-          unzip -q "dist-release/cela-mcp-$VERSION.mcpb" -d smoke/bundle
-          node packages/mcp/scripts/smoke.mjs "$VERSION" node smoke/bundle/dist/main.js
+          # Outside the checkout, like a user: inside it npm resolves ./file.tgz against the repo's package.json.
+          smoke="$RUNNER_TEMP/mcp-smoke"
+          mkdir -p "$smoke/bundle"
+          cp "dist-release/cela-mcp-$VERSION.tgz" "$smoke/"
+          script="$GITHUB_WORKSPACE/packages/mcp/scripts/smoke.mjs"
+          (cd "$smoke" && node "$script" "$VERSION" npx -y "./cela-mcp-$VERSION.tgz")
+          unzip -q "dist-release/cela-mcp-$VERSION.mcpb" -d "$smoke/bundle"
+          node "$script" "$VERSION" node "$smoke/bundle/dist/main.js"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
