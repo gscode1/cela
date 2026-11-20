@@ -432,6 +432,49 @@ describe("publishAndCheckProfiles", () => {
   });
 });
 
+describe("publishAndCheckProfiles resolves tools only", () => {
+  const NOW = new Date();
+  function dbWith(definitions: Record<string, ProfileDefinition>): FakeSettingsDb {
+    const db = new FakeSettingsDb();
+    for (const [name, definition] of Object.entries(definitions)) {
+      db.profiles.set(name, {
+        name,
+        current_version: 1,
+        enabled_for_new: true,
+        created_at: NOW,
+        created_by: "alice",
+        updated_at: NOW,
+        updated_by: "alice",
+      });
+      db.versions.push({ name, version: 1, definition, created_at: NOW, created_by: "alice" });
+    }
+    return db;
+  }
+
+  it("does not report browser, direct or sized profiles, which ingest enforces at write, but still an unknown tool", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const db = dbWith({
+        browser: { tools: ["read"], sandboxFlavour: "browser" },
+        direct: { tools: ["read"], networkMode: "direct" },
+        sized: { tools: ["read"], sandboxSize: "large", sandboxSizes: ["small", "large"] },
+        stale: { tools: ["grep"], sandboxFlavour: "browser" },
+      });
+      const unresolved = await publishAndCheckProfiles(
+        db.asPool(),
+        { tools: ["read", "bash"], extensions: ["coding-tools"] },
+        "o1",
+      );
+      expect(unresolved).toEqual(["stale"]);
+      const logged = write.mock.calls.map(([line]) => String(line)).join("");
+      expect(logged).not.toContain("sandboxFlavour");
+      expect(logged).not.toContain("sandbox size");
+    } finally {
+      write.mockRestore();
+    }
+  }, 10_000);
+});
+
 describe("a tool the profile removed is refused, not only hidden (#181)", () => {
   /** Two tools that record each call; the profile allows only `allowed`. */
   function spyTools(ran: string[], names: readonly string[]) {

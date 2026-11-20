@@ -13,9 +13,9 @@ must run in a fixed order:
 |---|---|---|
 | CloudNativePG operator | by hand, cluster-wide | heavy dependency for one small database |
 | agent-sandbox controller + CRDs | by hand | not documented as a step |
-| gVisor RuntimeClass `gvisor` | node setup | hard-coded in `deploy/sandbox-template.yaml` |
+| gVisor RuntimeClass `gvisor` | node setup | hard-coded in `deploy/sandbox-template.yaml` (removed, slice 11b; now a chart value) |
 | Cilium (to enforce policy) | CNI setup | without it isolation silently does not exist |
-| External Secrets Operator + `cluster-secret-store` | by hand | `deploy/*externalsecret*.yaml` fail without it |
+| External Secrets Operator + `cluster-secret-store` | by hand | `deploy/*externalsecret*.yaml` fail without it (now `charts/cela/examples/external-secrets.yaml`) |
 | OneCLI (own namespace, own Postgres) | by hand or GitOps | not in this repo; agent token, admin key, CA and host rules are manual |
 
 Before slice 2, secret/CA setup and code-upload scripts preceded `kubectl apply -k deploy`. Slice 2 replaces runtime code upload with multi-arch application images. Many names are fixed: namespace
@@ -328,6 +328,9 @@ move, no Helm adoption of kustomize objects.
    namespaces).
 6. OneCLI: if it stays external, keep the namespace name and the pod labels `pi-orchestrator` and `pi-sandbox` that its
    ingress policy selects, and keep the prefix `pi-session-` so the new orphan sweep removes the old agents and secrets.
+   If the namespace changes (as in [ADR 0047](decisions/0047-rename-to-cela.md)), update that shared ingress policy
+   too: it names the agent namespace (example: `hack/onecli-policies/ingress.yaml`; in the lab it lives in the GitOps
+   repo). Without it the gateway and API drop the new namespace's traffic.
 7. Apply the ExternalSecrets (`pi-onecli`, `pi-onecli-admin`, `pi-github-app`) from a local overlay before the app
    release; they feed the chart's `existingSecret` values.
 8. New `sandboxd-auth` and `api-auth`: every client token changes. Set `api.admins` explicitly and the storage classes
