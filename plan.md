@@ -222,7 +222,7 @@ Tests:
   - It passes the proxy token, `HTTPS_PROXY` and the CA to that session's commands.
   - It clones into `/workspace` once; the clone is idempotent and skipped if `.git` exists.
 - Session delete also deletes its OneCLI agent.
-- The sandbox image adds git and CA certificates. (Since issue #318 it also ships Node, Python, build tools, curl, jq, ripgrep and gh: [docs/sandbox-image.md](docs/sandbox-image.md), ADR 0048.)
+- The sandbox image adds git and CA certificates. (Since issue #318 it also ships Node, Python, build tools, uv, curl, jq, yq, ripgrep, fd, sqlite3, shellcheck, git-lfs and gh: [docs/sandbox-image.md](docs/sandbox-image.md), ADR 0048.)
 - Once NetworkPolicy is enforced, sandbox egress is only the OneCLI gateway (plus DNS). (Superseded twice: first by the 2026-11-15 baseline above, direct public internet open; then by the egress proxy (epic #50, ADRs 0034–0041), the chart's default since 2026-11-19: a sandbox reaches only the proxy, which applies the profile's rules and routes credentialed hosts to OneCLI.)
 - Tests:
   - A session without a repo works unchanged.

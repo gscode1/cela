@@ -14,7 +14,7 @@ export const SANDBOX_HOME = "/home/pi";
 export const FLAVOUR_FACTS: Readonly<Record<SandboxFlavour, { tools: string }>> = {
   default: {
     tools:
-      "git, gh, curl, jq, ripgrep (rg), unzip, node 22 with npm, npx and corepack (pnpm, yarn), python3 with pip and venv, gcc and make",
+      "git with git-lfs, gh, curl, jq, yq, ripgrep (rg), fd, tree, file, zip, unzip, xz, bzip2, sqlite3, shellcheck, node 22 with npm, npx and corepack (pnpm, yarn), python3 with pip and venv, uv and uvx, gcc and make",
   },
   browser: {
     tools:

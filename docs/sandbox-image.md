@@ -17,12 +17,16 @@ not ship the tools below. Decision: [ADR 0048](decisions/0048-sandbox-image-tool
 | `git` | 2.39.5 | bookworm apt |
 | `curl`, `jq`, `unzip` | curl 7.88.1, jq 1.6, UnZip 6.00 | bookworm apt |
 | `rg` (ripgrep) | ripgrep 13.0.0 | bookworm apt (issue #326: agents reach for it first) |
+| `fd`, `tree`, `file`, `zip`, `xz`, `bzip2`, `sqlite3`, `shellcheck` | bookworm's | bookworm apt (`fd-find`, linked as `fd`; `xz-utils`); issue #329 |
+| `git-lfs` | bookworm's | bookworm apt, enabled system-wide (`git lfs install --system`); its downloads need the LFS storage host in the session's egress rules |
+| `uv`, `uvx` | 0.13.7 | release tarball from `github.com/astral-sh/uv`, by architecture and SHA-256; cache under `XDG_CACHE_HOME` |
+| `yq` | v4.54.1 (mikefarah) | release binary from `github.com/mikefarah/yq`, by architecture and SHA-256 (bookworm's `yq` is a different tool) |
 | `gh` | 2.103.3 | release `.deb` from `github.com/cli/cli`, by architecture and SHA-256 |
 | `tini` | 0.19.0 | bookworm apt; PID 1, runs `sandboxd` and reaps orphaned processes (issue #327) |
 | `ca-certificates` | | bookworm apt |
 
-Versions are the ones the pinned sources gave on 2026-11-20. The apt packages follow bookworm at build time; Node, `pi-env`
-and `gh` change only when their pin in the Dockerfile does. Bump the pins on purpose and on a schedule, not on every patch
+Versions are the ones the pinned sources gave on 2026-11-20. The apt packages follow bookworm at build time; Node, `pi-env`,
+`gh`, `uv` and `yq` change only when their pin in the Dockerfile does. Bump the pins on purpose and on a schedule, not on every patch
 release, to keep image churn and CVE noise down. Go and Rust toolchains are not in the image: add them when a repository
 needs them.
 
