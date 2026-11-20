@@ -56,7 +56,7 @@ seeds the set `mcp-catalog`.
   history are written and before the commit. Ingest passes `syncMcpRulesFromCatalog`, which reads the catalog as the
   transaction sees it and rewrites the set: it creates, changes or removes only the rules that differ, each with a history entry
   under **one** new revision and one `NOTIFY egress_rules`. A failure in either step rolls both back; a catalog write that
-  changes nothing writes no rule. Lock order is the catalog lock, then the egress lock, as in every other writer.
+  changes nothing writes no rule (and does not sync: see the amendment on the start-up backfill). Lock order is the catalog lock, then the egress lock, as in every other writer.
 - **System-owned, read-only.** The admin API answers `409` ("derived from the MCP server catalog") to every edit or delete of
   the set and to adding, changing or deleting its rules; a profile naming it is a `400`. It has `applies_to_all = false` and no
   profile can name it, so the proxy's evaluation never uses it (the Go loader reads the extra column and ignores it: the parity
@@ -207,3 +207,23 @@ The bundled OneCLI is now open by default: no terminal `block *` from the bootst
 address, with its key injected by OneCLI, connects. The reconciler above is unchanged: it never creates a block where there is none,
 so without one its `pi-egress-allow-*` rules are harmless, and with a hardened install (a block, or `ONECLI_HOSTS`) it behaves as
 described. The MCP transport refuses redirects, so a 30x never moves a request or its injected key to another host.
+
+## Amendment: ingest backfills `mcp-catalog` at start (issue #338)
+
+Found live: `mcp-catalog` had no rule while the enabled server `mcp-searxng` was in the catalog. Migration 029 creates the set empty, the
+sync of section 2 runs only inside a catalog write that changes something, and a PUT that changes nothing returns before it. A
+server stored before 029 therefore never got a rule, and the reconciler (section 3) never opened its host.
+
+- **Fix.** After its migrations and before it reports ready, ingest calls `backfillMcpCatalogRules`: one transaction that takes
+  the catalog lock, reads the catalog and runs the same `syncMcpRules` as a catalog write. The set now matches the catalog after
+  every start, whatever wrote the catalog before, and a server it cannot name (an IP address, a host the validator refuses) is
+  logged as `mcp-catalog-skipped` with the reason. The actor of the rules and their history is `mcp-catalog`.
+- **Owner.** Ingest is the only writer of the `egress` schema (0034) and of the catalog, so it is the one place that can sync
+  them in one transaction; the orchestrator and the proxy only read the set.
+- **Idempotent and replica-safe.** The sync creates, changes or removes only rules that differ and writes a revision and a NOTIFY
+  only when it did, so a start with nothing to change leaves the set, its revision and the history untouched (tested: a second
+  run, and two concurrent ones, add no rule and no revision). Replicas starting together queue on the catalog lock, like a
+  catalog write, and the later ones find nothing to do. A failure retries with the rest of the start-up (readiness stays 503).
+- **Not done.** A no-op PUT still writes and syncs nothing: the set is derived data, and a restart (or any real catalog change)
+  repairs it. Running the sync on every no-op PUT was rejected because it would make a read-like request write rules and
+  history for drift the admin API cannot cause (it refuses every edit of the set).

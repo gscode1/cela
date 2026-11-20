@@ -120,7 +120,7 @@ orchestrator keeps the gateway's host rules in step with the egress rules, so a 
 | Wanted host | From |
 |---|---|
 | every host of an `allow` rule with `route=onecli` (a rule set, a repo session's rules, an admin's; not expired) | the egress rules (ADR 0034, 0037) |
-| every host of an enabled MCP server of the catalog, whatever its route | the system set `mcp-catalog`, derived in the transaction of the catalog write (ADR 0040) |
+| every host of an enabled MCP server of the catalog, whatever its route | the system set `mcp-catalog`, derived in the transaction of the catalog write and once when ingest starts (ADR 0040) |
 
 The reconciler creates one rule `pi-egress-allow-<host>` (`*.suffix` is `pi-egress-allow-wild-suffix`) per wanted host and deletes
 the ones nobody wants any more. It runs on every `egress_rules` notification (a catalog PUT is one), on a catalog notification and
