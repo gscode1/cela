@@ -32,13 +32,17 @@ the MCP transport.
 
 | Tool | What it does |
 |---|---|
-| `run_task { text, profile?, repo?, branch?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline. Returns as `wait`, always with the `sessionId`. |
+| `run_task { text, profile?, repo?, branch?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline (`timeoutSec` as in `wait`). Returns as `wait`, always with the `sessionId`. |
 | `start_session { profile?, repo?, branch? }` | `POST /sessions`. The profile decides model and tools. |
 | `send_message { sessionId, text, idempotencyKey? }` | Queues a message and returns at once with `{ eventId, duplicate }`. The same key on the same session never runs the message twice. |
-| `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (default 45, at most 50) and returns `{ done, status, cursor, text, truncated, runFailure?, failure?, events }`. |
+| `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (integer, 1 to 50, default 45; out-of-range values are rejected) and returns `{ done, status, cursor, text, truncated, runFailure?, failure?, events }`. |
 | `get_session { sessionId }` | `GET /sessions/{id}`: status, failure and event counts. |
 | `cancel { sessionId }` | Asks the running turn to stop. Asynchronous: follow with `wait`. |
-| `delete_session { sessionId }` | Deletes the session and its workspace. Push your work first: unpushed changes are lost. |
+| `delete_session { sessionId }` | Deletes the session and its workspace. Returns `{ sessionId, status }` with ingest's status, `deleting` or `deleted`. Push your work first: unpushed changes are lost. |
+
+A failed session tool returns `{ error, status?, retryAfter? }` and `isError`, like the admin tools: `status` is the
+HTTP status of the session API (absent when no answer came), `retryAfter` is in seconds and only on a 503. `run_task`
+adds the `sessionId` when the session was already created.
 
 `steer`, model overrides and a transcript reader are not in this slice.
 
@@ -71,11 +75,12 @@ reaches a sandbox with web egress.
 Set `PI_MCP_ADMIN=true` and `PI_API_ADMIN_TOKEN` (an admin's token, different from `PI_API_TOKEN`) to expose
 `admin_list_profiles`, `admin_get_profile`, `admin_list_skills`, `admin_get_skill`, `admin_list_mcp_servers`,
 `admin_get_mcp_server`, `admin_list_egress_rule_sets`, `admin_get_egress_rule_set` and `admin_get_settings`. Get tools
-take `name`.
+take `name`. `admin_get_profile` also takes an optional `versions` (integer, 0 or more): how many of the newest
+versions to return; absent returns all of them (newest first).
 Responses are untrusted. These tools can expose deployment configuration to the client.
 
 With `PI_MCP_ADMIN_WRITES=true`, `admin_put_profile` accepts `name`, `expectedRevision`, optional `definition`
 and `enabledForNew`; revision 0 means create only. `admin_delete_profile` requires `name` and the current
 `expectedRevision`. Read the profile first; a 409 means reload before retrying. Delete requires the profile to be
-disabled and unreferenced. Ingest returns its delete receipt (lastVersion), not a new revision. No other admin writes
+disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. No other admin writes
 are exposed. Only enable this mode for trusted clients: a shell-capable agent can read its environment.
