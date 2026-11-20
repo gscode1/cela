@@ -16,17 +16,45 @@ credential. It calls `/admin/*` only when explicitly enabled. Design and trade-o
 | `PI_MCP_ADMIN_WRITES` | no | Set to `true` to enable profile writes; requires admin mode (default `false`). |
 | `PI_MCP_MAX_SESSIONS` | no | Most sessions this process may hold at once (default 20), so a looping agent cannot start sandboxes without end. A slot is freed when `delete_session` reports `deleted`, or, for `deleting`, when the session is later seen `deleted` or gone (re-read when the cap is hit). Only sessions this process created count. |
 
+In the Claude Desktop bundle these are settings (`user_config`) that the manifest maps to the variables above. Every optional
+setting has a default, because an unset one could otherwise reach the server as a literal `${user_config.x}`.
+
 **Use the token of an owner who is not in `PI_API_ADMINS`.** In the default mode, an admin token also
 works on the admin API, and a coding agent with a shell can read its own MCP config.
 
-Build it once with `pnpm --filter @cela/mcp build`, then register `packages/mcp/dist/main.js`. For Claude Code:
+## Install
+
+Each release (`mcp-vX.Y.Z` on the [releases page](https://github.com/gscode1/cela/releases)) has two assets, built by
+`.github/workflows/mcp-release.yml` ([ADR 0051](decisions/0051-mcp-release-assets.md)). Both need Node 22.19 or newer (the bundle declares it in its manifest).
+
+**Claude Code** (and any client that takes a command): run the tarball with `npx`. Replace `X.Y.Z`:
 
 ```bash
-claude mcp add cela -e PI_API_URL=http://localhost:8080 -e PI_API_TOKEN=<token> -- node /path/to/cela/packages/mcp/dist/main.js
+claude mcp add cela -e PI_API_URL=https://cela.example.com -e PI_API_TOKEN=<token> -- \
+  npx -y https://github.com/gscode1/cela/releases/download/mcp-vX.Y.Z/cela-mcp-X.Y.Z.tgz
 ```
 
-Other clients take the same command, arguments and environment in their MCP server config. Logs go to stderr; stdout is
-the MCP transport.
+Pin the version in the URL; `npx` caches it. Other clients take the same command, arguments and environment in their MCP
+server config. Logs go to stderr; stdout is the MCP transport.
+
+**Claude Desktop**: download `cela-mcp-X.Y.Z.mcpb`, double-click it and fill in the settings: Session API URL and token are required; admin tools, the admin token, profile writes
+and the session limit are optional. Both tokens are marked sensitive: Claude Desktop keeps them in the OS keychain
+instead of `claude_desktop_config.json`. The bundle is unsigned, so Claude Desktop warns before installing it. Updating
+means installing the newer `.mcpb`.
+
+**From a checkout** (development): `pnpm --filter @cela/mcp build`, then register `packages/mcp/dist/main.js` with `node`
+instead of the `npx` command.
+
+### Cutting a release
+
+1. In one commit, set the same new version in `packages/mcp/package.json`, `packages/mcp/manifest.json` and `SERVER_VERSION`
+   in `packages/mcp/src/server.ts` (`pnpm check` fails if they differ).
+2. Merge it, then tag the merge commit and push the tag: `git tag mcp-vX.Y.Z && git push origin mcp-vX.Y.Z`.
+3. The workflow checks that the tag equals both versions, builds and tests, packs, validates the manifest, smoke-tests both
+   assets and creates the release. A version with a suffix (`1.1.0-rc.1`) becomes a pre-release.
+
+To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, then
+`node packages/mcp/scripts/smoke.mjs X.Y.Z npx -y ./cela-mcp-X.Y.Z.tgz` from the directory with the tarball.
 
 ## Tools
 
