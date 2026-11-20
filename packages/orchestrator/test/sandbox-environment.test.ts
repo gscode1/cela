@@ -63,6 +63,7 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "git",
       "curl",
       "jq",
+      "ripgrep",
       "unzip",
       "python3-pip",
       "python3-venv",

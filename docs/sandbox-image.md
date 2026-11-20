@@ -16,6 +16,7 @@ not ship the tools below. Decision: [ADR 0048](decisions/0048-sandbox-image-tool
 | `gcc`, `g++`, `make`, libc headers | GCC 12.2 | bookworm apt (`build-essential`), for native npm and pip modules |
 | `git` | 2.39.5 | bookworm apt |
 | `curl`, `jq`, `unzip` | curl 7.88.1, jq 1.6, UnZip 6.00 | bookworm apt |
+| `rg` (ripgrep) | ripgrep 13.0.0 | bookworm apt (issue #326: agents reach for it first) |
 | `gh` | 2.103.3 | release `.deb` from `github.com/cli/cli`, by architecture and SHA-256 |
 | `ca-certificates` | | bookworm apt |
 

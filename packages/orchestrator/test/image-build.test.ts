@@ -75,6 +75,7 @@ describe("image delivery replaces mutable code uploads", () => {
       "build-essential",
       "curl",
       "jq",
+      "ripgrep",
       "unzip",
       "git",
     ]) {

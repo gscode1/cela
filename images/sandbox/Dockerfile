@@ -43,7 +43,7 @@ COPY --from=gh /${TARGETARCH}.deb /tmp/gh.deb
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git ca-certificates curl jq unzip build-essential python3 python3-pip python3-venv /tmp/gh.deb \
+      git ca-certificates curl jq ripgrep unzip build-essential python3 python3-pip python3-venv /tmp/gh.deb \
  && rm -rf /var/lib/apt/lists/* /tmp/gh.deb \
  && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
