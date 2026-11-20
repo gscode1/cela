@@ -39,10 +39,18 @@ export interface WaitOptions {
   maxBytes?: number;
 }
 
+/** `pending`: a message is queued and not yet picked up (a first turn also waits here for the sandbox and clone). */
+export type WaitPhase = "pending" | "running" | "idle";
+
 export interface WaitResult {
   sessionId: string;
   done: boolean;
   status: SessionStatus;
+  phase: WaitPhase;
+  /** Names of the tools the agent is calling, from the last `live` event; only while `phase` is `running`. */
+  tools?: string[];
+  /** Whole seconds since the session was created (the API's `createdAt`). */
+  elapsedSec?: number;
   /** Id of the last entry returned whole (or skipped); pass it to the next `wait`. Absent while nothing was seen. */
   cursor?: number;
   /** Assistant text, untrusted. */
@@ -53,6 +61,8 @@ export interface WaitResult {
   runFailure?: string;
   /** Untrusted. */
   failure?: string;
+  /** Messages that failed during this call (a rise of `events.failed` since its first read); absent when none did. */
+  failedSinceStart?: number;
   events: SessionSummary["events"];
 }
 
@@ -72,8 +82,12 @@ interface EntryData {
 interface LiveData {
   running?: unknown;
   queued?: unknown;
+  tools?: unknown;
   runFailure?: unknown;
 }
+
+const MAX_TOOL_NAMES = 10;
+const MAX_TOOL_NAME_CHARS = 64;
 
 const isTerminal = (status: SessionStatus): boolean => status !== "active";
 
@@ -110,6 +124,10 @@ export async function waitForSession(
   let truncated = false;
   let runFailure: string | undefined;
   let summary: SessionSummary;
+  let failedAtStart = 0;
+  // The last `live` event of any connection: whether the run is busy, and the names of its tool calls.
+  let liveBusy: boolean | undefined;
+  let liveTools: string[] = [];
   // Set by the stream task; a holder, so the compiler does not narrow them to their initial value in the loop.
   const flags: {
     stop?: Stop;
@@ -145,17 +163,34 @@ export async function waitForSession(
     });
   };
 
-  const result = (done: boolean): WaitResult => ({
-    sessionId,
-    done,
-    status: summary.status,
-    ...(lastId === undefined ? {} : { cursor: lastId }),
-    text: parts.join(SEPARATOR),
-    truncated,
-    ...(runFailure === undefined ? {} : { runFailure }),
-    ...(summary.failure === undefined ? {} : { failure: summary.failure }),
-    events: summary.events,
-  });
+  const phase = (done: boolean): WaitPhase => {
+    if (summary.events.pending > 0 && !isTerminal(summary.status)) return "pending";
+    if (done || liveBusy === false) return "idle";
+    return "running";
+  };
+
+  const result = (done: boolean): WaitResult => {
+    const current = phase(done);
+    const created = Date.parse(summary.createdAt);
+    const failedSince = summary.events.failed - failedAtStart;
+    return {
+      sessionId,
+      done,
+      status: summary.status,
+      phase: current,
+      ...(current === "running" && liveTools.length > 0 ? { tools: liveTools } : {}),
+      ...(Number.isNaN(created)
+        ? {}
+        : { elapsedSec: Math.max(0, Math.floor((now() - created) / 1000)) }),
+      ...(lastId === undefined ? {} : { cursor: lastId }),
+      text: parts.join(SEPARATOR),
+      truncated,
+      ...(runFailure === undefined ? {} : { runFailure }),
+      ...(summary.failure === undefined ? {} : { failure: summary.failure }),
+      ...(failedSince > 0 ? { failedSinceStart: failedSince } : {}),
+      events: summary.events,
+    };
+  };
 
   /** One entry of the stream. Stops before an entry that would not fit; cuts one that cannot fit even alone. */
   const onEntry = (data: EntryData): void => {
@@ -184,6 +219,16 @@ export async function waitForSession(
   };
 
   const onLive = (live: LiveData): void => {
+    liveBusy = live.running === true || (typeof live.queued === "number" && live.queued > 0);
+    liveTools = Array.isArray(live.tools)
+      ? [
+          ...new Set(
+            (live.tools as ({ name?: unknown } | null)[]).flatMap((tool) =>
+              typeof tool?.name === "string" ? [tool.name.slice(0, MAX_TOOL_NAME_CHARS)] : [],
+            ),
+          ),
+        ].slice(0, MAX_TOOL_NAMES)
+      : [];
     if (live.running === true || (typeof live.queued === "number" && live.queued > 0)) {
       flags.idle = false;
       runFailure = undefined;
@@ -267,6 +312,7 @@ export async function waitForSession(
 
   try {
     summary = await get();
+    failedAtStart = summary.events.failed;
     apply(summary);
     let nextPoll = now() + pollMs;
 

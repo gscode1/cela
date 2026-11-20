@@ -127,6 +127,58 @@ describe("waitForSession", () => {
     },
   );
 
+  it(
+    "reports a message that failed during the wait as failedSinceStart",
+    { timeout: TIMEOUT },
+    async () => {
+      const s = fake.addSession({ events: { failed: 1, pending: 1 } });
+      const p = wait(s);
+      await vi.waitFor(() => expect(fake.openStreams(s.id)).toBe(1), { timeout: 2000 });
+      // The orchestrator gives up on the message: it leaves `pending` and ends `failed`.
+      s.events.pending = 0;
+      s.events.failed = 2;
+      fake.pushLive(s.id, IDLE);
+      const r = await p;
+      expect(r).toMatchObject({ done: true, text: "", failedSinceStart: 1, phase: "idle" });
+      // Failures from before the call are not counted, and none means no field.
+      const old = fake.addSession({ events: { failed: 3 } });
+      fake.pushLive(old.id, IDLE);
+      expect((await wait(old)).failedSinceStart).toBeUndefined();
+    },
+  );
+
+  it("reports phase, tools and elapsedSec", { timeout: TIMEOUT }, async () => {
+    const created = new Date(Date.now() - 90_000).toISOString();
+    const queued = fake.addSession({ createdAt: created, events: { pending: 1 } });
+    const first = await wait(queued, { ms: 100 });
+    expect(first).toMatchObject({ done: false, phase: "pending" });
+    expect(first.tools).toBeUndefined();
+    expect(first.elapsedSec).toBeGreaterThanOrEqual(90);
+    expect(first.elapsedSec).toBeLessThan(100);
+
+    const running = fake.addSession();
+    fake.pushLive(running.id, {
+      running: true,
+      queued: 0,
+      tools: [
+        { callId: "1", name: "bash", status: "running" },
+        { callId: "2", name: "bash", status: "running" },
+        { callId: "3", name: "read", status: "done" },
+      ],
+    });
+    expect(await wait(running, { ms: 100 })).toMatchObject({
+      done: false,
+      phase: "running",
+      tools: ["bash", "read"],
+    });
+
+    const idle = fake.addSession();
+    fake.pushLive(idle.id, { ...IDLE, tools: [{ callId: "1", name: "bash", status: "done" }] });
+    const r = await wait(idle);
+    expect(r).toMatchObject({ done: true, phase: "idle" });
+    expect(r.tools).toBeUndefined();
+  });
+
   it("reports events.failed", { timeout: TIMEOUT }, async () => {
     const s = fake.addSession({ events: { failed: 2, submitted: 3 } });
     fake.pushLive(s.id, IDLE);

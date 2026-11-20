@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, SessionApi, type PostedEvent, type SessionSummary } from "../src/api.js";
 import type { McpConfig } from "../src/config.js";
-import { createServer, SERVER_NAME, SERVER_VERSION } from "../src/server.js";
+import { createServer, SERVER_NAME, SERVER_VERSION, serverInstructions } from "../src/server.js";
 import { assistant, FakeApi } from "./fake-api.js";
 
 const TIMEOUT = 15_000;
@@ -105,6 +105,26 @@ describe("tools", () => {
     expect(client.getServerVersion()?.name).toBe("cela");
   });
 
+  it("sends short server instructions that tell the workflow", { timeout: TIMEOUT }, () => {
+    const text = client.getInstructions() ?? "";
+    const words = text.split(/\s+/).length;
+    expect(words).toBeGreaterThanOrEqual(150);
+    expect(words).toBeLessThanOrEqual(250);
+    for (const phrase of [
+      "run_task",
+      "done:false",
+      "cursor",
+      "delete_session",
+      "allowlist",
+      "untrusted",
+    ]) {
+      expect(text, phrase).toContain(phrase);
+    }
+    // Admin tools are not registered here, so they are not recommended either.
+    expect(text).not.toContain("admin_");
+    expect(serverInstructions({ apiUrl: fake.url, token: fake.token, maxSessions: 1 })).toBe(text);
+  });
+
   it("start_session then send_message dedups on idempotencyKey", { timeout: TIMEOUT }, async () => {
     const started = await call("start_session", {});
     expect(started.isError).toBeUndefined();
@@ -152,6 +172,12 @@ describe("tools", () => {
       expect(r.isError).toBe(true);
     }
     expect(fake.requests).toHaveLength(0);
+  });
+
+  it("declares the cursor as a positive integer in the schema", { timeout: TIMEOUT }, async () => {
+    const wait = (await client.listTools()).tools.find((t) => t.name === "wait");
+    const props = wait?.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.cursor).toMatchObject({ type: "integer", minimum: 1 });
   });
 
   it("run_task returns sessionId and text", { timeout: TIMEOUT }, async () => {
@@ -237,6 +263,54 @@ describe("tools", () => {
     expect(c.isError).toBe(true);
     expect(String(b.structuredContent?.error)).toContain("PI_MCP_MAX_SESSIONS");
     expect(fake.requestsTo("POST", "/sessions")).toHaveLength(posts);
+  });
+
+  it("delete_session frees a slot of the cap", { timeout: TIMEOUT }, async () => {
+    await close();
+    await setup(1);
+    const id = sid(await call("start_session", {}));
+    expect((await call("run_task", { text: "x" })).isError).toBe(true);
+    // A session this process did not create must not free a slot.
+    const foreign = fake.addSession();
+    expect((await call("delete_session", { sessionId: foreign.id })).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBe(true);
+    expect((await call("delete_session", { sessionId: id })).isError).toBeUndefined();
+    expect((await call("delete_session", { sessionId: id })).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBeUndefined();
+    expect((await call("start_session", {})).isError).toBe(true);
+  });
+
+  it(
+    "a session that is still deleting keeps its slot until it is deleted",
+    { timeout: TIMEOUT },
+    async () => {
+      await close();
+      await setup(1);
+      const id = sid(await call("start_session", {}));
+      fake.deleteStatus = "deleting";
+      const d = await call("delete_session", { sessionId: id });
+      expect(d.structuredContent).toEqual({ sessionId: id, status: "deleting" });
+      fake.session(id).status = "deleting";
+      const refused = await call("start_session", {});
+      expect(refused.isError).toBe(true);
+      expect(String(refused.structuredContent?.error)).toContain("still deleting");
+      // Cleanup finishes: the next create re-reads the session and takes the slot.
+      fake.session(id).status = "deleted";
+      expect((await call("start_session", {})).isError).toBeUndefined();
+      expect((await call("start_session", {})).isError).toBe(true);
+    },
+  );
+
+  it("a deleting session that is gone (404) frees its slot", { timeout: TIMEOUT }, async () => {
+    await close();
+    await setup(1);
+    const id = sid(await call("start_session", {}));
+    fake.deleteStatus = "deleting";
+    await call("delete_session", { sessionId: id });
+    fake.session(id).status = "deleting";
+    expect((await call("run_task", { text: "x", timeoutSec: 1 })).isError).toBe(true);
+    fake.forget(id);
+    expect((await call("start_session", {})).isError).toBeUndefined();
   });
 
   it("a failed create does not use up the cap", { timeout: TIMEOUT }, async () => {

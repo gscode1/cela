@@ -57,6 +57,8 @@ export interface FakeSession {
   id: string;
   status: SessionStatus;
   failure?: string;
+  /** ISO time the session reports as `createdAt`; a fixed past time when absent. */
+  createdAt?: string;
   events: { pending: number; submitted: number; failed: number };
   /** Committed entries, in id order. */
   entries: { id: number; kind: string; messages: EntryMessage[] }[];
@@ -124,6 +126,7 @@ export class FakeApi {
       id: init.id ?? randomUUID(),
       status: init.status ?? "active",
       ...(init.failure === undefined ? {} : { failure: init.failure }),
+      ...(init.createdAt === undefined ? {} : { createdAt: init.createdAt }),
       events: { pending: 0, submitted: 0, failed: 0, ...init.events },
       entries: init.entries ?? [],
       lastLive: undefined,
@@ -138,6 +141,11 @@ export class FakeApi {
 
   session(id: string): FakeSession {
     return this.#internal(id);
+  }
+
+  /** Drops a session, so later reads answer 404. */
+  forget(id: string): void {
+    this.#sessions.delete(id);
   }
 
   /** Requests of one kind, e.g. `api.requestsTo("POST", "/events")` (path suffix match). */
@@ -365,7 +373,7 @@ function summary(s: Internal): Record<string, unknown> {
     model: { provider: "fake", model: "fake-model" },
     profile: { name: "coding", version: 1 },
     ...(s.failure === undefined ? {} : { failure: s.failure }),
-    createdAt: "2026-01-01T00:00:00.000Z",
+    createdAt: s.createdAt ?? "2026-01-01T00:00:00.000Z",
     lastActivityAt: "2026-01-01T00:00:00.000Z",
     events: s.events,
   };
