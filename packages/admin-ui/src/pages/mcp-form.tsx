@@ -171,8 +171,14 @@ export function McpForm({
   // What the next save is laid over: after a reload the stored server, so a value set back to what the server had when
   // the form opened is still a change from what is stored now.
   const base = stored ?? server;
+  // The fields this admin edited. Only these override the stored server on save, so a reload after a conflict keeps
+  // what another admin changed in the fields this one never touched.
+  const [touched, setTouched] = useState<ReadonlySet<keyof McpFields>>(new Set());
+  const touch = (field: keyof McpFields) => {
+    setTouched((current) => new Set(current).add(field));
+  };
 
-  const urlChanged = base !== undefined && !sameUrl(url, base.url);
+  const urlChanged = base !== undefined && touched.has("url") && !sameUrl(url, base.url);
   // A changed URL is a different server: the declaration has to be made again for it.
   const mustReask = urlChanged;
   const readOnlyAnswered = readOnly !== "" && (!mustReask || reasked);
@@ -200,11 +206,21 @@ export function McpForm({
   const changes: Partial<McpFields> = {};
   if (base !== undefined) {
     if (urlChanged) changes.url = url;
-    if (timeoutMs !== base.timeoutMs && timeoutIssue === undefined) changes.timeoutMs = timeoutMs;
-    if (maxOutputBytes !== base.maxOutputBytes && outputIssue === undefined)
+    if (touched.has("timeoutMs") && timeoutMs !== base.timeoutMs && timeoutIssue === undefined)
+      changes.timeoutMs = timeoutMs;
+    if (
+      touched.has("maxOutputBytes") &&
+      maxOutputBytes !== base.maxOutputBytes &&
+      outputIssue === undefined
+    )
       changes.maxOutputBytes = maxOutputBytes;
-    if (mustReask || (readOnly === "yes") !== base.readOnly) changes.readOnly = readOnly === "yes";
-    if (onecliSecret !== base.onecliSecret && secretIssue === undefined)
+    if (mustReask || (touched.has("readOnly") && (readOnly === "yes") !== base.readOnly))
+      changes.readOnly = readOnly === "yes";
+    if (
+      touched.has("onecliSecret") &&
+      onecliSecret !== base.onecliSecret &&
+      secretIssue === undefined
+    )
       changes.onecliSecret = onecliSecret;
   }
   // A form with problems can still be submitted, so the attempt shows them.
@@ -239,7 +255,17 @@ export function McpForm({
     },
     onSuccess: async (latest) => {
       setStored(latest);
-      if (latest !== undefined) setBaseRevision(latest.revision);
+      if (latest !== undefined) {
+        setBaseRevision(latest.revision);
+        // Fields this admin did not edit show what is stored now, which is what a save leaves them as.
+        if (!touched.has("url")) setUrl(latest.url);
+        if (!touched.has("timeoutMs"))
+          setTimeoutText(toTyped(latest.timeoutMs, TIMEOUT_FIELD.scale));
+        if (!touched.has("maxOutputBytes"))
+          setMaxOutput(toTyped(latest.maxOutputBytes, OUTPUT_FIELD.scale));
+        if (!touched.has("readOnly")) setReadOnly(latest.readOnly ? "yes" : "no");
+        if (!touched.has("onecliSecret")) setSecret(latest.onecliSecret ?? "");
+      }
       save.reset();
       await queryClient.invalidateQueries({ queryKey: ["mcp"] });
     },
@@ -300,7 +326,14 @@ export function McpForm({
           )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="mcp-url">URL</Label>
-            <Input id="mcp-url" value={url} onChange={(event) => setUrl(event.target.value)} />
+            <Input
+              id="mcp-url"
+              value={url}
+              onChange={(event) => {
+                setUrl(event.target.value);
+                touch("url");
+              }}
+            />
           </div>
           <details
             open={limitsOpen}
@@ -315,7 +348,10 @@ export function McpForm({
                 <Input
                   id="mcp-timeout"
                   value={timeout}
-                  onChange={(event) => setTimeoutText(event.target.value)}
+                  onChange={(event) => {
+                    setTimeoutText(event.target.value);
+                    touch("timeoutMs");
+                  }}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -323,13 +359,23 @@ export function McpForm({
                 <Input
                   id="mcp-output"
                   value={maxOutput}
-                  onChange={(event) => setMaxOutput(event.target.value)}
+                  onChange={(event) => {
+                    setMaxOutput(event.target.value);
+                    touch("maxOutputBytes");
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">Cuts longer tool output.</p>
               </div>
             </div>
           </details>
-          <SecretField value={secret} names={secretNames} onChange={setSecret} />
+          <SecretField
+            value={secret}
+            names={secretNames}
+            onChange={(value) => {
+              setSecret(value);
+              touch("onecliSecret");
+            }}
+          />
           {mustReask && (
             <Alert>The URL changed. Answer again for the new address before saving.</Alert>
           )}
@@ -338,6 +384,7 @@ export function McpForm({
             onChange={(value) => {
               setReadOnly(value);
               setReasked(true);
+              touch("readOnly");
             }}
           />
           {attempted && problems.length > 0 && (
@@ -378,7 +425,7 @@ export function McpForm({
               {stored.readOnly ? "read-only" : "can change state"},{" "}
               {stored.enabled ? "enabled" : "disabled"}, OneCLI secret{" "}
               {stored.onecliSecret === null ? "none" : <code>{stored.onecliSecret}</code>}. Saving
-              again replaces these with your draft.
+              again replaces only the fields you edited.
             </Alert>
           )}
           {reload.isSuccess && reload.data === undefined && (
