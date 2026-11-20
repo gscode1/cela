@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { describe, expect, it, vi } from "vitest";
-import type { EventDbRow, InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
+import type { EventDbRow, InboxEvent, SessionRow } from "@cela/session-core";
 import { InboxLoop } from "../src/inbox.ts";
 import { GithubDeniedError } from "../src/github-app.ts";
 import type { Host } from "../src/host.ts";

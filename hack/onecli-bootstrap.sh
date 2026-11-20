@@ -24,11 +24,11 @@
 #   ONECLI_RELEASE       Helm release name of the OneCLI chart (default onecli); Services are <release>-api, -gateway
 #   ONECLI_API_URL       API base. Unset: the script runs `kubectl port-forward svc/<release>-api` itself
 #   ONECLI_EXTERNAL_URL  the chart's externalUrl, sent as the Origin header. Unset: read from GET /v1/instance
-#   ONECLI_ADMIN_EMAIL   first account's email (default pi-admin@pi-durable.local)
+#   ONECLI_ADMIN_EMAIL   first account's email (default pi-admin@cela.local)
 #   ONECLI_ADMIN_SECRET  Secret for the account login and admin key (default pi-onecli-admin; keys email, password, api-key)
 #   ONECLI_AGENT_SECRET  Secret for the agent token (default pi-onecli; key agent-token)
 #   ONECLI_AGENT_ID      agent identifier (default pi-orchestrator)
-#   ONECLI_CA_CONFIGMAP  ConfigMap for the public CA (default pi-onecli-ca; key ca.pem, the key charts/pi-durable mounts)
+#   ONECLI_CA_CONFIGMAP  ConfigMap for the public CA (default pi-onecli-ca; key ca.pem, the key charts/cela mounts)
 #   ONECLI_HOSTS         space-separated allowlist hosts: an allow rule per host, then a terminal `block *` (docs/onecli-host-rules.md
 #                        lists the hosts of the previous default). Unset or empty (the default, ADR 0043): no host rules and
 #                        no block, OneCLI relays any host. It never deletes an existing `pi-block-all`: an install that was
@@ -37,7 +37,7 @@
 #                        create one generic secret (header `authorization: Bearer {value}`) and grant it to the agent.
 #                        The value is read from the environment only. All three or none.
 #
-# Defaults of the three object names equal onecli.bundled in charts/pi-durable/values.yaml (a unit test checks it).
+# Defaults of the three object names equal onecli.bundled in charts/cela/values.yaml (a unit test checks it).
 # Requires kubectl, curl, jq and openssl. Runs on macOS bash 3.2.
 set -euo pipefail
 umask 077
@@ -58,7 +58,7 @@ done
 }
 
 release=${ONECLI_RELEASE:-onecli}
-email=${ONECLI_ADMIN_EMAIL:-pi-admin@pi-durable.local}
+email=${ONECLI_ADMIN_EMAIL:-pi-admin@cela.local}
 admin_secret=${ONECLI_ADMIN_SECRET:-pi-onecli-admin}
 agent_secret=${ONECLI_AGENT_SECRET:-pi-onecli}
 agent_id=${ONECLI_AGENT_ID:-pi-orchestrator}

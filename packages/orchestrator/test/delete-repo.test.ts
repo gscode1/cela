@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import type pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
+import type { InboxEvent, SessionRow } from "@cela/session-core";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
 import { OneCliAdmin } from "../src/onecli-admin.ts";

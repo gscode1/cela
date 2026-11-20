@@ -3,7 +3,7 @@ import { SessionApi } from "./api.js";
 import type { McpConfig } from "./config.js";
 import { registerTools, type ToolOptions } from "./tools.js";
 
-export const SERVER_NAME = "pi-durable";
+export const SERVER_NAME = "cela";
 // Keep in step with package.json; a test checks it.
 export const SERVER_VERSION = "0.0.0";
 

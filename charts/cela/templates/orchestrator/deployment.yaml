@@ -4,7 +4,7 @@ the schema durable_s<k> (docs/decisions/0017-schema-sharding.md). Shard 0 keeps 
 (pi-orchestrator, instance label pi-orchestrator); shard k > 0 is pi-orchestrator-<k>.
 */ -}}
 {{- $root := . -}}
-{{- $onecli := include "pi-durable.onecli" . | fromJson -}}
+{{- $onecli := include "cela.onecli" . | fromJson -}}
 {{- range $shard := until (int .Values.orchestrator.shards) }}
 {{- $name := ternary "pi-orchestrator" (printf "pi-orchestrator-%d" $shard) (eq $shard 0) }}
 ---
@@ -15,10 +15,10 @@ metadata:
   labels:
     app.kubernetes.io/name: pi-orchestrator
     app.kubernetes.io/instance: {{ $name }}
-    {{- include "pi-durable.labels" $root | nindent 4 }}
+    {{- include "cela.labels" $root | nindent 4 }}
   annotations:
     # hack/install.sh reads this to run the OneCLI step before the install when it is bundled.
-    pi-durable/onecli-mode: {{ $root.Values.onecli.mode }}
+    cela/onecli-mode: {{ $root.Values.onecli.mode }}
 spec:
   replicas: 1
   strategy:
@@ -32,20 +32,20 @@ spec:
       labels:
         app.kubernetes.io/name: pi-orchestrator
         app.kubernetes.io/instance: {{ $name }}
-        app.kubernetes.io/part-of: pi-durable
+        app.kubernetes.io/part-of: cela
       annotations:
         checksum/model-config: {{ include (print $.Template.BasePath "/config.yaml") $root | sha256sum }}
     spec:
       serviceAccountName: pi-orchestrator
       securityContext:
-        {{- include "pi-durable.podSecurityContext" $root | nindent 8 }}
+        {{- include "cela.podSecurityContext" $root | nindent 8 }}
       {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: orchestrator
-          image: {{ include "pi-durable.image" (dict "name" "orchestrator" "image" $root.Values.images.orchestrator) }}
+          image: {{ include "cela.image" (dict "name" "orchestrator" "image" $root.Values.images.orchestrator) }}
           imagePullPolicy: {{ $root.Values.images.orchestrator.pullPolicy }}
           envFrom:
             - configMapRef: { name: pi-model-config }
@@ -62,7 +62,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ $root.Values.database.external.existingSecret }}, key: {{ $root.Values.database.external.uriKey }} } }
-            {{- include "pi-durable.databaseTlsEnv" $root | nindent 12 }}
+            {{- include "cela.databaseTlsEnv" $root | nindent 12 }}
             # Master key of the per-sandbox sandboxd tokens: HMAC(master, claim). Never reaches a bridge or a sandbox.
             - name: PI_SANDBOX_MASTER_KEY
               valueFrom: { secretKeyRef: { name: {{ $root.Values.sandbox.masterSecret }}, key: master } }
@@ -92,7 +92,7 @@ spec:
             # Every session's tool commands go through the egress proxy with a per-session token (ADR 0036); a repo
             # session's OneCLI token is sealed for the proxy with the binding key and never reaches the sandbox (ADR 0037).
             - { name: PI_EGRESS_PROXY_URL, value: "http://pi-egress-proxy.{{ $root.Release.Namespace }}.svc:3128" }
-            {{- if include "pi-durable.egressOnecliRoute" $root }}
+            {{- if include "cela.egressOnecliRoute" $root }}
             - { name: PI_EGRESS_BINDING_KEY_FILE, value: /etc/pi-egress-binding/key }
             {{- end }}
             {{- end }}
@@ -123,24 +123,24 @@ spec:
           resources:
             {{- toYaml $root.Values.orchestrator.resources | nindent 12 }}
           securityContext:
-            {{- include "pi-durable.containerSecurityContext" $root | nindent 12 }}
+            {{- include "cela.containerSecurityContext" $root | nindent 12 }}
           volumeMounts:
             {{- if and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap }}
             - { name: onecli-ca, mountPath: /etc/onecli, readOnly: true }
             {{- end }}
-            {{- if include "pi-durable.databaseTlsEnabled" $root }}
-            {{- include "pi-durable.databaseTlsMount" $root | nindent 12 }}
+            {{- if include "cela.databaseTlsEnabled" $root }}
+            {{- include "cela.databaseTlsMount" $root | nindent 12 }}
             {{- end }}
             {{- if $root.Values.github.app.existingSecret }}
             - { name: github-app, mountPath: /etc/pi-github-app, readOnly: true }
             {{- end }}
-            {{- if include "pi-durable.egressOnecliRoute" $root }}
+            {{- if include "cela.egressOnecliRoute" $root }}
             - { name: egress-binding, mountPath: /etc/pi-egress-binding, readOnly: true }
             {{- end }}
-      {{- if or (and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "pi-durable.databaseTlsEnabled" $root) (include "pi-durable.egressOnecliRoute" $root) }}
+      {{- if or (and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap) $root.Values.github.app.existingSecret (include "cela.databaseTlsEnabled" $root) (include "cela.egressOnecliRoute" $root) }}
       volumes:
-        {{- if include "pi-durable.databaseTlsEnabled" $root }}
-        {{- include "pi-durable.databaseTlsVolume" $root | nindent 8 }}
+        {{- if include "cela.databaseTlsEnabled" $root }}
+        {{- include "cela.databaseTlsVolume" $root | nindent 8 }}
         {{- end }}
         {{- if and (ne $root.Values.onecli.mode "disabled") $onecli.caConfigMap }}
         # External: optional, so the orchestrator starts before the CA is fetched. Bundled: required, the bootstrap runs
@@ -152,7 +152,7 @@ spec:
         - name: github-app
           secret: { secretName: {{ $root.Values.github.app.existingSecret }}, optional: true }
         {{- end }}
-        {{- if include "pi-durable.egressOnecliRoute" $root }}
+        {{- if include "cela.egressOnecliRoute" $root }}
         - name: egress-binding
           secret:
             secretName: {{ $root.Values.egressProxy.binding.existingSecret }}

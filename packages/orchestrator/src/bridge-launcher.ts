@@ -21,10 +21,7 @@ export function bridgeEnv(
 
 /** The relay program, sandbox-env's relay.js. `fileURLToPath` decodes the URL, so a `#` or `?` in the path is kept. */
 function defaultRelay(): string {
-  return fileURLToPath(import.meta.resolve("@pi-durable-k8s/sandbox-env")).replace(
-    /index\.js$/,
-    "relay.js",
-  );
+  return fileURLToPath(import.meta.resolve("@cela/sandbox-env")).replace(/index\.js$/, "relay.js");
 }
 
 /**

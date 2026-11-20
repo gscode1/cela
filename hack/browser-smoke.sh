@@ -3,12 +3,12 @@
 # docs/decisions/0041-browser-sandbox.md):
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy
-#   hack/browser-smoke.sh [--name pi-egress] [--namespace pi-durable]
+#   hack/browser-smoke.sh [--name pi-egress] [--namespace cela]
 #   hack/kind-down.sh --name pi-egress
 #
 # It seeds the `browser` profile and its skills (hack/seed-browser-profile.mjs, without --create-only: hack/install.sh has
 # usually done it create-only already, and this run checks that the repo's definition publishes nothing new), creates sessions and a narrow profile
-# (named smoke-*), and refuses the cluster pi-durable and any context that is not a kind cluster. The APIs are called from
+# (named smoke-*), and refuses the cluster cela and any context that is not a kind cluster. The APIs are called from
 # inside an ingest pod (hack/kind-client.mjs); only the seed script goes through a port-forward with the admin token,
 # which is never printed. Every check prints `ok: ...` or `FAIL: ...`; the first failure stops the run, the cleanup still
 # runs. The numbers (memory, CPU) are printed as `measure: ...`.
@@ -24,7 +24,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 owner=${PI_SMOKE_OWNER:-admin}
 
 usage() {
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions and profiles. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions and profiles. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 for tool in kubectl node base64; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
 kubectl config get-contexts -o name | grep -qx -- "$ctx" || die "no kubectl context $ctx (kind cluster $name)"
@@ -155,10 +155,10 @@ out=$(sandbox "$sa" "env-$m" "$pre printf 'user=%s proxy=%s shm=%s' \"\$(id -u)\
 echo "$out"
 check "the sandbox runs as uid 1000 with the proxy variables and a 256 MB /dev/shm" "$out" 'user=1000 proxy=http://x:\*\*\*@P shm=256'
 check "both skills are materialized in /workspace/.skills" "$out" 'agent-browser .*patchright|patchright .*agent-browser'
-claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$sa" -o jsonpath='{.items[0].metadata.name}')
+claim=$(k get sandboxclaims -l "cela/session-id=$sa" -o jsonpath='{.items[0].metadata.name}')
 img=$(k get pod "$claim" -o jsonpath='{.spec.containers[0].image}')
 check "the Pod runs the browser image" "$img" 'pi-sandbox-browser'
-check "the Pod carries the browser flavour label" "$(k get pod "$claim" -o jsonpath='{.metadata.labels}')" '"pi-durable.dev/sandbox-flavour":"browser"'
+check "the Pod carries the browser flavour label" "$(k get pod "$claim" -o jsonpath='{.metadata.labels}')" '"cela.dev/sandbox-flavour":"browser"'
 
 # ------------------------------------------------------------------ 2. Patchright
 echo "## 2. Patchright: a public page's title and a screenshot in /workspace"

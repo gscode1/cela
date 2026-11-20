@@ -1,4 +1,4 @@
-import type { SessionRef } from "@pi-durable-k8s/session-core";
+import type { SessionRef } from "@cela/session-core";
 import { errorMessage, log } from "./log.js";
 import { planSweep } from "./sweep.js";
 import type { SweepAction, SweepAgent, SweepClaim, SweepPvc, SweepSecret } from "./sweep.js";

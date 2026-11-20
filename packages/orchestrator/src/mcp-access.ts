@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import { validateProfileDefinition } from "@pi-durable-k8s/session-core";
-import type { McpServerConfig, SessionRow } from "@pi-durable-k8s/session-core";
+import { validateProfileDefinition } from "@cela/session-core";
+import type { McpServerConfig, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import type { OneCliAdmin } from "./onecli-admin.js";
 import { narrowAgent } from "./onecli-grants.js";

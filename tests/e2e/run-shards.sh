@@ -246,8 +246,8 @@ t_placement() {
   assert_eq "both shards minted the SAME conversation id (each schema starts at 2): the collision" "$na" "$nb"
   assert "both SandboxClaims exist" claim_exists "$ca"
   assert "and $cb" claim_exists "$cb"
-  la=$(k get sandboxclaim "$ca" -o json | jq -r '.metadata.labels["pi-durable-k8s/session-id"]')
-  lb=$(k get sandboxclaim "$cb" -o json | jq -r '.metadata.labels["pi-durable-k8s/session-id"]')
+  la=$(k get sandboxclaim "$ca" -o json | jq -r '.metadata.labels["cela/session-id"]')
+  lb=$(k get sandboxclaim "$cb" -o json | jq -r '.metadata.labels["cela/session-id"]')
   assert_eq "claim $ca is labelled with session A" "$a" "$la"
   assert_eq "claim $cb is labelled with session B" "$b" "$lb"
   fa=$(k exec "$ca" -c sandboxd -- cat /workspace/who.txt)

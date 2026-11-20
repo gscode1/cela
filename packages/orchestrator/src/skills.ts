@@ -9,8 +9,8 @@ import {
   skillDir,
   verifySkillBundle,
   sessionByConversation,
-} from "@pi-durable-k8s/session-core";
-import type { ProfileDefinition, SkillBundle, SkillRef } from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { ProfileDefinition, SkillBundle, SkillRef } from "@cela/session-core";
 import type { WorkspaceEnv } from "./workspace.js";
 
 /** Skills live under this directory of the workspace, as `<name>/<digest>/` (docs/decisions/0011-skills-in-postgres.md). */

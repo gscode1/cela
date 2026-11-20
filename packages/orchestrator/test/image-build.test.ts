@@ -155,7 +155,7 @@ describe("image delivery replaces mutable code uploads", () => {
 
   it("builds the admin console into the ingest image", () => {
     const dockerfile = readFileSync(join(root, "images/ingest/Dockerfile"), "utf8");
-    expect(dockerfile).toContain("--filter @pi-durable-k8s/admin-ui build");
+    expect(dockerfile).toContain("--filter @cela/admin-ui build");
     expect(dockerfile).toContain("/src/packages/admin-ui/dist ./console");
   });
 
@@ -171,7 +171,7 @@ describe("image delivery replaces mutable code uploads", () => {
 
   it("uses immutable app images without init containers, shared code volumes or shard affinity", () => {
     // Rendered chart with three shards, so the shard Deployments are checked too.
-    const deployments = renderDocs("pi-durable", ["--set", "orchestrator.shards=3"]).filter(
+    const deployments = renderDocs("cela", ["--set", "orchestrator.shards=3"]).filter(
       (d) => d.kind === "Deployment",
     );
     const nameOf = (d: Obj): string => String((d.metadata as Obj).name);

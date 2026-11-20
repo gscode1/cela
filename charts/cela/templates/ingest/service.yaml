@@ -3,7 +3,7 @@ kind: Service
 metadata:
   name: pi-ingest
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/name: pi-ingest
@@ -18,7 +18,7 @@ kind: Service
 metadata:
   name: pi-ingest-nodeport
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   type: NodePort
   externalTrafficPolicy: Local

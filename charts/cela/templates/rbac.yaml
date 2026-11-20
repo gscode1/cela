@@ -9,14 +9,14 @@ kind: ServiceAccount
 metadata:
   name: pi-orchestrator
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: pi-orchestrator
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 rules:
   - apiGroups: [extensions.agents.x-k8s.io]
     resources: [sandboxclaims]
@@ -45,7 +45,7 @@ kind: RoleBinding
 metadata:
   name: pi-orchestrator
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
     name: pi-orchestrator

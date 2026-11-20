@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helm values (JSON, which is YAML) for the pi-durable chart in one e2e run: tests/e2e/run.sh passes them with -f.
+"""Helm values (JSON, which is YAML) for the cela chart in one e2e run: tests/e2e/run.sh passes them with -f.
 
 The run's own charts/pi-postgres release is the external database (secret `pi-db-uri`, made by run.sh),
 the shared OneCLI is external, and the test switches of the orchestrator are extra environment. Everything that varies

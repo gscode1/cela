@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Install the pi-durable app chart into one namespace (docs/install-plan.md, slice 4):
+# Install the cela app chart into one namespace (docs/install-plan.md, slice 4):
 #
-#   hack/install.sh --namespace pi-durable --values my-values.yaml [--set key=value]...
+#   hack/install.sh --namespace cela --values my-values.yaml [--set key=value]...
 #
 #   1. renders the chart with your values first (a bad value stops here, before the cluster is touched)
 #   2. creates the namespace with the restricted Pod Security labels when it does not exist (helm --create-namespace
@@ -43,17 +43,17 @@
 #
 # --no-seed-browser-profile skips step 7 (hack/kind-up.sh --no-browser needs no flag: its chart value turns the flavour off).
 #
-# Inputs: --namespace/-n (default pi-durable), --values/-f (repeatable), --set (repeatable, passed to helm),
-# --release (default pi-durable), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
+# Inputs: --namespace/-n (default cela), --values/-f (repeatable), --set (repeatable, passed to helm),
+# --release (default cela), --timeout (default 10m), --onecli-external-url (bundled OneCLI's externalUrl, default
 # http://localhost:10254, see hack/onecli.sh), --onecli-expose-cidr (kind only: passed to hack/onecli.sh as
 # --expose-source-cidr), --onecli-allow-open-without-proxy (see below); KUBE_CONTEXT selects the kubectl and helm context (unset:
 # the current one); DATABASE_URL and EGRESS_DATABASE_URL as above.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-chart=${CHART_DIR:-$root/charts/pi-durable}
-namespace=pi-durable
-release=pi-durable
+chart=${CHART_DIR:-$root/charts/cela}
+namespace=cela
+release=cela
 timeout=10m
 values=()
 sets=()
@@ -88,7 +88,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ ${#values[@]} -eq 0 && ${#sets[@]} -eq 0 ]]; then
-  echo "install: no values: pass --values FILE (images and database.external are required, see charts/pi-durable/README.md)" >&2
+  echo "install: no values: pass --values FILE (images and database.external are required, see charts/cela/README.md)" >&2
   usage
 fi
 [[ $namespace =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "bad namespace '$namespace'"
@@ -262,7 +262,7 @@ KUBE_CONTEXT=$ctx "$root/hack/agent-sandbox.sh" external
 
 # ------------------------------------------------------------------ 4b. bundled OneCLI
 # The chart marks the mode on the orchestrator Deployment (read from the render, so --set and --values are both followed).
-onecli_mode=$(sed -n 's/^ *pi-durable\/onecli-mode: //p' "$rendered" | head -1)
+onecli_mode=$(sed -n 's/^ *cela\/onecli-mode: //p' "$rendered" | head -1)
 if [[ $onecli_mode == bundled ]]; then
   log "bundled OneCLI (hack/onecli.sh)"
   # The release name is the one the chart derives its URLs from: PI_ONECLI_API is http://<release>-api.<ns>.svc:10256.
@@ -282,7 +282,7 @@ fi
 log "helm upgrade --install $release"
 helm ${ctx:+--kube-context="$ctx"} upgrade --install "$release" "$chart" --namespace "$namespace" \
   ${helm_values_args[@]+"${helm_values_args[@]}"} --wait --timeout "$timeout"
-for deployment in $(k get deployments -l app.kubernetes.io/part-of=pi-durable -o name); do
+for deployment in $(k get deployments -l app.kubernetes.io/part-of=cela -o name); do
   k rollout status "$deployment" --timeout=300s
 done
 

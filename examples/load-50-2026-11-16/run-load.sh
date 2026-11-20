@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Load test: 50 repo sessions created at once, followed from one stream process, sampled every 15 s.
-# Abort rule: a node reports MemoryPressure/DiskPressure/PIDPressure, or more pods outside pi-durable-poc are
+# Abort rule: a node reports MemoryPressure/DiskPressure/PIDPressure, or more pods outside cela-dev are
 # unhealthy than at the start -> every session is deleted.
 set -uo pipefail
-here=$(cd "$(dirname "$0")" && pwd); ns=${NAMESPACE:-pi-durable-poc}
+here=$(cd "$(dirname "$0")" && pwd); ns=${NAMESPACE:-cela-dev}
 mkdir -p "$here/raw"
 ctx=${KUBE_CONTEXT:-}
 kubectl() { command kubectl ${ctx:+--context="$ctx"} "$@"; }
@@ -31,7 +31,7 @@ abort_all() {
     uo=$(unhealthy_other); pr=$(pressure)
     echo "$(now) orch=[$o] mem_mib=$([[ $mem == NA ]] && echo NA || echo $((mem/1048576))) claims=$claims sandbox_pods=[${phases}] inbox_pending/failed=$pend ingest_restarts=$ing unhealthy_other=$uo pressure=[$pr]"
     if [[ -n $pr ]] && [[ ! -e "$here/raw/ABORTED" ]]; then abort_all "node pressure $pr"; fi
-    if (( uo > base_unhealthy + 2 )) && [[ ! -e "$here/raw/ABORTED" ]]; then abort_all "unhealthy pods outside pi-durable-poc: $uo (baseline $base_unhealthy)"; fi
+    if (( uo > base_unhealthy + 2 )) && [[ ! -e "$here/raw/ABORTED" ]]; then abort_all "unhealthy pods outside cela-dev: $uo (baseline $base_unhealthy)"; fi
     sleep 15
   done ) >>"$here/raw/resources.log" 2>&1 &
 sampler=$!

@@ -85,7 +85,7 @@ github_covers() { # owner/name
   k exec deploy/pi-orchestrator -c orchestrator -- node --input-type=module -e '
     import { GITHUB_APP_DIR, loadGithubApp, signAppJwt } from "/app/dist/github-app.js";
     const repo = process.argv[1];
-    const base = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "pi-durable-k8s-e2e" };
+    const base = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "cela-e2e-client" };
     try {
       const app = await loadGithubApp(GITHUB_APP_DIR);
       const r = await fetch(`https://api.github.com/app/installations/${app.installationId}/access_tokens`, {
@@ -365,7 +365,7 @@ t_delete() {
   assert_eq "its secrets are gone" 0 "$(onecli_count /v1/secrets --arg n "${onecli_prefix}$repo_session" '[.. | objects | select((.name? // "") | startswith($n))] | length')"
   assert_eq "the old agent id no longer has grants" 0 "$(onecli GET "/v1/agents/$agent_id/grants" | jq '[.. | objects | select(has("id"))] | length' 2>/dev/null || echo 0)"
   assert_eq "the tombstone was written first and completed" t "$(sql "select (completed_at is not null) from inbox.tombstones where session_id='$repo_session'" | tr -d ' ')"
-  assert_eq "the claim is gone" 0 "$(k get sandboxclaims -l "pi-durable-k8s/session-id=$repo_session" -o name | wc -l | tr -d ' ')"
+  assert_eq "the claim is gone" 0 "$(k get sandboxclaims -l "cela/session-id=$repo_session" -o name | wc -l | tr -d ' ')"
   if [[ $proxied == 1 ]]; then
     assert_jq "the proxy binding and the session's onecli rules are gone" "$(explain github.com "$repo_session")" '.binding==false and .route!="onecli"'
   fi

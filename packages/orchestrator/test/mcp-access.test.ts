@@ -1,7 +1,7 @@
 import { createRegistry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import type { SessionRow } from "@pi-durable-k8s/session-core";
+import type { SessionRow } from "@cela/session-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpAccess, McpNotGrantedError } from "../src/mcp-access.ts";
 import { McpTools } from "../src/mcp.ts";

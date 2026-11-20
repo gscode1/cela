@@ -210,7 +210,7 @@ orch_log_has() { k logs deploy/pi-orchestrator --tail=5000 2>/dev/null | grep -q
 orch_log_lines() { k logs deploy/pi-orchestrator --tail=5000 2>/dev/null | grep -- "$1" | cut -c1-260 | tail -3; }
 mkclaim() { # name [session-label]: a claim made by hand, with a (zero) token hash so the Pod starts
   local labels=""
-  [[ -z ${2:-} ]] || labels="labels: { \"pi-durable-k8s/session-id\": \"$2\" }"
+  [[ -z ${2:-} ]] || labels="labels: { \"cela/session-id\": \"$2\" }"
   printf '%s\n' "$1" >>"$extra_claims_file"
   k apply -f - >/dev/null <<YAML
 apiVersion: extensions.agents.x-k8s.io/v1beta1
@@ -300,7 +300,7 @@ t_create_send_stream() {
   assert "the stream carried live state while the tool ran" grep -q '^LIVE {"running":true' <<<"$s"
   claim=$(claim_of "$id")
   assert "the SandboxClaim $claim exists after the first tool call" claim_exists "$claim"
-  assert_eq "the claim is labelled with the session UUID" "$id" "$(k get sandboxclaim "$claim" -o json | jq -r '.metadata.labels["pi-durable-k8s/session-id"]')"
+  assert_eq "the claim is labelled with the session UUID" "$id" "$(k get sandboxclaim "$claim" -o json | jq -r '.metadata.labels["cela/session-id"]')"
   assert "the bridge process has no database URL or API tokens in its environment" bridge_env_clean
   assert_eq "the inbox row is submitted" "submitted" "$(pg -c "select status from inbox.events where session_id='$id'")"
   assert_jq "GET /sessions/{id} counts the submitted event" "$(api alice GET "/sessions/$id")" '.body.events.submitted==1 and .body.events.pending==0'

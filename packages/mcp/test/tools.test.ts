@@ -100,9 +100,9 @@ describe("tools", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
       version: string;
     };
-    expect(SERVER_NAME).toBe("pi-durable");
+    expect(SERVER_NAME).toBe("cela");
     expect(SERVER_VERSION).toBe(pkg.version);
-    expect(client.getServerVersion()?.name).toBe("pi-durable");
+    expect(client.getServerVersion()?.name).toBe("cela");
   });
 
   it("start_session then send_message dedups on idempotencyKey", { timeout: TIMEOUT }, async () => {

@@ -5,7 +5,7 @@
 # changes the rules, and measures how long the tunnel lives:
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --egress-proxy   # 2 replicas by default
-#   hack/egress-revoke-smoke.sh [--name pi-egress] [--namespace pi-durable] [--echo-host httpbingo.org]
+#   hack/egress-revoke-smoke.sh [--name pi-egress] [--namespace cela] [--echo-host httpbingo.org]
 #   hack/kind-down.sh --name pi-egress
 #
 # The held tunnel is a node fetch of <echo-host>/drip (a response that takes minutes) from inside a real session's sandbox
@@ -18,13 +18,13 @@
 #   d. stop Postgres: the proxies go stale after 2 min and close every open tunnel          -> closed within 2 min 10 s
 #
 # Sessions A and B keep streaming while the others are revoked (a revocation closes only what it denies). The script refuses
-# the cluster pi-durable and any context that is not kind. Tokens and keys are never printed. Every check prints `ok: ...` or
+# the cluster cela and any context that is not kind. Tokens and keys are never printed. Every check prints `ok: ...` or
 # `FAIL: ...`; the first failure stops the run, the cleanup (Postgres back up, sessions deleted) still runs.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 name=pi-egress
-namespace=pi-durable
+namespace=cela
 echo_host=httpbingo.org
 owner=${PI_SMOKE_OWNER:-admin}
 
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $name =~ ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$ ]] || die "bad cluster name '$name'"
-[[ $name != pi-durable ]] || die "refusing the cluster pi-durable: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
+[[ $name != cela ]] || die "refusing the cluster cela: this script creates sessions, OneCLI agents and rules. Use a throwaway cluster (hack/kind-up.sh --name pi-egress ...)"
 [[ $echo_host =~ ^[a-z0-9.-]+$ ]] || die "bad echo host"
 for tool in kubectl node base64; do command -v "$tool" >/dev/null 2>&1 || die "$tool is required"; done
 ctx=kind-$name
@@ -102,7 +102,7 @@ driver_js=$(cat "$root/hack/egress-onecli-driver.mjs")
 driver() { k exec -i deploy/pi-orchestrator -- node --input-type=module -e "$driver_js" "$@"; }
 pod_of() {
   local claim
-  claim=$(k get sandboxclaims -l "pi-durable-k8s/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
+  claim=$(k get sandboxclaims -l "cela/session-id=$1" -o jsonpath='{.items[0].metadata.name}')
   [[ -n $claim ]] || fail "no SandboxClaim for session $1"
   echo "$claim"
 }

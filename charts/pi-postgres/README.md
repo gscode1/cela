@@ -1,6 +1,6 @@
 # pi-postgres
 
-A single Postgres 17 instance for pi-durable-k8s ([install plan](../../docs/install-plan.md), D3). It is for evaluation:
+A single Postgres 17 instance for cela ([install plan](../../docs/install-plan.md), D3). It is for evaluation:
 one replica, no HA, no backups. Production points the app chart at an external Postgres instead.
 
 It creates two databases, each owned by its own non-superuser role, and no other roles:
@@ -66,7 +66,7 @@ Ingress to 5432 is admitted only from the Pods matching `networkPolicy.clientSel
 the orchestrator, ingest and OneCLI. Add another client, for example an e2e client Pod, by appending its labels:
 
 ```sh
---set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"pi-durable-e2e":"true"}]'
+--set-json 'networkPolicy.clientSelectors=[{"app.kubernetes.io/name":"pi-orchestrator"},{"cela-e2e":"true"}]'
 ```
 
 A list replaces the default, so repeat the entries you still need. The chart opens no egress.

@@ -8,7 +8,7 @@ metadata:
   name: pi-ingest
   labels:
     app.kubernetes.io/name: pi-ingest
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.ingest.replicas }}
   strategy:
@@ -21,13 +21,13 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: pi-ingest
-        app.kubernetes.io/part-of: pi-durable
+        app.kubernetes.io/part-of: cela
       annotations:
         checksum/model-config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
       securityContext:
-        {{- include "pi-durable.podSecurityContext" . | nindent 8 }}
+        {{- include "cela.podSecurityContext" . | nindent 8 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -43,7 +43,7 @@ spec:
                     app.kubernetes.io/name: pi-ingest
       containers:
         - name: ingest
-          image: {{ include "pi-durable.image" (dict "name" "ingest" "image" .Values.images.ingest) }}
+          image: {{ include "cela.image" (dict "name" "ingest" "image" .Values.images.ingest) }}
           imagePullPolicy: {{ .Values.images.ingest.pullPolicy }}
           # SEED ONLY: the model settings (see pi-model-config).
           envFrom:
@@ -75,7 +75,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ .Values.database.external.existingSecret }}, key: {{ .Values.database.external.uriKey }} } }
-            {{- include "pi-durable.databaseTlsEnv" . | nindent 12 }}
+            {{- include "cela.databaseTlsEnv" . | nindent 12 }}
             - name: PI_API_TOKENS
               valueFrom: { secretKeyRef: { name: {{ .Values.api.existingSecret }}, key: tokens } }
           ports:
@@ -90,16 +90,16 @@ spec:
           resources:
             {{- toYaml .Values.ingest.resources | nindent 12 }}
           securityContext:
-            {{- include "pi-durable.containerSecurityContext" . | nindent 12 }}
+            {{- include "cela.containerSecurityContext" . | nindent 12 }}
             readOnlyRootFilesystem: true
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
-            {{- if include "pi-durable.databaseTlsEnabled" . }}
-            {{- include "pi-durable.databaseTlsMount" . | nindent 12 }}
+            {{- if include "cela.databaseTlsEnabled" . }}
+            {{- include "cela.databaseTlsMount" . | nindent 12 }}
             {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if include "pi-durable.databaseTlsEnabled" . }}
-        {{- include "pi-durable.databaseTlsVolume" . | nindent 8 }}
+        {{- if include "cela.databaseTlsEnabled" . }}
+        {{- include "cela.databaseTlsVolume" . | nindent 8 }}
         {{- end }}

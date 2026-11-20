@@ -25,7 +25,7 @@ async function ignoreNotFound(call: Promise<unknown>): Promise<boolean> {
 }
 
 /** Label that ties a SandboxClaim to the API session (or `control-<id>` for the test-only control sessions). */
-export const SESSION_LABEL = "pi-durable-k8s/session-id";
+export const SESSION_LABEL = "cela/session-id";
 
 const CLAIM_REF = {
   group: "extensions.agents.x-k8s.io",

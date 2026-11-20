@@ -21,7 +21,7 @@
 #           console.enabled=true, and Playwright on THIS machine (not a Job) drives http://127.0.0.1:<port>/console/ through a
 #           kubectl port-forward to pi-ingest with the run's alice (admin) and bob (owner without admin access) tokens; then
 #           the chart is upgraded with console.enabled=false and /console/ must be a 404. Needs `pnpm install` and
-#           `pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium`. Not part of `all`.
+#           `pnpm --filter @cela/admin-ui exec playwright install chromium`. Not part of `all`.
 #   all     the full failure suite: phase1, phase3, phase4 and phase4b (the real-model test only with REAL_MODEL=1); it
 #           installs the chart once, so with phase3 in it every phase runs with the egress proxy
 #
@@ -32,10 +32,10 @@
 #                      (docs/e2e.md)
 #
 # Every run gets its own namespace, pi-e2e-<run id> (docs/e2e.md): its own Postgres (the charts/pi-postgres release, the
-# external database of pi-durable), the pi-durable Helm chart (orchestrator, ingest, sandbox template, RBAC, network
+# external database of cela), the cela Helm chart (orchestrator, ingest, sandbox template, RBAC, network
 # policies) and secrets, deleted again at the end. Two runs (two branches) can therefore run at the
-# same time, and the long-lived namespace pi-durable-poc is never touched: this script refuses any other prefix.
-#   DB_TLS=1           the run's Postgres requires TLS (charts/pi-postgres tls.requireTls) and pi-durable verifies it
+# same time, and the long-lived namespace cela-dev is never touched: this script refuses any other prefix.
+#   DB_TLS=1           the run's Postgres requires TLS (charts/pi-postgres tls.requireTls) and cela verifies it
 #                      (database.tls verify-full), with a throwaway CA made for the run (docs/e2e.md)
 #   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
 #   KEEP_NS_ON_FAIL=1  keep it only when the run did not pass
@@ -73,9 +73,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 run_id=${RUN_ID:-$(openssl rand -hex 3)}
 ns=pi-e2e-$run_id
-# The prefix is the whole safety net: nothing below may ever run against pi-durable-poc or any other namespace.
+# The prefix is the whole safety net: nothing below may ever run against cela-dev or any other namespace.
 [[ $ns =~ ^pi-e2e-[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || { echo "bad RUN_ID '$run_id': the namespace must be pi-e2e-<lowercase letters, digits, dashes>" >&2; exit 64; }
-# This run's OneCLI name prefix. The OneCLI workspace is shared with pi-durable-poc and every other run, and each
+# This run's OneCLI name prefix. The OneCLI workspace is shared with cela-dev and every other run, and each
 # orchestrator's orphan sweep revokes the agents it does not know, so every stack needs its own (ADR 0013). The run
 # id is lowercase letters, digits and dashes, so the prefix passes the orchestrator's validation.
 onecli_prefix=pi-e2e-$run_id-
@@ -168,8 +168,8 @@ kubectl config get-contexts ${ctx:-"$(kubectl config current-context)"} >/dev/nu
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null | tr -c 'A-Za-z0-9._/\n-' '_' || true)
 if kc get namespace "$ns" >/dev/null 2>&1; then
   # kubectl rejects a name together with a label selector, so read the label itself.
-  [[ $(kc get namespace "$ns" -o jsonpath='{.metadata.labels.pi-durable-e2e}' 2>/dev/null) == true ]] || {
-    echo "namespace $ns exists but is not an e2e run namespace (label pi-durable-e2e=true); refusing to use it" >&2
+  [[ $(kc get namespace "$ns" -o jsonpath='{.metadata.labels.cela-e2e}' 2>/dev/null) == true ]] || {
+    echo "namespace $ns exists but is not an e2e run namespace (label cela-e2e=true); refusing to use it" >&2
     exit 1
   }
   log "reusing namespace $ns"
@@ -187,7 +187,7 @@ kind: Namespace
 metadata:
   name: $ns
   labels:
-    pi-durable-e2e: "true"
+    cela-e2e: "true"
     app.kubernetes.io/managed-by: pi-e2e
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.36
@@ -196,8 +196,8 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/audit-version: v1.36
   annotations:
-    pi-durable-e2e/branch: "${branch:-unknown}"
-    pi-durable-e2e/suite: "${1:-}"
+    cela-e2e/branch: "${branch:-unknown}"
+    cela-e2e/suite: "${1:-}"
 EOF
 
 # The run's own pieces (tests/e2e/deploy, which includes tests/e2e/driver) around the chart: the
@@ -238,7 +238,7 @@ if ! NAMESPACE=$ns KUBE_CONTEXT=$ctx "$root/hack/fetch-onecli-ca.sh" >"$work/ca.
 fi
 
 # The database of this run: the charts/pi-postgres release, installed as a user installs it. It must be Ready before
-# pi-durable, whose orchestrator and ingest read the URI secret. The passwords are random per run and only ever written
+# cela, whose orchestrator and ingest read the URI secret. The passwords are random per run and only ever written
 # to files in the private temp dir and read by kubectl (never an argument, never printed); a reused namespace keeps its
 # secret, because the retained data directory was initialised with it.
 log "database: charts/pi-postgres into $ns"
@@ -252,7 +252,7 @@ if ! k get secret pi-postgres-auth >/dev/null 2>&1; then
 fi
 # DB_TLS=1: a throwaway CA and a server certificate for the Service names, made in the private temp dir and deleted
 # again; only the Secrets stay in the namespace. pi-postgres-tls (kubernetes.io/tls) is for the server, pi-db-tls-ca
-# (the public CA only) for the clients: pi-durable's database.tls and the e2e psql client (fns.sh). A reused namespace
+# (the public CA only) for the clients: cela's database.tls and the e2e psql client (fns.sh). A reused namespace
 # keeps both, so the retained database and its certificate stay a pair. No key is ever printed or passed as an argument.
 if [[ $db_tls == 1 ]] && ! { k get secret pi-postgres-tls >/dev/null 2>&1 && k get secret pi-db-tls-ca >/dev/null 2>&1; }; then
   log "database TLS: throwaway CA and server certificate for pi-postgres.$ns.svc"
@@ -286,7 +286,7 @@ helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-postgres "$root/charts/p
   echo "helm install of charts/pi-postgres failed in $ns" >&2
   exit 1
 }
-# The URI of the pi database for the pi-durable chart (database.external). Direct to the Service, no pooler.
+# The URI of the pi database for the cela chart (database.external). Direct to the Service, no pooler.
 umask 077
 {
   printf 'postgres://pi:'
@@ -382,7 +382,7 @@ fi
 # the shard count can only grow, so a reused namespace that already has two keeps them.
 shards=1
 if has_phase shards || k get deployment pi-orchestrator-1 >/dev/null 2>&1; then shards=2; fi
-log "helm: charts/pi-durable into $ns (orchestrator shards: $shards, egress proxy: $([[ $egress_proxy == 1 ]] && echo on || echo off))"
+log "helm: charts/cela into $ns (orchestrator shards: $shards, egress proxy: $([[ $egress_proxy == 1 ]] && echo on || echo off))"
 # The console suite serves the console (CONSOLE_ENABLED is read by chart-values.py); every other suite leaves it off.
 if has_phase console; then export CONSOLE_ENABLED=1; fi
 # The browser suite turns on the browser flavour (chart-values.py); its image has no local default.
@@ -391,7 +391,7 @@ if has_phase browser; then
   : "${BROWSER_SANDBOX_IMAGE:?BROWSER_SANDBOX_IMAGE (a pushed pi-sandbox-browser reference) is required for the browser suite}"
 fi
 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values.json"
-helm ${ctx:+--kube-context="$ctx"} upgrade --install pi-durable "$root/charts/pi-durable" --namespace "$ns" \
+helm ${ctx:+--kube-context="$ctx"} upgrade --install cela "$root/charts/cela" --namespace "$ns" \
   --values "$work/values.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm.log" 2>&1 || {
   cat "$work/helm.log" >&2
   echo "helm install of the chart failed in $ns" >&2
@@ -505,10 +505,10 @@ stop_port_forward() {
   pf_pid=""
 }
 run_console() {
-  local port tokens admin_token owner_token pw=(pnpm --dir "$root" --filter @pi-durable-k8s/admin-ui exec playwright)
+  local port tokens admin_token owner_token pw=(pnpm --dir "$root" --filter @cela/admin-ui exec playwright)
   log "console: browser suite against pi-ingest in $ns"
   if ! "${pw[@]}" --version >/dev/null 2>&1; then
-    echo "Playwright is not installed: run pnpm install, then pnpm --filter @pi-durable-k8s/admin-ui exec playwright install chromium" >&2
+    echo "Playwright is not installed: run pnpm install, then pnpm --filter @cela/admin-ui exec playwright install chromium" >&2
     verdicts+=("console: FAIL (Playwright missing)")
     overall=1
     return
@@ -538,7 +538,7 @@ run_console() {
   # Switched off: the same release with console.enabled=false must answer 404 for /console/.
   log "console: helm upgrade with console.enabled=false"
   CONSOLE_ENABLED=0 python3 "$here/chart-values.py" "$onecli_prefix" "$shards" >"$work/values-off.json"
-  if ! helm ${ctx:+--kube-context="$ctx"} upgrade pi-durable "$root/charts/pi-durable" --namespace "$ns" \
+  if ! helm ${ctx:+--kube-context="$ctx"} upgrade cela "$root/charts/cela" --namespace "$ns" \
     --values "$work/values-off.json" --wait --timeout "${HELM_TIMEOUT:-10m}" >"$work/helm-off.log" 2>&1; then
     cat "$work/helm-off.log" >&2
     verdicts+=("console (disabled): FAIL (helm upgrade)")

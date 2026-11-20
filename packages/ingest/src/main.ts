@@ -7,7 +7,7 @@ import {
   readSettings,
   settingsEqual,
   tokenAuthenticator,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import { loadConfig } from "./config.js";
 import { assertSessionShardRoutes, MissingShardRoutesError } from "./shard-routes.js";
 import { log } from "./log.js";

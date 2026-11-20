@@ -2,12 +2,8 @@ import { readFile } from "node:fs/promises";
 import type { FetchFunction, Models } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { errorMessage, modelKey } from "@pi-durable-k8s/session-core";
-import type {
-  CredentialState,
-  ModelCatalogEntry,
-  ModelProviderStatus,
-} from "@pi-durable-k8s/session-core";
+import { errorMessage, modelKey } from "@cela/session-core";
+import type { CredentialState, ModelCatalogEntry, ModelProviderStatus } from "@cela/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { log } from "./log.js";
 import { scriptedProvider } from "./model.js";

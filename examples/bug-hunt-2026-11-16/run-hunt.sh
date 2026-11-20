@@ -6,7 +6,7 @@ mkdir -p "$here/raw"
 ctx=${KUBE_CONTEXT:-}
 kubectl() { command kubectl ${ctx:+--context="$ctx"} "$@"; }
 client=$here/../../tests/e2e/client.mjs
-ns=${NAMESPACE:-pi-durable-poc}
+ns=${NAMESPACE:-cela-dev}
 repo=${REPO:?set REPO to your test owner/repo}
 ing=$(kubectl -n $ns get pod -l app.kubernetes.io/name=pi-ingest --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 call() { kubectl -n $ns exec -i "$ing" -c ingest -- node - call alice "$@" <"$client"; }

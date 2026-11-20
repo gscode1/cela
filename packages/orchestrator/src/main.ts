@@ -18,8 +18,8 @@ import {
   SettingsCache,
   settingsFromEnv,
   tokenAuthenticator,
-} from "@pi-durable-k8s/session-core";
-import { ENV } from "@pi-durable-k8s/sandbox-env";
+} from "@cela/session-core";
+import { ENV } from "@cela/sandbox-env";
 import { bridgeCapFields } from "./bridge-cap.js";
 import { loadConfig } from "./config.js";
 import type { FetchLike } from "./github-app.js";

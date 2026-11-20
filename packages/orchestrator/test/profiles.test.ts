@@ -8,8 +8,8 @@ import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/n
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BUILTIN_TOOL_NAMES } from "@pi-durable-k8s/session-core";
-import type { InboxEvent, ProfileDefinition, SessionRow } from "@pi-durable-k8s/session-core";
+import { BUILTIN_TOOL_NAMES } from "@cela/session-core";
+import type { InboxEvent, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { publishAndCheckProfiles } from "../src/capabilities.ts";
 import { loadConfig } from "../src/config.ts";

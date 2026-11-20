@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { describe, expect, it } from "vitest";
-import type { InboxEvent, SessionRow } from "@pi-durable-k8s/session-core";
+import type { InboxEvent, SessionRow } from "@cela/session-core";
 import type { Host } from "../src/host.ts";
 import { PermanentError, SessionService } from "../src/sessions.ts";
 

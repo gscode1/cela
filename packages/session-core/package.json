@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/session-core",
+  "name": "@cela/session-core",
   "private": true,
   "version": "0.0.0",
   "description": "Shared by ingest and the orchestrator: inbox schema migration, inbox and session store, bearer-token authentication, HTTP helpers.",

@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { clearMcpDiscovery, recordMcpDiscovery } from "@pi-durable-k8s/session-core";
+import { clearMcpDiscovery, recordMcpDiscovery } from "@cela/session-core";
 import { errorMessage, log } from "./log.js";
 import type { McpStatusReport, McpStatusSink } from "./mcp.js";
 

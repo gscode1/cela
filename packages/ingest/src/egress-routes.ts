@@ -26,8 +26,8 @@ import {
   sessionIdError,
   updateEgressRule,
   updateRuleSet,
-} from "@pi-durable-k8s/session-core";
-import type { RuleOwner, StoredEgressRule, StoredRuleSet } from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { RuleOwner, StoredEgressRule, StoredRuleSet } from "@cela/session-core";
 import type pg from "pg";
 
 const HISTORY_DEFAULT = 50;

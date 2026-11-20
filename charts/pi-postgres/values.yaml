@@ -1,4 +1,4 @@
-# Bundled Postgres for pi-durable-k8s (docs/install-plan.md D3). One replica, no HA, no backup: for evaluation.
+# Bundled Postgres for cela (docs/install-plan.md D3). One replica, no HA, no backup: for evaluation.
 # Production uses an external Postgres instead.
 
 nameOverride: ""
@@ -28,7 +28,7 @@ auth:
       role: onecli
       existingSecret: pi-postgres-auth
       passwordKey: onecli-password
-  # The egress proxy's read-only role (charts/pi-durable egressProxy, ADR 0035), created in the `pi` database: it may
+  # The egress proxy's read-only role (charts/cela egressProxy, ADR 0035), created in the `pi` database: it may
   # connect and gets the grants of egress.grant_proxy_reader (read the egress rule tables, write its own status row).
   # Off by default; the app's migration 025 grants a role named pi_egress, and the init sidecar grants any name once the
   # egress schema exists.

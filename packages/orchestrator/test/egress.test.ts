@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { inspect } from "node:util";
-import { openBinding } from "@pi-durable-k8s/session-core";
-import type { SessionRow } from "@pi-durable-k8s/session-core";
+import { openBinding } from "@cela/session-core";
+import type { SessionRow } from "@cela/session-core";
 import { buildShellEnv } from "../src/workspace.ts";
 import {
   buildEgressEnv,

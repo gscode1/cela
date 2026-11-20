@@ -2,7 +2,7 @@ import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { ConversationView, ConversationWatch, EntryRecord } from "@earendil-works/pi-durable";
-import { errorMessage } from "@pi-durable-k8s/session-core";
+import { errorMessage } from "@cela/session-core";
 import type { Host } from "./host.js";
 import { toEvent } from "./host.js";
 import { log } from "./log.js";

@@ -103,7 +103,7 @@ export async function mintInstallationToken(
         authorization: `Bearer ${signAppJwt(app, nowMs)}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
-        "user-agent": "pi-durable-k8s",
+        "user-agent": "cela",
         "content-type": "application/json",
       },
       body: JSON.stringify({ repositories: [name], permissions: TOKEN_PERMISSIONS }),

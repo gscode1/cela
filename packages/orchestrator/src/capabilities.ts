@@ -4,14 +4,10 @@ import {
   errorMessage,
   publishCapabilities,
   readProfiles,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import type { Models } from "@earendil-works/pi-ai";
-import { validateProfileDefinition } from "@pi-durable-k8s/session-core";
-import type {
-  Capabilities,
-  ModelProviderStatus,
-  ProfileDefinition,
-} from "@pi-durable-k8s/session-core";
+import { validateProfileDefinition } from "@cela/session-core";
+import type { Capabilities, ModelProviderStatus, ProfileDefinition } from "@cela/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { log } from "./log.js";
 import { mcpSecretCandidates } from "./onecli-names.js";

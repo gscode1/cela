@@ -1,10 +1,10 @@
-# What an e2e run adds around the pi-durable chart (tests/e2e/run.sh installs the chart itself with Helm): the
+# What an e2e run adds around the cela chart (tests/e2e/run.sh installs the chart itself with Helm): the
 # ExternalSecrets that bring the shared OneCLI's credentials, the policies of the test-only pods (the e2e driver), and the
 # driver's identity (tests/e2e/driver). The run's database is the charts/pi-postgres release that run.sh installs with
 # Helm, with its own policy. It carries no namespace of its own: run.sh generates a tiny overlay that sets
 # `namespace: pi-e2e-<run>` on top of it (docs/e2e.md), so never apply this directory as it is.
 # The CiliumNetworkPolicies are in cilium/, applied first. The ExternalSecrets copy the examples in
-# charts/pi-durable/examples/external-secrets.yaml.
+# charts/cela/examples/external-secrets.yaml.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

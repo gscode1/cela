@@ -34,7 +34,7 @@ export function Shell() {
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-6 md:flex-row">
       <aside className="flex min-w-0 shrink-0 flex-col gap-4 md:w-56">
-        <h1 className="text-lg font-semibold">pi-durable console</h1>
+        <h1 className="text-lg font-semibold">cela console</h1>
         {/* One scrolling row below md, grouped list from md up. */}
         <nav
           aria-label="Console"

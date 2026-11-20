@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/browser-proxy",
+  "name": "@cela/browser-proxy",
   "private": true,
   "version": "0.0.0",
   "description": "Loopback forwarder inside the browser sandbox: adds the session's egress token to CONNECT requests, because Chromium does not send credentials from --proxy-server.",

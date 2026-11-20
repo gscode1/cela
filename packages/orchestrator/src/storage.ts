@@ -1,6 +1,6 @@
 import type { Storage } from "@earendil-works/pi-durable";
 import { openNodePostgresStorage } from "@gscode1/pi-durable-postgres";
-import { connectionOptions, createPool } from "@pi-durable-k8s/session-core";
+import { connectionOptions, createPool } from "@cela/session-core";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 

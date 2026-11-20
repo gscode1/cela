@@ -2,10 +2,10 @@
 # Delete the kind cluster hack/kind-up.sh created (the name is the same default): everything in it goes, including the
 # database and the workspaces. Only a kind cluster is touched, never another kubeconfig context.
 #
-#   hack/kind-down.sh [--name pi-durable]      (or KIND_CLUSTER_NAME)
+#   hack/kind-down.sh [--name cela]      (or KIND_CLUSTER_NAME)
 set -euo pipefail
 
-name=${KIND_CLUSTER_NAME:-pi-durable}
+name=${KIND_CLUSTER_NAME:-cela}
 while [[ $# -gt 0 ]]; do
   case $1 in
   --name) [[ $# -ge 2 ]] || { echo "usage: ${0##*/} [--name CLUSTER]" >&2; exit 64; }; name=$2; shift 2 ;;

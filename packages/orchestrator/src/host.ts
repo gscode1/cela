@@ -14,7 +14,7 @@ import type {
   ModelChoice,
   ProfileDefinition,
   SessionUsage,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import { defineExtension } from "@earendil-works/pi-durable";
 import type { AgentChange, Extension, ToolRegistration } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
@@ -252,7 +252,7 @@ export class Host {
     const coding = options.codingExtension ?? createCodingTools();
     registry.install(coding);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
-    // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in pi-durable
+    // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in Pi Durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
     // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
     // created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).

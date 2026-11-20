@@ -4,7 +4,7 @@
  * revokes, the agents of another (docs/decisions/0013-e2e-namespace-per-run.md).
  */
 
-import { isOnecliSecretRef } from "@pi-durable-k8s/session-core";
+import { isOnecliSecretRef } from "@cela/session-core";
 
 /** What production uses; the names of existing agents and secrets do not change. */
 export const DEFAULT_ONECLI_NAME_PREFIX = "pi-session-";

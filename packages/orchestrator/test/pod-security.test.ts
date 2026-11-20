@@ -79,9 +79,9 @@ for (const { path, text } of files) {
 }
 
 // Rendered Helm charts (charts/*, default values): the same pod kinds, the same checks.
-// pi-durable is rendered a second time with every option that adds a volume, a variable or another Deployment.
+// cela is rendered a second time with every option that adds a volume, a variable or another Deployment.
 const variants: Record<string, string[][]> = {
-  "pi-durable": [
+  cela: [
     [],
     [
       "--set",
@@ -135,7 +135,7 @@ describe("every pod-producing manifest meets the restricted Pod Security profile
       "tests/e2e/runner-pod.yaml",
       "tests/e2e/job.yaml.tpl",
       "charts/pi-postgres (helm template)",
-      "charts/pi-durable (helm template)",
+      "charts/cela (helm template)",
     ]) {
       expect(byFile.has(known), `${known} was not discovered`).toBe(true);
     }
@@ -241,6 +241,6 @@ describe("the namespaces enforce the restricted level at a pinned version", () =
   }
 
   it("tests/e2e/run.sh keeps the e2e label next to the Pod Security labels", () => {
-    expect(readFileSync(join(root, "tests/e2e/run.sh"), "utf8")).toMatch(/pi-durable-e2e: "true"/);
+    expect(readFileSync(join(root, "tests/e2e/run.sh"), "utf8")).toMatch(/cela-e2e: "true"/);
   });
 });

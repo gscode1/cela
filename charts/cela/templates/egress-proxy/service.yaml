@@ -6,7 +6,7 @@ kind: Service
 metadata:
   name: pi-egress-proxy
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/name: pi-egress-proxy
@@ -18,7 +18,7 @@ kind: ServiceAccount
 metadata:
   name: pi-egress-proxy
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 automountServiceAccountToken: false
 ---
 apiVersion: policy/v1
@@ -26,7 +26,7 @@ kind: PodDisruptionBudget
 metadata:
   name: pi-egress-proxy
   labels:
-    {{- include "pi-durable.labels" . | nindent 4 }}
+    {{- include "cela.labels" . | nindent 4 }}
 spec:
   minAvailable: 1
   selector:

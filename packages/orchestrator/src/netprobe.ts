@@ -5,7 +5,7 @@ import {
   claimNetworkProbeRequest,
   markNetworkProbeRunning,
   recordNetworkProbe,
-} from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
 import type pg from "pg";
 import { log } from "./log.js";
 import { decide } from "./netprobe-verdict.js";

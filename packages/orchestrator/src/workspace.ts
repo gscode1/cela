@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { cloneUrl } from "@pi-durable-k8s/session-core";
-import type { RepoSpec } from "@pi-durable-k8s/session-core";
+import { cloneUrl } from "@cela/session-core";
+import type { RepoSpec } from "@cela/session-core";
 import { Redacted } from "./onecli.js";
 
 export const WORKSPACE_ROOT = "/workspace";

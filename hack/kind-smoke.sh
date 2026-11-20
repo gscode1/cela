@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test of an installed pi-durable (docs/install-plan.md section 7, step 5), made for the kind cluster of
+# Smoke test of an installed cela (docs/install-plan.md section 7, step 5), made for the kind cluster of
 # hack/kind-up.sh and run by the kind CI job:
 #
-#   hack/kind-smoke.sh [--name pi-durable] [--namespace pi-durable] [--status] [--onecli]
+#   hack/kind-smoke.sh [--name cela] [--namespace cela] [--status] [--onecli]
 #
 #   1. GET /admin/status: print the runtime and the isolation probe. With NETPOL_ENFORCED=1 anything but `enforced` fails.
 #      Without it the run fails when the probe finds any target reachable except the Kubernetes API, which kindnet cannot
@@ -44,8 +44,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-name=${KIND_CLUSTER_NAME:-pi-durable}
-namespace=pi-durable
+name=${KIND_CLUSTER_NAME:-cela}
+namespace=cela
 status_only=0
 onecli=0
 owner=${PI_SMOKE_OWNER:-admin}

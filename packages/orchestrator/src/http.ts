@@ -7,8 +7,8 @@ import {
   sendBodyError,
   sendJson,
   UUID,
-} from "@pi-durable-k8s/session-core";
-import type { Authenticator } from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { Authenticator } from "@cela/session-core";
 import type pg from "pg";
 import type { Host } from "./host.js";
 import { log } from "./log.js";

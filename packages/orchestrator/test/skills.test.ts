@@ -10,8 +10,8 @@ import {
   putSkillVersion,
   readProfile,
   readSkillBundle,
-} from "@pi-durable-k8s/session-core";
-import type { SkillBundle } from "@pi-durable-k8s/session-core";
+} from "@cela/session-core";
+import type { SkillBundle } from "@cela/session-core";
 import { FakeSettingsDb } from "../../session-core/test/fake-settings-db.ts";
 import { materializeSkills, SkillIntegrityError, SkillLibrary } from "../src/skills.ts";
 

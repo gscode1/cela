@@ -6,8 +6,8 @@ import {
   deriveSandboxToken,
   ensureClaim,
   sandboxTokenSha256,
-} from "@pi-durable-k8s/sandbox-env";
-import type { SandboxEnv } from "@pi-durable-k8s/sandbox-env";
+} from "@cela/sandbox-env";
+import type { SandboxEnv } from "@cela/sandbox-env";
 import type { OrchestratorConfig } from "./config.js";
 import {
   deleteClaimAndPvc,

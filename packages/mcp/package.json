@@ -1,5 +1,5 @@
 {
-  "name": "@pi-durable-k8s/mcp",
+  "name": "@cela/mcp",
   "private": true,
   "version": "0.0.0",
   "description": "Stdio MCP server that exposes the session API (and nothing else) to MCP clients.",
@@ -8,7 +8,7 @@
     "node": ">=22.19.0"
   },
   "bin": {
-    "pi-durable-mcp": "dist/main.js"
+    "cela-mcp": "dist/main.js"
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",

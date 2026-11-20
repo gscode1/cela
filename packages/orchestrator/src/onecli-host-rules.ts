@@ -1,5 +1,5 @@
-import { MCP_RULE_SET, readEgress } from "@pi-durable-k8s/session-core";
-import type { EgressData, StoredEgressRule } from "@pi-durable-k8s/session-core";
+import { MCP_RULE_SET, readEgress } from "@cela/session-core";
+import type { EgressData, StoredEgressRule } from "@cela/session-core";
 import type pg from "pg";
 import { errorMessage, log } from "./log.js";
 import type { OneCliAdmin, OneCliHostRule } from "./onecli-admin.js";
@@ -26,8 +26,7 @@ import type { OneCliAdmin, OneCliHostRule } from "./onecli-admin.js";
  */
 
 export const OWNED_PREFIX = "pi-egress-allow-";
-const DESCRIPTION =
-  "Managed by the pi-durable-k8s egress reconciler from the egress rules: do not edit.";
+const DESCRIPTION = "Managed by the cela egress reconciler from the egress rules: do not edit.";
 
 /** The host pattern of OneCLI for an egress rule host: an exact host, or `*.suffix` for a leading-dot suffix. */
 export function onecliPattern(host: string): string | undefined {

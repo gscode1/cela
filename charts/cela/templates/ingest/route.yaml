@@ -1,6 +1,6 @@
 {{- /*
 Optional routes to the pi-ingest Service (ADR 0026): a Gateway API HTTPRoute, an Ingress, or both. Off by default. The
-chart does not admit the gateway's pods by itself: networkPolicy.ingest.clients must name them (pi-durable.validate
+chart does not admit the gateway's pods by itself: networkPolicy.ingest.clients must name them (cela.validate
 refuses to render a route without it). Ingest does not rate-limit failed sign-ins, so a route reachable by untrusted
 clients needs that on the gateway.
 */ -}}
@@ -11,7 +11,7 @@ kind: HTTPRoute
 metadata:
   name: pi-ingest
   labels:
-    {{- include "pi-durable.labels" $ | nindent 4 }}
+    {{- include "cela.labels" $ | nindent 4 }}
   {{- with .annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -58,7 +58,7 @@ kind: Ingress
 metadata:
   name: pi-ingest
   labels:
-    {{- include "pi-durable.labels" $ | nindent 4 }}
+    {{- include "cela.labels" $ | nindent 4 }}
   {{- with .annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}

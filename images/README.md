@@ -14,7 +14,7 @@ repository and publishes to `ghcr.io/<owner>/pi-*:<version>-<short sha>`; the jo
 `IMAGE_REPO` is a registry/repository **prefix**: images are named `pi-orchestrator`, `pi-ingest`, `pi-sandbox`,
 `pi-sandbox-browser`, `pi-egress-proxy`, `pi-e2e-driver` beneath it (default: those local names). Every tag is `<root package version>-<git short sha>`.
 Use a clean checkout so the tag identifies its source. The script prints image references and content digests;
-use `registry.example.com/team/pi-orchestrator@sha256:…` in your values file (`charts/pi-durable`). Without `--push`, a single native
+use `registry.example.com/team/pi-orchestrator@sha256:…` in your values file (`charts/cela`). Without `--push`, a single native
 platform is loaded into Docker; other builds write `pi-<name>-<tag>.oci.tar` in the current directory. No images
 are published automatically. Omitting the image target builds `all`. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
 

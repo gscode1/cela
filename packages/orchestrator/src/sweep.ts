@@ -1,5 +1,5 @@
-import type { SessionRef } from "@pi-durable-k8s/session-core";
-import { UUID } from "@pi-durable-k8s/session-core";
+import type { SessionRef } from "@cela/session-core";
+import { UUID } from "@cela/session-core";
 import { claimPrefixFor } from "./lifecycle.js";
 import { DEFAULT_ONECLI_NAME_PREFIX, namePatterns } from "./onecli-names.js";
 
@@ -9,7 +9,7 @@ import { DEFAULT_ONECLI_NAME_PREFIX, namePatterns } from "./onecli-names.js";
  * list of things to remove. Nothing here calls Kubernetes, OneCLI or Postgres.
  *
  * Only three kinds of object are ever candidates, and only by exact name or label pattern:
- *  - a SandboxClaim `pi-conv-<n>` (`pi-s<k>-conv-<n>` on shard k) whose `pi-durable-k8s/session-id` label is a session UUID;
+ *  - a SandboxClaim `pi-conv-<n>` (`pi-s<k>-conv-<n>` on shard k) whose `cela/session-id` label is a session UUID;
  *  - a PVC `workspace-pi-conv-<n>` (`workspace-pi-s<k>-conv-<n>` on shard k) for which no SandboxClaim of that name exists;
  *  - a OneCLI agent `<prefix><uuid>` and its secrets `<prefix><uuid>-git` / `-api`, where the prefix is this
  *    orchestrator's own (`pi-session-` by default). Names with any other prefix belong to another stack that shares

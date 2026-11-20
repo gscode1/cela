@@ -5,7 +5,7 @@ import { MemoryStorage } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InboxEvent, ProfileDefinition, SessionRow } from "@pi-durable-k8s/session-core";
+import type { InboxEvent, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { loadConfig } from "../src/config.ts";
 import { Host } from "../src/host.ts";
 import { SessionService } from "../src/sessions.ts";

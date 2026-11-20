@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { EventKind } from "@pi-durable-k8s/session-core";
+import type { EventKind } from "@cela/session-core";
 
 const MAX_TEXT = 64 * 1024;
 const MAX_SOURCE_EVENT_ID = 200;

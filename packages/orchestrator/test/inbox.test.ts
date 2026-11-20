@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EventDbRow, InboxEvent } from "@pi-durable-k8s/session-core";
+import type { EventDbRow, InboxEvent } from "@cela/session-core";
 import { retryDelayMs, InboxLoop } from "../src/inbox.ts";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
