@@ -260,6 +260,39 @@ describe("tools", () => {
     expect((await call("start_session", {})).isError).toBe(true);
   });
 
+  it(
+    "a session that is still deleting keeps its slot until it is deleted",
+    { timeout: TIMEOUT },
+    async () => {
+      await close();
+      await setup(1);
+      const id = sid(await call("start_session", {}));
+      fake.deleteStatus = "deleting";
+      const d = await call("delete_session", { sessionId: id });
+      expect(d.structuredContent).toEqual({ sessionId: id, status: "deleting" });
+      fake.session(id).status = "deleting";
+      const refused = await call("start_session", {});
+      expect(refused.isError).toBe(true);
+      expect(String(refused.structuredContent?.error)).toContain("still deleting");
+      // Cleanup finishes: the next create re-reads the session and takes the slot.
+      fake.session(id).status = "deleted";
+      expect((await call("start_session", {})).isError).toBeUndefined();
+      expect((await call("start_session", {})).isError).toBe(true);
+    },
+  );
+
+  it("a deleting session that is gone (404) frees its slot", { timeout: TIMEOUT }, async () => {
+    await close();
+    await setup(1);
+    const id = sid(await call("start_session", {}));
+    fake.deleteStatus = "deleting";
+    await call("delete_session", { sessionId: id });
+    fake.session(id).status = "deleting";
+    expect((await call("run_task", { text: "x", timeoutSec: 1 })).isError).toBe(true);
+    fake.forget(id);
+    expect((await call("start_session", {})).isError).toBeUndefined();
+  });
+
   it("a failed create does not use up the cap", { timeout: TIMEOUT }, async () => {
     await close();
     await setup(1);

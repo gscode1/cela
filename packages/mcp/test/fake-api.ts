@@ -143,6 +143,11 @@ export class FakeApi {
     return this.#internal(id);
   }
 
+  /** Drops a session, so later reads answer 404. */
+  forget(id: string): void {
+    this.#sessions.delete(id);
+  }
+
   /** Requests of one kind, e.g. `api.requestsTo("POST", "/events")` (path suffix match). */
   requestsTo(method: string, pathSuffix: string): RecordedRequest[] {
     return this.requests.filter((r) => r.method === method && r.path.endsWith(pathSuffix));
