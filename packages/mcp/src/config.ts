@@ -7,6 +7,7 @@ export interface McpConfig {
   token: string;
   /** Most sessions this process may create. */
   maxSessions: number;
+  admin?: { token: string; writes: boolean };
 }
 
 export class ConfigError extends Error {
@@ -59,5 +60,31 @@ export function parseConfig(env: Record<string, string | undefined>): McpConfig 
   if (!/^[\x21-\x7e]+$/.test(token)) {
     throw new ConfigError("PI_API_TOKEN contains characters not allowed in a bearer token");
   }
-  return { apiUrl, token, maxSessions: parseMaxSessions(env.PI_MCP_MAX_SESSIONS) };
+  const flag = (name: string): boolean => {
+    const value = env[name];
+    if (value === undefined || value === "false") return false;
+    if (value === "true") return true;
+    throw new ConfigError(`${name} must be true or false`);
+  };
+  const enabled = flag("PI_MCP_ADMIN");
+  const writes = flag("PI_MCP_ADMIN_WRITES");
+  if (writes && !enabled) throw new ConfigError("PI_MCP_ADMIN_WRITES requires PI_MCP_ADMIN");
+  let admin: McpConfig["admin"];
+  if (enabled) {
+    const adminToken = env.PI_API_ADMIN_TOKEN?.trim();
+    if (adminToken === undefined || adminToken === "")
+      throw new ConfigError("PI_API_ADMIN_TOKEN is required");
+    if (!/^[\x21-\x7e]+$/.test(adminToken))
+      throw new ConfigError("PI_API_ADMIN_TOKEN contains characters not allowed in a bearer token");
+    // The point of a second token is that the session tools never hold admin rights (ADR 0050).
+    if (adminToken === token)
+      throw new ConfigError("PI_API_ADMIN_TOKEN must differ from PI_API_TOKEN");
+    admin = { token: adminToken, writes };
+  }
+  return {
+    apiUrl,
+    token,
+    maxSessions: parseMaxSessions(env.PI_MCP_MAX_SESSIONS),
+    ...(admin === undefined ? {} : { admin }),
+  };
 }

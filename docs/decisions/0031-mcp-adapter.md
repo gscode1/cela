@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-17 (issue #158), amended 2026-11-18 after review. Implementation: issue #195.
 
+**Amended by [ADR 0050](0050-mcp-admin-mode.md):** opt-in admin tools may call `/admin/*`.
+
 ## Context
 
 Coding agents (Claude Code, Codex, OpenCode, Cursor, Goose, ...) all speak MCP. If pi-durable has an MCP server, one of them

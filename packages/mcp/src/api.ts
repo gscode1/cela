@@ -1,6 +1,7 @@
 /**
- * Client of the session API (docs/session-api.md). It speaks only the `/sessions` routes: no admin endpoints.
- * It parses JSON bodies but not the SSE stream: `openStream` hands the raw response to the reader.
+ * Client of the session API (docs/session-api.md): the `/sessions` routes, and `/admin/*` through `admin` for the opt-in
+ * admin tools (ADR 0050), each instance with its own token. It parses JSON bodies but not the SSE stream: `openStream`
+ * hands the raw response to the reader.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -118,6 +119,33 @@ export class SessionApi {
     const headers: Record<string, string> = { accept: "text/event-stream" };
     if (cursor !== undefined) headers["last-event-id"] = String(cursor);
     return this.#fetch("GET", path, headers, undefined, signal);
+  }
+
+  /**
+   * One admin API call (ADR 0050): `path` must start with `/admin/` and be built from validated, encoded parts. Any 2xx
+   * answer is its JSON body; anything else is an `ApiError` with the server's text, scrubbed of this client's token.
+   */
+  async admin(
+    method: "GET" | "PUT" | "DELETE",
+    path: string,
+    payload?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!path.startsWith("/admin/")) throw new ApiError(0, "not an admin path");
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const res = await this.#fetch(
+      method,
+      path,
+      payload === undefined ? {} : { "content-type": "application/json" },
+      payload === undefined ? undefined : JSON.stringify(payload),
+      signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+    );
+    if (!res.ok) throw await this.errorFromResponse(res);
+    try {
+      return (await res.json()) as unknown;
+    } catch {
+      throw new ApiError(res.status, "admin API answered with a body that is not JSON");
+    }
   }
 
   /** The error for a non-success response, with the server's `error` text. Consumes the body. */
