@@ -58,6 +58,51 @@ describe("admin mode", { timeout: 10_000 }, () => {
     }
   });
 
+  it("validates each catalog name and profile writes before making requests", async () => {
+    const fetcher = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetcher);
+    const config = parseConfig({
+      ...base,
+      PI_MCP_ADMIN: "true",
+      PI_API_ADMIN_TOKEN: "admin-secret",
+      PI_MCP_ADMIN_WRITES: "true",
+    });
+    const server = createServer(config);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      for (const tool of [
+        "admin_get_profiles",
+        "admin_get_mcp_servers",
+        "admin_get_egress_rule_sets",
+        "admin_get_skills",
+      ]) {
+        const max = tool === "admin_get_skills" ? 64 : 32;
+        const valid = await client.callTool({ name: tool, arguments: { name: "a".repeat(max) } });
+        expect(valid.isError).not.toBe(true);
+        const invalid = await client.callTool({
+          name: tool,
+          arguments: { name: "a".repeat(max + 1) },
+        });
+        expect(invalid.isError).toBe(true);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      for (const tool of ["admin_put_profile", "admin_delete_profile"]) {
+        const invalid = await client.callTool({
+          name: tool,
+          arguments: { name: "a".repeat(33), expectedRevision: 1 },
+        });
+        expect(invalid.isError).toBe(true);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(4);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it.each([false, true])("exposes reads and gates writes (writes=%s)", async (writes) => {
     const fetcher = vi.fn(() =>
       Promise.resolve(
