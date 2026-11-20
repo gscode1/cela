@@ -277,13 +277,71 @@ describe("tools", () => {
     await server.close();
   });
 
+  it("delete_session passes on ingest's deleting status", { timeout: TIMEOUT }, async () => {
+    const id = sid(await call("start_session", {}));
+    fake.deleteStatus = "deleting";
+    const d = await call("delete_session", { sessionId: id });
+    expect(d.structuredContent).toEqual({ sessionId: id, status: "deleting" });
+  });
+
+  it("session tool errors carry the HTTP status", { timeout: TIMEOUT }, async () => {
+    const unknown = await call("get_session", {
+      sessionId: "00000000-0000-4000-8000-000000000000",
+    });
+    expect(unknown.structuredContent).toEqual({ error: "session not found", status: 404 });
+    fake.failNextCreate = { status: 500, error: "boom" };
+    const boom = await call("start_session", {});
+    expect(boom.structuredContent?.status).toBe(500);
+    const offline = await call("get_session", { sessionId: "../x" });
+    expect(offline.structuredContent).not.toHaveProperty("status");
+  });
+
+  it("a 503 adds retryAfter", { timeout: TIMEOUT }, async () => {
+    class Busy extends SessionApi {
+      override getSession(): Promise<SessionSummary> {
+        return Promise.reject(new ApiError(503, "busy", 7));
+      }
+    }
+    const server = createServer(
+      { apiUrl: fake.url, token: fake.token, maxSessions: 5 },
+      new Busy({ apiUrl: fake.url, token: fake.token }),
+    );
+    const [x, y] = InMemoryTransport.createLinkedPair();
+    await server.connect(x);
+    const other = new Client({ name: "t2", version: "0.0.0" });
+    await other.connect(y);
+    const r = (await other.callTool({
+      name: "get_session",
+      arguments: { sessionId: "00000000-0000-4000-8000-000000000000" },
+    })) as Result;
+    await other.close();
+    await server.close();
+    expect(r.structuredContent).toMatchObject({ status: 503, retryAfter: 7 });
+  });
+
+  it("rejects timeoutSec outside 1 to 50 and non-integers", { timeout: TIMEOUT }, async () => {
+    const id = sid(await call("start_session", {}));
+    const posts = fake.requests.length;
+    for (const timeoutSec of [0, 51, 99, 1.5, -1]) {
+      expect(
+        (await call("wait", { sessionId: id, timeoutSec })).isError,
+        `wait ${String(timeoutSec)}`,
+      ).toBe(true);
+      expect(
+        (await call("run_task", { text: "x", timeoutSec })).isError,
+        `run_task ${String(timeoutSec)}`,
+      ).toBe(true);
+    }
+    expect(fake.requests).toHaveLength(posts);
+  });
+
   it("cancel and delete_session hit the right endpoints", { timeout: TIMEOUT }, async () => {
     const id = sid(await call("start_session", {}));
     const c = await call("cancel", { sessionId: id });
     expect(c.isError).toBeUndefined();
     expect(fake.requestsTo("POST", `/sessions/${id}/events`)[0]?.body).toEqual({ kind: "cancel" });
     const d = await call("delete_session", { sessionId: id });
-    expect(d.structuredContent).toEqual({ sessionId: id, deleted: true });
+    expect(d.structuredContent).toEqual({ sessionId: id, status: "deleted" });
     expect(fake.requestsTo("DELETE", `/sessions/${id}`)).toHaveLength(1);
     const g = await call("get_session", { sessionId: id });
     expect(g.structuredContent?.status).toBe("deleted");

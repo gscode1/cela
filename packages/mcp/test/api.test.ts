@@ -41,7 +41,10 @@ describe("SessionApi", { timeout: 15_000 }, () => {
 
     const summary = await api.getSession(created.sessionId);
     expect(summary).toMatchObject({ status: "active", events: { pending: 1 } });
-    await api.deleteSession(created.sessionId);
+    expect(await api.deleteSession(created.sessionId)).toEqual({
+      sessionId: created.sessionId,
+      status: "deleted",
+    });
     expect(fake.session(created.sessionId).status).toBe("deleted");
 
     for (const r of fake.requests) expect(r.headers.authorization).toBe(`Bearer ${fake.token}`);
