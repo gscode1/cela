@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-11-17 (issue #158), amended 2026-11-18 after review. Implementation: issue #195.
 
-**Amended by [ADR 0050](0050-mcp-admin-mode.md):** opt-in admin tools may call `/admin/*`.
+**Amended by [ADR 0050](0050-mcp-admin-mode.md):** opt-in admin tools may call `/admin/*`. **Amended 2026-11-20** (issue #342): see Amendment below.
 
 ## Context
 
@@ -121,3 +121,14 @@ Support on 2026-11-17, checked against docs, changelogs and source:
 - There is no `GET /sessions` list, so an agent that loses a `sessionId` (context compaction) leaks the session until
   someone deletes it. Every result carries the `sessionId`; a list endpoint is a follow-up.
 - The polling path is complete without tasks mode, so no work is lost if the extension changes.
+
+## Amendment, 2026-11-20 (issue #342)
+
+- **The cap counts live sessions.** `PI_MCP_MAX_SESSIONS` limits the sessions this process created and still holds, not
+  every create it ever made. A delete that ingest answers with `deleted` frees the slot at once. A session that is still
+  `deleting` keeps its slot, because its sandbox is still being torn down; when the cap is hit, the adapter reads such
+  sessions again and frees those now `deleted` or gone. A session this process did not create never frees a slot.
+- **`wait` and `run_task` also return** `phase` (`pending`, `running` or `idle`), `tools` (the tool names of the last `live`
+  event, only while `running`), `elapsedSec` (the session's age from `createdAt`) and `failedSinceStart` (messages that
+  failed during the call, a rise of `events.failed` since its first read). All come from data the session API already
+  returns.
