@@ -297,6 +297,7 @@ export {
 } from "./egress-bindings.js";
 export type { BindingCounts, SealedBinding } from "./egress-bindings.js";
 export {
+  backfillMcpCatalogRules,
   deriveMcpRules,
   MCP_RULE_SET,
   MCP_RULES_AUTHOR,

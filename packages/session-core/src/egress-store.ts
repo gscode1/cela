@@ -239,7 +239,8 @@ export async function readEgress(db: Db): Promise<EgressData> {
   return data;
 }
 
-async function inTransaction<T>(
+/** One connection, one transaction: commits when `work` returns, rolls back when it throws. */
+export async function inTransaction<T>(
   pool: pg.Pool,
   work: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
