@@ -58,6 +58,26 @@ export function joinInstructions(parts: readonly (string | undefined)[]): string
   return kept.length === 0 ? undefined : kept.join("\n\n");
 }
 
+export interface InstructionParts {
+  /** The profile's own instructions. */
+  profile?: string | undefined;
+  /** The sandbox facts (`renderEnvironment`). */
+  environment?: string | undefined;
+  /** The repo's context file, rendered (`renderProjectContext`). */
+  project?: string | undefined;
+  /** The skill catalog. */
+  catalog?: string | undefined;
+}
+
+/**
+ * A conversation's instructions, in one order wherever they are built (at creation and at every repo rescan): the
+ * profile, then the sandbox facts, so a repository's own context file cannot precede either, then the project
+ * instructions and the skill catalog (Pi's order, ADR 0015).
+ */
+export function composeInstructions(parts: InstructionParts): string | undefined {
+  return joinInstructions([parts.profile, parts.environment, parts.project, parts.catalog]);
+}
+
 /**
  * Finds `<repo>/.pi/skills/**\/SKILL.md` and `<repo>/.agents/skills/**\/SKILL.md` as Pi does: a directory that holds a
  * SKILL.md is a skill and is not searched further; hidden directories and `node_modules` are skipped; a symlink is not

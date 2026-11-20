@@ -19,12 +19,13 @@ import type { Host } from "./host.js";
 import { log } from "./log.js";
 import { RepoUnavailableError } from "./repo-access.js";
 import {
-  joinInstructions,
+  composeInstructions,
   mergeCatalog,
   readProjectContext,
   renderProjectContext,
   scanRepoSkills,
 } from "./repo-context.js";
+import { environmentFacts, renderEnvironment } from "./sandbox-environment.js";
 import type { McpAccess } from "./mcp-access.js";
 import type { RepoAccess } from "./repo-access.js";
 import type { TurnTimings } from "./timing.js";
@@ -269,10 +270,14 @@ export class SessionService {
     if (current?.conversationId != null) return current.conversationId;
     // The profile snapshot of the session row, never the live profile: edits and deletes do not reach this session.
     const definition = current === undefined ? {} : definitionOf(current);
+    const catalog = await this.#skillCatalog(definition);
     const conversationId = await this.#host.createConversation(
       current?.model ?? this.#options.defaultModel,
       definition,
-      await this.#skillCatalog(definition),
+      {
+        environment: current === undefined ? undefined : this.#environment(current),
+        catalog,
+      },
     );
     await this.#pool.query(
       "update inbox.sessions set conversation_id = $1 where id = $2 and shard = $3 and conversation_id is null",
@@ -280,6 +285,11 @@ export class SessionService {
     );
     log("conversation-created", { session: sessionId, conversation: conversationId });
     return conversationId;
+  }
+
+  /** The sandbox facts of a session's instructions (ADR 0049). */
+  #environment(session: SessionRow): string {
+    return renderEnvironment(environmentFacts(session, this.#options.egress !== undefined));
   }
 
   /**
@@ -342,11 +352,12 @@ export class SessionService {
       const project = definition.repoContext === true ? await readProjectContext(env) : undefined;
       const repo = definition.repoSkills === true ? await scanRepoSkills(env) : [];
       const admin = (await this.#options.skills?.entriesFor(definition)) ?? [];
-      const text = joinInstructions([
-        definition.instructions,
-        project === undefined ? undefined : renderProjectContext(project),
-        buildSkillCatalog(mergeCatalog(admin, repo)),
-      ]);
+      const text = composeInstructions({
+        profile: definition.instructions,
+        environment: this.#environment(session),
+        project: project === undefined ? undefined : renderProjectContext(project),
+        catalog: buildSkillCatalog(mergeCatalog(admin, repo)),
+      });
       if (await this.#host.setInstructions(conversationId, text)) {
         log("repo-context-applied", {
           session: session.id,

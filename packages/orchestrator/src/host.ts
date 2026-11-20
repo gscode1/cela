@@ -21,7 +21,8 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
-import { joinInstructions } from "./repo-context.js";
+import { composeInstructions } from "./repo-context.js";
+import type { InstructionParts } from "./repo-context.js";
 import type { Script } from "./model.js";
 import { httpTransportFactory, McpTools } from "./mcp.js";
 import type { McpIdentity, McpStatusSink, McpTimings, McpTransportFactory } from "./mcp.js";
@@ -85,6 +86,9 @@ export class AbortWaitTimeoutError extends Error {
     this.name = "AbortWaitTimeoutError";
   }
 }
+
+/** What a new conversation's instructions get besides the profile's own text. */
+export type CreateExtras = Pick<InstructionParts, "environment" | "catalog">;
 
 /** Where the host reads the MCP catalog from: the `McpCatalogCache` (enabled and disabled servers). */
 export interface McpCatalogSource {
@@ -204,7 +208,7 @@ export class Host {
    * extension per server, taken from the catalog's installed ones; a server that is missing or disabled now is stored by
    * name anyway (an empty stand-in), so its tools are `tool_unavailable` and appear if it is enabled later.
    */
-  #agentFor(definition: ProfileDefinition, catalog?: string): AgentChange {
+  #agentFor(definition: ProfileDefinition, extra: CreateExtras = {}): AgentChange {
     const coding: readonly ToolRegistration[] = this.#coding.tools ?? [];
     for (const name of [...(definition.tools ?? []), ...(definition.modelTools ?? [])]) {
       if (!coding.some((tool) => tool.name === name)) {
@@ -212,8 +216,9 @@ export class Host {
       }
     }
     const servers = definition.mcpServers ?? [];
-    // The skill catalog follows the profile's own instructions; it is stored with the conversation like them.
-    const instructions = joinInstructions([definition.instructions, catalog]);
+    // The sandbox facts and the skill catalog follow the profile's own instructions; they are stored with the
+    // conversation like them.
+    const instructions = composeInstructions({ profile: definition.instructions, ...extra });
     return {
       ...toolFilters(coding, definition),
       ...(instructions === undefined ? {} : { instructions }),
@@ -388,12 +393,13 @@ export class Host {
    * Pi Durable stores the model in the conversation's `pi.agent` document, in the creating commit. It survives
    * restarts, so it is set once here and not on every turn; only the provider must be installed again at each start.
    * `definition` is the session's validated profile snapshot (`{}`: every coding tool, no instructions, no MCP).
-   * `skillCatalog` is the text listing the snapshot's skills (`SkillLibrary.catalogFor`), added to the instructions.
+   * `extra` adds the session's sandbox facts (`renderEnvironment`) and the text listing the snapshot's skills
+   * (`SkillLibrary.catalogFor`) to the instructions.
    */
   async createConversation(
     model: ModelChoice,
     definition: ProfileDefinition = {},
-    skillCatalog?: string,
+    extra: CreateExtras = {},
   ): Promise<number> {
     const conversation = await this.#harness.createConversation(
       {
@@ -402,7 +408,7 @@ export class Host {
           model: { provider: model.provider, modelId: model.model },
           ...(model.reasoning === undefined ? {} : { thinkingLevel: model.reasoning }),
           cwd: WORKSPACE,
-          ...this.#agentFor(definition, skillCatalog),
+          ...this.#agentFor(definition, extra),
         },
       },
       context,
