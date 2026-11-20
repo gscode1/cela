@@ -22,6 +22,18 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
+    // Node scripts that are not TypeScript: the MCP release smoke test.
+    files: ["packages/mcp/scripts/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+  },
+  {
     // Node scripts that are not TypeScript: the browser suite's local server.
     files: ["packages/admin-ui/e2e/*.mjs"],
     languageOptions: { globals: { process: "readonly", URL: "readonly" } },
