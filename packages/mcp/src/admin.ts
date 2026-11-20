@@ -30,7 +30,7 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
         const scrub = (value: unknown): unknown => {
           if (typeof value === "string") return [admin!.token, config.token].reduce((text, token) => text.split(token).join("[redacted]"), value);
           if (Array.isArray(value)) return value.map(scrub);
-          if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrub(key), scrub(item)]));
+          if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrub(key) as string, scrub(item)]));
           return value;
         };
         const data = scrub(await res.json());

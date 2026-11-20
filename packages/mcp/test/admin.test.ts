@@ -16,6 +16,25 @@ describe("admin mode", { timeout: 10_000 }, () => {
     expect(() => parseConfig({ ...base, PI_MCP_ADMIN: "yes" })).toThrow("PI_MCP_ADMIN");
   });
 
+  it("returns conflicts without forwarding server secrets", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "admin-secret" }), { status: 409 })));
+    const config = parseConfig({ ...base, PI_MCP_ADMIN: "true", PI_API_ADMIN_TOKEN: "admin-secret", PI_MCP_ADMIN_WRITES: "true" });
+    const server = createServer(config);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1" });
+    await server.connect(a);
+    await client.connect(b);
+    try {
+      const result = await client.callTool({ name: "admin_put_profile", arguments: { name: "coding", expectedRevision: 1, definition: {} } });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("409");
+      expect(JSON.stringify(result)).not.toContain("admin-secret");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it.each([false, true])("exposes reads and gates writes (writes=%s)", async (writes) => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ revision: 2, value: "admin-secret" }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
