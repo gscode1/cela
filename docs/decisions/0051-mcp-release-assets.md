@@ -37,7 +37,7 @@ token to install, which defeats the purpose.
 - **Pinned tooling.** `@anthropic-ai/mcpb` is an exact devDependency of `packages/mcp` (2.1.2), so the lockfile pins the CLI
   that CI uses and the unit test validates the manifest against the same strict schema as `mcpb validate`. The workflow's
   actions are pinned by commit like the other workflows.
-- **Smoke test before release.** The workflow runs the tarball through `npx` from an empty directory and the unpacked
+- **Smoke test before release.** The workflow runs the tarball through `npx` from a fresh directory outside the checkout and the unpacked
   bundle with `node`, each as a stdio server with a fake environment, and checks `initialize` (name, version) and
   `tools/list`. Listing tools never calls the API.
 
