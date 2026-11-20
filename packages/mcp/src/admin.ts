@@ -92,6 +92,7 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
       },
       async (_args, extra) => call("GET", `/admin/${path}`, extra.mcpReq.signal),
     );
+    if (singular === "profile") continue; // admin_get_profile has its own tool below (versions)
     server.registerTool(
       `admin_get_${singular}`,
       {
@@ -103,6 +104,30 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
         call("GET", `/admin/${path}/${encodeURIComponent(args.name)}`, extra.mcpReq.signal),
     );
   }
+  server.registerTool(
+    "admin_get_profile",
+    {
+      description: `Get one profile by name, with its versions (newest first). Pass versions to limit how many of the newest versions are returned; absent returns all. ${note}`,
+      inputSchema: z.object({ name: profileName, versions: z.number().int().min(0).optional() }),
+      annotations: readAnnotation,
+    },
+    async (args, extra) => {
+      const result = await call(
+        "GET",
+        `/admin/profiles/${encodeURIComponent(args.name)}`,
+        extra.mcpReq.signal,
+      );
+      const list = result.structuredContent.versions;
+      if (args.versions === undefined || result.isError === true || !Array.isArray(list)) {
+        return result;
+      }
+      const trimmed = { ...result.structuredContent, versions: list.slice(0, args.versions) };
+      return {
+        content: [{ type: "text", text: `${note}\n${JSON.stringify(trimmed)}` }],
+        structuredContent: trimmed,
+      };
+    },
+  );
   server.registerTool(
     "admin_get_settings",
     {
@@ -136,7 +161,7 @@ export function registerAdminTools(server: McpServer, config: McpConfig): void {
   server.registerTool(
     "admin_delete_profile",
     {
-      description: `Delete a disabled, unreferenced profile at its current revision. ${note}`,
+      description: `Delete a profile at its current revision. It must be disabled and not the default profile; running sessions keep their snapshot. ${note}`,
       inputSchema: z.object({
         name: profileName,
         expectedRevision: z.number().int().min(1).max(MAX_REVISION),
