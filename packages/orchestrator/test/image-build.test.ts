@@ -63,6 +63,18 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(base.trimEnd().endsWith("USER 1000:1000")).toBe(true);
     // Node from the digest-pinned Node stage: bookworm's own nodejs is v18.
     expect(base).toContain("COPY --from=pi-env /usr/local/bin/node /usr/local/bin/node");
+    // uv and yq: one release each, a checksum per architecture.
+    expect(
+      base.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/github\.com\/astral-sh\/uv\/releases\/download\/0\.13\.7\//g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      base.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/github\.com\/mikefarah\/yq\/releases\/download\/v4\.54\.1\//g,
+      ),
+    ).toHaveLength(2);
+    expect(base).toContain("ln -s /usr/bin/fdfind /usr/local/bin/fd");
     // gh: one release, a checksum per architecture.
     expect(
       base.match(
@@ -76,6 +88,15 @@ describe("image delivery replaces mutable code uploads", () => {
       "curl",
       "jq",
       "ripgrep",
+      "fd-find",
+      "tree",
+      "file",
+      "zip",
+      "xz-utils",
+      "bzip2",
+      "sqlite3",
+      "shellcheck",
+      "git-lfs",
       "unzip",
       "git",
     ]) {

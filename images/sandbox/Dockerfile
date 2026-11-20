@@ -17,6 +17,13 @@ FROM scratch AS gh
 ADD --checksum=sha256:e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux_amd64.deb /amd64.deb
 ADD --checksum=sha256:cac3ff84b60b68e64cca69f31f303210c26320361cc3286b773655d4226b7b06 https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux_arm64.deb /arm64.deb
 
+# uv 0.13.7 and yq v4.54.1 (mikefarah; bookworm's `yq` is another tool) release binaries, by architecture and sha256.
+FROM scratch AS bins
+ADD --checksum=sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83 https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz /uv-amd64.tar.gz
+ADD --checksum=sha256:71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz /uv-arm64.tar.gz
+ADD --checksum=sha256:8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64 /yq-amd64
+ADD --checksum=sha256:189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_arm64 /yq-arm64
+
 # sandboxd executes tools in its own rootfs, so pi-env and the coding tools belong here.
 FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
 ARG TARGETARCH
@@ -40,11 +47,17 @@ COPY --from=pi-env /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi-env /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=pi-env /usr/local/include/node /usr/local/include/node
 COPY --from=gh /${TARGETARCH}.deb /tmp/gh.deb
+COPY --from=bins /uv-${TARGETARCH}.tar.gz /tmp/uv.tar.gz
+COPY --from=bins --chmod=0755 /yq-${TARGETARCH} /usr/local/bin/yq
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git ca-certificates curl jq ripgrep tini unzip build-essential python3 python3-pip python3-venv /tmp/gh.deb \
- && rm -rf /var/lib/apt/lists/* /tmp/gh.deb \
+      git git-lfs ca-certificates curl jq ripgrep fd-find tree file tini unzip zip xz-utils bzip2 sqlite3 shellcheck \
+      build-essential python3 python3-pip python3-venv /tmp/gh.deb \
+ && tar -xzf /tmp/uv.tar.gz -C /usr/local/bin --strip-components=1 \
+ && rm -rf /var/lib/apt/lists/* /tmp/gh.deb /tmp/uv.tar.gz \
+ && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+ && git lfs install --system --skip-repo \
  && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
