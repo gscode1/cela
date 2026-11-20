@@ -67,8 +67,9 @@ and the storage adapter are untouched. Set once at env open, so it holds only st
 
 Variables with the egress proxy on: the proxy variables of ADR 0036 (the egress token) plus `buildWorkspaceEnv()`, which is the CA, git and
 identity part of the list below, and no OneCLI address or token. Variables without it (`workspace.ts` `buildShellEnv`): `HTTPS_PROXY`/`https_proxy` with the agent token, `NO_PROXY=localhost,127.0.0.1,::1`,
-`SSL_CERT_FILE` and `GIT_SSL_CAINFO` (system roots + OneCLI CA, `/workspace/.onecli/bundle.pem`), `NODE_EXTRA_CA_CERTS`
-(`/workspace/.onecli/ca.pem`), `NODE_USE_ENV_PROXY=1`, git author identity, and git config through `GIT_CONFIG_COUNT=1`,
+`SSL_CERT_FILE`, `GIT_SSL_CAINFO` and `REQUESTS_CA_BUNDLE` (system roots + OneCLI CA, `/workspace/.onecli/bundle.pem`), `NODE_EXTRA_CA_CERTS`
+(`/workspace/.onecli/ca.pem`), `NODE_USE_ENV_PROXY=1`, `GH_TOKEN` (a placeholder for `gh`, which OneCLI's header replaces;
+[sandbox image](sandbox-image.md)), git author identity, and git config through `GIT_CONFIG_COUNT=1`,
 `GIT_CONFIG_KEY_0=http.proxyAuthMethod`, `GIT_CONFIG_VALUE_0=basic`. (`GIT_CONFIG` itself is read only by `git config`, so it is not used.)
 The CA is public; the orchestrator writes it into the workspace from its ConfigMap mount.
 

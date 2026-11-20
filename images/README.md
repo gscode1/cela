@@ -23,6 +23,10 @@ dependencies, including the vendored adapter/SDK and session-core SQL migrations
 suite scripts, Node clients and the sandbox-env Phase 1 test bundle. Containers run as uid/gid 1000; charts
 keep the restricted Pod Security controls (ADR 0019).
 
+`pi-sandbox` (`images/sandbox`, ADR 0048) is sandboxd plus `pi-env`, git, Node 22 (npm, corepack), Python 3 (pip, venv),
+build-essential, curl, jq, unzip and `gh` 2.103.3 (release `.deb` by sha256); the list is in
+[docs/sandbox-image.md](../docs/sandbox-image.md). About 1 GB (arm64, uncompressed).
+
 `pi-sandbox-browser` (`images/sandbox-browser`, ADR 0041) is the sandbox image plus Chromium (installed by Patchright 1.64.3,
 ADR 0046), Patchright and agent-browser 0.43.0 (release binaries by sha256), and the
 loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/sandbox-browser/package-lock.json`. It is
