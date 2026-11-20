@@ -16,11 +16,18 @@ describe("admin mode", { timeout: 10_000 }, () => {
     expect(() => parseConfig({ ...base, PI_MCP_ADMIN: "yes" })).toThrow("PI_MCP_ADMIN");
   });
 
-  it("returns conflicts without forwarding server secrets", async () => {
+  it.each([
+    [400, "unknown key bogusKey"],
+    [409, "profile must be disabled before delete"],
+  ])("returns untrusted %i errors without forwarding server secrets", async (status, message) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({ error: "admin-secret" }), { status: 409 })),
+        Promise.resolve(
+          new Response(JSON.stringify({ error: `${message}: admin-secret session-secret` }), {
+            status,
+          }),
+        ),
       ),
     );
     const config = parseConfig({
@@ -40,8 +47,11 @@ describe("admin mode", { timeout: 10_000 }, () => {
         arguments: { name: "coding", expectedRevision: 1, definition: {} },
       });
       expect(result.isError).toBe(true);
-      expect(JSON.stringify(result)).toContain("409");
+      expect(JSON.stringify(result)).toContain(String(status));
+      expect(JSON.stringify(result)).toContain(message);
+      expect(JSON.stringify(result)).toContain("untrusted");
       expect(JSON.stringify(result)).not.toContain("admin-secret");
+      expect(JSON.stringify(result)).not.toContain("session-secret");
     } finally {
       await client.close();
       await server.close();
