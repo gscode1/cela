@@ -1,8 +1,17 @@
 {
   "name": "@cela/mcp",
-  "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Stdio MCP server that exposes the session API (and nothing else) to MCP clients.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gscode1/cela.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/gscode1/cela/blob/main/docs/mcp-adapter.md",
+  "bugs": {
+    "url": "https://github.com/gscode1/cela/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -10,6 +19,9 @@
   "bin": {
     "cela-mcp": "dist/main.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -20,6 +32,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
     "@cela/session-core": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "22.20.5",
