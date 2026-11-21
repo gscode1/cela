@@ -251,6 +251,34 @@ describe("admin settings", () => {
     expect(sessions).toHaveLength(2);
   });
 
+  it("stores and echoes the allowlist's spelling of a repo, not the caller's (issue #334)", async () => {
+    const { base, sessions } = await start();
+    expect(
+      (
+        await call(base, "alice", "PUT", "/admin/settings", {
+          repoAllowlist: ["gscode1/pi-tick", "acme/*"],
+        })
+      ).status,
+    ).toBe(200);
+    const mixed = await call(base, "bob", "POST", "/sessions", {
+      repo: "GSCODE1/Pi-Tick",
+      branch: "Main",
+    });
+    expect(mixed.status).toBe(201);
+    expect(await mixed.json()).toMatchObject({ repo: "gscode1/pi-tick", branch: "Main" });
+    expect(sessions[0]?.[6]).toBe("gscode1/pi-tick");
+    // An owner wildcard canonicalises the owner; the name is as typed.
+    const wild = await call(base, "bob", "POST", "/sessions", { repo: "ACME/Widgets" });
+    expect(await wild.json()).toMatchObject({ repo: "acme/Widgets" });
+    expect(sessions[1]?.[6]).toBe("acme/Widgets");
+    // A refused repo is still reported as typed.
+    const refused = await call(base, "bob", "POST", "/sessions", { repo: "Other/App" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'repo "Other/App" is not on the repo allowlist',
+    });
+  });
+
   it("uses a new default model and reasoning for POST /sessions at once, without a restart", async () => {
     const { base, sessions } = await start();
     const first = (await (await call(base, "bob", "POST", "/sessions", {})).json()) as Record<

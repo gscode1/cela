@@ -24,6 +24,13 @@ export interface RunWatcherOptions {
   onUnanswered: (watched: Watched, outcome: RunOutcome) => Promise<void>;
   /** A submission was answered. A run queued behind it may have started right away. */
   onDone?: (watched: Watched) => Promise<void>;
+  /**
+   * Called every `heartbeatMs` while the submission is unsettled (the agent is running), so a busy session does not look
+   * idle (issue #333). Failures go to `onError`; the next beat tries again.
+   */
+  heartbeat?: (watched: Watched) => Promise<void>;
+  /** Default 30 s. Tests shorten it. */
+  heartbeatMs?: number;
   onError?: (error: unknown) => void;
   /** Wait before retrying a failed `settle` or handler; tests shorten it. */
   retryMs?: number;
@@ -73,9 +80,23 @@ export class RunWatcher {
   }
 
   async #follow(watched: Watched): Promise<void> {
-    const settled = await this.#retry(() =>
-      this.#options.settle(watched.conversationId, watched.requestId),
-    );
+    const beat = this.#options.heartbeat;
+    const timer =
+      beat === undefined
+        ? undefined
+        : setInterval(() => {
+            beat(watched).catch((error: unknown) => this.#options.onError?.(error));
+          }, this.#options.heartbeatMs ?? 30_000);
+    // Unref'd: a beat must not keep the process alive.
+    timer?.unref();
+    let settled;
+    try {
+      settled = await this.#retry(() =>
+        this.#options.settle(watched.conversationId, watched.requestId),
+      );
+    } finally {
+      clearInterval(timer);
+    }
     if (settled === undefined || settled.value === undefined) return;
     const state = settled.value;
     if (state.status === "done") {

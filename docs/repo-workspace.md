@@ -16,7 +16,7 @@ Stored in `inbox.sessions` (`repo`, `repo_branch`; migration `004_repo.sql`).
 
 A session may only clone a repository the `repoAllowlist` setting lists ([ADR 0032](decisions/0032-repo-allowlist.md)):
 `owner/name`, `owner/*` or `*`, matched case-insensitively. Empty, the default, refuses every repo session. Ingest
-answers `403` for a repository it does not list. The orchestrator checks the list again before every token mint, so a
+answers `403` for a repository it does not list. A session stores, and `POST /sessions` echoes, the list's spelling of the repository, not the caller's (issue #334): an `owner/name` entry gives its own spelling (the settings store entries in lower case), an `owner/*` entry gives its owner's and keeps the name as typed, and `*` keeps both as typed. So `GSCODE1/Pi-Tick` against `gscode1/pi-tick` is stored as `gscode1/pi-tick`. The orchestrator checks the list again before every token mint, so a
 repository an admin removes gets no new token and its running sessions lose access within the hour the current token
 lives. Seed it with the chart value `github.repoAllowlist` (`PI_REPO_ALLOWLIST`). Change it on the console's settings
 page or with `PUT /admin/settings`. The list narrows what the GitHub App installation offers, so install the App only on

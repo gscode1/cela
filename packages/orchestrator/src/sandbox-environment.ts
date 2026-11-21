@@ -27,14 +27,21 @@ export interface EnvironmentFacts {
   repo: RepoSpec | null;
   /** What the sandbox can reach: the session's mode, or `direct` when the deployment runs without the egress proxy. */
   network: NetworkMode;
+  /** The rule sets of the session's profile snapshot (`egressRuleSets`); only meaningful while `network` is `proxied`. */
+  egressRuleSets?: readonly string[];
 }
 
 /** The facts of a session; `proxyOn` is whether this deployment runs the egress proxy (ADR 0038 "Proxy disabled"). */
-export function environmentFacts(session: SessionRow, proxyOn: boolean): EnvironmentFacts {
+export function environmentFacts(
+  session: SessionRow,
+  proxyOn: boolean,
+  egressRuleSets: readonly string[] = [],
+): EnvironmentFacts {
   return {
     flavour: session.sandboxFlavour,
     repo: session.repo,
     network: proxyOn ? session.networkMode : "direct",
+    egressRuleSets,
   };
 }
 
@@ -46,9 +53,15 @@ export function renderEnvironment(facts: EnvironmentFacts): string {
       : `Repository: ${facts.repo.repo}, cloned into ${REPO_DIR} from ${
           facts.repo.branch === undefined ? "its default branch" : `branch ${facts.repo.branch}`
         }. git and gh reach github.com for this repository only, already authenticated; no token is in the sandbox.`;
+  // Names only, not their hosts: an operator edits a set's rules while the session runs, and the text must not change
+  // under a running conversation (ADR 0049). The denial itself names the host (ADR 0052).
+  const sets =
+    (facts.egressRuleSets ?? []).length === 0
+      ? "The session's profile names no egress rule set, so only the rule sets that apply to every session and rules added to this session open hosts."
+      : `The session's profile names the egress rule sets ${(facts.egressRuleSets ?? []).join(", ")}.`;
   const network =
     facts.network === "proxied"
-      ? "Network: HTTP and HTTPS only, through the proxy already set in HTTPS_PROXY; the session's egress rules decide which hosts answer. No DNS, no UDP."
+      ? `Network: HTTP and HTTPS only, through the proxy already set in HTTPS_PROXY; the session's egress rules decide which hosts answer. ${sets} A host no rule allows is refused with "407 Request rejected by proxy: <host> is not allowed by the session's egress rules": that is a rule, not a broken network, so do not retry it; say which host you need. No DNS, no UDP.`
       : "Network: direct internet access; private and cluster addresses are blocked.";
   return [
     "<sandbox_environment>",

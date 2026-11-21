@@ -218,6 +218,47 @@ func TestRejectedRequests(t *testing.T) {
 	}
 }
 
+func TestDenyStatusLineNamesHostAndRules(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, envOpts{
+		rules: func(_, _ string) map[string][]HostRule {
+			return map[string][]HostRule{"a": {{Host: "*.example", Route: RouteOneCLI}}}
+		},
+	})
+	c, err := net.DialTimeout("tcp", e.proxyAddr, ioWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(ioWait))
+	fmt.Fprintf(c, "CONNECT registry.npmjs.org:443 HTTP/1.1\r\nHost: registry.npmjs.org:443\r\nProxy-Authorization: %s\r\n\r\n", basic(tokA))
+	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusProxyAuthRequired {
+		t.Fatalf("status %d, want 407", resp.StatusCode)
+	}
+	want := "407 Request rejected by proxy: registry.npmjs.org:443 is not allowed by the session's egress rules"
+	if resp.Status != want {
+		t.Errorf("status line %q, want %q", resp.Status, want)
+	}
+}
+
+func TestDenyPhraseIsOneSafeLine(t *testing.T) {
+	t.Parallel()
+	got := denyPhrase("evil\r\nX-Injected: 1 host.test:443")
+	if strings.ContainsAny(got, "\r\n") || strings.Contains(got, " X-Injected") {
+		t.Errorf("phrase can split the status line: %q", got)
+	}
+	if got := denyPhrase(""); !strings.Contains(got, "destination") {
+		t.Errorf("empty host: %q", got)
+	}
+	if got := denyPhrase(strings.Repeat("a", 500)); len(got) > 200 {
+		t.Errorf("phrase not capped: %d", len(got))
+	}
+}
+
 func TestDirectRouteDeniesInternalAddresses(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, envOpts{

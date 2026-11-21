@@ -39,6 +39,19 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
     ).toContain("from its default branch.");
   });
 
+  it("name the egress rule sets of the profile and what a refusal looks like (ADR 0052)", () => {
+    const text = renderEnvironment(environmentFacts(row({}), true, ["packages", "github-public"]));
+    expect(text).toContain("egress rule sets packages, github-public.");
+    expect(text).toContain("407 Request rejected by proxy: <host> is not allowed");
+    expect(renderEnvironment(environmentFacts(row({}), true))).toContain(
+      "names no egress rule set",
+    );
+    // A direct session has no rules to name.
+    expect(
+      renderEnvironment(environmentFacts(row({ networkMode: "direct" }), true, ["packages"])),
+    ).not.toContain("rule set");
+  });
+
   it("say direct for a direct session, and for every session when the deployment runs without the proxy", () => {
     expect(environmentFacts(row({ networkMode: "direct" }), true).network).toBe("direct");
     expect(environmentFacts(row({ networkMode: "proxied" }), false).network).toBe("direct");

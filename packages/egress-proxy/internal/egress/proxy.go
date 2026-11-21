@@ -110,7 +110,11 @@ func Build(o Options) (*Proxy, error) {
 	cfg.RoleFromRequest = p.roleFromRequest
 	cfg.UpstreamProxySelector = p.selectUpstream
 	cfg.UpstreamProxyConnectReqHandler = p.authUpstream
-	cfg.RejectResponseHandlerWithCtx = func(_ *smokescreen.SmokescreenContext, r *http.Response) {
+	cfg.RejectResponseHandlerWithCtx = func(sc *smokescreen.SmokescreenContext, r *http.Response) {
+		if r.StatusCode == http.StatusProxyAuthRequired && sc != nil && sc.Decision != nil {
+			// The reason phrase is what npm, curl and git print ("407 <phrase>"); the body rarely reaches the user.
+			r.Status = denyPhrase(sc.RequestedHost)
+		}
 		// Smokescreen answers every deny with 407. Only a proxy that asks for a token invites credentials.
 		if r.StatusCode == http.StatusProxyAuthRequired && o.Principals != nil {
 			r.Header.Set("Proxy-Authenticate", `Basic realm="egress"`)
@@ -538,4 +542,23 @@ func (h *handshakeConn) Read(b []byte) (int, error) {
 	}
 	h.n = copy(h.tail[:], buf)
 	return n, err
+}
+
+// denyPhrase is the reason phrase of a 407 that an ACL decision caused: it names the host and says the session's rules
+// are why, so an agent that sees only the status line can tell a rule from a broken network. The host is client
+// input: control characters are dropped and the length is capped, so it cannot split the status line.
+func denyPhrase(host string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x21 || r > 0x7e {
+			return -1
+		}
+		return r
+	}, host)
+	if len(clean) > 100 {
+		clean = clean[:100]
+	}
+	if clean == "" {
+		clean = "destination"
+	}
+	return "Request rejected by proxy: " + clean + " is not allowed by the session's egress rules"
 }
