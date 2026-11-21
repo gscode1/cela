@@ -293,6 +293,20 @@ export async function recordSessionUsage(
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Moves `last_activity_at` of a live session to now: a run is working on it or just ended (issue #333). `active` only:
+ * a failed, deleting or deleted session keeps the time its status changed.
+ */
+export async function touchSessionActivity(
+  db: Pick<pg.Pool, "query">,
+  sessionId: string,
+): Promise<void> {
+  await db.query(
+    "update inbox.sessions set last_activity_at = clock_timestamp() where id = $1 and status = 'active'",
+    [sessionId],
+  );
+}
+
 export async function getSession(
   db: Pick<pg.Pool, "query">,
   id: string,

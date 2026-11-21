@@ -3,6 +3,7 @@ import {
   branchError,
   chooseRepo,
   cloneUrl,
+  canonicalRepo,
   repoAllowed,
   repoError,
   repoPatternError,
@@ -148,5 +149,23 @@ describe("repoAllowed", () => {
     expect(repoAllowed("octo/hello", ["oct/*"])).toBe(false);
     expect(repoAllowed("octocat/hello", ["octo/*"])).toBe(false);
     expect(repoAllowed("other/hello", ["octo/hello", "octo/*"])).toBe(false);
+  });
+});
+
+describe("canonicalRepo (issue #334)", () => {
+  it("gives the spelling of the entry that matched", () => {
+    expect(canonicalRepo("GSCODE1/Pi-Tick", ["gscode1/pi-tick"])).toBe("gscode1/pi-tick");
+    expect(canonicalRepo("gscode1/pi-tick", ["GSCode1/Pi-Tick"])).toBe("GSCode1/Pi-Tick");
+  });
+
+  it("prefers the exact entry over a wildcard, and canonicalises the owner of a wildcard", () => {
+    expect(canonicalRepo("Octo/Hello", ["octo/*", "octo/hello"])).toBe("octo/hello");
+    expect(canonicalRepo("OCTO/Hello", ["octo/*"])).toBe("octo/Hello");
+  });
+
+  it("keeps the caller's spelling under * and is undefined when refused", () => {
+    expect(canonicalRepo("Octo/Hello", ["*"])).toBe("Octo/Hello");
+    expect(canonicalRepo("Octo/Hello", [])).toBeUndefined();
+    expect(canonicalRepo("Octo/Hello", ["other/*"])).toBeUndefined();
   });
 });

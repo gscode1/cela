@@ -612,3 +612,24 @@ describe("strings Postgres cannot store", () => {
     });
   });
 });
+
+describe("the seeded coding profile of migration 034 (ADR 0052)", () => {
+  it("is a valid definition that names the packages rule set", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const sql = await readFile(
+      new URL("../migrations/034_coding_packages.sql", import.meta.url),
+      "utf8",
+    );
+    const json = /select 'coding', 4, '(\{.*\})'::jsonb/.exec(sql)?.[1];
+    expect(json).toBeDefined();
+    const definition = validateProfileDefinition(JSON.parse(json ?? "{}"));
+    expect(definition).toMatchObject({
+      repoSkills: true,
+      repoContext: true,
+      egressRuleSets: ["packages"],
+    });
+    // Only an untouched version 3 seed is upgraded: an operator's edit stays theirs.
+    expect(sql).toContain("p.current_version = 3");
+    expect(sql).toContain("v.created_by = 'seed'");
+  }, 10_000);
+});

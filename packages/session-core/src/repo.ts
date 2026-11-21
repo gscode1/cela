@@ -74,14 +74,30 @@ export function repoPatternError(pattern: string): string | undefined {
     : `repo allowlist entry "${pattern.slice(0, 80)}" is not *, owner/* or owner/name`;
 }
 
-/** Whether a validated `repo` matches a validated allowlist. GitHub names are case-insensitive, so the match is too. */
+/**
+ * Whether a validated `repo` matches a validated allowlist. GitHub names are case-insensitive, so the match is too.
+ */
 export function repoAllowed(repo: string, allowlist: readonly string[]): boolean {
+  return canonicalRepo(repo, allowlist) !== undefined;
+}
+
+/**
+ * The spelling a session stores for an allowed `repo` (issue #334), or undefined when the allowlist refuses it. One
+ * repository must have one spelling, or everything keyed by the string (OneCLI rules, audit, repo settings) sees
+ * several. The most specific entry that matches decides: an `owner/name` entry gives its own spelling; an `owner/*`
+ * entry gives its owner's spelling and keeps the name as typed (the list cannot know it); `*` keeps both as typed.
+ * Settings store entries lower-cased, so in practice an entry's spelling is lower case.
+ */
+export function canonicalRepo(repo: string, allowlist: readonly string[]): string | undefined {
   const wanted = repo.toLowerCase();
-  const owner = wanted.slice(0, wanted.indexOf("/"));
-  return allowlist.some((entry) => {
-    const pattern = entry.toLowerCase();
-    return pattern === "*" || pattern === wanted || pattern === `${owner}/*`;
-  });
+  const slash = wanted.indexOf("/");
+  const owner = wanted.slice(0, slash);
+  const exact = allowlist.find((entry) => entry.toLowerCase() === wanted);
+  if (exact !== undefined) return exact;
+  const wildcard = allowlist.find((entry) => entry.toLowerCase() === `${owner}/*`);
+  if (wildcard !== undefined)
+    return `${wildcard.slice(0, wildcard.indexOf("/"))}${repo.slice(slash)}`;
+  return allowlist.includes("*") ? repo : undefined;
 }
 
 /** The https clone URL of a validated repo. Credentials never appear in it: the OneCLI gateway injects them. */

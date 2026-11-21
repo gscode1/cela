@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RunOutcome } from "../src/failure.ts";
 import { RunWatcher } from "../src/watcher.ts";
 import type { Settlement, Watched } from "../src/watcher.ts";
@@ -29,6 +29,51 @@ function make(settlements: (Settlement | Error)[]) {
   });
   return { watcher, ended, done, errors, calls: () => calls };
 }
+
+describe("RunWatcher heartbeat (issue #333)", () => {
+  it("beats while the submission is unsettled and stops once it settles", async () => {
+    const gate = Promise.withResolvers<Settlement>();
+    const beats: Watched[] = [];
+    const watcher = new RunWatcher({
+      settle: () => gate.promise,
+      onUnanswered: () => Promise.resolve(),
+      heartbeat: (w) => {
+        beats.push(w);
+        return Promise.resolve();
+      },
+      heartbeatMs: 5,
+    });
+    watcher.add(watched);
+    await vi.waitFor(() => expect(beats.length).toBeGreaterThanOrEqual(2), { timeout: 2_000 });
+    expect(beats[0]).toEqual(watched);
+    gate.resolve({ status: "done" });
+    await watcher.idle();
+    const after = beats.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(beats.length).toBe(after);
+  }, 5_000);
+
+  it("reports a failed beat to onError and keeps beating", async () => {
+    const gate = Promise.withResolvers<Settlement>();
+    const errors: unknown[] = [];
+    let calls = 0;
+    const watcher = new RunWatcher({
+      settle: () => gate.promise,
+      onUnanswered: () => Promise.resolve(),
+      heartbeat: () => {
+        calls += 1;
+        return calls === 1 ? Promise.reject(new Error("db down")) : Promise.resolve();
+      },
+      heartbeatMs: 5,
+      onError: (e) => errors.push(e),
+    });
+    watcher.add(watched);
+    await vi.waitFor(() => expect(calls).toBeGreaterThanOrEqual(2), { timeout: 2_000 });
+    expect(errors).toHaveLength(1);
+    gate.resolve({ status: "done" });
+    await watcher.idle();
+  }, 5_000);
+});
 
 describe("RunWatcher", () => {
   it("reports an unanswered submission once, with the reason and the error text", async () => {

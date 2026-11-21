@@ -7,6 +7,7 @@ import {
   failSession,
   getSession,
   recordSessionUsage,
+  touchSessionActivity,
   validateProfileDefinition,
   writeTombstone,
 } from "@cela/session-core";
@@ -95,6 +96,8 @@ export interface SessionServiceOptions {
    * run inside the inbox claim transaction; default 30 s.
    */
   abortWaitMs?: number;
+  /** How often a running session's `last_activity_at` moves (issue #333); default 30 s. Only tests change this. */
+  heartbeatMs?: number;
   /** Tokens one session may use in total; null or absent: no limit (docs/decisions/0028-token-budget.md). */
   tokenBudget?: () => number | null;
   /** Repo workspaces (Phase 4c). Without it a session that asked for a repo is refused at its first input. */
@@ -138,6 +141,8 @@ export class SessionService {
     this.#abortWaitMs = options.abortWaitMs ?? DEFAULT_ABORT_WAIT_MS;
     this.#watcher = new RunWatcher({
       settle: (conversationId, requestId) => host.settlement(conversationId, requestId),
+      heartbeat: (watched) => touchSessionActivity(pool, watched.sessionId),
+      ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
       onUnanswered: async (watched, outcome) => {
         await this.#publishUsage(watched);
         await this.#runEnded(watched, outcome);
@@ -222,6 +227,8 @@ export class SessionService {
         watched.sessionId,
         await this.#host.usage(watched.conversationId),
       );
+      // The run ended: its last work is the session's last activity (issue #333).
+      await touchSessionActivity(this.#pool, watched.sessionId);
     } catch (error) {
       log("usage-publish-failed", { session: watched.sessionId, message: errorMessage(error) });
     }
@@ -289,7 +296,13 @@ export class SessionService {
 
   /** The sandbox facts of a session's instructions (ADR 0049). */
   #environment(session: SessionRow): string {
-    return renderEnvironment(environmentFacts(session, this.#options.egress !== undefined));
+    return renderEnvironment(
+      environmentFacts(
+        session,
+        this.#options.egress !== undefined,
+        definitionOf(session).egressRuleSets ?? [],
+      ),
+    );
   }
 
   /**

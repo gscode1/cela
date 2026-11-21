@@ -60,7 +60,7 @@ import {
   readProfiles,
   readJsonObject,
   sendBodyError,
-  repoAllowed,
+  canonicalRepo,
   readSettings,
   PROBE_SHARD,
   readMcpDiscovery,
@@ -1107,15 +1107,21 @@ async function postSession(
     });
     return;
   }
-  const repo = chooseRepo(body);
-  if (typeof repo === "string") {
-    sendJson(res, 400, { error: repo });
+  const requested = chooseRepo(body);
+  if (typeof requested === "string") {
+    sendJson(res, 400, { error: requested });
     return;
   }
-  // The GitHub App can reach more repositories than callers should: only the ones an admin listed (ADR 0032).
-  if (repo !== undefined && !repoAllowed(repo.repo, deps.settings.get().repoAllowlist)) {
-    sendJson(res, 403, { error: `repo "${repo.repo}" is not on the repo allowlist` });
-    return;
+  // The GitHub App can reach more repositories than callers should: only the ones an admin listed (ADR 0032). The
+  // session stores the allowlist's spelling, not the caller's, so one repository has one name (issue #334).
+  let repo = requested;
+  if (requested !== undefined) {
+    const canonical = canonicalRepo(requested.repo, deps.settings.get().repoAllowlist);
+    if (canonical === undefined) {
+      sendJson(res, 403, { error: `repo "${requested.repo}" is not on the repo allowlist` });
+      return;
+    }
+    repo = { ...requested, repo: canonical };
   }
   const sized = chooseSandboxSize(deps.sandboxSizes, snapshot.definition, body.sandboxSize);
   if ("error" in sized) {

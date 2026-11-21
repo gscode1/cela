@@ -351,6 +351,13 @@ describe("usage on the session row (#185)", () => {
     expect(usage.input + usage.output).toBeGreaterThan(0);
     // The guard against an older read overwriting a newer one compares with the same total.
     expect(write?.params[2]).toBe(total);
+    // The run ended, so the session's last activity moves too, for a live session only (issue #333).
+    const touched = () => queries.find((q) => q.sql.includes("set last_activity_at"));
+    for (let i = 0; i < 200 && touched() === undefined; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(touched()?.params).toEqual(["usage-session"]);
+    expect(touched()?.sql).toContain("status = 'active'");
     service.stop();
   }, 15_000);
 });
