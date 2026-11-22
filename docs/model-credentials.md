@@ -178,6 +178,11 @@ recoverable and nothing leaks.
 - **To avoid it:** keep large parallel bursts on one subscription away from the token's last minutes, or spread
   sessions over more than one subscription. Revisit if OneCLI moves the Codex refresh onto its locked refresh path.
 
+**Pi 1.6.0 (ADR 0053).** `openai-completions` sends the `developer` role only to `api.openai.com`; other hosts
+(OpenRouter and the like) get `system` unless `compat.supportsDeveloperRole` says otherwise. The Google adapters
+(`google-generative-ai`, `google-vertex`) now accept a custom `fetch`, so Google calls can be sent through the OneCLI
+gateway like the others; cela does not wire that yet, and until it does they bypass the gateway.
+
 ## Set up (once per cluster)
 
 1. **OneCLI agent for the orchestrator** (your dashboard, or the API with an `oc_` key): create
