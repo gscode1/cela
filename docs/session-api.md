@@ -237,7 +237,7 @@ processes use it, so replacing the static tokens by an OIDC verifier is a change
   `gpt-6.1-terra` (`gpt-6.1-sol` is allowlisted too, and the scripted models, which the e2e suites select through
   `PUT /admin/settings` and restore afterwards). With an OneCLI token the orchestrator installs every built-in provider at start, whatever
   the allowlist says, so adding a built-in provider through settings needs no restart. Without a token it installs only the
-  allowlisted providers, and a provider the orchestrator code does not ship needs a new release.
+  allowlisted providers. A provider the orchestrator code does not ship is an operator-defined one: the chart's `models.customProviders` (OpenAI-compatible, through OneCLI or keyless direct; [ADR 0055](decisions/0055-custom-model-providers.md), `docs/model-credentials.md`), read at start, so adding one needs a restart; its models then go on the allowlist like any other.
 - **Storage.** The chosen model is stored with the session (`inbox.sessions.model_provider`, `model_id`, `model_reasoning`; migrations
   `002_models.sql`, `003_reasoning.sql`), so changing the default later does not change existing sessions. The orchestrator creates the Pi
   conversation with it; Pi Durable keeps it in the conversation across restarts (`docs/model-credentials.md`).
@@ -365,7 +365,7 @@ only SQL can write; the Phase 4 crash test uses it to exit between submit and ma
   succeeded (then ready means the database answers). The orchestrator listens before it migrates; its `/readyz` is
   owner-only.
 - The chart's `models` values (ConfigMap `pi-model-config`) is the settings seed (ingest) and the orchestrator's provider
-  list and fallback; `PI_CONSOLE_DIR` (set only with `console.enabled`) names the console bundle and `PI_CONSOLE_CATALOGS` (`console.catalogs`, `manage` or `readOnly`) its catalog mode; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
+  list and fallback; `models.customProviders` (ConfigMap `pi-custom-providers`, orchestrators only, [ADR 0055](decisions/0055-custom-model-providers.md)) defines operator-added providers; `PI_CONSOLE_DIR` (set only with `console.enabled`) names the console bundle and `PI_CONSOLE_CATALOGS` (`console.catalogs`, `manage` or `readOnly`) its catalog mode; `PI_API_ADMINS` (plain env on ingest, `alice`) names the admin owners. The orchestrator also takes the
   OneCLI agent token and CA (`docs/model-credentials.md`).
 
 ## Known limits

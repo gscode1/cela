@@ -198,7 +198,8 @@ gateway like the others; cela does not wire that yet, and until it does they byp
 5. **Choose models.** The settings live in Postgres (`inbox.settings`, `docs/decisions/0008-settings-in-postgres.md`).
    Ingest seeds them once from ConfigMap `pi-model-config` (the keys below) when the row is absent; **after that the
    table wins** and a differing ConfigMap value only logs `settings-env-ignored`. Change them with
-   `PUT /admin/settings` (`docs/session-api.md`), no restart. With an OneCLI token the orchestrator installs every built-in
+   `PUT /admin/settings` (`docs/session-api.md`), no restart. (Operator-defined providers are not settings: see
+   [Adding an OpenAI-compatible provider](#adding-an-openai-compatible-provider).) With an OneCLI token the orchestrator installs every built-in
    provider at start, so adding a built-in provider needs no restart (without a token only allowlisted providers are installed).
    A credential added to OneCLI later also needs no restart: shard 0 re-reads OneCLI's secrets every 30 s, and the console's
    model pickers list the provider once its hint is `configured` ([ADR 0025](decisions/0025-model-catalog.md)).
@@ -215,6 +216,64 @@ gateway like the others; cela does not wire that yet, and until it does they byp
 Example for OpenRouter (seed values): `PI_MODEL_PROVIDER=openrouter`, `PI_MODEL_ID=openai/gpt-4.1-nano`,
 `PI_MODEL_ALLOWLIST=openrouter/openai/gpt-4.1-nano,openrouter/google/gemini-2.5-flash-lite`. An allowlisted model that
 pi-ai does not know stops the orchestrator at start with a clear message, not at the first request.
+
+## Adding an OpenAI-compatible provider
+
+Any server that speaks the OpenAI chat-completions API can offer models to agents ([ADR 0055](decisions/0055-custom-model-providers.md)).
+The operator declares it in the chart values (`models.customProviders`, reference in `charts/cela/values.yaml`); it is
+read at start by every orchestrator shard, so a change restarts them. A model is then picked like a builtin one. There are two
+transports.
+
+**HTTPS with a key, through OneCLI (the generic path).** The `baseUrl` is `https://` with a host name (an IP address is
+refused: OneCLI matches the host name).
+
+1. In OneCLI, create a **generic secret** holding the real key, with `hostPattern` the host (`llm.acme.example`, or
+   `*.acme.example`), header `Authorization` and value format `Bearer {value}`, and grant it to the agent `pi-orchestrator`
+   ([bundled OneCLI](#bundled-onecli-sign-in-and-credentials)). The orchestrator holds only the placeholder.
+2. Add the provider to the values:
+
+```yaml
+models:
+  customProviders:
+    - id: acme
+      baseUrl: https://llm.acme.example/v1
+      models:
+        - { id: acme-large, contextWindow: 128000, maxTokens: 8192, reasoning: true }
+```
+
+An HTTPS host on a LAN works the same way: OneCLI admits private targets on TCP 443 ([ADR 0043](decisions/0043-open-onecli-defaults.md)).
+The orchestrator refuses a host that `NO_PROXY` would send around the gateway.
+
+**Keyless server on the LAN, direct.** For a server with no key, such as oMLX, with plain HTTP and an IP address. The call
+skips OneCLI (and its audit), refuses redirects, and the chart opens exactly one egress rule for the orchestrator:
+
+```yaml
+models:
+  customProviders:
+    - id: omlx
+      baseUrl: http://192.168.7.101:8000/v1
+      via: direct
+      egress: { cidr: 192.168.7.101/32, port: 8000 }
+      models:
+        - { id: <model-id>, contextWindow: 32768, maxTokens: 8192 }
+```
+
+`egress` is required; the chart (and the orchestrator at start) refuse a CIDR in 169.254.0.0/16, 100.64.0.0/10 or 127.0.0.0/8
+and any key, token or header field: a direct provider is **keyless only**. A keyed server goes through OneCLI.
+
+**Then allow the models** (the chart values only define them): the provider shows in `GET /admin/models` (a direct provider
+at once, a provider through OneCLI when a secret's host pattern covers its host, [ADR 0025](decisions/0025-model-catalog.md)),
+and you add `omlx/<model-id>` to the allowlist with `PUT /admin/settings`, or name it as a profile's `defaultModel`.
+
+```sh
+curl -X PUT $API/admin/settings -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"allowlist":["scripted/scripted-1","omlx/<model-id>"]}'
+```
+
+Notes. A model's `contextWindow` and `maxTokens` are yours to state; there is no discovery. `compat` sets pi-ai's
+openai-completions flags for a server that differs (`supportsDeveloperRole` and `supportsReasoningEffort` default to false
+here). The cost is 0. **Removing a provider or model from the values breaks the stored conversations that name it at their
+next turn**; the start log `custom-model-providers` lists the providers (ids, transport, model counts, no other value).
 
 ## Per-session model
 

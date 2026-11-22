@@ -98,6 +98,7 @@ per database: the schema `inbox` is fixed.
 | `ingest.ingress.*`                                         | optional Ingress to ingest: `enabled`, `className`, `hosts`, `paths`, `tls`, `annotations`. See [Routes](#routes)                                                                                                                                                                                                                                                                                                                                                                           |
 | `ingest.replicas`, `resources`                             | ingest scale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `api.admins`, `api.existingSecret`                         | owners who may call `/admin/*`; Secret with key `tokens`, one `owner:token` line per owner                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `models.customProviders`                                   | operator-defined OpenAI-compatible providers (ADR 0055, [model credentials](../../docs/model-credentials.md#adding-an-openai-compatible-provider)): `via: onecli` (HTTPS host name, key in OneCLI) or `via: direct` (keyless LAN server, needs `egress: {cidr, port}`, rendered as the orchestrator's egress rule). Not a seed: read at start by every shard, a change restarts them                                                                                                        |
 | `models.default`, `allowlist`, `turnBudget`, `tokenBudget` | seeds Postgres once (ADR 0008); change later with `PUT /admin/settings`                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `github.app.existingSecret`                                | optional GitHub App key and ids; repo sessions are off without it                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `github.repoAllowlist`                                     | seeds the repositories a session may clone (`owner/name`, `owner/*`, `*`; ADR 0032); empty refuses every repo session. Seed only: change later on the console or with `PUT /admin/settings`                                                                                                                                                                                                                                                                                                 |
@@ -186,6 +187,25 @@ the bootstrap. OneCLI cannot close sign-up, so keep the API and dashboard off ev
 ([ADR 0022](../../docs/decisions/0022-bundled-onecli.md), sign-in: [model credentials](../../docs/model-credentials.md#bundled-onecli-sign-in-and-credentials)).
 
 Model credentials stay in the orchestrator; they are never mounted into a sandbox.
+
+To offer an OpenAI-compatible server's models, add it to `models.customProviders` (the same on every shard; then allow its
+models with `PUT /admin/settings`). A server with a key is reached over HTTPS through OneCLI, with the key stored as an
+OneCLI generic secret whose host pattern covers the host. A keyless LAN server such as oMLX is called directly, and the chart
+opens one egress rule for it:
+
+```yaml
+models:
+  customProviders:
+    - id: omlx
+      baseUrl: http://192.168.7.101:8000/v1
+      via: direct
+      egress: { cidr: 192.168.7.101/32, port: 8000 }
+      models:
+        - { id: <model-id>, contextWindow: 32768, maxTokens: 8192 }
+```
+
+The chart refuses a direct provider without `egress` and a CIDR in 169.254.0.0/16, 100.64.0.0/10 or 127.0.0.0/8
+([ADR 0055](../../docs/decisions/0055-custom-model-providers.md)).
 
 ## Shards
 
