@@ -6,6 +6,7 @@ import {
   errorMessage,
   failSession,
   getSession,
+  recordEventOutcome,
   recordSessionUsage,
   touchSessionActivity,
   validateProfileDefinition,
@@ -144,10 +145,15 @@ export class SessionService {
       heartbeat: (watched) => touchSessionActivity(pool, watched.sessionId),
       ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
       onUnanswered: async (watched, outcome) => {
+        await recordEventOutcome(pool, watched.requestId, {
+          state: "unanswered",
+          reason: outcome.reason,
+        });
         await this.#publishUsage(watched);
         await this.#runEnded(watched, outcome);
       },
       onDone: async (watched) => {
+        await recordEventOutcome(pool, watched.requestId, { state: "answered" });
         await this.#publishUsage(watched);
         await this.#relimit(watched);
       },

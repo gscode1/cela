@@ -9,6 +9,10 @@ export interface StoredEvent {
   sourceEventId: string;
   kind: string;
   status: string;
+  /** Set by a test, as the orchestrator would once Pi Durable settled the submission. */
+  outcome?: "answered" | "unanswered";
+  outcomeReason?: string;
+  settledAt?: Date;
 }
 
 /**
@@ -97,6 +101,29 @@ export class FakeInboxDb {
         status: "pending",
       });
       return done([{ id }]);
+    }
+    if (sql.includes("select * from inbox.events where id = $1 and session_id = $2")) {
+      const [id, sessionId] = params as string[];
+      const found = this.events.find((e) => e.id === id && e.sessionId === sessionId);
+      if (found === undefined) return done();
+      return done([
+        {
+          id: found.id,
+          session_id: found.sessionId,
+          source: found.source,
+          source_event_id: found.sourceEventId,
+          kind: found.kind,
+          payload: {},
+          status: found.status,
+          attempts: found.status === "pending" ? 0 : 1,
+          created_at: new Date("2026-11-22T10:00:00Z"),
+          submitted_at: found.status === "submitted" ? new Date("2026-11-22T10:00:01Z") : null,
+          error: found.status === "failed" ? "internal detail" : null,
+          outcome: found.outcome ?? null,
+          outcome_reason: found.outcomeReason ?? null,
+          settled_at: found.settledAt ?? null,
+        },
+      ]);
     }
     if (sql.includes("from inbox.events where source")) {
       const [source, sourceEventId] = params as string[];

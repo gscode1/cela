@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { EventKind } from "@cela/session-core";
+import type { EventKind, InboxEvent } from "@cela/session-core";
 
 const MAX_TEXT = 64 * 1024;
 const MAX_SOURCE_EVENT_ID = 200;
@@ -44,5 +44,37 @@ export function parseEventBody(body: Record<string, unknown>): ParsedEvent | str
     payload: typeof text === "string" ? { text } : {},
     // Without a client-supplied id every post is its own event: there is nothing to deduplicate on.
     sourceEventId: typeof sourceEventId === "string" ? sourceEventId : `auto-${randomUUID()}`,
+  };
+}
+
+/**
+ * The id of `GET /sessions/{id}/events/{eventId}`: the decimal row id ingest returned for the post. Anything else, or a
+ * number past bigint, is undefined (a 404, like an id of another session), so it never reaches the query as an error.
+ */
+export function parseEventId(raw: string): string | undefined {
+  return /^[1-9][0-9]{0,17}$/.test(raw) ? raw : undefined;
+}
+
+/**
+ * The body of `GET /sessions/{id}/events/{eventId}` (ADR 0058). The stored `error` is left out: it is the orchestrator's
+ * own message and can name internals; `status: failed` says enough. The payload (the text) is the caller's own.
+ */
+export function eventView(event: InboxEvent): Record<string, unknown> {
+  const outcome = event.outcome;
+  return {
+    eventId: event.id,
+    kind: event.kind,
+    status: event.status,
+    createdAt: event.createdAt.toISOString(),
+    ...(event.submittedAt === null ? {} : { submittedAt: event.submittedAt.toISOString() }),
+    ...(outcome === undefined
+      ? {}
+      : {
+          outcome: {
+            state: outcome.state,
+            ...(outcome.state === "unanswered" ? { reason: outcome.reason } : {}),
+            settledAt: outcome.settledAt.toISOString(),
+          },
+        }),
   };
 }
