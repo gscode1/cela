@@ -23,6 +23,7 @@ import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 import { lazyImageProcessor } from "./images.js";
+import { createCurrentDateExtension } from "./current-date.js";
 import { composeInstructions } from "./repo-context.js";
 import type { InstructionParts } from "./repo-context.js";
 import type { Script } from "./model.js";
@@ -267,12 +268,14 @@ export class Host {
     registry.install(coding);
     const fitImages = createFitImagesExtension(images);
     registry.install(fitImages);
+    const currentDate = createCurrentDateExtension();
+    registry.install(currentDate);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in Pi Durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
-    // The host default is therefore always pinned to `coding` and `fit-images` (which has no tools, so nothing offered
-    // changes, and is read from these settings at every start, so conversations that already exist get it too, ADR
-    // 0055), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
+    // The host default is therefore always pinned to `coding`, `fit-images` and `current-date` (which have no tools, so
+    // nothing offered changes, and are read from these settings at every start, so conversations that already exist get
+    // them too, ADR 0055 and 0061), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
     const mcp = new McpTools(
       registry,
@@ -300,7 +303,7 @@ export class Host {
         registry,
         // A failed run withdraws the inputs queued behind it (they settle `unanswered`, `run_failed`) instead of
         // leaving them until the next input (`keep`), and never retries paid calls by itself (`continue`) (ADR 0029).
-        settings: { extensions: [coding, fitImages], afterFailedRun: "withdraw" },
+        settings: { extensions: [coding, fitImages, currentDate], afterFailedRun: "withdraw" },
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {

@@ -71,6 +71,8 @@ export function renderEnvironment(facts: EnvironmentFacts): string {
     `- Tools: ${tools}.`,
     `- ${repo}`,
     `- ${network}`,
+    // The date is per message and added at each request (ADR 0061), so this line stays fixed.
+    "- Date: each user message starts with <current_date>, the UTC date it was sent, which may be later than your training data. Run `date` for the exact time.",
     "</sandbox_environment>",
   ].join("\n");
 }
