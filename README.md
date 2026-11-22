@@ -2,7 +2,8 @@
 
 _cela_ — Polish for a cage, a locked cell: every session runs locked in its own.
 
-Run [Pi Durable](https://github.com/earendil-works/pi) coding agents on your own Kubernetes cluster.
+Run [Pi Durable](https://earendil.com/posts/pi-durable/) coding agents on your own Kubernetes cluster
+([source](https://github.com/earendil-works/pi/tree/main/packages/durable)).
 
 Each session gets an agent that keeps its state in PostgreSQL and resumes after a crash, plus a private gVisor
 sandbox with a persistent workspace where its tools run. Model and GitHub credentials never reach the agent or the
