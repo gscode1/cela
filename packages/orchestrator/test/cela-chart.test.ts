@@ -1753,3 +1753,185 @@ describe("browser flavour (ADR 0041)", () => {
     );
   });
 });
+
+describe("custom model providers (ADR 0055)", () => {
+  const omlx = {
+    id: "omlx",
+    baseUrl: "http://192.168.7.101:8000/v1",
+    via: "direct",
+    egress: { cidr: "192.168.7.101/32", port: 8000 },
+    models: [{ id: "qwen3-30b", contextWindow: 32768, maxTokens: 8192 }],
+  };
+  const acme = {
+    id: "acme",
+    baseUrl: "https://llm.acme.example/v1",
+    models: [{ id: "acme-1", contextWindow: 128000, maxTokens: 4096 }],
+  };
+  const providers = (...list: object[]): string[] => [
+    ...external,
+    "--set-json",
+    `models.customProviders=${JSON.stringify(list)}`,
+  ];
+  const orchestrators = (list: Obj[]): Obj[] =>
+    ofKind(list, "Deployment").filter((d) => d.metadata.name.startsWith("pi-orchestrator"));
+  const egressTo = (list: Obj[], cidr: string): Obj[] =>
+    named(list, "NetworkPolicy", "orchestrator-allow-egress").spec.egress.filter((rule: Obj) =>
+      rule.to?.some((peer: Obj) => peer.ipBlock?.cidr === cidr),
+    );
+
+  it("renders nothing without custom providers", () => {
+    const list = docs(external);
+    expect(list.some((d) => d.metadata.name === "pi-custom-providers")).toBe(false);
+    for (const d of orchestrators(list)) {
+      expect(JSON.stringify(d)).not.toContain("pi-custom-providers");
+    }
+  });
+
+  it("renders the egress rule of a direct provider: its address and port, nothing wider", () => {
+    const list = docs([...providers(omlx), ...proxyOff]);
+    const rules = egressTo(list, "192.168.7.101/32");
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toEqual({
+      to: [{ ipBlock: { cidr: "192.168.7.101/32" } }],
+      ports: [{ protocol: "TCP", port: 8000 }],
+    });
+  });
+
+  it("renders no egress rule for a provider through OneCLI: it uses the gateway rule", () => {
+    const before = named(docs(external), "NetworkPolicy", "orchestrator-allow-egress");
+    const after = named(docs(providers(acme)), "NetworkPolicy", "orchestrator-allow-egress");
+    expect(after.spec.egress).toEqual(before.spec.egress);
+  });
+
+  it("opens the direct provider in the Cilium mode too, through the standard policy Cilium also enforces", () => {
+    const list = docs([...providers(omlx), "--set", "networkPolicy.provider=cilium"]);
+    expect(egressTo(list, "192.168.7.101/32")).toHaveLength(1);
+    // No Cilium policy of the orchestrator closes it: they only add allowed destinations.
+    for (const d of ofKind(list, "CiliumNetworkPolicy")) {
+      expect(JSON.stringify(d.spec)).not.toMatch(/192\.168\.7\.101/);
+    }
+  });
+
+  it.each([1, 3])(
+    "gives every one of %i orchestrator shards the same providers, from one ConfigMap",
+    (shards) => {
+      const list = docs([
+        ...providers(omlx, acme),
+        "--set",
+        `orchestrator.shards=${String(shards)}`,
+      ]);
+      const config = named(list, "ConfigMap", "pi-custom-providers");
+      expect(JSON.parse(config.data.PI_CUSTOM_MODEL_PROVIDERS)).toEqual([omlx, acme]);
+      const found = orchestrators(list);
+      expect(found).toHaveLength(shards);
+      const sources = found.map((d) => JSON.stringify(d.spec.template.spec.containers[0].envFrom));
+      expect(new Set(sources).size).toBe(1);
+      expect(sources[0]).toContain("pi-custom-providers");
+      // Nothing per shard overrides it.
+      for (const d of found) expect(envOf(d).PI_CUSTOM_MODEL_PROVIDERS).toBeUndefined();
+    },
+  );
+
+  it("restarts the orchestrators when a provider changes", () => {
+    const sum = (list: Obj[]): string =>
+      named(list, "Deployment", "pi-orchestrator").spec.template.metadata.annotations[
+        "checksum/model-config"
+      ];
+    expect(sum(docs(providers(omlx)))).not.toBe(sum(docs(providers(omlx, acme))));
+    expect(sum(docs(providers(omlx)))).not.toBe(sum(docs(external)));
+  });
+
+  it("reaches only the orchestrators: no ingest, sandbox, template, pool or other object refers to it", () => {
+    const list = docs(providers(omlx, acme));
+    const holders = list
+      .filter((d) => /PI_CUSTOM_MODEL_PROVIDERS|pi-custom-providers/.test(JSON.stringify(d)))
+      .map((d) => `${d.kind}/${d.metadata.name}`);
+    expect(holders).toEqual(["ConfigMap/pi-custom-providers", "Deployment/pi-orchestrator"]);
+    expect(JSON.stringify(list.filter((d) => d.kind.startsWith("Sandbox")))).not.toMatch(
+      /omlx|acme|192\.168\.7\.101/,
+    );
+  });
+
+  it("lets a direct provider be allowlisted without OneCLI, but not one through OneCLI", () => {
+    const off = ["--set", "onecli.mode=disabled"];
+    const direct = docs([
+      ...providers(omlx),
+      ...off,
+      "--set-json",
+      'models.allowlist=["omlx/qwen3-30b","scripted/scripted-1"]',
+    ]);
+    expect(named(direct, "ConfigMap", "pi-model-config").data.PI_MODEL_ALLOWLIST).toContain(
+      "omlx/qwen3-30b",
+    );
+    expect(() =>
+      docs([
+        ...providers(acme),
+        ...off,
+        "--set-json",
+        'models.allowlist=["acme/acme-1","scripted/scripted-1"]',
+      ]),
+    ).toThrow(/onecli\.mode is disabled but models name the provider\(s\) acme/);
+  });
+
+  describe("refuses", () => {
+    const direct = (patch: object): string[] => providers({ ...omlx, ...patch });
+    it.each<[string, string[], RegExp]>([
+      [
+        "a direct provider without egress",
+        providers({ ...omlx, egress: undefined }),
+        /needs egress/,
+      ],
+      [
+        "a link-local egress range",
+        direct({ egress: { cidr: "169.254.169.254/32", port: 8000 } }),
+        /169\.254\.0\.0\/16/,
+      ],
+      [
+        "a CGNAT egress range",
+        direct({ egress: { cidr: "100.64.0.0/10", port: 8000 } }),
+        /100\.64\.0\.0\/10/,
+      ],
+      [
+        "a loopback egress range",
+        direct({ egress: { cidr: "127.0.0.1/32", port: 8000 } }),
+        /127\.0\.0\.0\/8/,
+      ],
+      [
+        "an egress range that contains a forbidden one",
+        direct({ egress: { cidr: "0.0.0.0/0", port: 8000 } }),
+        /may not use/,
+      ],
+      [
+        "a CIDR that is not IPv4",
+        direct({ egress: { cidr: "fd00::/8", port: 8000 } }),
+        /not an IPv4 CIDR/,
+      ],
+      [
+        "a bad prefix length",
+        direct({ egress: { cidr: "192.168.7.1/33", port: 8000 } }),
+        /not an IPv4 CIDR/,
+      ],
+      [
+        "egress on a provider through OneCLI",
+        providers({ ...acme, egress: omlx.egress }),
+        /egress is for a direct provider/,
+      ],
+      [
+        "http for a provider through OneCLI",
+        providers({ ...acme, baseUrl: "http://llm.acme.example/v1" }),
+        /baseUrl must be https/,
+      ],
+      ["a duplicate id", providers(acme, acme), /defined twice/],
+      ["an unknown transport", providers({ ...acme, via: "proxy" }), /schema|via must be/],
+      ["a key field", providers({ ...omlx, apiKey: "sk-x" }), /schema|apiKey/],
+    ])("%s", (_name, args, message) => {
+      expect(() => docs(args)).toThrow(message);
+    });
+
+    it("also under --skip-schema-validation", () => {
+      expect(() =>
+        docs([...providers({ ...omlx, egress: undefined }), "--skip-schema-validation"]),
+      ).toThrow(/needs egress/);
+    });
+  });
+});
