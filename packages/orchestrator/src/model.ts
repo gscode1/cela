@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import type { FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import type { Message } from "@earendil-works/pi-ai";
+import { isDateBlock } from "./current-date.js";
 
 /** The JSON object a scripted tool call carries as its arguments. */
 type ToolArgs = Parameters<typeof fauxToolCall>[1];
@@ -33,7 +34,10 @@ export interface Script {
 function textOf(message: Message): string {
   if (message.role !== "user") return "";
   if (typeof message.content === "string") return message.content;
-  return message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+  // The date block is added to every request (current-date.ts); a script is only the user's own text.
+  return message.content
+    .map((block) => (block.type === "text" && !isDateBlock(block.text) ? block.text : ""))
+    .join("");
 }
 
 export function parseScript(text: string): Script {
