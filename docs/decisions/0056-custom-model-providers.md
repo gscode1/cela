@@ -1,4 +1,4 @@
-# 0055: Operators define OpenAI-compatible model providers in the chart
+# 0056: Operators define OpenAI-compatible model providers in the chart
 
 Status: accepted, 2026-11-22 (issue #357). Amends [0025](0025-model-catalog.md) (the catalog no longer changes only with a
 new image). Related: [0043](0043-open-onecli-defaults.md) (what OneCLI may reach), [0008](0008-settings-in-postgres.md) (the

@@ -2,7 +2,7 @@
 pi-orchestrator (every shard, label app.kubernetes.io/name=pi-orchestrator, control port 8081).
 Ingress: ingest (stream proxy) only. Egress: the database, sandboxd on sandbox pods, the OneCLI gateway and API, the
 Kubernetes API (provider-specific below), and one rule per direct custom model provider (models.customProviders, ADR
-0055). The Cilium policies add to these rules; none of them blocks a direct provider, so cilium.yaml has nothing for it. DNS is allow-dns-egress.
+0056). The Cilium policies add to these rules; none of them blocks a direct provider, so cilium.yaml has nothing for it. DNS is allow-dns-egress.
 */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

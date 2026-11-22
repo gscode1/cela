@@ -283,7 +283,7 @@ models:
     - scripted/scripted-2
   turnBudget: 100
   tokenBudget: null # tokens one session may use in total (ADR 0028); null: no limit
-  # Operator-defined OpenAI-compatible providers (docs/decisions/0055-custom-model-providers.md, docs/model-credentials.md).
+  # Operator-defined OpenAI-compatible providers (docs/decisions/0056-custom-model-providers.md, docs/model-credentials.md).
   # Not a seed: every orchestrator shard reads this at start, so a change restarts them; removing a provider breaks the
   # stored conversations that name it at their next turn. Their models are then in GET /admin/models and can be put on the
   # allowlist above or later with PUT /admin/settings, per session and per profile, like the builtin ones. Per entry:

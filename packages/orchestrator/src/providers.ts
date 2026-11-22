@@ -26,7 +26,7 @@ import {
  * Pi Durable stores a conversation's model as `{ provider, modelId }` names and resolves them against this `Models`
  * at every request, so every provider a stored conversation may name must be installed at every start: all builtin
  * providers when the OneCLI token is set (the allowlist only limits new sessions), the scripted ones, and `faux` for
- * the Phase 3 /control sessions. The operator's custom providers (ADR 0055) come after the builtin ones: those that go
+ * the Phase 3 /control sessions. The operator's custom providers (ADR 0056) come after the builtin ones: those that go
  * through OneCLI with the token like the builtin ones, the keyless direct ones always.
  *
  * Real providers resolve their API key to a placeholder (`placeholderAuthContext`) and send their requests through
@@ -208,7 +208,7 @@ function credentialOf(
   patterns: string[] | undefined,
 ): CredentialState {
   if (provider === "scripted") return "configured";
-  // Keyless by design (ADR 0055): there is no credential to be missing.
+  // Keyless by design (ADR 0056): there is no credential to be missing.
   if (config.customProviders.some((custom) => custom.id === provider && custom.via === "direct"))
     return "configured";
   if (provider === "openai-codex" && config.onecli.codexAccountId !== PLACEHOLDER_API_KEY) {
