@@ -66,7 +66,7 @@ describe("shard invariants", () => {
     }
   });
 
-  it("custom model providers (ADR 0055) are read by the orchestrator's model code only, never by ingest or a sandbox", () => {
+  it("custom model providers (ADR 0056) are read by the orchestrator's model code only, never by ingest or a sandbox", () => {
     // Allowed: where they are parsed, installed, routed, reported and logged at start.
     const allowed = [
       "config.ts",

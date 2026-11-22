@@ -50,7 +50,7 @@ spec:
           envFrom:
             - configMapRef: { name: pi-model-config }
             {{- if $root.Values.models.customProviders }}
-            # The same ConfigMap on every shard: all shards install the same custom providers (ADR 0055).
+            # The same ConfigMap on every shard: all shards install the same custom providers (ADR 0056).
             - configMapRef: { name: pi-custom-providers }
             {{- end }}
           env:

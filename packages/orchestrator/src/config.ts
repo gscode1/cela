@@ -52,7 +52,7 @@ export interface OrchestratorConfig {
   models: ModelPolicy;
   /**
    * Operator-defined OpenAI-compatible providers (`PI_CUSTOM_MODEL_PROVIDERS`, the chart's `models.customProviders`; ADR
-   * 0055). Identical on every shard; a direct provider needs no OneCLI token.
+   * 0056). Identical on every shard; a direct provider needs no OneCLI token.
    */
   customProviders: readonly CustomProvider[];
   /** Model turns (assistant responses) one session may use in total; the first spend limit. */

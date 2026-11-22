@@ -219,7 +219,7 @@ pi-ai does not know stops the orchestrator at start with a clear message, not at
 
 ## Adding an OpenAI-compatible provider
 
-Any server that speaks the OpenAI chat-completions API can offer models to agents ([ADR 0055](decisions/0055-custom-model-providers.md)).
+Any server that speaks the OpenAI chat-completions API can offer models to agents ([ADR 0056](decisions/0056-custom-model-providers.md)).
 The operator declares it in the chart values (`models.customProviders`, reference in `charts/cela/values.yaml`); it is
 read at start by every orchestrator shard, so a change restarts them. A model is then picked like a builtin one. There are two
 transports.

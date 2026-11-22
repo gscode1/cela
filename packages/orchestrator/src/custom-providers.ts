@@ -3,7 +3,7 @@ import type { FetchFunction, OpenAICompletionsCompat } from "@earendil-works/pi-
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
 /**
- * Operator-defined OpenAI-compatible model providers (docs/decisions/0055-custom-model-providers.md).
+ * Operator-defined OpenAI-compatible model providers (docs/decisions/0056-custom-model-providers.md).
  *
  * They come from the chart (`models.customProviders`, rendered into the ConfigMap `pi-custom-providers`, env
  * `PI_CUSTOM_MODEL_PROVIDERS`) and are the same on every shard. Nothing here is reachable from the admin API: a base URL

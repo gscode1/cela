@@ -1754,7 +1754,7 @@ describe("browser flavour (ADR 0041)", () => {
   });
 });
 
-describe("custom model providers (ADR 0055)", () => {
+describe("custom model providers (ADR 0056)", () => {
   const omlx = {
     id: "omlx",
     baseUrl: "http://192.168.7.101:8000/v1",

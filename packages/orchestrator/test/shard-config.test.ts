@@ -39,7 +39,7 @@ describe("shard schema", () => {
     expect(() => loadConfig({ ...env, PI_ORCH_SHARD: "x" })).toThrow(/PI_ORCH_SHARD/);
   });
 
-  it("gives every shard the same custom providers: the list is not a function of the shard (ADR 0055)", () => {
+  it("gives every shard the same custom providers: the list is not a function of the shard (ADR 0056)", () => {
     const providers = JSON.stringify([
       {
         id: "omlx",

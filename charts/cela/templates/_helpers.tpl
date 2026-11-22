@@ -82,7 +82,7 @@ First and last address of an IPv4 CIDR as "first,last" integers. The input is ch
 {{- end -}}
 
 {{/*
-The custom provider range a CIDR touches (docs/decisions/0055-custom-model-providers.md): link-local (cloud metadata),
+The custom provider range a CIDR touches (docs/decisions/0056-custom-model-providers.md): link-local (cloud metadata),
 CGNAT (node networks) and loopback. Empty when it touches none. Same list as FORBIDDEN_RANGES in
 packages/orchestrator/src/custom-providers.ts, which refuses them at start too.
 */}}
@@ -178,7 +178,7 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- end -}}
 {{- if eq $via "direct" -}}
 {{- if not $p.egress -}}
-{{- fail (printf "models.customProviders[%d] (%s): a direct provider needs egress {cidr, port}: the chart opens exactly that in the orchestrator's NetworkPolicy (docs/decisions/0055-custom-model-providers.md)" $i $p.id) -}}
+{{- fail (printf "models.customProviders[%d] (%s): a direct provider needs egress {cidr, port}: the chart opens exactly that in the orchestrator's NetworkPolicy (docs/decisions/0056-custom-model-providers.md)" $i $p.id) -}}
 {{- end -}}
 {{- $cidr := toString $p.egress.cidr -}}
 {{- $cidrOk := regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$" $cidr -}}
