@@ -17,10 +17,12 @@ import type {
 } from "@cela/session-core";
 import { defineExtension } from "@earendil-works/pi-durable";
 import type { AgentChange, Extension, ToolRegistration } from "@earendil-works/pi-durable";
+import { createFitImagesExtension } from "@earendil-works/pi-durable/images/fit";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
+import { lazyImageProcessor } from "./images.js";
 import { composeInstructions } from "./repo-context.js";
 import type { InstructionParts } from "./repo-context.js";
 import type { Script } from "./model.js";
@@ -164,6 +166,7 @@ export class Host {
   readonly #mcp: McpTools;
   readonly #toolSearch: Extension;
   readonly #coding: Extension;
+  readonly #fitImages: Extension;
   readonly #unsubscribe: () => void;
   /** What pi-ai knows here, for the catalog published with the capabilities. */
   readonly models: Models;
@@ -175,6 +178,7 @@ export class Host {
     mcp: McpTools,
     toolSearch: Extension,
     coding: Extension,
+    fitImages: Extension,
     unsubscribe: () => void,
     models: Models,
   ) {
@@ -185,6 +189,7 @@ export class Host {
     this.#mcp = mcp;
     this.#toolSearch = toolSearch;
     this.#coding = coding;
+    this.#fitImages = fitImages;
     this.#unsubscribe = unsubscribe;
   }
 
@@ -197,7 +202,7 @@ export class Host {
   capabilities(): { tools: string[]; extensions: string[] } {
     return {
       tools: (this.#coding.tools ?? []).map((tool) => tool.name),
-      extensions: [this.#coding.name, this.#toolSearch.name],
+      extensions: [this.#coding.name, this.#fitImages.name, this.#toolSearch.name],
     };
   }
 
@@ -256,13 +261,18 @@ export class Host {
   ): Promise<Host> {
     const models = await buildModels(config);
     const registry = createRegistry();
-    const coding = options.codingExtension ?? createCodingTools();
+    // One processor for `read` and for the fit-images extension, loaded at the first image (docs/decisions/0055-fit-images.md).
+    const images = lazyImageProcessor();
+    const coding = options.codingExtension ?? createCodingTools({ images });
     registry.install(coding);
+    const fitImages = createFitImagesExtension(images);
+    registry.install(fitImages);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in Pi Durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
-    // The host default is therefore always pinned to `coding`, whatever the catalog holds, and only conversations
-    // created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
+    // The host default is therefore always pinned to `coding` and `fit-images` (which has no tools, so nothing offered
+    // changes, and is read from these settings at every start, so conversations that already exist get it too, ADR
+    // 0055), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
     const mcp = new McpTools(
       registry,
@@ -290,7 +300,7 @@ export class Host {
         registry,
         // A failed run withdraws the inputs queued behind it (they settle `unanswered`, `run_failed`) instead of
         // leaving them until the next input (`keep`), and never retries paid calls by itself (`continue`) (ADR 0029).
-        settings: { extensions: [coding], afterFailedRun: "withdraw" },
+        settings: { extensions: [coding, fitImages], afterFailedRun: "withdraw" },
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {
@@ -320,7 +330,17 @@ export class Host {
     // After resume: discovery runs in the background and never delays readiness; a server that is down only leaves
     // its tools unavailable until a retry succeeds.
     mcp.start();
-    return new Host(harness, sandboxes, storage, mcp, toolSearch, coding, unsubscribe, models);
+    return new Host(
+      harness,
+      sandboxes,
+      storage,
+      mcp,
+      toolSearch,
+      coding,
+      fitImages,
+      unsubscribe,
+      models,
+    );
   }
 
   /** Creates the conversation and its sandbox claim, then submits the script as the first input. */
