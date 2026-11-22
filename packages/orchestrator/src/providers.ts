@@ -76,13 +76,17 @@ export async function buildModels(
   return withFetch(models, await buildGatewayFetch(config, token, readCa), direct);
 }
 
+/** What a direct (keyless) provider sends as its bearer value; see `customProvider`. */
+export const KEYLESS_API_KEY = "keyless";
+
 const noGatewayFetch: FetchFunction = () =>
   Promise.reject(new Error("ONECLI_AGENT_TOKEN is required: model calls go through the gateway"));
 
 /**
  * One operator-defined OpenAI-compatible provider. A provider that goes through OneCLI resolves its API key to the same
  * placeholder as the builtin ones (`<ID>_API_KEY` through `placeholderAuthContext`); the gateway swaps in the secret
- * whose host pattern covers the base URL. A direct provider is keyless: the request carries no Authorization header.
+ * whose host pattern covers the base URL. A direct provider is keyless: pi-ai's client refuses to start without some
+ * key, so it sends the constant `keyless`, which no server takes as a credential.
  */
 function customProvider(custom: CustomProvider): Provider {
   const models: Model<"openai-completions">[] = custom.models.map((model) => ({
@@ -104,7 +108,10 @@ function customProvider(custom: CustomProvider): Provider {
     auth: {
       apiKey:
         custom.via === "direct"
-          ? { name: custom.id, resolve: () => Promise.resolve({ auth: {} }) }
+          ? {
+              name: custom.id,
+              resolve: () => Promise.resolve({ auth: { apiKey: KEYLESS_API_KEY } }),
+            }
           : envApiKeyAuth(custom.id, [`${custom.id.toUpperCase().replaceAll("-", "_")}_API_KEY`]),
     },
     models,
