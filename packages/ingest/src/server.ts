@@ -72,6 +72,7 @@ import {
   requeueFailedDelete,
   sendJson,
   summarize,
+  getEvent,
   UUID,
 } from "@cela/session-core";
 import type {
@@ -92,7 +93,7 @@ import type {
   StoredProfile,
   StoredSettings,
 } from "@cela/session-core";
-import { parseEventBody } from "./events.js";
+import { eventView, parseEventBody, parseEventId } from "./events.js";
 import { log } from "./log.js";
 
 export interface IngestDeps {
@@ -227,6 +228,17 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   }
   if (parts.length === 3 && parts[2] === "events" && method === "POST") {
     await postEvent(req, res, deps.pool, session, principal);
+    return;
+  }
+  if (parts.length === 4 && parts[2] === "events" && method === "GET") {
+    const eventId = parseEventId(parts[3] ?? "");
+    const event =
+      eventId === undefined ? undefined : await getEvent(deps.pool, session.id, eventId);
+    if (event === undefined) {
+      sendJson(res, 404, { error: "event not found" });
+      return;
+    }
+    sendJson(res, 200, eventView(event));
     return;
   }
   if (parts.length === 3 && parts[2] === "stream" && method === "GET") {

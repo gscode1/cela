@@ -126,7 +126,8 @@ reaches a sandbox with web egress.
 ## Limits
 
 - There is no `GET /sessions` list yet. A `sessionId` you lose leaves the session running until someone deletes it.
-- No MCP tasks mode yet. It waits for SDK support and a per-event outcome on the session API (ADR 0031).
+- No MCP tasks mode yet. It waits for SDK support (ADR 0031); the per-event outcome it needs is on the session API
+  (`GET /sessions/{id}/events/{eventId}`, ADR 0058).
 - No remote endpoint yet. The adapter runs where the coding agent runs and reaches ingest the way you do.
 
 ## Optional admin tools

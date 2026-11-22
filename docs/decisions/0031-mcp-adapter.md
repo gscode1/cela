@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-11-17 (issue #158), amended 2026-11-18 after review. Implementation: issue #195.
 
-**Amended by [ADR 0050](0050-mcp-admin-mode.md):** opt-in admin tools may call `/admin/*`. **Amended 2026-11-20** (issue #342): see Amendment below.
+**Amended by [ADR 0050](0050-mcp-admin-mode.md):** opt-in admin tools may call `/admin/*`. **Amended 2026-11-20** (issue #342): see Amendment below. The per-event outcome tasks mode waits for exists since issue #364 ([ADR 0058](0058-input-outcome-and-owner-feed.md)).
 
 ## Context
 
