@@ -13,7 +13,7 @@ Two things need a human in the middle of a run:
   back. ADR 0041 forbids credentials, cookies and signed-in state in a sandbox (`0041:109-113`, `0041:234`); the person types
   them, the model never sees them.
 - **Approval** of a risky call or of a new egress host. Today the only controls are static: the profile's tool list
-  (`ProfileDefinition.tools`, `packages/session-core/src/profiles.ts:79`) and egress rule sets (`profiles.ts:111-115`).
+  (`ProfileDefinition.tools`, `packages/session-core/src/profiles.ts:79`) and egress rule sets (`profiles.ts:116-120`).
 
 With Pi Durable 1.5.2 a tool that waits for a person holds its invocation, the run and the sandbox. Pi 1.6.0 adds what is
 missing (changelog 1.6.0, "Added"): `defineSignal` and `harness.signal(taskId, token, key, value)`, answering `delivered`,
@@ -23,7 +23,7 @@ missing (changelog 1.6.0, "Added"): `defineSignal` and `harness.signal(taskId, t
 
 The existing path is built for this. A session event is a row in `inbox.events`, claimed by the owning shard's drain
 (`inbox.ts:203`, `sessions.ts:177`), deduplicated by `UNIQUE (source, source_event_id)` (`session-api.md:155`) and submitted
-with a stable request id (`session-api.md:139-146`). The stream already forwards each tool slot's status verbatim
+with a stable request id (`session-api.md:139`). The stream already forwards each tool slot's status verbatim
 (`stream.ts:55`), and `liveEvent` is `running: true` for as long as the run exists (`stream.ts:38`).
 
 ## Decision
@@ -43,7 +43,7 @@ Body `{ kind: "login-complete" }` or `{ kind: "approval", decision: "approve" | 
 
 - **Delivery goes through `inbox.events`** as a new event kind `signal`, not a synchronous proxy to the orchestrator. A click
   during an orchestrator restart is not lost, ordering with `cancel` and `delete` is the existing per-session order
-  (`session-api:152-160`), and routing to the owning shard is free: only that shard claims the session's rows
+  (`session-api.md:162`), and routing to the owning shard is free: only that shard claims the session's rows
   (`sessions.ts:177`, [0017](0017-schema-sharding.md) "Everything periodic is per shard"), so no `421` path is needed.
 - **Auth**: the session's owner, checked like every session call (`session-api.md:220`; another owner's session and an
   unknown park are `404`). An `approval` park may require an admin (`PI_API_ADMINS`, `session-api.md:75`) when the profile
@@ -96,8 +96,8 @@ approvals?: {
   that connection at the proxy is rejected: the proxy would need a callback to the orchestrator and would hold sockets for
   minutes. Instead a parking tool `request_egress(host, port, reason)` is offered when `egressHosts` is set. A host outside
   `egressHosts` is refused at once without a park. An approval makes the orchestrator write a session rule, `allow`, `direct`,
-  never `route=onecli`, with `expiresAt` of 1 hour, through the functions `session-api.md:62` and `0034:58` already reserve
-  for the orchestrator; the proxy applies it within one poll (about 5 s, `session-api.md:66`). The session's sandbox facts
+  never `route=onecli`, with `expiresAt` of 1 hour, through the functions `session-api.md:68` and `0034:58` already reserve
+  for the orchestrator; the proxy applies it within one poll (about 5 s, `session-api.md:67`). The session's sandbox facts
   say that a refused host can be requested ([0049](0049-sandbox-environment-instructions.md), [0052](0052-coding-profile-packages.md)).
 - **What the model sees.** Deny: tool result `isError`, `Denied by the user. Do not try the same action another way.` plus
   the approver's note, which is client input: truncated to 500 characters, control characters dropped, quoted as the
@@ -112,7 +112,7 @@ approvals?: {
 - **Budgets.** A park spends no turn and no token: turns are model responses counted from the transcript
   (`sessions.ts:495`) and the model does not run while parked. `maxTurns` (`sessions.ts:513`, `0029:29-34`) is unchanged. The
   turn limit is recomputed when the run answers, and a long park does not delay it, because the run is the same run. A steer
-  queued meanwhile joins only after the park's tool round (`session-api.md:144-145`); the way out is `cancel`. The token budget
+  queued meanwhile joins only after the park's tool round (`session-api.md:145`); the way out is `cancel`. The token budget
   stays an admission check with the overshoot of `0028:23-26`.
 - **Stream.** `sleeping` and `waiting` reach clients with no code change (`stream.ts:55`, a string), but `running: true`
   must not read as "thinking". The `live` event gains, per tool entry, `park?: { kind, summary, expiresAt }`, merged in
@@ -124,7 +124,7 @@ approvals?: {
   `onDone`, and a late signal is `closed`. `Host.abort` waits for idle, bounded by `abortWaitMs` (`host.ts:586-600`);
   whether a parked call counts as idle must be shown by a test (Open questions).
 - **Restart.** Parks are Pi tasks in Postgres and survive; `harness.resume()` (`host.ts:319`) continues them and the signal
-  rows wait `pending` while the orchestrator is down (`session-api.md:168`). The park table is derived state: on start the
+  rows wait `pending` while the orchestrator is down (`session-api.md:169`). The park table is derived state: on start the
   orchestrator closes `open` rows whose call is no longer parked. A 1.6.0 database cannot be opened by an older Harness
   (changelog, `task_too_old`), so a rollback with open parks blocks them; the rollout of [0053](0053-pi-durable-1-6.md)
   decides what to do about it.
