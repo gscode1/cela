@@ -24,12 +24,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@earendil-works/pi-durable": "1.5.2",
-    "@earendil-works/pi-env": "1.5.2",
+    "@earendil-works/pi-durable": "1.6.0",
+    "@earendil-works/pi-env": "1.6.0",
     "agentic-sandbox-client": "workspace:*"
   },
   "devDependencies": {
-    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/chord": "1.6.0",
     "@types/node": "22.20.5",
     "typescript": "7.0.2",
     "vitest": "5.1.0"

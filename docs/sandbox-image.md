@@ -9,7 +9,7 @@ not ship the tools below. Decision: [ADR 0048](decisions/0048-sandbox-image-tool
 | Tool | Version | Source |
 | --- | --- | --- |
 | `sandboxd` | v1.0.11 | base image `registry.k8s.io/agent-sandbox/sandboxd` (Debian 12 bookworm) |
-| `pi-env` | 1.5.2 | npm tarball, binary by architecture and SHA-256 ([images/README.md](../images/README.md)) |
+| `pi-env` | 1.6.0 | npm tarball, binary by architecture and SHA-256 ([images/README.md](../images/README.md)) |
 | `node`, `npm`, `npx` | Node 22.23.5, npm 10.9.9 | copied from the pinned `node:22-bookworm-slim` stage (bookworm's `nodejs` is v18), with the Node headers |
 | `corepack`, `pnpm`, `yarn` | corepack 0.36.0 | shims from `corepack enable`; corepack downloads the package manager on first use, or the version a repository's `packageManager` names |
 | `python3`, `pip`, `venv` | Python 3.11.2, pip 23.0.1 | bookworm apt (`python3`, `python3-pip`, `python3-venv`) |

@@ -13,11 +13,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.5.2",
-    "@earendil-works/pi-ai": "1.5.2",
-    "@earendil-works/pi-durable": "1.5.2",
-    "@earendil-works/pi-mcp": "1.5.2",
-    "@gscode1/pi-durable-postgres": "0.3.0",
+    "@earendil-works/chord": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-durable": "1.6.0",
+    "@earendil-works/pi-mcp": "1.6.0",
+    "@gscode1/pi-durable-postgres": "0.4.0",
     "@kubernetes/client-node": "2.0.0",
     "@cela/sandbox-env": "workspace:*",
     "@cela/session-core": "workspace:*",

@@ -242,6 +242,18 @@ ORCH_IMAGE=o:1 INGEST_IMAGE=i:1 SANDBOX_IMAGE=s:1 tests/e2e/chart-values.py pi-e
 helm template cela charts/cela -n pi-e2e-test -f /tmp/values.json | grep -c cela-dev
 ```
 
+### Pi upgrade resume check
+
+`packages/orchestrator/test/pi-upgrade-resume.test.ts` covers the storage side with a fixture written by Pi 1.5.2. This
+is the same check on a cluster, for an upgrade that changes the Pi version (ADR 0053), after a database backup:
+
+1. On the old images, start a session whose first input runs a long command (`sleep 600`) and wait until the tool is
+   running (`GET /sessions/<id>` shows the run active).
+2. Delete the orchestrator pod mid-command (`kubectl delete pod <orchestrator> --grace-period=0 --force`).
+3. Deploy the new orchestrator and both sandbox image digests; recycle the warm pools.
+4. Confirm the same session resumes without a new input: its run settles (`done`), the transcript holds an
+   `interrupted` result for the command, and a following input is answered.
+
 ### Isolation enforcement and database client
 
 `NETPOL_ENFORCED=1 tests/e2e/run.sh phase3` forwards the setting into the driver Job and makes missing enforcement a

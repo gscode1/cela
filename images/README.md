@@ -32,9 +32,9 @@ ADR 0046), Patchright and agent-browser 0.43.0 (release binaries by sha256), and
 loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/sandbox-browser/package-lock.json`. It is
 about 1.6 GB (arm64, uncompressed) and needed by the chart's `sandbox.flavours.browser.enabled` (the default; `false` skips it); `hack/kind-up.sh --build` builds it unless `--no-browser`.
 
-The sandbox selects `pi-env` 1.5.2 from its npm tarball by `TARGETARCH`. Verified binary SHA-256 values:
+The sandbox selects `pi-env` 1.6.0 from its npm tarball by `TARGETARCH`. Verified binary SHA-256 values:
 
 | Architecture | Tarball path | SHA-256 |
 | --- | --- | --- |
-| amd64 | `package/bin/pi-env-linux-x64/pi-env` | `b730549ce73dbefc2f3e9e90aee6f9f172ae8279d7f84e726b14fffe527f990c` |
-| arm64 | `package/bin/pi-env-linux-arm64/pi-env` | `23094f7089e3ab4410431ced346ee50944ae601ea91aa14061573d23d4e3d8c3` |
+| amd64 | `package/bin/pi-env-linux-x64/pi-env` | `c28dc21e95a8895ad47f721cb57c4bce3d6c2ba8c036f528b72c54b7813a94ca` |
+| arm64 | `package/bin/pi-env-linux-arm64/pi-env` | `020022f2b0f8198b691f7c73333bb04310dc35e4a49be3109778765c6bec795e` |

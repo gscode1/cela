@@ -2,11 +2,11 @@
 FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS pi-env
 ARG TARGETARCH
 WORKDIR /tmp/pi-env
-ADD --checksum=sha256:abdc7b5661342acc0b5ba2fbc52b0c63c82a472185b2c82d13335c4b066f2085 https://registry.npmjs.org/@earendil-works/pi-env/-/pi-env-1.5.2.tgz ./
-RUN tar xzf pi-env-1.5.2.tgz \
+ADD --checksum=sha256:e3f9e6b8164460b43730c7b72d9d436bd09958ac4e6d237af356e9bd6d5d776f https://registry.npmjs.org/@earendil-works/pi-env/-/pi-env-1.6.0.tgz ./
+RUN tar xzf pi-env-1.6.0.tgz \
  && case "$TARGETARCH" in \
-      amd64) arch=x64; sum=b730549ce73dbefc2f3e9e90aee6f9f172ae8279d7f84e726b14fffe527f990c ;; \
-      arm64) arch=arm64; sum=23094f7089e3ab4410431ced346ee50944ae601ea91aa14061573d23d4e3d8c3 ;; \
+      amd64) arch=x64; sum=c28dc21e95a8895ad47f721cb57c4bce3d6c2ba8c036f528b72c54b7813a94ca ;; \
+      arm64) arch=arm64; sum=020022f2b0f8198b691f7c73333bb04310dc35e4a49be3109778765c6bec795e ;; \
       *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac \
  && cp "package/bin/pi-env-linux-$arch/pi-env" /pi-env \

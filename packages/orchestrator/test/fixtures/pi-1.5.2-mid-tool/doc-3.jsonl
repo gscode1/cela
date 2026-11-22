@@ -1,0 +1,1 @@
+{"format":1,"type":"record","seq":5,"ordinal":2,"payload":{"type":"document","id":3,"content":{"version":3,"kind":"base","value":{"run":{"taskId":10,"inputs":[9],"turns":1,"first":8},"tools":[{"callId":"step-1-0","name":"hold","taskId":13,"status":"pending"}]}}}}
