@@ -330,3 +330,13 @@ export type {
   McpDiscoveryView,
   McpReachability,
 } from "./mcp-discovery.js";
+export {
+  FEED_LIMIT_DEFAULT,
+  FEED_LIMIT_MAX,
+  feedLagSeconds,
+  formatCursor,
+  parseCursor,
+  pruneFeed,
+  readFeed,
+} from "./feed.js";
+export type { FeedEvent, FeedPage, FeedType } from "./feed.js";

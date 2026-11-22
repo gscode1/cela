@@ -178,3 +178,15 @@ describe("config: egress proxy", () => {
     }
   });
 });
+
+describe("feed retention (ADR 0058)", () => {
+  it("defaults to 7 days and refuses values that are not whole hours up to a year", () => {
+    expect(loadConfig(env).feedRetentionHours).toBe(168);
+    expect(loadConfig({ ...env, PI_FEED_RETENTION_HOURS: "24" }).feedRetentionHours).toBe(24);
+    for (const bad of ["0", "1.5", "8761", "x"]) {
+      expect(() => loadConfig({ ...env, PI_FEED_RETENTION_HOURS: bad }), bad).toThrow(
+        /PI_FEED_RETENTION_HOURS/,
+      );
+    }
+  });
+});

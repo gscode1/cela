@@ -8,6 +8,7 @@ export interface Running {
   service?: { stop(): void };
   sweeper?: { stop(): void };
   netProbe?: { stop(): void };
+  feedMaintenance?: { stop(): void };
   modelCredentials?: { stop(): void };
   hostRules?: { stop(): void };
   mcpAccess?: { close(): Promise<void> };
@@ -38,6 +39,7 @@ export function createShutdown(deps: ShutdownDeps): (signal: string) => void {
       running.service?.stop();
       running.sweeper?.stop();
       running.netProbe?.stop();
+      running.feedMaintenance?.stop();
       running.modelCredentials?.stop();
       running.hostRules?.stop();
       await running.inbox?.stop();

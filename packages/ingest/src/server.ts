@@ -94,6 +94,7 @@ import type {
   StoredSettings,
 } from "@cela/session-core";
 import { eventView, parseEventBody, parseEventId } from "./events.js";
+import { getFeed, streamFeed } from "./feed-routes.js";
 import { log } from "./log.js";
 
 export interface IngestDeps {
@@ -188,6 +189,15 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   }
   if (method === "POST" && url.pathname === "/sessions") {
     await postSession(req, res, deps, principal);
+    return;
+  }
+  // The caller's own feed (ADR 0058): keyed by the subject, like the owner check of every session route.
+  if (method === "GET" && url.pathname === "/events") {
+    await getFeed(res, deps.pool, principal.subject, url);
+    return;
+  }
+  if (method === "GET" && url.pathname === "/events/stream") {
+    streamFeed(req, res, deps.pool, principal.subject);
     return;
   }
   if (parts[0] !== "sessions" || parts[1] === undefined) {
