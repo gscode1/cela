@@ -176,7 +176,7 @@ Guarantees:
 
 | SSE event | `id:` | Data |
 |---|---|---|
-| `entry` | the Pi Durable entry id | `{ id, kind, messages: [{ role, text, calls?, isError? }] }`: one committed transcript entry (user input, assistant answer or tool call, tool result), once, in order. Entries without model messages are not sent. |
+| `entry` | the Pi Durable entry id | `{ id, kind, messages: [{ role, text, calls?, isError? }] }`: one committed transcript entry (user input, assistant answer or tool call, tool result), once, in order. Entries without model messages are not sent. `text` shows an image as `[image]`; the transcript holds the image fitted to the model's limits ([ADR 0055](decisions/0055-fit-images.md)), or a note that it was left out. |
 | `live` | none | `{ running, queued, partial?, tools?, runFailure? }`: the run in progress, from `pi.live` and `pi.inbox`. Sent on connect and on every change. `running: false` with `queued: 0` means idle. |
 | `deleted` | none | The session was deleted; the stream ends. |
 | comment `: keepalive` | | Every 15 s. |
