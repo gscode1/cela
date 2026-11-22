@@ -33,6 +33,8 @@ export interface OrchestratorConfig {
   schema: string;
   /** Which shard this orchestrator is; it owns the schema of that shard and the sessions assigned to it (ADR 0017). */
   shard: number;
+  /** How long the owner feed keeps its rows (ADR 0058); shard 0 prunes. */
+  feedRetentionHours: number;
   namespace: string;
   /**
    * The unsized SandboxWarmPool (`PI_ORCH_WARMPOOL`): what a session without a size references, and the prefix of the
@@ -204,6 +206,9 @@ export function loadConfig(
   if (!Number.isInteger(maxActions) || maxActions < 1)
     throw new Error("PI_SWEEP_MAX_ACTIONS must be an integer of 1 or more");
   const shard = Number(env.PI_ORCH_SHARD ?? "0");
+  const feedRetentionHours = Number(env.PI_FEED_RETENTION_HOURS ?? "168");
+  if (!Number.isInteger(feedRetentionHours) || feedRetentionHours < 1 || feedRetentionHours > 8760)
+    throw new Error("PI_FEED_RETENTION_HOURS must be an integer from 1 to 8760");
   const models = loadModelPolicy(env);
   const customProviders = parseCustomProviders(env[CUSTOM_PROVIDERS_ENV]);
   // A direct provider has no credential and does not use the gateway, so it needs no token.
@@ -247,6 +252,7 @@ export function loadConfig(
     databaseTls: loadDatabaseTls(env),
     schema: shardSchema(env.PI_DURABLE_SCHEMA ?? "public", shard),
     shard,
+    feedRetentionHours,
     namespace,
     warmPool,
     port,

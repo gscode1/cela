@@ -7,6 +7,8 @@ import {
   conversationsWithExecInFlight,
   createPool,
   errorMessage,
+  feedLagSeconds,
+  pruneFeed,
   listSessionRefs,
   parseBindingKey,
   publishModelProviders,
@@ -55,9 +57,11 @@ import { createShutdown } from "./shutdown.js";
 import type { Running } from "./shutdown.js";
 import { openStorageWhenFree } from "./storage.js";
 import { OrphanSweeper } from "./sweeper.js";
+import { FeedMaintenanceLoop } from "./feed-maintenance.js";
 
 /** How often shard 0 re-reads OneCLI's secrets for the credential hint: one cheap listing (the sweep makes the same). */
 const MODEL_CREDENTIALS_INTERVAL_MS = 30_000;
+const FEED_MAINTENANCE_INTERVAL_MS = 10 * 60_000;
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -147,6 +151,13 @@ async function main(): Promise<void> {
       log("netprobe-cleanup-failed", { message: errorMessage(error) });
     });
     probe.start(5_000);
+    // The owner feed is shared by every shard; one shard prunes it (ADR 0058).
+    const feed = new FeedMaintenanceLoop({
+      prune: () => pruneFeed(pool, config.feedRetentionHours),
+      lagSeconds: () => feedLagSeconds(pool),
+    });
+    running.feedMaintenance = feed;
+    feed.start(FEED_MAINTENANCE_INTERVAL_MS);
   }
   const sessionKeyOf = async (conversationId: number): Promise<string> => {
     const session = await sessionByConversation(pool, config.shard, conversationId);
