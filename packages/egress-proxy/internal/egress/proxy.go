@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -258,8 +259,8 @@ func (p *Proxy) authUpstream(ctx *goproxy.ProxyCtx, req *http.Request) error {
 //     dialled directly, skipping Smokescreen's private-address denial (which
 //     would refuse a ClusterIP). Anything else is refused, which also stops a
 //     proxy env var (NO_PROXY) from turning the route into a direct dial.
-//   - route=direct: the address must be the requested destination, and goes
-//     through Smokescreen's resolve-classify-dial path.
+//   - route=direct: the address must be the requested destination, and the IP
+//     dialled must be one both the decision and Smokescreen's IP policy approved.
 //   - every connection is registered with its decision inputs, for revocation and maximum age, and judged again once
 //     registered.
 func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, error) {
@@ -283,16 +284,23 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 		if addr != d.OutboundHost {
 			return nil, errors.New("direct route may only dial the requested destination")
 		}
-		// Dial the address the decision checked, not whatever the name resolves to now: Smokescreen's dialContext
-		// reuses ResolvedAddr when the address is the decision's own destination, so there is no second lookup an
-		// attacker's DNS could answer differently (rebinding).
-		if st := stateOf(pctx); st != nil && len(st.addrs) > 0 {
-			_, port, ok := splitHostPort(addr)
-			if !ok {
-				return nil, errors.New("destination needs host:port")
-			}
-			d.ResolvedAddr = &net.TCPAddr{IP: net.IP(st.addrs[0].AsSlice()), Port: port}
+		// Dial an address both checks approved: the one Smokescreen's own IP policy picked, and only if the decision
+		// judged it too. Smokescreen's dialContext reuses ResolvedAddr when the address is the decision's own
+		// destination, so there is no third lookup an attacker's DNS could answer differently (rebinding). When the two
+		// lookups share no address the tunnel is refused rather than dialling an address one of them never saw (#373).
+		st := stateOf(pctx)
+		if st == nil || d.ResolvedAddr == nil {
+			return nil, errors.New("direct route has no checked address")
 		}
+		chosen, ok := netip.AddrFromSlice(d.ResolvedAddr.IP)
+		if !ok || !slices.Contains(st.addrs, chosen.Unmap()) {
+			return nil, errors.New("the destination's addresses changed between the two checks")
+		}
+		_, port, ok := splitHostPort(addr)
+		if !ok {
+			return nil, errors.New("destination needs host:port")
+		}
+		d.ResolvedAddr = &net.TCPAddr{IP: net.IP(chosen.Unmap().AsSlice()), Port: port}
 		ctx := context.WithValue(context.Background(), goproxy.ProxyContextKey, pctx)
 		c, err = p.baseDial(ctx, network, addr)
 	}
@@ -398,7 +406,7 @@ func (p *Proxy) logRevoked(r revoked) {
 // reqState is what one CONNECT carries from the front handler through the ACL decision to the dial. The ACL
 // decision (decider.Decide) is the only writer of addrs and it runs before the dial, on the same goroutine chain.
 type reqState struct {
-	// addrs are the destination's addresses as the decision checked them; the direct route dials the first.
+	// addrs are the destination's addresses as the decision checked them; the direct route dials one of them.
 	addrs []netip.Addr
 }
 

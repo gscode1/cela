@@ -244,12 +244,12 @@ function overlaps(a: Cidr, b: Cidr): boolean {
   return (a.value & mask) === (b.value & mask);
 }
 
-const cidrs = (list: string[]): Cidr[] =>
-  list.map((text) => {
-    const cidr = parseCidrText(text);
-    if (cidr === undefined) throw new Error(`bad built-in cidr ${text}`);
-    return cidr;
-  });
+function builtInCidr(text: string): Cidr {
+  const cidr = parseCidrText(text);
+  if (cidr === undefined) throw new Error(`bad built-in cidr ${text}`);
+  return cidr;
+}
+const cidrs = (list: string[]): Cidr[] => list.map(builtInCidr);
 
 /**
  * Destinations no rule can open (ADR 0034): loopback, link-local (cloud metadata included), "this network", multicast
@@ -287,17 +287,53 @@ export const PRIVATE_CIDRS: readonly string[] = [
 const BLOCKED = cidrs([...ALWAYS_BLOCKED_CIDRS]);
 const PRIVATE = cidrs([...PRIVATE_CIDRS]);
 
+/*
+ * Translation prefixes whose IPv6 addresses carry an IPv4 address a gateway may connect to. They are judged by that IPv4
+ * address too, the stricter class winning, so 64:ff9b::a00:5 is no way around the private tier (#373). The proxy's
+ * embeddedIPv4 (rules.go) is the twin.
+ */
+const NAT64_WELL_KNOWN = builtInCidr("64:ff9b::/96"); // RFC 6052, IPv4 in the last 32 bits
+const NAT64_LOCAL = builtInCidr("64:ff9b:1::/48"); // RFC 8215, local use: at least private (the /96 layout is checked)
+const SIX_TO_FOUR = builtInCidr("2002::/16"); // RFC 3056, IPv4 in bits 16-47
+const TEREDO = builtInCidr("2001::/32"); // RFC 4380, server in bits 32-63, client inverted in the last 32
+const SIIT_TRANSLATED = builtInCidr("::ffff:0:0:0/96"); // RFC 2765, IPv4 in the last 32 bits
+const V4_COMPATIBLE = builtInCidr("::/96"); // RFC 4291 (deprecated), IPv4 in the last 32 bits
+
+function embeddedIPv4(address: Address): Address[] {
+  if (address.family !== 6) return [];
+  const at = (shift: bigint, invert = false): Address => {
+    const value = (address.value >> shift) & 0xffffffffn;
+    return { family: 4, value: invert ? value ^ 0xffffffffn : value };
+  };
+  const within = (cidr: Cidr): boolean => inCidr(cidr, address);
+  if ([NAT64_WELL_KNOWN, NAT64_LOCAL, SIIT_TRANSLATED, V4_COMPATIBLE].some(within)) return [at(0n)];
+  if (within(SIX_TO_FOUR)) return [at(80n)];
+  if (within(TEREDO)) return [at(64n), at(0n, true)];
+  return [];
+}
+
+type AddressClass = "blocked" | "private" | "public";
+const STRICTNESS: readonly AddressClass[] = ["blocked", "private", "public"];
+const stricter = (a: AddressClass, b: AddressClass): AddressClass =>
+  STRICTNESS.indexOf(a) <= STRICTNESS.indexOf(b) ? a : b;
+
+function classifyPlain(address: Address): AddressClass {
+  if (BLOCKED.some((cidr) => inCidr(cidr, address))) return "blocked";
+  return PRIVATE.some((cidr) => inCidr(cidr, address)) ? "private" : "public";
+}
+
 /** `blocked`: no rule can allow it. `private`: only a private rule can. `invalid`: not an IP address. */
-export function classifyAddress(text: string): "blocked" | "private" | "public" | "invalid" {
+export function classifyAddress(text: string): AddressClass | "invalid" {
   let address = parseIp(text.toLowerCase());
   if (address === undefined) return "invalid";
   // An IPv4 address in IPv6 clothes is judged as the IPv4 address it is (::ffff:10.0.0.1 is private, ::ffff:8.8.8.8 not).
   if (address.family === 6 && address.value >> 32n === 0xffffn) {
     address = { family: 4, value: address.value & 0xffffffffn };
   }
-  const here = address;
-  if (BLOCKED.some((cidr) => inCidr(cidr, here))) return "blocked";
-  return PRIVATE.some((cidr) => inCidr(cidr, here)) ? "private" : "public";
+  let kind = classifyPlain(address);
+  if (inCidr(NAT64_LOCAL, address)) kind = stricter(kind, "private");
+  for (const inner of embeddedIPv4(address)) kind = stricter(kind, classifyPlain(inner));
+  return kind;
 }
 
 /** The message for a 400 when `host` cannot be the host of a private rule, else undefined: an exact name or a narrow cidr. */

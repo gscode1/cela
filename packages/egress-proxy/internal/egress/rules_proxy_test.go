@@ -163,8 +163,9 @@ func TestProxyAllowsRuleHostAndDialsTheCheckedAddress(t *testing.T) {
 	t.Parallel()
 	e := newRulesEnv(t, rulesEnvOpts{
 		snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
-		// The second lookup (Smokescreen's own) answers differently: the dial must still use the first, checked one.
-		dns: map[string][]string{"ok.example.com": {"93.184.216.34", "8.8.8.8"}},
+		// The second lookup (Smokescreen's own) answers in another order: it picks 8.8.8.8, which the decision also
+		// checked, so that is what is dialled.
+		dns: map[string][]string{"ok.example.com": {"93.184.216.34,8.8.8.8", "8.8.8.8,93.184.216.34"}},
 	})
 	c, br, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
 	if status != http.StatusOK {
@@ -173,8 +174,82 @@ func TestProxyAllowsRuleHostAndDialsTheCheckedAddress(t *testing.T) {
 	if got := get(t, c, br, "/"); got != http.StatusOK {
 		t.Errorf("origin answered %d", got)
 	}
+	if d := e.dialed(); len(d) != 1 || d[0] != "8.8.8.8:443" {
+		t.Errorf("dialled %v, want exactly the address both checks approved, 8.8.8.8:443", d)
+	}
+}
+
+// DNS rebinding: the two lookups share no address, so neither check approved what the other would dial.
+func TestProxyRefusesWhenTheTwoLookupsDisagree(t *testing.T) {
+	t.Parallel()
+	e := newRulesEnv(t, rulesEnvOpts{
+		snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
+		dns:  map[string][]string{"ok.example.com": {"93.184.216.34", "8.8.8.8"}},
+	})
+	_, _, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
+	if status == http.StatusOK {
+		t.Error("status 200, want a refusal")
+	}
+	if d := e.dialed(); len(d) != 0 {
+		t.Errorf("dialled %v", d)
+	}
+}
+
+// #373: an IPv6 address that embeds an IPv4 one (NAT64, 6to4, Teredo, SIIT, IPv4-compatible) is judged by that IPv4
+// address too, and the address dialled is the one Smokescreen approved, never another of the answer.
+func TestProxyJudgesIPv4EmbeddedInIPv6(t *testing.T) {
+	t.Parallel()
+	platform := &Platform{Hosts: []string{"10.96.1.5"}}
+	if err := platform.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	dns := map[string][]string{
+		// The answer of the issue: a NAT64 address of 10.0.0.5 next to a public one.
+		"nat64-mixed.example.com":    {"64:ff9b::a00:5,93.184.216.34"},
+		"nat64-loop.example.com":     {"64:ff9b::7f00:1"},
+		"nat64-meta.example.com":     {"64:ff9b::a9fe:a9fe"},
+		"nat64-local.example.com":    {"64:ff9b:1::808:808"},
+		"nat64-platform.example.com": {"64:ff9b::a60:105"},
+		"sixtofour.example.com":      {"2002:a00:5::1,93.184.216.34"},
+		"teredo-server.example.com":  {"2001:0:a00:5::f7f7:f7f7"},
+		"teredo-client.example.com":  {"2001:0:808:808::f5ff:fffa"},
+		"siit.example.com":           {"::ffff:0:a00:5"},
+		"compat.example.com":         {"::a00:5"},
+	}
+	e := newRulesEnv(t, rulesEnvOpts{
+		platform: platform,
+		dns:      dns,
+		snap: baseSnapshot(
+			Rule{ID: "1", RuleSet: "all", Effect: "allow", Host: "*", Ports: []int{443}, Route: RouteDirect},
+			// The platform address stays out of reach even for a name a private rule allows.
+			Rule{ID: "2", RuleSet: "all", Effect: "allow", Host: "nat64-platform.example.com", Ports: []int{443}, Route: RouteDirect, Private: true},
+		),
+	})
+	for name := range dns {
+		_, _, status, _ := connect(t, e.proxyAddr, name+":443", "")
+		if status != http.StatusProxyAuthRequired {
+			t.Errorf("%s: status %d, want a deny (407)", name, status)
+		}
+	}
+	if d := e.dialed(); len(d) != 0 {
+		t.Errorf("dialled %v", d)
+	}
+}
+
+// A NAT64 address of a public IPv4 passes the decision, but Smokescreen skips it: the dial uses the address
+// Smokescreen picked, not the first of the answer.
+func TestProxyDialsTheAddressSmokescreenApproved(t *testing.T) {
+	t.Parallel()
+	e := newRulesEnv(t, rulesEnvOpts{
+		snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
+		dns:  map[string][]string{"ok.example.com": {"64:ff9b::808:808,93.184.216.34"}},
+	})
+	_, _, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200", status)
+	}
 	if d := e.dialed(); len(d) != 1 || d[0] != "93.184.216.34:443" {
-		t.Errorf("dialled %v, want exactly the checked address 93.184.216.34:443", d)
+		t.Errorf("dialled %v, want 93.184.216.34:443", d)
 	}
 }
 
@@ -317,5 +392,37 @@ func TestRulesAuthorizeExplainsStaleness(t *testing.T) {
 	d := r.Authorize(Principal{}, "ok.example.com", 443, nil)
 	if d.Allow || d.Kind != KindStale {
 		t.Errorf("decision %+v", d)
+	}
+}
+
+func TestClassifyJudgesEmbeddedIPv4(t *testing.T) {
+	t.Parallel()
+	for text, want := range map[string]addrClass{
+		"64:ff9b::808:808":          classPublic,
+		"64:ff9b::a00:5":            classPrivate,
+		"64:ff9b::7f00:1":           classBlocked,
+		"64:ff9b::a9fe:a9fe":        classBlocked,
+		"64:ff9b:1::808:808":        classPrivate,
+		"64:ff9b:1::7f00:1":         classBlocked,
+		"2002:808:808::1":           classPublic,
+		"2002:a00:5::1":             classPrivate,
+		"2002:7f00:1::1":            classBlocked,
+		"2001:0:808:808::f7f7:f7f7": classPublic,
+		"2001:0:a00:5::f7f7:f7f7":   classPrivate,
+		"2001:0:808:808::f5ff:fffa": classPrivate,
+		"2001:0:808:808::80ff:fffe": classBlocked,
+		"::ffff:0:a00:5":            classPrivate,
+		"::a00:5":                   classPrivate,
+		"::7f00:1":                  classBlocked,
+		"2001:db8::1":               classPrivate,
+		"2606:4700::1111":           classPublic,
+	} {
+		a, ok := parseAddr(text)
+		if !ok {
+			t.Fatalf("%s does not parse", text)
+		}
+		if got := classify(a); got != want {
+			t.Errorf("classify(%s) = %d, want %d", text, got, want)
+		}
 	}
 }
