@@ -23,6 +23,8 @@ sandbox:
 - the repository and the branch it was **cloned from** (the agent may switch), or that none is checked out;
 - the network: the session's mode, or `direct` when the deployment runs without the egress proxy (ADR 0038 "Proxy
   disabled").
+- where the date is: the UTC date at the start of each user message, and `date` for the exact time. The date itself is
+  added to each request by the `current-date` extension, not here ([0057](0057-current-date.md)).
 
 **Facts only.** What to do about them (stop, ask, comment) is the profile's business, in its instructions.
 
