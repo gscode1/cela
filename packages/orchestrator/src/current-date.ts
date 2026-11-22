@@ -3,7 +3,7 @@ import { defineExtension, GenerationTask, hook } from "@earendil-works/pi-durabl
 import type { Extension } from "@earendil-works/pi-durable";
 
 /**
- * Shows the agent the date each user message was sent (docs/decisions/0057-current-date.md). Without it the model takes
+ * Shows the agent the date each user message was sent (docs/decisions/0061-current-date.md). Without it the model takes
  * "now" to be near its training cutoff. The date is added per request and never stored: the transcript keeps the
  * user's own text, and the instructions stay free of anything that changes over time (ADR 0049).
  */

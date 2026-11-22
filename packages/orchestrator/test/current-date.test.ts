@@ -21,7 +21,7 @@ const user = (content: UserMessage["content"], timestamp: number): UserMessage =
   timestamp,
 });
 
-describe("the current date in every request (docs/decisions/0057-current-date.md)", () => {
+describe("the current date in every request (docs/decisions/0061-current-date.md)", () => {
   it(
     "puts the UTC date a message was sent in front of it, as its own block",
     { timeout: 5_000 },

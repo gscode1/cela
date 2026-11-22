@@ -27,7 +27,7 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
     expect(text).toContain("Repository: none is checked out, and /workspace starts empty.");
     expect(text).toContain("through the proxy already set in HTTPS_PROXY");
     expect(text).toContain("HOME (/home/pi)");
-    // The date itself is never in the instructions (ADR 0057), only where to find it.
+    // The date itself is never in the instructions (ADR 0061), only where to find it.
     expect(text).toContain("each user message starts with <current_date>");
     expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });

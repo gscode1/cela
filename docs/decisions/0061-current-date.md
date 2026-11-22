@@ -1,4 +1,4 @@
-# 0057: The current date in every model request
+# 0061: The current date in every model request
 
 Status: accepted, 2026-11-22 (issue #371). Builds on [0049](0049-sandbox-environment-instructions.md) (no timestamps in
 the instructions) and [0055](0055-fit-images.md) (extensions in the pinned host default).

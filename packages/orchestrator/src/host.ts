@@ -275,7 +275,7 @@ export class Host {
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
     // The host default is therefore always pinned to `coding`, `fit-images` and `current-date` (which have no tools, so
     // nothing offered changes, and are read from these settings at every start, so conversations that already exist get
-    // them too, ADR 0055 and 0057), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
+    // them too, ADR 0055 and 0061), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
     const mcp = new McpTools(
       registry,
