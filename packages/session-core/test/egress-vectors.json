@@ -1644,6 +1644,292 @@
       }
     },
     {
+      "name": "nat64 of a private ipv4 is private (#373)",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["64:ff9b::a00:5"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "nat64 of a private ipv4 next to a public address is denied (#373)",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["93.184.216.34", "64:ff9b::a00:5"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "nat64 of loopback is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["64:ff9b::7f00:1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "nat64 of a public ipv4 is public",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["64:ff9b::808:808"]
+      },
+      "expect": {
+        "decision": "allow",
+        "route": "direct",
+        "reasonKind": "allowed",
+        "matchedRuleId": "1"
+      }
+    },
+    {
+      "name": "local-use nat64 is at least private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["64:ff9b:1::808:808"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "6to4 of metadata is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["2002:a9fe:a9fe::1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
+      "name": "teredo with a private client is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["2001:0:808:808::f5ff:fffa"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "teredo with a private server is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["2001:0:a00:5::f7f7:f7f7"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "siit-translated private is private",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::ffff:0:a00:5"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "needs-private",
+        "matchedRuleId": null,
+        "needsPrivate": true
+      }
+    },
+    {
+      "name": "ipv4-compatible loopback is blocked",
+      "rules": [
+        {
+          "id": "1",
+          "ruleSet": "all",
+          "sessionId": null,
+          "effect": "allow",
+          "host": "*",
+          "ports": [443],
+          "route": "direct",
+          "private": false,
+          "expiresAt": null,
+          "note": ""
+        }
+      ],
+      "request": {
+        "host": "a.example.com",
+        "port": 443,
+        "addresses": ["::7f00:1"]
+      },
+      "expect": {
+        "decision": "deny",
+        "route": null,
+        "reasonKind": "always-blocked",
+        "matchedRuleId": null
+      }
+    },
+    {
       "name": "blocked address wins over a private rule for its cidr",
       "rules": [
         {

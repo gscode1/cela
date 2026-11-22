@@ -119,7 +119,10 @@ Hosts resolve to addresses, and the destination address is what decides how dang
 1. **Always blocked: no rule can open them.** Loopback (`127.0.0.0/8`, `::1`), link-local including cloud metadata
    (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`), "this network" (`0.0.0.0/8`, `::`), multicast and reserved space
    (`224.0.0.0/4`, `240.0.0.0/4`, `ff00::/8`) and IPv4-mapped IPv6 as such (`::ffff:a.b.c.d` is judged as the IPv4
-   address). On top of these, **the platform itself**: the namespace's own services (Postgres, the orchestrator,
+   address). IPv6 addresses of a translation prefix are also judged by the IPv4 address they carry, the stricter tier
+   winning (amended for #373): NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (bits 16-47), Teredo `2001::/32` (server and
+   inverted client), SIIT `::ffff:0:0:0/96` and IPv4-compatible `::/96`; the local-use NAT64 prefix `64:ff9b:1::/48` is at
+   least private, since its layout is the operator's. On top of these, **the platform itself**: the namespace's own services (Postgres, the orchestrator,
    ingest, the OneCLI API) and the Kubernetes API. Why: through them a sandbox can take over the platform or read
    other sessions' data (credentials, conversations, the model keys). Validation rejects a private rule whose cidr
    overlaps the static ranges. **Which cluster addresses are "the platform" is deployment knowledge**: slice 2 cannot

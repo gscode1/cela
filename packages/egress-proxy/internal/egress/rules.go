@@ -170,7 +170,46 @@ func inAny(list []netip.Prefix, a netip.Addr) bool {
 	return false
 }
 
-func classify(a netip.Addr) addrClass {
+// Translation prefixes whose IPv6 addresses carry an IPv4 address a gateway may connect to. They are judged by that
+// IPv4 address too, the stricter class winning, so [64:ff9b::a00:5] is no way around the private tier (#373).
+var (
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")    // RFC 6052, IPv4 in the last 32 bits
+	nat64Local     = netip.MustParsePrefix("64:ff9b:1::/48")  // RFC 8215, local use: at least private
+	sixToFour      = netip.MustParsePrefix("2002::/16")       // RFC 3056, IPv4 in bits 16-47
+	teredo         = netip.MustParsePrefix("2001::/32")       // RFC 4380, server in bits 32-63, client inverted in the last 32
+	siitTranslated = netip.MustParsePrefix("::ffff:0:0:0/96") // RFC 2765, IPv4 in the last 32 bits
+	v4Compatible   = netip.MustParsePrefix("::/96")           // RFC 4291 (deprecated), IPv4 in the last 32 bits
+)
+
+// embeddedIPv4 lists the IPv4 addresses an IPv6 address of a translation prefix may reach. For the local-use NAT64
+// prefix the layout depends on the operator's prefix length; the /96 layout, the common one, is checked.
+func embeddedIPv4(a netip.Addr) []netip.Addr {
+	if !a.Is6() || a.Is4In6() {
+		return nil
+	}
+	b := a.As16()
+	v4 := func(off int, invert bool) netip.Addr {
+		var x [4]byte
+		copy(x[:], b[off:off+4])
+		if invert {
+			for i := range x {
+				x[i] ^= 0xff
+			}
+		}
+		return netip.AddrFrom4(x)
+	}
+	switch {
+	case nat64WellKnown.Contains(a), nat64Local.Contains(a), siitTranslated.Contains(a), v4Compatible.Contains(a):
+		return []netip.Addr{v4(12, false)}
+	case sixToFour.Contains(a):
+		return []netip.Addr{v4(2, false)}
+	case teredo.Contains(a):
+		return []netip.Addr{v4(4, false), v4(12, true)}
+	}
+	return nil
+}
+
+func classifyPlain(a netip.Addr) addrClass {
 	if inAny(alwaysBlocked, a) {
 		return classBlocked
 	}
@@ -178,6 +217,17 @@ func classify(a netip.Addr) addrClass {
 		return classPrivate
 	}
 	return classPublic
+}
+
+func classify(a netip.Addr) addrClass {
+	c := classifyPlain(a)
+	if nat64Local.Contains(a) {
+		c = min(c, classPrivate)
+	}
+	for _, e := range embeddedIPv4(a) {
+		c = min(c, classifyPlain(e))
+	}
+	return c
 }
 
 func isCidr(r *Rule) bool { return strings.Contains(r.Host, "/") }
