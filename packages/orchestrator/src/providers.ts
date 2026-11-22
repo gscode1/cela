@@ -1,10 +1,14 @@
 import { readFile } from "node:fs/promises";
-import type { FetchFunction, Models } from "@earendil-works/pi-ai";
+import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
+import type { FetchFunction, Model, Models, Provider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { errorMessage, modelKey } from "@cela/session-core";
 import type { CredentialState, ModelCatalogEntry, ModelProviderStatus } from "@cela/session-core";
 import type { OrchestratorConfig } from "./config.js";
+import { directFetch } from "./custom-providers.js";
+import type { CustomProvider } from "./custom-providers.js";
 import { log } from "./log.js";
 import { scriptedProvider } from "./model.js";
 import type { Redacted } from "./onecli.js";
@@ -22,7 +26,8 @@ import {
  * Pi Durable stores a conversation's model as `{ provider, modelId }` names and resolves them against this `Models`
  * at every request, so every provider a stored conversation may name must be installed at every start: all builtin
  * providers when the OneCLI token is set (the allowlist only limits new sessions), the scripted ones, and `faux` for
- * the Phase 3 /control sessions.
+ * the Phase 3 /control sessions. The operator's custom providers (ADR 0055) come after the builtin ones: those that go
+ * through OneCLI with the token like the builtin ones, the keyless direct ones always.
  *
  * Real providers resolve their API key to a placeholder (`placeholderAuthContext`) and send their requests through
  * the OneCLI gateway, which replaces the placeholder with the credential it holds. Throws when an allowlisted model
@@ -44,17 +49,67 @@ export async function buildModels(
     }).provider,
   );
 
+  // A direct provider has no credential and never touches the gateway: its calls skip it, token or not.
+  const direct = new Map<string, FetchFunction>();
+  for (const custom of config.customProviders) {
+    if (custom.via === "direct") {
+      models.setProvider(customProvider(custom));
+      direct.set(
+        custom.id,
+        directFetch(custom, (input, init) => globalThis.fetch(input, init)),
+      );
+    }
+  }
   const token = config.onecli.token;
   if (token === undefined) {
     assertInstalled(models, config);
-    return models;
+    return direct.size === 0 ? models : withFetch(models, noGatewayFetch, direct);
   }
   // Every builtin provider, not only the allowlisted ones: the allowlist governs new sessions (ingest checks it), but
   // an existing conversation keeps the model stored with it, so a provider whose last model was removed from the
   // allowlist must still resolve (docs/model-credentials.md). Without a token nothing can reach a provider anyway.
   for (const provider of builtinProviders()) models.setProvider(provider);
+  for (const custom of config.customProviders) {
+    if (custom.via === "onecli") models.setProvider(customProvider(custom));
+  }
   assertInstalled(models, config);
-  return withFetch(models, await buildGatewayFetch(config, token, readCa));
+  return withFetch(models, await buildGatewayFetch(config, token, readCa), direct);
+}
+
+const noGatewayFetch: FetchFunction = () =>
+  Promise.reject(new Error("ONECLI_AGENT_TOKEN is required: model calls go through the gateway"));
+
+/**
+ * One operator-defined OpenAI-compatible provider. A provider that goes through OneCLI resolves its API key to the same
+ * placeholder as the builtin ones (`<ID>_API_KEY` through `placeholderAuthContext`); the gateway swaps in the secret
+ * whose host pattern covers the base URL. A direct provider is keyless: the request carries no Authorization header.
+ */
+function customProvider(custom: CustomProvider): Provider {
+  const models: Model<"openai-completions">[] = custom.models.map((model) => ({
+    id: model.id,
+    name: model.name,
+    api: "openai-completions",
+    provider: custom.id,
+    baseUrl: custom.baseUrl,
+    reasoning: model.reasoning,
+    input: model.input,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    compat: custom.compat,
+  }));
+  return createProvider({
+    id: custom.id,
+    baseUrl: custom.baseUrl,
+    auth: {
+      apiKey:
+        custom.via === "direct"
+          ? { name: custom.id, resolve: () => Promise.resolve({ auth: {} }) }
+          : envApiKeyAuth(custom.id, [`${custom.id.toUpperCase().replaceAll("-", "_")}_API_KEY`]),
+    },
+    models,
+    api: openAICompletionsApi(),
+  });
 }
 
 /** The orchestrator's one `fetch` through the OneCLI gateway: model calls and remote MCP calls share it. */
@@ -118,7 +173,7 @@ export function hostPatternMatches(pattern: string, host: string): boolean {
  */
 export async function providerCredentials(
   models: Models,
-  config: Pick<OrchestratorConfig, "onecli">,
+  config: Pick<OrchestratorConfig, "onecli" | "customProviders">,
   listSecrets: (() => Promise<readonly { hostPattern?: string }[]>) | undefined,
 ): Promise<ModelProviderStatus[]> {
   let patterns: string[] | undefined;
@@ -142,10 +197,13 @@ export async function providerCredentials(
 function credentialOf(
   models: Models,
   provider: string,
-  config: Pick<OrchestratorConfig, "onecli">,
+  config: Pick<OrchestratorConfig, "onecli" | "customProviders">,
   patterns: string[] | undefined,
 ): CredentialState {
   if (provider === "scripted") return "configured";
+  // Keyless by design (ADR 0055): there is no credential to be missing.
+  if (config.customProviders.some((custom) => custom.id === provider && custom.via === "direct"))
+    return "configured";
   if (provider === "openai-codex" && config.onecli.codexAccountId !== PLACEHOLDER_API_KEY) {
     return "configured";
   }
