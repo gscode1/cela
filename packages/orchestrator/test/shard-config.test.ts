@@ -38,4 +38,26 @@ describe("shard schema", () => {
     });
     expect(() => loadConfig({ ...env, PI_ORCH_SHARD: "x" })).toThrow(/PI_ORCH_SHARD/);
   });
+
+  it("gives every shard the same custom providers: the list is not a function of the shard (ADR 0055)", () => {
+    const providers = JSON.stringify([
+      {
+        id: "omlx",
+        baseUrl: "http://192.168.7.101:8000/v1",
+        via: "direct",
+        egress: { cidr: "192.168.7.101/32", port: 8000 },
+        models: [{ id: "m", contextWindow: 32768, maxTokens: 8192 }],
+      },
+    ]);
+    const lists = [0, 1, 2, 5].map(
+      (shard) =>
+        loadConfig({
+          ...env,
+          PI_CUSTOM_MODEL_PROVIDERS: providers,
+          PI_ORCH_SHARD: String(shard),
+        }).customProviders,
+    );
+    expect(lists[0]).toHaveLength(1);
+    for (const list of lists) expect(list).toEqual(lists[0]);
+  });
 });
