@@ -20,6 +20,14 @@ describe("bridgeEnv", () => {
     expect(kept).toEqual({ PATH: "/usr/bin", HOME: "/tmp" });
   });
 
+  it("never passes the custom provider list on to the relay", () => {
+    const kept = bridgeEnv({
+      PATH: "/usr/bin",
+      PI_CUSTOM_MODEL_PROVIDERS: '[{"id":"omlx","baseUrl":"http://192.168.7.101:8000/v1"}]',
+    });
+    expect(kept).toEqual({ PATH: "/usr/bin" });
+  });
+
   it("never passes the OneCLI agent token or any proxy setting on to the relay", () => {
     const kept = bridgeEnv({
       PATH: "/usr/bin",

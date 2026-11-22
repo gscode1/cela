@@ -47,15 +47,53 @@ produce. One place, so the two modes cannot drift apart.
 {{- end -}}
 {{- end -}}
 
-{{/* Providers that need no OneCLI (config.ts LOCAL_PROVIDERS). */}}
+{{/* Ids of the custom providers that are keyless and direct: like scripted and faux they need no OneCLI. */}}
+{{- define "cela.directProviders" -}}
+{{- $ids := list -}}
+{{- range .Values.models.customProviders -}}
+{{- if eq (default "onecli" .via) "direct" -}}{{- $ids = append $ids .id -}}{{- end -}}
+{{- end -}}
+{{- join "," $ids -}}
+{{- end -}}
+
+{{/* Providers that need no OneCLI (config.ts LOCAL_PROVIDERS and the direct custom providers). */}}
 {{- define "cela.remoteProviders" -}}
 {{- $remote := list -}}
+{{- $local := concat (list "scripted" "faux") (splitList "," (include "cela.directProviders" .)) -}}
 {{- $all := append .Values.models.allowlist (printf "%s/%s" .Values.models.default.provider .Values.models.default.id) -}}
 {{- range $all -}}
 {{- $provider := first (splitList "/" .) -}}
-{{- if not (has $provider (list "scripted" "faux")) -}}{{- $remote = append $remote $provider -}}{{- end -}}
+{{- if not (has $provider $local) -}}{{- $remote = append $remote $provider -}}{{- end -}}
 {{- end -}}
 {{- join "," (uniq $remote) -}}
+{{- end -}}
+
+{{/*
+First and last address of an IPv4 CIDR as "first,last" integers. The input is checked by cela.validate before this runs.
+*/}}
+{{- define "cela.cidrBounds" -}}
+{{- $parts := splitList "/" . -}}
+{{- $addr := int64 0 -}}
+{{- range splitList "." (first $parts) -}}{{- $addr = add (mul $addr 256) (int64 .) -}}{{- end -}}
+{{- $size := int64 1 -}}
+{{- range until (int (sub 32 (int (last $parts)))) -}}{{- $size = mul $size 2 -}}{{- end -}}
+{{- $first := mul (div $addr $size) $size -}}
+{{- printf "%d,%d" $first (sub (add $first $size) 1) -}}
+{{- end -}}
+
+{{/*
+The custom provider range a CIDR touches (docs/decisions/0055-custom-model-providers.md): link-local (cloud metadata),
+CGNAT (node networks) and loopback. Empty when it touches none. Same list as FORBIDDEN_RANGES in
+packages/orchestrator/src/custom-providers.ts, which refuses them at start too.
+*/}}
+{{- define "cela.forbiddenCidr" -}}
+{{- $bounds := splitList "," (include "cela.cidrBounds" .) -}}
+{{- $first := int64 (index $bounds 0) -}}
+{{- $last := int64 (index $bounds 1) -}}
+{{- range (list "169.254.0.0/16" "100.64.0.0/10" "127.0.0.0/8") -}}
+{{- $other := splitList "," (include "cela.cidrBounds" .) -}}
+{{- if and (le $first (int64 (index $other 1))) (ge $last (int64 (index $other 0))) -}}{{- printf "%s " . -}}{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -125,6 +163,46 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- end -}}
 {{- if not $p.ports -}}
 {{- fail (printf "egressProxy.privateEgress[%d] needs ports: private destinations are opened per port" $i) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $customIds := list -}}
+{{- range $i, $p := .Values.models.customProviders -}}
+{{- $via := default "onecli" $p.via -}}
+{{- if has $p.id $customIds -}}
+{{- fail (printf "models.customProviders[%d]: id %q is defined twice" $i $p.id) -}}
+{{- end -}}
+{{- $customIds = append $customIds $p.id -}}
+{{- if not (has $via (list "onecli" "direct")) -}}
+{{- fail (printf "models.customProviders[%d] (%s): via must be onecli or direct" $i $p.id) -}}
+{{- end -}}
+{{- if eq $via "direct" -}}
+{{- if not $p.egress -}}
+{{- fail (printf "models.customProviders[%d] (%s): a direct provider needs egress {cidr, port}: the chart opens exactly that in the orchestrator's NetworkPolicy (docs/decisions/0055-custom-model-providers.md)" $i $p.id) -}}
+{{- end -}}
+{{- $cidr := toString $p.egress.cidr -}}
+{{- $cidrOk := regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$" $cidr -}}
+{{- if $cidrOk -}}
+{{- range splitList "." (first (splitList "/" $cidr)) -}}{{- if gt (int .) 255 -}}{{- $cidrOk = false -}}{{- end -}}{{- end -}}
+{{- if gt (int (last (splitList "/" $cidr))) 32 -}}{{- $cidrOk = false -}}{{- end -}}
+{{- end -}}
+{{- if not $cidrOk -}}
+{{- fail (printf "models.customProviders[%d] (%s): egress.cidr %q is not an IPv4 CIDR like 192.168.7.101/32" $i $p.id $cidr) -}}
+{{- end -}}
+{{- $forbidden := include "cela.forbiddenCidr" $cidr | trim | replace " " ", " -}}
+{{- if $forbidden -}}
+{{- fail (printf "models.customProviders[%d] (%s): egress.cidr %s overlaps %s, which a direct provider may not use (link-local, CGNAT and loopback ranges stay closed)" $i $p.id $cidr $forbidden) -}}
+{{- end -}}
+{{- $port := int $p.egress.port -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "models.customProviders[%d] (%s): egress.port must be a port number" $i $p.id) -}}
+{{- end -}}
+{{- else -}}
+{{- if $p.egress -}}
+{{- fail (printf "models.customProviders[%d] (%s): egress is for a direct provider; a provider through OneCLI uses the gateway rule" $i $p.id) -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" (toString $p.baseUrl)) -}}
+{{- fail (printf "models.customProviders[%d] (%s): baseUrl must be https:// for a provider through OneCLI; for a plain-HTTP LAN server use via: direct" $i $p.id) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

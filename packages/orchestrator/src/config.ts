@@ -5,7 +5,9 @@ import type { BridgeCapSource } from "./bridge-cap.js";
 import { GITHUB_APP_DIR } from "./github-app.js";
 import type { OneCliCallPolicy } from "./onecli-admin.js";
 import { DEFAULT_ONECLI_NAME_PREFIX, validateNamePrefix } from "./onecli-names.js";
-import { parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
+import { bypassesProxy, parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
+import { CUSTOM_PROVIDERS_ENV, parseCustomProviders } from "./custom-providers.js";
+import type { CustomProvider } from "./custom-providers.js";
 
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
 const LOCAL_PROVIDERS = new Set(["scripted", "faux"]);
@@ -48,6 +50,11 @@ export interface OrchestratorConfig {
   testFaults: boolean;
   /** Default model and allowlist (`PI_MODEL_PROVIDER`, `PI_MODEL_ID`, `PI_MODEL_ALLOWLIST`, one ConfigMap). */
   models: ModelPolicy;
+  /**
+   * Operator-defined OpenAI-compatible providers (`PI_CUSTOM_MODEL_PROVIDERS`, the chart's `models.customProviders`; ADR
+   * 0055). Identical on every shard; a direct provider needs no OneCLI token.
+   */
+  customProviders: readonly CustomProvider[];
   /** Model turns (assistant responses) one session may use in total; the first spend limit. */
   turnBudget: number;
   /** Sandbox idle handling. Both are in milliseconds; see docs/decisions/0004-idle-suspend.md. */
@@ -198,7 +205,13 @@ export function loadConfig(
     throw new Error("PI_SWEEP_MAX_ACTIONS must be an integer of 1 or more");
   const shard = Number(env.PI_ORCH_SHARD ?? "0");
   const models = loadModelPolicy(env);
-  const remote = models.allowed.find((choice) => !LOCAL_PROVIDERS.has(choice.provider));
+  const customProviders = parseCustomProviders(env[CUSTOM_PROVIDERS_ENV]);
+  // A direct provider has no credential and does not use the gateway, so it needs no token.
+  const local = new Set([
+    ...LOCAL_PROVIDERS,
+    ...customProviders.filter((p) => p.via === "direct").map((p) => p.id),
+  ]);
+  const remote = models.allowed.find((choice) => !local.has(choice.provider));
   const token = env.ONECLI_AGENT_TOKEN;
   if (remote !== undefined && !token) {
     throw new Error(`ONECLI_AGENT_TOKEN is required for model provider ${remote.provider}`);
@@ -215,6 +228,20 @@ export function loadConfig(
   const database = new URL(databaseUrl);
   const databaseHost =
     database.searchParams.get("host") || database.hostname || env.PGHOST || "localhost";
+  const noProxy = [
+    ...DEFAULT_NO_PROXY,
+    databaseHost,
+    new URL(onecliApi).hostname,
+    ...parseNoProxy(env.NO_PROXY),
+  ];
+  for (const provider of customProviders) {
+    // A host in NO_PROXY is called without the gateway, so no secret would be injected and the call would skip OneCLI's
+    // rules: such a provider must say `via: direct` (chart egress rule, keyless), not hide behind `onecli`.
+    if (provider.via === "onecli" && bypassesProxy(new URL(provider.baseUrl), noProxy))
+      throw new Error(
+        `custom provider ${provider.id}: its host is in NO_PROXY and would skip the OneCLI gateway; use via: direct (keyless) or another host`,
+      );
+  }
   return {
     databaseUrl,
     databaseTls: loadDatabaseTls(env),
@@ -228,6 +255,7 @@ export function loadConfig(
     control: env.PI_ORCH_CONTROL === "1",
     testFaults: env.PI_ORCH_TEST_FAULTS === "1",
     models,
+    customProviders,
     turnBudget,
     sandbox: {
       idleEvictMs,
@@ -244,12 +272,7 @@ export function loadConfig(
     onecli: {
       gateway,
       caFile: env.PI_ONECLI_CA_FILE ?? "/etc/onecli/ca.pem",
-      noProxy: [
-        ...DEFAULT_NO_PROXY,
-        databaseHost,
-        new URL(onecliApi).hostname,
-        ...parseNoProxy(env.NO_PROXY),
-      ],
+      noProxy,
       token: token ? new Redacted(token) : undefined,
       codexAccountId: env.PI_CODEX_ACCOUNT_ID ?? PLACEHOLDER_API_KEY,
     },

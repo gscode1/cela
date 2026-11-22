@@ -90,7 +90,7 @@ type ListSecrets = () => Promise<readonly { name: string; hostPattern?: string }
  */
 export async function oneCliSecretsView(
   models: Models,
-  config: Pick<OrchestratorConfig, "onecli">,
+  config: Pick<OrchestratorConfig, "onecli" | "customProviders">,
   listSecrets: ListSecrets | undefined,
 ): Promise<Pick<Capabilities, "modelProviders" | "onecliSecretNames">> {
   let secrets: readonly { name: string; hostPattern?: string }[] | undefined;
@@ -114,7 +114,7 @@ export async function oneCliSecretsView(
 
 export interface ModelCredentialsDeps {
   models: Models;
-  config: Pick<OrchestratorConfig, "onecli">;
+  config: Pick<OrchestratorConfig, "onecli" | "customProviders">;
   listSecrets: ListSecrets;
   /** Writes the hint (`publishModelProviders`); true if it changed. */
   publish: (providers: readonly ModelProviderStatus[]) => Promise<boolean>;

@@ -192,8 +192,14 @@ export function createGatewayFetch(config: OneCliConfig): GatewayFetch {
 /**
  * The `Models` the Harness sees, with every stream request carrying `fetch`. Pi Durable has no per-conversation
  * hook for pi-ai's `fetch` option, so the wrapper adds it where the Harness calls `streamSimple` and `stream`.
+ * `perProvider` replaces `fetch` for the named providers (the custom providers that skip the gateway) and wins over a
+ * caller's own `fetch` option, so nothing can route those calls elsewhere.
  */
-export function withFetch(models: MutableModels, fetch: FetchFunction): Models {
+export function withFetch(
+  models: MutableModels,
+  fetch: FetchFunction,
+  perProvider: ReadonlyMap<string, FetchFunction> = new Map(),
+): Models {
   return new Proxy(models, {
     get(target, property, receiver): unknown {
       const value: unknown = Reflect.get(target, property, receiver);
@@ -205,13 +211,16 @@ export function withFetch(models: MutableModels, fetch: FetchFunction): Models {
         property === "completeSimple" ||
         property === "complete"
       ) {
-        return (model: unknown, context: unknown, options?: Record<string, unknown>) =>
+        return (model: unknown, context: unknown, options?: Record<string, unknown>) => {
+          const provider = (model as { provider?: unknown } | null)?.provider;
+          const own = typeof provider === "string" ? perProvider.get(provider) : undefined;
           // `sse`: the Codex provider defaults to a WebSocket, which is not proven through the gateway.
-          method.call(target, model, context, {
+          return method.call(target, model, context, {
             transport: "sse",
             ...options,
-            fetch: options?.fetch ?? fetch,
+            fetch: own ?? options?.fetch ?? fetch,
           });
+        };
       }
       return method.bind(target);
     },

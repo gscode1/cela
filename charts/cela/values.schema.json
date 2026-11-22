@@ -722,6 +722,110 @@
         "tokenBudget": {
           "type": ["integer", "null"],
           "minimum": 1
+        },
+        "customProviders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "baseUrl", "models"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*$"
+              },
+              "baseUrl": {
+                "type": "string",
+                "pattern": "^https?://[^\\s?#@]+$"
+              },
+              "via": {
+                "enum": ["onecli", "direct"]
+              },
+              "egress": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["cidr", "port"],
+                "properties": {
+                  "cidr": {
+                    "type": "string"
+                  },
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  }
+                }
+              },
+              "compat": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "supportsStore": { "type": "boolean" },
+                  "supportsDeveloperRole": { "type": "boolean" },
+                  "supportsReasoningEffort": { "type": "boolean" },
+                  "supportsUsageInStreaming": { "type": "boolean" },
+                  "supportsFinishReason": { "type": "boolean" },
+                  "requiresToolResultName": { "type": "boolean" },
+                  "requiresAssistantAfterToolResult": { "type": "boolean" },
+                  "requiresNonNullAssistantContent": { "type": "boolean" },
+                  "requiresToolsWithToolHistory": { "type": "boolean" },
+                  "requiresThinkingAsText": { "type": "boolean" },
+                  "requiresReasoningContentOnAssistantMessages": { "type": "boolean" },
+                  "maxTokensField": { "enum": ["max_completion_tokens", "max_tokens"] },
+                  "thinkingFormat": {
+                    "enum": [
+                      "ant-ling",
+                      "baseten",
+                      "chat-template",
+                      "deepseek",
+                      "openai",
+                      "openrouter",
+                      "qwen",
+                      "qwen-chat-template",
+                      "string-thinking",
+                      "together",
+                      "zai"
+                    ]
+                  }
+                }
+              },
+              "models": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "contextWindow", "maxTokens"],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[^,\\s]+$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "contextWindow": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "reasoning": {
+                      "type": "boolean"
+                    },
+                    "input": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "enum": ["text", "image"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

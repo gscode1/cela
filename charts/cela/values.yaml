@@ -283,6 +283,33 @@ models:
     - scripted/scripted-2
   turnBudget: 100
   tokenBudget: null # tokens one session may use in total (ADR 0028); null: no limit
+  # Operator-defined OpenAI-compatible providers (docs/decisions/0055-custom-model-providers.md, docs/model-credentials.md).
+  # Not a seed: every orchestrator shard reads this at start, so a change restarts them; removing a provider breaks the
+  # stored conversations that name it at their next turn. Their models are then in GET /admin/models and can be put on the
+  # allowlist above or later with PUT /admin/settings, per session and per profile, like the builtin ones. Per entry:
+  #   id        ^[a-z][a-z0-9-]*$, not a builtin provider id, scripted or faux
+  #   baseUrl   the OpenAI-compatible root, without /chat/completions (no credentials, query or fragment)
+  #   via       onecli (default) or direct
+  #   egress    direct only: { cidr, port }, one IPv4 CIDR and port, rendered as the orchestrator's egress rule
+  #   compat    optional pi-ai openai-completions flags (supportsStore, supportsDeveloperRole, supportsReasoningEffort,
+  #             supportsUsageInStreaming, supportsFinishReason, maxTokensField, requiresToolResultName,
+  #             requiresAssistantAfterToolResult, requiresNonNullAssistantContent, requiresToolsWithToolHistory,
+  #             requiresThinkingAsText, requiresReasoningContentOnAssistantMessages, thinkingFormat);
+  #             supportsDeveloperRole and supportsReasoningEffort default to false
+  #   models    id, contextWindow and maxTokens are required; name, reasoning (false) and input (["text"]) are optional.
+  #             The cost is always 0. There is no model discovery.
+  # via onecli: baseUrl must be https:// with a host NAME (no IP address). Calls go through the OneCLI gateway like the
+  #   builtin providers; store the real key as an OneCLI generic secret whose host pattern covers the host.
+  # via direct: for a keyless server on the LAN. No gateway, no credential (a key is refused), redirects are refused. The
+  #   chart refuses a direct provider without egress, or whose cidr touches 169.254.0.0/16, 100.64.0.0/10 or 127.0.0.0/8.
+  # customProviders:
+  #   - id: omlx
+  #     baseUrl: http://192.168.7.101:8000/v1
+  #     via: direct
+  #     egress: { cidr: 192.168.7.101/32, port: 8000 }
+  #     models:
+  #       - { id: <model-id>, contextWindow: 32768, maxTokens: 8192 }
+  customProviders: []
 
 github:
   app:

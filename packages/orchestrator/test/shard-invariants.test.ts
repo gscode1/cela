@@ -65,4 +65,33 @@ describe("shard invariants", () => {
       );
     }
   });
+
+  it("custom model providers (ADR 0055) are read by the orchestrator's model code only, never by ingest or a sandbox", () => {
+    // Allowed: where they are parsed, installed, routed, reported and logged at start.
+    const allowed = [
+      "config.ts",
+      "custom-providers.ts",
+      "providers.ts",
+      "capabilities.ts",
+      "main.ts",
+    ];
+    const offenders = sourceFiles()
+      .filter(({ file }) => !allowed.some((name) => file.endsWith(`/orchestrator/src/${name}`)))
+      .filter(({ text }) =>
+        /customProviders|PI_CUSTOM_MODEL_PROVIDERS|CUSTOM_PROVIDERS_ENV/.test(code(text)),
+      )
+      .map(({ file }) => file);
+    expect(offenders).toEqual([]);
+    // The sandbox-side packages and the relay's environment never name them.
+    const sandboxSide = ["sandbox-env", "browser-proxy"].flatMap((pkg) =>
+      readdirSync(join(here, "../..", pkg, "src"), { recursive: true })
+        .filter((name) => String(name).endsWith(".ts"))
+        .map((name) => join(here, "../..", pkg, "src", String(name))),
+    );
+    for (const file of sandboxSide) {
+      expect(readFileSync(file, "utf8"), file).not.toMatch(
+        /customProviders|CUSTOM_MODEL_PROVIDERS/,
+      );
+    }
+  });
 });

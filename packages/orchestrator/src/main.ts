@@ -64,6 +64,17 @@ async function main(): Promise<void> {
   const runtime = await checkRuntime(config.namespace, config.warmPool);
   const { maxOpenBridges, bridgeCap } = config.sandbox;
   log("bridge-cap", bridgeCapFields(maxOpenBridges, bridgeCap.source, bridgeCap.memoryLimitBytes));
+  if (config.customProviders.length > 0) {
+    // Names and counts only. Removing a provider later breaks the stored conversations that name it at their next turn.
+    log("custom-model-providers", {
+      level: "warn",
+      providers: config.customProviders.map((p) => ({
+        id: p.id,
+        via: p.via,
+        models: p.models.length,
+      })),
+    });
+  }
   const lifecycle: Lifecycle = { state: "waiting-for-lock", instance: config.instance };
   // A second, independent connection pool for the inbox and the owner check: the Pi Durable adapter pins its
   // own connection and holds the ownership lock on it, and neither may share it.

@@ -18,3 +18,17 @@ data:
   PI_SESSION_TOKEN_BUDGET: {{ . | quote }}
   {{- end }}
   PI_REPO_ALLOWLIST: {{ join "," .Values.github.repoAllowlist | quote }}
+{{- if .Values.models.customProviders }}
+---
+# Operator-defined OpenAI-compatible providers (docs/decisions/0055-custom-model-providers.md). Not a secret: base URLs,
+# model limits and egress rules only. Read at start by every orchestrator shard (the same ConfigMap, so the same
+# providers) and by nothing else: it is not mounted into ingest or a sandbox, and a change restarts the shards.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-custom-providers
+  labels:
+    {{- include "cela.labels" . | nindent 4 }}
+data:
+  PI_CUSTOM_MODEL_PROVIDERS: {{ .Values.models.customProviders | toJson | quote }}
+{{- end }}

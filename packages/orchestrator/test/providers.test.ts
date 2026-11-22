@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import type { FetchFunction } from "@earendil-works/pi-ai";
+import type { OrchestratorConfig } from "../src/config.ts";
 import { loadConfig } from "../src/config.ts";
-import { PLACEHOLDER_API_KEY } from "../src/onecli.ts";
+import { PLACEHOLDER_API_KEY, withFetch } from "../src/onecli.ts";
 import {
+  KEYLESS_API_KEY,
   buildModels,
   hostPatternMatches,
   modelCatalog,
@@ -193,5 +199,222 @@ describe("providerCredentials", () => {
     });
     expect((await status(undefined, withAccount))["openai-codex"]).toBe("configured");
     expect((await status(undefined))["openai-codex"]).toBe("unknown");
+  });
+});
+
+const OMLX = {
+  id: "omlx",
+  baseUrl: "http://192.168.7.101:8000/v1",
+  via: "direct",
+  egress: { cidr: "192.168.7.101/32", port: 8000 },
+  models: [{ id: "qwen3-30b", contextWindow: 32768, maxTokens: 8192 }],
+};
+const ACME = {
+  id: "acme",
+  baseUrl: "https://llm.acme.example/v1",
+  models: [
+    { id: "acme-1", name: "Acme One", contextWindow: 128000, maxTokens: 4096, reasoning: true },
+  ],
+};
+const custom = (extra: Record<string, string> = {}): OrchestratorConfig =>
+  loadConfig({ ...base, PI_CUSTOM_MODEL_PROVIDERS: JSON.stringify([OMLX, ACME]), ...extra });
+
+describe("custom providers", () => {
+  it("installs a direct provider without the OneCLI token, and leaves the one through OneCLI out", async () => {
+    const models = await buildModels(custom(), readCa);
+    expect(models.getModel("omlx", "qwen3-30b")).toMatchObject({
+      provider: "omlx",
+      api: "openai-completions",
+      baseUrl: "http://192.168.7.101:8000/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 32768,
+      maxTokens: 8192,
+      compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+    });
+    expect(models.getModel("acme", "acme-1")).toBeUndefined();
+    expect(models.getModel("openai", "gpt-5-mini")).toBeUndefined();
+  });
+
+  it("installs both next to the builtin providers when the token is set, and lists them in the catalog", async () => {
+    const config = custom({ ONECLI_AGENT_TOKEN: TOKEN, PI_MODEL_ALLOWLIST: "acme/acme-1" });
+    const models = await buildModels(config, readCa);
+    expect(models.getModel("acme", "acme-1")).toMatchObject({
+      name: "Acme One",
+      reasoning: true,
+      baseUrl: "https://llm.acme.example/v1",
+    });
+    expect(models.getModel("openai", "gpt-5-mini")).toBeDefined();
+    expect(modelCatalog(models)).toEqual(
+      expect.arrayContaining([
+        {
+          provider: "omlx",
+          id: "qwen3-30b",
+          reasoning: false,
+          contextWindow: 32768,
+          maxTokens: 8192,
+        },
+        expect.objectContaining({ provider: "acme", id: "acme-1", name: "Acme One" }),
+      ]),
+    );
+  });
+
+  it("fails at start for an allowlisted custom model that does not exist", async () => {
+    const config = custom({ PI_MODEL_ALLOWLIST: "omlx/nope" });
+    await expect(buildModels(config, readCa)).rejects.toThrow(/omlx\/nope/);
+  });
+
+  it("resolves a provider through OneCLI to the placeholder key, a direct one to the keyless constant", async () => {
+    const config = custom({ ONECLI_AGENT_TOKEN: TOKEN });
+    const models = await buildModels(config, readCa);
+    const acme = models.getModel("acme", "acme-1");
+    const omlx = models.getModel("omlx", "qwen3-30b");
+    if (acme === undefined || omlx === undefined) throw new Error("models missing");
+    process.env.ACME_API_KEY = "sk-real-should-never-be-used";
+    try {
+      expect((await models.getAuth(acme))?.auth.apiKey).toBe(PLACEHOLDER_API_KEY);
+    } finally {
+      delete process.env.ACME_API_KEY;
+    }
+    expect((await models.getAuth(omlx))?.auth.apiKey).toBe(KEYLESS_API_KEY);
+  });
+
+  describe("routing", () => {
+    let server: Server | undefined;
+    afterEach(() => {
+      server?.close();
+      server = undefined;
+    });
+
+    /** A server answering every request with `reply`; the config's direct provider is pointed at it for the test. */
+    async function serve(
+      reply: (url: string) => { status: number; headers?: Record<string, string>; body?: string },
+    ): Promise<{ requests: { url: string; authorization: string | undefined }[]; port: number }> {
+      const requests: { url: string; authorization: string | undefined }[] = [];
+      const listening = createServer((req, res) => {
+        requests.push({ url: req.url ?? "", authorization: req.headers.authorization });
+        const { status, headers = {}, body = "" } = reply(req.url ?? "");
+        res.writeHead(status, headers);
+        res.end(body);
+      });
+      server = listening;
+      await new Promise<void>((resolve) => listening.listen(0, "127.0.0.1", resolve));
+      return { requests, port: (listening.address() as AddressInfo).port };
+    }
+
+    /** The config with the direct provider's base URL moved to the test server: the loader refuses loopback. */
+    const pointedAt = (config: OrchestratorConfig, port: number): OrchestratorConfig => ({
+      ...config,
+      customProviders: config.customProviders.map((p) => ({
+        ...p,
+        baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+      })),
+    });
+    const ask = async (config: OrchestratorConfig): Promise<{ stopReason: string }> => {
+      const models = await buildModels(config, readCa);
+      const model = models.getModel("omlx", "qwen3-30b");
+      if (model === undefined) throw new Error("model missing");
+      return models.completeSimple(model, {
+        messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+      });
+    };
+    const chunk = (delta: object, finish: string | null): string =>
+      `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+
+    it("calls a direct provider itself, without the gateway, with no credential, even with a token set", async () => {
+      const { requests, port } = await serve(() => ({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: `${chunk({ role: "assistant", content: "ok" }, null)}${chunk({}, "stop")}data: [DONE]\n\n`,
+      }));
+      // The gateway host does not resolve: a call that went through it would fail.
+      const config = pointedAt(custom({ ONECLI_AGENT_TOKEN: TOKEN }), port);
+      const result = await ask(config);
+      expect(result.stopReason).toBe("stop");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe("/v1/chat/completions");
+      expect(requests[0]?.authorization).toBe(`Bearer ${KEYLESS_API_KEY}`);
+    }, 20_000);
+
+    it("does not follow a redirect from a direct provider", async () => {
+      const { requests, port } = await serve((url) =>
+        url.startsWith("/v1/")
+          ? { status: 302, headers: { location: "/elsewhere" } }
+          : { status: 200 },
+      );
+      const result = await ask(pointedAt(custom(), port));
+      expect(result.stopReason).toBe("error");
+      expect(requests.map((r) => r.url)).toEqual(["/v1/chat/completions"]);
+    }, 20_000);
+
+    it("withFetch gives a provider its own fetch, which wins over the caller's, and the others the default", async () => {
+      const seen: string[] = [];
+      const tag =
+        (name: string): FetchFunction =>
+        () => {
+          seen.push(name);
+          return Promise.resolve(new Response(""));
+        };
+      const calls: { provider: string; fetch: FetchFunction | undefined }[] = [];
+      // Stands in for Models: only what the wrapper touches.
+      const stub = {
+        stream: (
+          model: { provider: string },
+          _context: unknown,
+          options?: { fetch?: FetchFunction },
+        ) => calls.push({ provider: model.provider, fetch: options?.fetch }),
+      };
+      const wrapped = withFetch(
+        stub as unknown as Parameters<typeof withFetch>[0],
+        tag("gateway"),
+        new Map([["omlx", tag("direct")]]),
+      );
+      const stream = (
+        model: { provider: string },
+        context: unknown,
+        options?: { fetch?: FetchFunction },
+      ): unknown =>
+        (wrapped.stream as unknown as (...args: unknown[]) => unknown).call(
+          wrapped,
+          model,
+          context,
+          options,
+        );
+      stream({ provider: "omlx" }, {}, { fetch: tag("caller") });
+      stream({ provider: "acme" }, {});
+      for (const call of calls) await call.fetch?.("https://x.example/");
+      expect(calls.map((c) => c.provider)).toEqual(["omlx", "acme"]);
+      expect(seen).toEqual(["direct", "gateway"]);
+    });
+  });
+});
+
+describe("providerCredentials for custom providers", () => {
+  const status = async (
+    patterns: string[] | undefined,
+    token: boolean,
+  ): Promise<Record<string, string>> => {
+    const config = custom(token ? { ONECLI_AGENT_TOKEN: TOKEN } : {});
+    const models = await buildModels(config, readCa);
+    const list =
+      patterns === undefined
+        ? undefined
+        : () => Promise.resolve(patterns.map((hostPattern) => ({ hostPattern })));
+    return Object.fromEntries(
+      (await providerCredentials(models, config, list)).map((p) => [p.provider, p.credential]),
+    );
+  };
+
+  it("counts a direct provider as configured: it is keyless, whatever OneCLI holds", async () => {
+    expect((await status([], false)).omlx).toBe("configured");
+    expect((await status(undefined, true)).omlx).toBe("configured");
+  });
+
+  it("matches a provider through OneCLI by the host of its base URL", async () => {
+    expect((await status(["llm.acme.example"], true)).acme).toBe("configured");
+    expect((await status(["*.acme.example"], true)).acme).toBe("configured");
+    expect((await status(["api.openai.com"], true)).acme).toBe("missing");
+    expect((await status(undefined, true)).acme).toBe("unknown");
   });
 });
