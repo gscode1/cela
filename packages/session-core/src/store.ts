@@ -14,6 +14,13 @@ export type EventKind = "message" | "steer" | "cancel" | "delete";
 export type EventStatus = "pending" | "submitted" | "failed";
 
 /**
+ * How a submitted input ended, as Pi Durable settled it (ADR 0029, ADR 0058): answered, or unanswered with Pi's reason
+ * (`model_error`, `aborted`, `run_failed`, `turn_limit`, ...). Never the provider's text.
+ */
+export type EventOutcome =
+  { state: "answered"; settledAt: Date } | { state: "unanswered"; reason: string; settledAt: Date };
+
+/**
  * A session's spend so far: the totals of its conversation's `pi.usage` (every model, attempt and tool that reports
  * usage), copied by the orchestrator when a run settles (#185). `cost` is in USD, pi-ai's best total: the billed cost
  * where the provider reports it, else its catalog estimate, and 0 for a model it has no price for.
@@ -80,6 +87,8 @@ export interface InboxEvent {
   createdAt: Date;
   submittedAt: Date | null;
   error: string | null;
+  /** Absent until Pi Durable settled the submission, and always for `cancel` and `delete`. */
+  outcome?: EventOutcome;
 }
 
 interface SessionDbRow {
@@ -125,6 +134,10 @@ export interface EventDbRow {
   created_at: Date;
   submitted_at: Date | null;
   error: string | null;
+  /** Absent in rows read before migration 035 was applied, and in test fakes. */
+  outcome?: "answered" | "unanswered" | null;
+  outcome_reason?: string | null;
+  settled_at?: Date | null;
 }
 
 const toSession = (row: SessionDbRow): SessionRow => ({
@@ -185,7 +198,54 @@ export const toEvent = (row: EventDbRow): InboxEvent => ({
   createdAt: row.created_at,
   submittedAt: row.submitted_at,
   error: row.error,
+  ...outcomeOf(row),
 });
+
+function outcomeOf(row: EventDbRow): { outcome?: EventOutcome } {
+  const settledAt = row.settled_at;
+  if (settledAt === undefined || settledAt === null) return {};
+  if (row.outcome === "answered") return { outcome: { state: "answered", settledAt } };
+  if (row.outcome === "unanswered") {
+    return { outcome: { state: "unanswered", reason: row.outcome_reason ?? "unknown", settledAt } };
+  }
+  return {};
+}
+
+/** Longest reason stored: Pi's reasons are short identifiers, so anything longer is not one. */
+const MAX_OUTCOME_REASON = 64;
+
+/**
+ * Records how Pi Durable settled the submission of an input (the row id is its `requestId`). Written once: a second
+ * call, from a watch recovered after a restart, changes nothing. False when the row has no outcome to take.
+ */
+export async function recordEventOutcome(
+  db: Pick<pg.Pool, "query">,
+  eventId: string,
+  outcome: { state: "answered" } | { state: "unanswered"; reason: string },
+): Promise<boolean> {
+  const reason =
+    outcome.state === "unanswered" ? outcome.reason.slice(0, MAX_OUTCOME_REASON) : null;
+  const result = await db.query(
+    `update inbox.events set outcome = $2, outcome_reason = $3, settled_at = clock_timestamp()
+      where id = $1 and kind in ('message', 'steer') and outcome is null`,
+    [eventId, outcome.state, reason],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** One event of one session; undefined when the id is not an event of that session. */
+export async function getEvent(
+  db: Pick<pg.Pool, "query">,
+  sessionId: string,
+  eventId: string,
+): Promise<InboxEvent | undefined> {
+  const { rows } = await db.query<EventDbRow>(
+    "select * from inbox.events where id = $1 and session_id = $2",
+    [eventId, sessionId],
+  );
+  const row = rows[0];
+  return row === undefined ? undefined : toEvent(row);
+}
 
 /** The profile changed (a new version, closed or deleted) between reading it and storing the session: retry. */
 export class StaleProfileError extends Error {}

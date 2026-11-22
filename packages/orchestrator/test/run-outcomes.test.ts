@@ -358,6 +358,85 @@ describe("usage on the session row (#185)", () => {
     }
     expect(touched()?.params).toEqual(["usage-session"]);
     expect(touched()?.sql).toContain("status = 'active'");
+    // The input's own outcome is on its row, for GET /sessions/{id}/events/{eventId} (ADR 0058).
+    const outcome = queries.find((q) => q.sql.includes("set outcome"));
+    expect(outcome?.params).toEqual(["1", "answered", null]);
+    expect(outcome?.sql).toContain("outcome is null");
+    service.stop();
+  }, 15_000);
+});
+
+describe("the outcome of each input (ADR 0058)", () => {
+  it("records Pi's reason for an unanswered input, never the provider's text", async () => {
+    const queries: { sql: string; params: unknown[] }[] = [];
+    const pool = {
+      query: (sql: string, params: unknown[] = []) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      },
+    } as unknown as pg.Pool;
+    const host = {
+      applyProfileTools: () => Promise.resolve(),
+      runTurns: () => Promise.resolve(0),
+      turnsUsed: () => Promise.resolve(0),
+      limitTurns: () => Promise.resolve(),
+      submitInput: () => Promise.resolve(),
+      usage: () => Promise.reject(new Error("no usage in this test")),
+      settlement: () =>
+        Promise.resolve({
+          status: "unanswered",
+          reason: "model_error",
+          detail: "429 from provider, key sk-not-a-secret",
+        }),
+    } as unknown as Host;
+    const service = new SessionService(pool, host, {
+      shard: 0,
+      testFaults: false,
+      defaultModel: MODEL,
+      turnBudget: () => 10,
+    });
+    const session: SessionRow = {
+      id: "outcome-session",
+      owner: "alice",
+      ownerSubject: "static:alice",
+      status: "active",
+      shard: 0,
+      conversationId: 3,
+      model: null,
+      failure: null,
+      repo: null,
+      onecli: null,
+      workspaceReadyAt: null,
+      profile: null,
+      usage: null,
+      sandboxSize: null,
+      networkMode: "proxied",
+      sandboxFlavour: "default",
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+    };
+    await service.apply(
+      {
+        id: "42",
+        sessionId: session.id,
+        source: "api:alice",
+        sourceEventId: "m1",
+        kind: "message",
+        payload: { text: "hi" },
+        status: "pending",
+        attempts: 0,
+        createdAt: new Date(),
+        submittedAt: null,
+        error: null,
+      },
+      session,
+    );
+    const written = () => queries.find((q) => q.sql.includes("set outcome"));
+    for (let i = 0; i < 200 && written() === undefined; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(written()?.params).toEqual(["42", "unanswered", "model_error"]);
+    expect(JSON.stringify(queries.map((q) => q.params))).not.toContain("sk-not-a-secret");
     service.stop();
   }, 15_000);
 });
