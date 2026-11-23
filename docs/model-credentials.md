@@ -298,11 +298,11 @@ model.
 
 ## Failures and spend limits
 
-- **Rejected credentials end the session.** A model error whose text reads as 401, 403 or 407 (the provider rejecting
-  the key, or the gateway rejecting the agent token) sets the session to the terminal status `failed` and stores a
+- **Rejected credentials end the session.** A model error whose text reads as 401 or 407, or as a 403 that names the
+  credentials (the provider rejecting the key, or the gateway rejecting the agent token; [ADR 0062](decisions/0062-narrow-403-classifier.md)) sets the session to the terminal status `failed` and stores a
   fixed message (never the provider's text). pi-ai does not retry these statuses, and nothing in the orchestrator does
   either. The session then answers new events with 409 and stays readable; `DELETE` still works. The orchestrator does
-  not exit, so there is no restart loop. Other model errors (429 after the retries, network errors) leave the session
+  not exit, so there is no restart loop. Other model errors (429 after the retries, network errors, a 403 that is a content, moderation or region refusal) leave the session
   active for its next message.
 - **Where it is detected.** Pi Durable reports a model error only inside the conversation (the run's submissions end
   `unanswered` with the reason and text), not through `onReport`. The orchestrator's run watcher awaits each
