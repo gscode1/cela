@@ -7,16 +7,28 @@ description: "Drive the sandbox's desktop apps (Mousepad, LibreOffice Writer, Fi
 
 Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`). Always run it as `agent-desktop-run <args>` (see the desktop-sandbox skill). `agent-desktop-run <command> --help` lists the flags.
 
+## Never print a full snapshot
+
+A raw snapshot is hundreds of kB of JSON (class lists, offscreen nodes) that you re-read on every turn. Use `desktop-find`: it saves the snapshot to a file and prints only matching nodes, `@ref role "name"`.
+
+    desktop-find --app firefox-esr                      summary: windows, counts by role
+    desktop-find --app firefox-esr "add to cart|koszyk"  regex on name/value, any case
+    desktop-find --app firefox-esr --role button,link --limit 20
+    desktop-find --from /home/pi/.agent-desktop-session/last-snapshot.json "price"   filter the saved file again, no new walk
+    desktop-find --app firefox-esr --all "x"            also offscreen nodes; --skeleton, --root @ref, --max-depth N narrow big trees
+
+Never run `snapshot` without redirecting it. Batch act, wait and find in one call: `agent-desktop-run click <ref> && sleep 2 && desktop-find --app firefox-esr "cart"`. `desktop-url` prints the focused Firefox's URL (no ref reading).
+
 ## Loop: observe, act on a ref, verify
 
-1. `desktop-launch <app>` once, then `agent-desktop-run snapshot --app <name> -i --compact --timeout-ms 60000`. App names: `mousepad`, `soffice.bin` (Writer), `firefox-esr`. `list-apps` shows what runs.
-2. Large app (Writer has about 1500 refs): `snapshot --skeleton --app <name> -i --compact` first, then drill into one region with `snapshot --root <ref> -i --compact`.
+1. `desktop-launch <app>` once, then `desktop-find --app <name> <regex>`. App names: `mousepad`, `soffice.bin` (Writer), `firefox-esr`. `list-apps` shows what runs.
+2. Large app (Writer has about 1500 refs): `desktop-find --skeleton --app <name>` first, then drill into one region with `desktop-find --root <ref> --app <name> <regex>`. A big web page overflows the snapshot (`RefMap exceeds 1MB`) and `--root` inside a page is refused as ambiguous: there, always give a regex or `--role`, and `desktop-find` switches to `agent-desktop find` by itself (a literal word is faster than a regex).
 3. Act on a ref from that snapshot. A ref belongs to one snapshot: after the UI changes, snapshot again (`STALE_REF`, `SNAPSHOT_NOT_FOUND`).
-4. Verify the effect with `get <ref> --property value|text|states` or one new snapshot. Take one snapshot per step: every call walks the whole tree and costs seconds.
+4. Verify the effect with `get <ref> --property value|text|states` or one new `desktop-find`. Take one snapshot per step: every call walks the whole tree and costs seconds.
 
 ## Commands
 
-- `snapshot`: `-i` interactive nodes only, `--compact`, `--skeleton`, `--root <ref>`, `--max-depth N`, `--window-id <id>`, `--surface menu|sheet|alert`.
+- `snapshot` (via `desktop-find`; redirect it to a file if run directly): `-i` interactive nodes only, `--compact`, `--skeleton`, `--root <ref>`, `--max-depth N`, `--window-id <id>`, `--surface menu|sheet|alert`.
 - `find --app <name> --role <role> --name <text>`: search by role or name; it walks the tree too.
 - `click`, `toggle`, `check`, `uncheck`, `select`, `expand`, `collapse`, `scroll-to`, `clear`, `set-value`: act on a ref, headless.
 - `type <ref> "<text>"`: inserts text into a field. Use `--headed` for browser-family apps (Firefox): headless typing is refused there.

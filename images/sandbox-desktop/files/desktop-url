@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Prints the URL of the focused Firefox window: ctrl+l, ctrl+c, read the clipboard, Escape. Saves the agent reading it out of
+# the accessibility tree turn by turn (docs/decisions/0065-desktop-sandbox.md, "Token budget"). Needs Firefox focused.
+set -euo pipefail
+
+run=(agent-desktop-run --exec)
+"${run[@]}" xdotool key --clearmodifiers ctrl+l
+sleep 0.3
+"${run[@]}" xdotool key --clearmodifiers ctrl+c
+sleep 0.3
+url=$("${run[@]}" xclip -o -selection clipboard)
+"${run[@]}" xdotool key Escape
+[[ -n "$url" ]] || { echo "desktop-url: empty clipboard; is a Firefox window focused?" >&2; exit 1; }
+printf '%s\n' "$url"
