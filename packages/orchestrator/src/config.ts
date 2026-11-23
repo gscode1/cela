@@ -8,6 +8,8 @@ import { DEFAULT_ONECLI_NAME_PREFIX, validateNamePrefix } from "./onecli-names.j
 import { bypassesProxy, parseNoProxy, PLACEHOLDER_API_KEY, Redacted } from "./onecli.js";
 import { CUSTOM_PROVIDERS_ENV, parseCustomProviders } from "./custom-providers.js";
 import type { CustomProvider } from "./custom-providers.js";
+import { TRIM_CONTEXT_DEFAULTS } from "./trim-context.js";
+import type { TrimContextOptions } from "./trim-context.js";
 
 /** Providers served by the in-process scripted model: no network, no OneCLI. */
 const LOCAL_PROVIDERS = new Set(["scripted", "faux"]);
@@ -33,6 +35,11 @@ export interface OrchestratorConfig {
   schema: string;
   /** Which shard this orchestrator is; it owns the schema of that shard and the sessions assigned to it (ADR 0017). */
   shard: number;
+  /**
+   * The trim-context extension (`PI_TRIM_CONTEXT=0` turns it off; `PI_TRIM_CONTEXT_IMAGES`, `_TEXT_CHARS`, `_TURNS`,
+   * `_STEP` override its constants; ADR 0067).
+   */
+  trimContext: { enabled: boolean; options: TrimContextOptions };
   /** How long the owner feed keeps its rows (ADR 0058); shard 0 prunes. */
   feedRetentionHours: number;
   namespace: string;
@@ -262,6 +269,7 @@ export function loadConfig(
     schema: shardSchema(env.PI_DURABLE_SCHEMA ?? "public", shard),
     shard,
     feedRetentionHours,
+    trimContext: trimContext(env),
     namespace,
     warmPool,
     sandboxRuntimes: parseSandboxRuntimes(env),
@@ -314,6 +322,32 @@ export function loadConfig(
       },
       namePrefix: validateNamePrefix(env.PI_ONECLI_NAME_PREFIX ?? DEFAULT_ONECLI_NAME_PREFIX),
       reconcileHostRules: hostRulesMode(env.PI_ONECLI_HOST_RULES),
+    },
+  };
+}
+
+function trimContext(
+  env: Readonly<Record<string, string | undefined>>,
+): OrchestratorConfig["trimContext"] {
+  const flag = env.PI_TRIM_CONTEXT?.trim() ?? "";
+  if (flag !== "" && flag !== "0" && flag !== "1")
+    throw new Error("PI_TRIM_CONTEXT must be 0 or 1");
+  const d = TRIM_CONTEXT_DEFAULTS;
+  const number = (name: string, fallback: number, min: number, max: number): number => {
+    const value = Number(env[name]?.trim() || String(fallback));
+    if (!Number.isInteger(value) || value < min || value > max)
+      throw new Error(`${name} must be a whole number from ${String(min)} to ${String(max)}`);
+    return value;
+  };
+  return {
+    enabled: flag !== "0",
+    options: {
+      ...d,
+      imageKeep: number("PI_TRIM_CONTEXT_IMAGES", d.imageKeep, 0, 100),
+      // Above the 600 characters an elided text keeps, so an elided result is never elided again.
+      textMaxChars: number("PI_TRIM_CONTEXT_TEXT_CHARS", d.textMaxChars, 1_000, 10_000_000),
+      turnsKept: number("PI_TRIM_CONTEXT_TURNS", d.turnsKept, 1, 1_000),
+      stepTurns: number("PI_TRIM_CONTEXT_STEP", d.stepTurns, 1, 1_000),
     },
   };
 }

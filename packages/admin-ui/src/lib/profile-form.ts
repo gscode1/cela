@@ -1,4 +1,4 @@
-import type { ProfileDefinition, SkillInfo, SkillPin } from "@/lib/api/profiles";
+import type { ContextTrim, ProfileDefinition, SkillInfo, SkillPin } from "@/lib/api/profiles";
 import { REASONING_LEVELS } from "@/lib/api/settings";
 import type { ReasoningLevel } from "@/lib/api/settings";
 
@@ -54,6 +54,8 @@ export interface ProfileForm {
   sandboxFlavour: "default" | "browser" | "desktop";
   /** Empty for the default runtime. */
   sandboxRuntime: string;
+  /** Empty for the default of the flavour (`full` for browser and desktop, `images` for default). */
+  contextTrim: ContextTrim | "";
 }
 
 export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
@@ -77,6 +79,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     networkMode: definition.networkMode ?? "proxied",
     sandboxFlavour: definition.sandboxFlavour ?? "default",
     sandboxRuntime: definition.sandboxRuntime ?? "",
+    contextTrim: definition.contextTrim ?? "",
   };
 }
 
@@ -115,6 +118,7 @@ export function definitionFromForm(
   if (form.sandboxFlavour !== "default" || original.sandboxFlavour !== undefined)
     definition.sandboxFlavour = form.sandboxFlavour;
   if (form.sandboxRuntime !== "") definition.sandboxRuntime = form.sandboxRuntime;
+  if (form.contextTrim !== "") definition.contextTrim = form.contextTrim;
   return definition;
 }
 
@@ -196,6 +200,9 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
     !SANDBOX_RUNTIME_NAME.test(definition.sandboxRuntime)
   )
     problems.push("sandboxRuntime must be a runtime name");
+  const trim: string | undefined = definition.contextTrim;
+  if (trim !== undefined && trim !== "off" && trim !== "images" && trim !== "full")
+    problems.push("contextTrim must be one of off, images, full");
   const sizes = definition.sandboxSizes;
   if (
     sizes !== undefined &&
@@ -330,7 +337,8 @@ export function isEmptyForm(form: ProfileForm): boolean {
     form.sandboxSizes.length === 0 &&
     form.networkMode === "proxied" &&
     form.sandboxFlavour === "default" &&
-    form.sandboxRuntime === ""
+    form.sandboxRuntime === "" &&
+    form.contextTrim === ""
   );
 }
 

@@ -36,7 +36,7 @@ the date taken from that message's stored `timestamp` (set by Pi Durable when it
 - **UTC, date only.** A time would differ for every message for no gain; the date can be a day off for a user near
   midnight in their zone. The sandbox facts (ADR 0049) say where the date is and that `date` gives the exact time,
   which covers a long run that crosses midnight after its last message.
-- **Installed in the pinned host default** `settings.extensions` (`[coding, fit-images, current-date]`), which Pi Durable
+- **Installed in the pinned host default** `settings.extensions` (`[coding, fit-images, current-date]`, and `trim-context` since [0067](0067-trim-context.md)), which Pi Durable
   reads at every start, so conversations created before this change get it too (ADR 0055). It has no tools, so nothing
   offered changes.
 - The scripted test model skips the block when it reads a script (`model.ts`, `isDateBlock`).

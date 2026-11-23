@@ -40,6 +40,8 @@ function showProfile(
       return definition.sandboxFlavour ?? "default";
     case "sandboxRuntime":
       return definition.sandboxRuntime ?? "default";
+    case "contextTrim":
+      return definition.contextTrim ?? "flavour default";
     case "skills":
       return list(
         (definition.skills ?? []).map((pin) => `${pin.name}@v${String(pin.version)}`),
@@ -76,6 +78,7 @@ const DEFINITION_FIELDS = [
   "networkMode",
   "sandboxFlavour",
   "sandboxRuntime",
+  "contextTrim",
 ] as const;
 
 /** The fields that differ between two stored definitions, in the order of the editor. A change of spelling alone is none. */

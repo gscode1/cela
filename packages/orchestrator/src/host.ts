@@ -24,6 +24,8 @@ import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 import { lazyImageProcessor } from "./images.js";
 import { createCurrentDateExtension } from "./current-date.js";
+import { createTrimContextExtension } from "./trim-context.js";
+import type { ContextTrimOf } from "./trim-context.js";
 import { composeInstructions } from "./repo-context.js";
 import type { InstructionParts } from "./repo-context.js";
 import type { Script } from "./model.js";
@@ -111,6 +113,8 @@ export interface HostOptions {
   mcpTimings?: McpTimings;
   /** Receives each server's latest discovery outcome (ADR 0044); main.ts publishes it into the shard status row. */
   mcpStatus?: McpStatusSink;
+  /** The `contextTrim` mode of a conversation's session (profile, else its flavour's default); ADR 0067. */
+  contextTrimOf?: ContextTrimOf;
   /** Test seam: the coding extension to install (a later release with one more tool). Production passes nothing. */
   codingExtension?: Extension;
   /**
@@ -168,6 +172,7 @@ export class Host {
   readonly #toolSearch: Extension;
   readonly #coding: Extension;
   readonly #fitImages: Extension;
+  readonly #trimContext: Extension | undefined;
   readonly #unsubscribe: () => void;
   /** What pi-ai knows here, for the catalog published with the capabilities. */
   readonly models: Models;
@@ -180,6 +185,7 @@ export class Host {
     toolSearch: Extension,
     coding: Extension,
     fitImages: Extension,
+    trimContext: Extension | undefined,
     unsubscribe: () => void,
     models: Models,
   ) {
@@ -191,6 +197,7 @@ export class Host {
     this.#toolSearch = toolSearch;
     this.#coding = coding;
     this.#fitImages = fitImages;
+    this.#trimContext = trimContext;
     this.#unsubscribe = unsubscribe;
   }
 
@@ -203,7 +210,12 @@ export class Host {
   capabilities(): { tools: string[]; extensions: string[] } {
     return {
       tools: (this.#coding.tools ?? []).map((tool) => tool.name),
-      extensions: [this.#coding.name, this.#fitImages.name, this.#toolSearch.name],
+      extensions: [
+        this.#coding.name,
+        this.#fitImages.name,
+        ...(this.#trimContext === undefined ? [] : [this.#trimContext.name]),
+        this.#toolSearch.name,
+      ],
     };
   }
 
@@ -270,12 +282,18 @@ export class Host {
     registry.install(fitImages);
     const currentDate = createCurrentDateExtension();
     registry.install(currentDate);
+    // Request-time trimming of old screenshots and large tool output (docs/decisions/0067-trim-context.md); off with
+    // `PI_TRIM_CONTEXT=0`, then it is neither installed nor in the default.
+    const trimContext = config.trimContext.enabled
+      ? createTrimContextExtension(config.trimContext.options, options.contextTrimOf)
+      : undefined;
+    if (trimContext !== undefined) registry.install(trimContext);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in Pi Durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
-    // The host default is therefore always pinned to `coding`, `fit-images` and `current-date` (which have no tools, so
-    // nothing offered changes, and are read from these settings at every start, so conversations that already exist get
-    // them too, ADR 0055 and 0061), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
+    // The host default is therefore always pinned to `coding`, `fit-images`, `current-date` and `trim-context` (which have no tools,
+    // so nothing offered changes, and are read from these settings at every start, so conversations that already exist
+    // get them too, ADR 0055, 0061 and 0067), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
     const mcp = new McpTools(
       registry,
@@ -303,7 +321,15 @@ export class Host {
         registry,
         // A failed run withdraws the inputs queued behind it (they settle `unanswered`, `run_failed`) instead of
         // leaving them until the next input (`keep`), and never retries paid calls by itself (`continue`) (ADR 0029).
-        settings: { extensions: [coding, fitImages, currentDate], afterFailedRun: "withdraw" },
+        settings: {
+          extensions: [
+            coding,
+            fitImages,
+            currentDate,
+            ...(trimContext === undefined ? [] : [trimContext]),
+          ],
+          afterFailedRun: "withdraw",
+        },
         // Lazy: the SandboxClaim is created at the first tool call, not at the first model request.
         env: ({ conversationId }) => Promise.resolve(sandboxes.lazyEnv(Number(conversationId))),
         onReport: (report) => {
@@ -341,6 +367,7 @@ export class Host {
       toolSearch,
       coding,
       fitImages,
+      trimContext,
       unsubscribe,
       models,
     );
