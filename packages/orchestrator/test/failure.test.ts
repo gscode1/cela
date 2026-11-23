@@ -4,7 +4,10 @@ import { terminalFailure } from "../src/failure.ts";
 describe("terminalFailure", () => {
   it.each([
     "401 Incorrect API key provided: onecli-managed-placeholder",
-    "403 Forbidden",
+    "403 Invalid API key provided",
+    "403 Your API key has expired",
+    "403 Authentication failed: invalid credentials",
+    "403 Forbidden: credentials revoked",
     "Request failed with status code 401",
     'OpenRouter error: 401 {"error":{"message":"No auth credentials found","code":401}}',
     "Proxy response (407) !== 200 when HTTP Tunneling",
@@ -26,6 +29,12 @@ describe("terminalFailure", () => {
     "request id 4010293 failed",
     "got 14031 bytes",
     "Provider returned error",
+    // 403s that are not about the key leave the session usable (ADR 0062).
+    "403 Your chosen model requires moderation and your input was flagged",
+    "403 Country, region, or territory not supported",
+    "403 Forbidden",
+    "403 status code (no body)",
+    "PERMISSION_DENIED: The caller does not have permission to use this model in this location",
   ])("leaves the session usable for a transient or unrelated error: %s", (detail) => {
     expect(terminalFailure({ reason: "model_error", detail })).toBeUndefined();
   });

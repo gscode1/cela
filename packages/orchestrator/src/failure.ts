@@ -9,19 +9,21 @@ export const TOKEN_BUDGET_EXHAUSTED =
   "token budget exhausted: the session used all the model tokens it is allowed";
 
 /**
- * Model-side signs that the credentials are not accepted: an HTTP status of 401 or 403 from the provider (a missing
- * or revoked key, a revoked OneCLI grant leaves the gateway injecting nothing), 407 from the gateway itself (the
- * agent token was deleted or regenerated), the gateway's own answer when the agent has no grant for the host (a 401
- * whose JSON body, which is all pi-ai keeps, reads `access_restricted` / `this agent does not have access`), or the
- * usual wording. Status codes must stand alone, so a request id or a
+ * Model-side signs that the credentials are not accepted: an HTTP status of 401 from the provider (a missing or
+ * revoked key; a revoked OneCLI grant leaves the gateway injecting nothing), 407 from the gateway itself (the agent
+ * token was deleted or regenerated), the gateway's own answer when the agent has no grant for the host (a 401 whose
+ * JSON body, which is all pi-ai keeps, reads `access_restricted` / `this agent does not have access`), or credential
+ * wording. pi-ai surfaces the SDK's message as `<status> <body message>`, so a 403 is told apart by its body: providers
+ * also use 403 for per-request refusals unrelated to the key (OpenRouter moderation "your input was flagged", "region
+ * not supported"), so a bare 403 or "forbidden" is not enough. Status codes must stand alone, so a request id or a
  * byte count that happens to contain 401 does not match.
  */
 const REJECTED =
-  /(?<![a-z0-9])(?:401|403|407)(?![a-z0-9])|unauthori[sz]ed|forbidden|invalid[ _-]?api[ _-]?key|incorrect api key|proxy authentication|authentication[ _-]?(?:error|failed)|permission[ _-]?denied|access_restricted|does not have access/i;
+  /(?<![a-z0-9])(?:401|407)(?![a-z0-9])|unauthori[sz]ed|invalid[ _-]?api[ _-]?key|incorrect api key|api key (?:is |was |has )?(?:not valid|invalid|expired|revoked)|(?:invalid|expired|revoked|missing)[ _-](?:credentials?|token|key)|credentials? (?:are |is |were )?(?:invalid|expired|revoked|rejected)|proxy authentication|authentication[ _-]?(?:error|failed|required)|access_restricted|does not have access/i;
 
 /**
  * The terminal failure a run outcome maps to, or undefined when the session stays usable.
- *  - A model error that reads as rejected credentials is terminal: nothing in the orchestrator can fix a grant, and
+ *  - A model error that reads as rejected credentials is terminal (a 403 only with credential wording, ADR 0062): nothing in the orchestrator can fix a grant, and
  *    retrying only repeats paid or rate-limited calls. (pi-ai does not retry these statuses either.)
  *  - `turn_limit` is the per-session turn budget (`maxTurns`).
  *  - Everything else (a 429 that outlasted the retries, a network error, an abort) leaves the session active: the
