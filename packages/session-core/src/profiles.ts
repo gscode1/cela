@@ -1,6 +1,8 @@
 import type pg from "pg";
 import { RULE_SET_NAME } from "./egress-rules.js";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
+import { CONTEXT_TRIMS, isContextTrim } from "./context-trim.js";
+import type { ContextTrim } from "./context-trim.js";
 import { DIRECT_NOT_ALLOWED, isNetworkMode, NETWORK_MODES } from "./network-mode.js";
 import type { NetworkMode } from "./network-mode.js";
 import {
@@ -75,6 +77,7 @@ const KEYS = [
   "networkMode",
   "sandboxFlavour",
   "sandboxRuntime",
+  "contextTrim",
 ] as const;
 
 /**
@@ -142,6 +145,12 @@ export interface ProfileDefinition {
    * deployment's default runtime. Fixed per session when it is created; proxied network mode only.
    */
   sandboxRuntime?: string;
+  /**
+   * How much old tool output is left out of the model's requests (docs/decisions/0067-trim-context.md): `off`,
+   * `images` (old screenshots) or `full` (also large old text results). Absent: `full` for the browser and desktop
+   * flavours, `images` for `default`.
+   */
+  contextTrim?: ContextTrim;
 }
 
 export interface ProfileRef {
@@ -324,6 +333,12 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
       return `sandboxRuntime must be a runtime name (${SANDBOX_RUNTIME_NAME.source})`;
     }
     definition.sandboxRuntime = body.sandboxRuntime;
+  }
+  if (body.contextTrim !== undefined) {
+    if (!isContextTrim(body.contextTrim)) {
+      return `contextTrim must be one of ${CONTEXT_TRIMS.join(", ")}`;
+    }
+    definition.contextTrim = body.contextTrim;
   }
   return ordered(definition);
 }

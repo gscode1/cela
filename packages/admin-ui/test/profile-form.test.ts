@@ -97,6 +97,17 @@ describe("profile form round trips", () => {
     );
   });
 
+  it("round-trips contextTrim: absent stays absent, a set mode is sent", () => {
+    const plain: ProfileDefinition = { instructions: "x" };
+    expect(formFromDefinition(plain).contextTrim).toBe("");
+    expect(definitionFromForm(formFromDefinition(plain), plain)).toEqual(plain);
+    const off: ProfileDefinition = { contextTrim: "off" };
+    expect(definitionFromForm(formFromDefinition(off), off)).toEqual(off);
+    expect(definitionProblems({ contextTrim: "most" } as unknown as ProfileDefinition)).toContain(
+      "contextTrim must be one of off, images, full",
+    );
+  });
+
   it("keeps sandbox sizes set through the API when the console saves an edit elsewhere", () => {
     const stored: ProfileDefinition = { instructions: "x", sandboxSize: "l", sandboxSizes: ["xl"] };
     expect(

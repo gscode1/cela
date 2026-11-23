@@ -317,6 +317,7 @@ describe("admin_put_profile definition schema", { timeout: 10_000 }, () => {
       networkMode: true,
       sandboxFlavour: true,
       sandboxRuntime: true,
+      contextTrim: true,
     };
     expect(Object.keys(PROFILE_DEFINITION_SHAPE).sort()).toEqual(Object.keys(fields).sort());
     for (const [key, field] of Object.entries(PROFILE_DEFINITION_SHAPE)) {

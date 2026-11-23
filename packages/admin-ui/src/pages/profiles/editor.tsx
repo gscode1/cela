@@ -58,6 +58,8 @@ import {
 } from "@/pages/profiles/pickers";
 import { AdmissionPreview } from "@/pages/profiles/preview";
 
+const CONTEXT_TRIMS = ["off", "images", "full"] as const;
+
 /**
  * The edit in progress. `base` is the stored definition the form started from and `baseRevision` the revision that goes
  * back as `expectedRevision`; a create has neither.
@@ -407,6 +409,24 @@ export function ProfileEditor({
               edit(change);
             }}
           />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="profile-context-trim">{fieldLabel("contextTrim")}</Label>
+            <Select
+              id="profile-context-trim"
+              className="w-72"
+              value={form.contextTrim}
+              onChange={(event) => {
+                edit({
+                  contextTrim: CONTEXT_TRIMS.find((mode) => mode === event.target.value) ?? "",
+                });
+              }}
+            >
+              <option value="">Default (full for browser and desktop, images otherwise)</option>
+              <option value="off">off: send everything</option>
+              <option value="images">images: leave out old screenshots</option>
+              <option value="full">full: also leave out large old text results</option>
+            </Select>
+          </div>
           <McpPicker
             selected={form.mcpServers}
             catalog={mcp.data}

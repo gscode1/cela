@@ -236,6 +236,8 @@ export {
   sandboxFlavourOf,
   untrustedFlavourConflict,
 } from "./sandbox-flavour.js";
+export { CONTEXT_TRIMS, contextTrimOf, defaultContextTrim, isContextTrim } from "./context-trim.js";
+export type { ContextTrim } from "./context-trim.js";
 export type { SandboxFlavour, UntrustedContentFlavour } from "./sandbox-flavour.js";
 export {
   DEFAULT_SANDBOX_RUNTIME,

@@ -25,7 +25,7 @@ LibreOffice Writer exposes menus and toolbars but not its body text, and some fi
 
 - Focus the window first: `agent-desktop-run focus-window --app soffice.bin`.
 - Keys and text: `agent-desktop-run --exec xdotool key ctrl+a`, `... xdotool type --delay 20 "text"`. Click a spot: `... xdotool mousemove X Y click 1`.
-- See the screen: `desktop-shot` (focused window, 800 px JPEG under `/workspace/shots`), wait about 2 seconds after the last action so the window has repainted, then open it with the `read` tool. It prints `scale` and `origin`: screen_x = origin_x + image_x * scale, same for y. Small text: `desktop-shot --region x,y,w,h --width 1200` rather than a bigger full shot. A deliverable screenshot: `desktop-shot --out /workspace/<name>.jpg` (or `--full`).
+- See the screen: `desktop-shot` (focused window, 800 px JPEG under `/workspace/shots`), wait about 2 seconds after the last action so the window has repainted, then open it with the `read` tool. It prints `scale` and `origin`: screen_x = origin_x + image_x * scale, same for y. Small text: `desktop-shot --region x,y,w,h --width 1200` rather than a bigger full shot. A deliverable screenshot: `desktop-shot --out /workspace/<name>.jpg` (or `--full`). After you read a screenshot, write one line stating what matters on it (the page or window, key values such as prices or errors, what changed). Older screenshots are removed from your context later, and that line is what you keep.
 - Writer: type with xdotool, save with `ctrl+s`, and check the saved file in `/workspace` (`ls -l`) rather than the tree. Mousepad and Firefox's address bar (`ctrl+l`) work through refs.
 
 ## Quick start

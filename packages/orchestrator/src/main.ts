@@ -52,6 +52,7 @@ import { EgressPrincipals } from "./egress.js";
 import { SandboxRuntimeNotConfiguredError, warmPoolOfSession } from "./sandbox-runtime.js";
 import { LiveViewProxy } from "./live-view.js";
 import { log } from "./log.js";
+import { sessionContextTrim } from "./trim-context.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
 import { createShutdown } from "./shutdown.js";
@@ -371,6 +372,8 @@ async function main(): Promise<void> {
       catalog: mcpCatalog,
       mcpIdentity: mcpAccess,
       mcpStatus: mcpStatusRecorder(pool, config.shard),
+      contextTrimOf: async (conversationId) =>
+        sessionContextTrim(await sessionByConversation(pool, config.shard, conversationId)),
       conversationProfiles: () => liveConversationProfiles(pool, config.shard),
     },
   );
