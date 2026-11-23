@@ -77,8 +77,18 @@ CREATE ROLE needs CREATEROLE, which the app's database user does not have (`pi` 
 So the **operator creates the role** and migration `025_egress_proxy.sql` provides `egress.grant_proxy_reader(role)`, which
 grants `usage` on the schema, `select` on `revisions`, `rule_sets` and `rules`, and `select, insert, update, delete` on
 `egress.proxy_status` only. The migration applies it to a role named `pi_egress` when that exists; any other name, or a role
-created later, is granted by `select egress.grant_proxy_reader('<role>')` as the app's user (the owner). The bundled Postgres
-creates the role with `auth.egressReader.enabled` and grants it from its init sidecar. The chart takes the role's URI from
+created later, can be granted by `select egress.grant_proxy_reader('<role>')` as the app's user (the owner).
+
+Amendment (issue #378): ingest and orchestrator reconcile grants for `PI_EGRESS_READER_ROLE` after migrations, including
+on an already-current schema. The chart sets this from `egressProxy.database.role` (default `pi_egress`) when the proxy
+is enabled. Match it to the URI username and to `auth.egressReader.role` with bundled Postgres; for external Postgres,
+create the role and grant CONNECT as an administrator before starting the app. The bundled Postgres creates the role with
+`auth.egressReader.enabled`; its init sidecar grants only if the function already exists, so it is not the repair loop.
+No Postgres restart or CREATEROLE for the app is needed. Missing roles fail startup migration/readiness and are retried;
+healthy grants need only SELECTs, without advisory locks or DDL. Reconciliation is additive, not a revocation of extra
+operator-granted privileges; leaving the environment variable unset preserves manual grant management.
+
+The chart takes the role's URI from
 `egressProxy.database.existingSecret`; the proxy never gets write access to a rule, and the same TLS variables as the app
 ([database-tls](../database-tls.md)) apply.
 

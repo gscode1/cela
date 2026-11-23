@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   void (async () => {
     while (!state.stopping) {
       try {
-        await applyMigrations(pool);
+        await applyMigrations(pool, undefined, process.env.PI_EGRESS_READER_ROLE || undefined);
         await assertSessionShardRoutes(pool, config.shards);
         // Seed once from the environment (a no-op when the row exists); after that the table wins.
         await seedSettings(pool, config.seed);

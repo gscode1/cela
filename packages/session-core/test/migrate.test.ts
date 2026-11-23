@@ -11,13 +11,25 @@ class FakeDb {
   statements: string[] = [];
   recorded: string[] | undefined;
   failOn: string | undefined;
+  readerComplete = false;
+  grantRoles: unknown[] = [];
 
-  query(sql: string, params?: unknown[]): Promise<{ rows: { version: string }[] }> {
+  query(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: ({ version: string } | { complete: boolean })[] }> {
     this.statements.push(sql.trim().split("\n")[0] ?? "");
     if (this.failOn !== undefined && sql.includes(this.failOn)) {
       return Promise.reject(
         Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }),
       );
+    }
+    if (sql.startsWith("select has_schema_privilege")) {
+      return Promise.resolve({ rows: [{ complete: this.readerComplete }] });
+    }
+    if (sql.startsWith("select egress.grant_proxy_reader")) {
+      this.grantRoles.push(params?.[0]);
+      this.readerComplete = true;
     }
     if (sql.startsWith("select version")) {
       if (this.recorded === undefined)
@@ -79,6 +91,45 @@ describe("applyMigrations", () => {
     db.statements = [];
     await applyMigrations(db.asPool(), dir);
     expect(db.statements).toEqual(["select version from inbox.schema_migrations"]);
+  });
+
+  it("grants the configured role after all missing migrations, with a bound parameter", async () => {
+    const db = new FakeDb();
+    await applyMigrations(db.asPool(), dir, 'custom-reader"');
+    expect(db.grantRoles).toEqual(['custom-reader"']);
+    const grant = db.statements.findIndex((s) => s.startsWith("select egress.grant_proxy_reader"));
+    expect(grant).toBeGreaterThan(db.statements.indexOf("-- b"));
+    expect(db.statements.at(-1)).toBe("commit");
+  });
+
+  it("repairs missing grants on a current schema, then restarts with only SELECTs", async () => {
+    const db = new FakeDb();
+    db.recorded = ["001_a.sql", "002_b.sql"];
+    await applyMigrations(db.asPool(), dir, "custom-reader");
+    expect(db.grantRoles).toEqual(["custom-reader"]);
+    expect(ran(db)).toEqual([]);
+    expect(db.statements.some((s) => s.startsWith("create"))).toBe(false);
+    expect(db.statements.some((s) => s.includes("pg_advisory_xact_lock"))).toBe(true);
+    db.statements = [];
+    await applyMigrations(db.asPool(), dir, "custom-reader");
+    expect(db.statements).toHaveLength(2);
+    expect(db.statements.every((s) => s.startsWith("select"))).toBe(true);
+    expect(db.grantRoles).toHaveLength(1);
+  });
+
+  it("rolls back a failed grant instead of recording a partial migration", async () => {
+    const db = new FakeDb();
+    db.failOn = "select egress.grant_proxy_reader";
+    await expect(applyMigrations(db.asPool(), dir, "custom-reader")).rejects.toThrow(
+      /lock timeout/,
+    );
+    expect(db.statements.at(-1)).toBe("rollback");
+  });
+
+  it.each(["", "x".repeat(64), "é".repeat(32)])("rejects an invalid role name %j", async (role) => {
+    const db = new FakeDb();
+    await expect(applyMigrations(db.asPool(), dir, role)).rejects.toThrow(/1 to 63 bytes/);
+    expect(db.statements).toEqual([]);
   });
 
   it("rolls back and rethrows when DDL cannot get its lock", async () => {

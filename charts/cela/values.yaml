@@ -351,9 +351,10 @@ egressProxy:
   # which the app's database user lacks, so the operator creates the role once. The bundled Postgres does it with
   # auth.egressReader (charts/pi-postgres); for any other Postgres, see docs/network-policy.md and ADR 0035:
   #   create role pi_egress login password '...'; grant connect on database pi to pi_egress;
-  # and, as the app's database user (the owner of the egress tables), `select egress.grant_proxy_reader('pi_egress')`
-  # (the migration does that itself for a role that is named pi_egress and exists).
+  # The app reconciles grants after migrations as the table owner, without a Postgres restart.
   database:
+    # Must match the URI username and charts/pi-postgres auth.egressReader.role (or the external Postgres role).
+    role: pi_egress
     existingSecret: "" # required: a Secret in the release namespace that holds the connection URI of that role
     uriKey: uri
   # The OneCLI route (ADR 0037): with OneCLI on, the proxy chains `route=onecli` connections to the OneCLI gateway with the

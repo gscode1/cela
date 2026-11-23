@@ -113,7 +113,7 @@ async function main(): Promise<void> {
 
   for (;;) {
     try {
-      await applyMigrations(pool);
+      await applyMigrations(pool, undefined, process.env.PI_EGRESS_READER_ROLE || undefined);
       break;
     } catch (error) {
       log("migrate-failed", { message: errorMessage(error) });

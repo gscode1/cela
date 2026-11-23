@@ -35,9 +35,8 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO %I', db, role) FROM wanted \gexec
 
 -- The egress proxy's read-only role (epic #50, ADR 0035), only when auth.egressReader.enabled sets EGRESS_ROLE. It may
 -- connect to the app database and read and write what egress.grant_proxy_reader grants (the egress rule tables to read,
--- its own status table to write). The grants live in the app's migration 025, which can only run once the app has
--- started: the migration grants them to a role named pi_egress that exists, and this block grants them again when the role
--- is created after the migration ran (or has another name), as soon as the function exists.
+-- its own status table to write). This startup pass grants only when the function already exists. The app reconciles
+-- grants after migrations using charts/cela egressProxy.database.role, which must match EGRESS_ROLE.
 \getenv egress_role EGRESS_ROLE
 \getenv egress_password EGRESS_PASSWORD
 \if :{?egress_role}

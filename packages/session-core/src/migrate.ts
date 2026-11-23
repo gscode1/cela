@@ -14,16 +14,29 @@ const UNDEFINED_TABLE = "42P01";
 
 /**
  * Applies the inbox schema: every `NNN_*.sql` in order, each idempotent, each recorded in
- * `inbox.schema_migrations`. When every file is recorded this is one plain SELECT: no advisory lock, no DDL, so a
- * process restart never queues behind (or in front of) running traffic. Only a missing file takes the lock and runs.
+ * `inbox.schema_migrations`. A current schema with complete reader grants uses only SELECTs: no advisory lock or DDL.
+ * Missing migrations or reader grants take the same lock, so concurrent starters cannot race their repairs.
  *
  * A database that predates the table has all files applied but nothing recorded; it takes the slow path once, the
  * idempotent files re-run (they change nothing) and are recorded, which is the backfill.
  */
-export async function applyMigrations(pool: pg.Pool, dir: URL = MIGRATIONS): Promise<void> {
+export async function applyMigrations(
+  pool: pg.Pool,
+  dir: URL = MIGRATIONS,
+  egressReaderRole?: string,
+): Promise<void> {
+  if (
+    egressReaderRole !== undefined &&
+    (egressReaderRole.length === 0 ||
+      Buffer.byteLength(egressReaderRole) > 63 ||
+      egressReaderRole.includes("\0"))
+  ) {
+    throw new Error("PI_EGRESS_READER_ROLE must be a Postgres role name of 1 to 63 bytes");
+  }
   const files = (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort();
   const applied = await recordedVersions(pool);
-  if (applied !== undefined && files.every((name) => applied.has(name))) return;
+  const current = applied !== undefined && files.every((name) => applied.has(name));
+  if (current && (await readerGrantsComplete(pool, egressReaderRole))) return;
 
   const scripts = new Map(
     await Promise.all(
@@ -36,18 +49,23 @@ export async function applyMigrations(pool: pg.Pool, dir: URL = MIGRATIONS): Pro
     await client.query(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [LOCK_KEY]);
     // Another starter may have finished while this one waited for the lock.
-    await client.query("create schema if not exists inbox");
-    await client.query(
-      `create table if not exists inbox.schema_migrations (
-         version    text primary key,
-         applied_at timestamptz not null default clock_timestamp()
-       )`,
-    );
-    const done = await recordedVersions(client);
-    for (const [name, sql] of scripts) {
-      if (done?.has(name) === true) continue;
-      await client.query(sql);
-      await client.query("insert into inbox.schema_migrations (version) values ($1)", [name]);
+    if (!current) {
+      await client.query("create schema if not exists inbox");
+      await client.query(
+        `create table if not exists inbox.schema_migrations (
+           version    text primary key,
+           applied_at timestamptz not null default clock_timestamp()
+         )`,
+      );
+      const done = await recordedVersions(client);
+      for (const [name, sql] of scripts) {
+        if (done?.has(name) === true) continue;
+        await client.query(sql);
+        await client.query("insert into inbox.schema_migrations (version) values ($1)", [name]);
+      }
+    }
+    if (!(await readerGrantsComplete(client, egressReaderRole))) {
+      await client.query("select egress.grant_proxy_reader($1::name)", [egressReaderRole]);
     }
     await client.query("commit");
   } catch (error) {
@@ -56,6 +74,26 @@ export async function applyMigrations(pool: pg.Pool, dir: URL = MIGRATIONS): Pro
   } finally {
     client.release();
   }
+}
+
+/** Mirrors grant_proxy_reader (027), including column-only access to principals: never grant token_salt. */
+async function readerGrantsComplete(
+  db: pg.Pool | pg.PoolClient,
+  role: string | undefined,
+): Promise<boolean> {
+  if (role === undefined) return true;
+  const { rows } = await db.query<{ complete: boolean }>(
+    `select has_schema_privilege($1::name, 'egress', 'USAGE')
+       and (select bool_and(has_table_privilege($1::name, t, 'SELECT'))
+              from unnest(array['egress.revisions', 'egress.rule_sets', 'egress.rules', 'egress.bindings']) as t)
+       and (select bool_and(has_column_privilege($1::name, 'egress.principals', c, 'SELECT'))
+              from unnest(array['session_id', 'token_hash', 'profile_name', 'profile_version',
+                                'rule_sets', 'pod_ip', 'created_at', 'revoked_at']) as c)
+       and (select bool_and(has_table_privilege($1::name, 'egress.proxy_status', p))
+              from unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE']) as p) as complete`,
+    [role],
+  );
+  return rows[0]?.complete === true;
 }
 
 /** The recorded versions, or undefined while the table does not exist yet. */
