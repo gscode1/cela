@@ -179,19 +179,69 @@ func TestProxyAllowsRuleHostAndDialsTheCheckedAddress(t *testing.T) {
 	}
 }
 
-// DNS rebinding: the two lookups share no address, so neither check approved what the other would dial.
-func TestProxyRefusesWhenTheTwoLookupsDisagree(t *testing.T) {
+// DNS rebinding: the two lookups share no address and the second one is an address the rules deny (private, platform),
+// so the address Smokescreen picked was never approved.
+func TestProxyRefusesWhenTheTwoLookupsDisagreeOnADeniedAddress(t *testing.T) {
 	t.Parallel()
-	e := newRulesEnv(t, rulesEnvOpts{
-		snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
-		dns:  map[string][]string{"ok.example.com": {"93.184.216.34", "8.8.8.8"}},
-	})
-	_, _, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
-	if status == http.StatusOK {
-		t.Error("status 200, want a refusal")
+	platform := &Platform{Hosts: []string{"10.96.1.5"}}
+	if err := platform.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if d := e.dialed(); len(d) != 0 {
-		t.Errorf("dialled %v", d)
+	for name, second := range map[string]string{
+		"private":  "10.0.0.5",
+		"platform": "10.96.1.5",
+		"mixed":    "93.184.216.35,10.0.0.5", // Smokescreen skips the private one, but the decision never judged the public one
+	} {
+		e := newRulesEnv(t, rulesEnvOpts{
+			platform: platform,
+			snap:     baseSnapshot(allowRule("1", "all", "ok.example.com")),
+			dns:      map[string][]string{"ok.example.com": {"93.184.216.34", second}},
+		})
+		_, _, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
+		if name == "mixed" {
+			// 93.184.216.35 is public and allowed by the rule on its own: judged and dialled, the 10.0.0.5 is never used.
+			if d := e.dialed(); len(d) != 1 || d[0] != "93.184.216.35:443" {
+				t.Errorf("%s: dialled %v", name, d)
+			}
+			continue
+		}
+		if status == http.StatusOK {
+			t.Errorf("%s: status 200, want a refusal", name)
+		}
+		if d := e.dialed(); len(d) != 0 {
+			t.Errorf("%s: dialled %v", name, d)
+		}
+	}
+}
+
+// #412: a host whose DNS answers one rotating address per query (allegro.pl) gives disjoint answers to the decision and
+// to Smokescreen. The picked address is judged on its own and dialled; nothing the rules deny is.
+func TestProxyTunnelsWhenTheTwoLookupsRotate(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		dns  []string
+		want string
+	}{
+		"single address rotates":   {[]string{"185.31.27.160", "5.134.213.80"}, "5.134.213.80:443"},
+		"different order":          {[]string{"93.184.216.34,8.8.8.8", "8.8.8.8,93.184.216.34"}, "8.8.8.8:443"},
+		"rotating subsets overlap": {[]string{"8.8.8.8,93.184.216.34", "93.184.216.34,1.1.1.1"}, "93.184.216.34:443"},
+		"A then A plus AAAA":       {[]string{"185.31.27.160", "2606:4700::6810:84e5,185.31.27.160"}, "[2606:4700::6810:84e5]:443"},
+		"mapped then plain":        {[]string{"::ffff:93.184.216.34", "93.184.216.34"}, "93.184.216.34:443"},
+		"plain then mapped":        {[]string{"93.184.216.34", "::ffff:93.184.216.34"}, "93.184.216.34:443"},
+		"disjoint v4 and v6":       {[]string{"93.184.216.34", "2606:4700::6810:84e5"}, "[2606:4700::6810:84e5]:443"},
+	}
+	for name, c := range cases {
+		e := newRulesEnv(t, rulesEnvOpts{
+			snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
+			dns:  map[string][]string{"ok.example.com": c.dns},
+		})
+		_, _, status, _ := connect(t, e.proxyAddr, "ok.example.com:443", "")
+		if status != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", name, status)
+		}
+		if d := e.dialed(); len(d) != 1 || d[0] != c.want {
+			t.Errorf("%s: dialled %v, want %s", name, d, c.want)
+		}
 	}
 }
 

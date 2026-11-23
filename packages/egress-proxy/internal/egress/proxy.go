@@ -209,6 +209,21 @@ func (p *Proxy) principalOf(role string) (Principal, bool) {
 	return p.opts.Principals.BySession(role)
 }
 
+// approvesDialled judges the one address about to be dialled, the way the decision judged the whole answer: the
+// session must still exist and the Authorizer must allow host:port for that address on the direct route.
+func (p *Proxy) approvesDialled(d *smokescreen.ACLDecision, ip netip.Addr) bool {
+	host, port, ok := splitHostPort(d.OutboundHost)
+	if !ok {
+		return false
+	}
+	pr, known := p.principalOf(d.Role)
+	if !known {
+		return false
+	}
+	v := p.opts.Authorizer.Authorize(pr, normalizeHost(host), port, []string{ip.String()})
+	return v.Allow && v.Route == RouteDirect
+}
+
 // selectUpstream chains route=onecli tunnels to the fixed upstream. An
 // explicit direct route returns "". A host with no route cannot get here (the
 // ACL denied it), but if the policy changed in between we return an address
@@ -295,8 +310,18 @@ func (p *Proxy) dial(pctx *goproxy.ProxyCtx, network, addr string) (net.Conn, er
 			return nil, errors.New("direct route has no checked address")
 		}
 		chosen, ok := netip.AddrFromSlice(d.ResolvedAddr.IP)
-		if !ok || !slices.Contains(st.addrs, chosen.Unmap()) {
-			return nil, errors.New("the destination's addresses changed between the two checks")
+		if !ok {
+			return nil, errors.New("direct route has no checked address")
+		}
+		chosen = chosen.Unmap()
+		if !slices.Contains(st.addrs, chosen) {
+			// The two lookups answered differently (a CDN or GeoDNS that hands out one rotating address per query).
+			// Smokescreen's IP policy approved its own pick; the decision has not seen it, so judge it now, by the
+			// same rules and for the same route. Only an address both checks approved is dialled.
+			if !p.approvesDialled(d, chosen) {
+				return nil, errors.New("the destination's addresses changed between the two checks, and the address dialled was not approved")
+			}
+			st.addrs = append(slices.Clone(st.addrs), chosen)
 		}
 		_, port, ok := splitHostPort(addr)
 		if !ok {
@@ -406,7 +431,8 @@ func (p *Proxy) logRevoked(r revoked) {
 }
 
 // reqState is what one CONNECT carries from the front handler through the ACL decision to the dial. The ACL
-// decision (decider.Decide) is the only writer of addrs and it runs before the dial, on the same goroutine chain.
+// decision (decider.Decide) writes addrs and the dial may add the one address it re-judged (#412); both run in order on
+// the same goroutine chain, before the tunnel is registered, so nothing reads addrs concurrently.
 type reqState struct {
 	// addrs are the destination's addresses as the decision checked them; the direct route dials one of them.
 	addrs []netip.Addr
