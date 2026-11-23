@@ -1,10 +1,9 @@
 # 0067: Session mail: a credentialed MCP server that scopes inboxes by an owner header
 
-Status: proposed, 2026-11-23 (issue #420). The gateway gate is met: the egress smoke of issue #419 showed, live, that the
-OneCLI gateway forwards a custom request header unchanged and once ([0040](0040-mcp-egress-flow.md), Live verification),
-and a one-off run on the same kind setup held 130 s and 150 s responses through the gateway (status 200, the header intact)
-from a test Worker that holds a response on request. Still open before acceptance: an e2e of the contract against a real
-mail backend. Builds on
+Status: accepted, 2026-11-23 (issue #420). Its gates are met: the egress smoke of issue #419 showed, live, that the OneCLI
+gateway forwards a custom request header unchanged and once ([0040](0040-mcp-egress-flow.md), Live verification); a one-off
+run held 130 s and 150 s responses through the gateway; and `hack/session-mail-smoke.sh` passed against a real backend (a
+Cloudflare Email Worker), including a real message delivered by Email Routing (see Verification). Builds on
 [0040](0040-mcp-egress-flow.md) (per-session MCP identity), [0041](0041-browser-sandbox.md) (the browser flavour holds no
 credential; amended here) and [0038](0038-network-modes.md) (direct mode). Research:
 [docs/research/agent-session-emails.md](../research/agent-session-emails.md), variant 8d with the review of 8d. The wire
@@ -65,4 +64,12 @@ credential (ADR 0040, section 4). The browser flavour, where this matters most, 
 - Done: issue #419's gateway smoke, live (header unchanged and once; a 10 s response held), and a one-off live run through
   the gateway as the orchestrator's agent against a test Worker on Cloudflare: 130 s and 150 s holds returned 200 in 130.1 s
   and 150.2 s with the owner header intact.
-- Before this ADR is accepted: an e2e of the contract against a real mail backend.
+- Done: `hack/session-mail-smoke.sh` on a throwaway kind cluster (Cilium, bundled OneCLI) against a Cloudflare Email Worker
+  that serves this contract (free plan: Email Routing catch-all on a dedicated apex domain, D1, the MCP endpoint on its own
+  host; not part of cela). Discovery listed the four tools without the header; a browser and a default session got distinct,
+  stable addresses without the session id in them; a message injected through the backend's test path reached only its own
+  session's `wait_for_email` with the code extracted, and the other session could neither list it nor read it by id; a real
+  message sent from an external mailbox arrived through Email Routing and was returned to the browser session; a forged
+  owner header without the operator secret got `401`.
+- Found live: the smoke must not delete the server named by `sessionMail.server`, since a deleted catalog name can never be
+  created again; it disables it instead.
