@@ -132,7 +132,8 @@ in the proxy's namespace, and nothing for the management API.
 
 **Direct and credentials.** A direct session has no proxy environment, principal, token or binding, and the API refuses
 direct together with a repo, a credentialed MCP server, or an allow rule with `route=onecli` in a rule set that applies to
-the profile.
+the profile. The session mail server of [ADR 0067](decisions/0067-session-mail.md) is a credentialed server like any other
+here: direct refuses it.
 
 **Odd ports.** A CONNECT to a public host is limited to `egressProxy.publicPorts` (80 and 443): a rule for another port has
 no effect at the network. Widen the list per deployment, or use `direct`.
@@ -152,7 +153,10 @@ and platform addresses and the OneCLI gateway still fail.
 `app.kubernetes.io/name=pi-sandbox` and `cela.dev/network-mode` labels as any sandbox (plus
 `cela.dev/sandbox-flavour=browser`, which no policy selects on), so a proxied browser reaches the egress proxy on 3128 and
 nothing else: Chromium sends everything to a forwarder on 127.0.0.1 inside the Pod, which tunnels through the proxy. No DNS, no
-UDP. `hack/browser-smoke.sh` shows the cluster, platform, OneCLI, metadata and LAN addresses refused.
+UDP. `hack/browser-smoke.sh` shows the cluster, platform, OneCLI, metadata and LAN addresses refused. A browser session has no
+OneCLI route and no credentialed MCP server, with one opt-in exception: the session mail server (`sessionMail.server`, ADR
+0067). The orchestrator, not the sandbox, calls it through the OneCLI gateway as the session's own agent, so the sandbox's
+network position does not change.
 
 ## Assumptions to check before applying
 

@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     consoleCatalogs: config.consoleCatalogs,
     sandboxSizes: config.sandboxSizes,
     allowDirectSandboxEgress: config.allowDirectSandboxEgress,
+    sessionMailServer: config.sessionMailServer,
     browserFlavourEnabled: config.browserFlavourEnabled,
     desktopFlavourEnabled: config.desktopFlavourEnabled,
     sandboxRuntimes: config.sandboxRuntimes,

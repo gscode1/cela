@@ -945,6 +945,7 @@ describe("values are validated", () => {
       ["--set", "onecli.namePrefix=cela-prod-session-"],
       /namePrefix|pattern/,
     ],
+    ["a bad session mail server name", ["--set", "sessionMail.server=Bad_"], /server|pattern/],
     ["no admins", ["--set-json", "api.admins=[]"], /admins/],
     ["a bad CIDR", ["--set-json", 'networkPolicy.kubeApiCidrs=["nope"]'], /kubeApiCidrs|pattern/],
     ["a model without a provider", ["--set-json", 'models.allowlist=["x"]'], /allowlist|pattern/],
@@ -1700,6 +1701,29 @@ describe("network cutover and network modes (ADR 0038)", () => {
       /egressProxy\.enabled=false, so the network cutover is off/,
     );
     expect(execNotes([...on, ...external])).not.toMatch(/cutover is off/);
+  });
+});
+
+describe("session mail server (ADR 0067)", () => {
+  it("is off by default: neither the orchestrator nor ingest gets the setting", () => {
+    const list = docs(external);
+    expect(envOf(named(list, "Deployment", "pi-orchestrator")).PI_SESSION_MAIL_SERVER).toBe(
+      undefined,
+    );
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SESSION_MAIL_SERVER).toBe(undefined);
+  });
+
+  it("names the reserved server for the orchestrator shards and ingest", () => {
+    const list = docs([
+      ...external,
+      "--set",
+      "orchestrator.shards=2",
+      "--set",
+      "sessionMail.server=mail",
+    ]);
+    for (const name of ["pi-orchestrator", "pi-orchestrator-1", "pi-ingest"]) {
+      expect(envOf(named(list, "Deployment", name)).PI_SESSION_MAIL_SERVER?.value).toBe("mail");
+    }
   });
 });
 

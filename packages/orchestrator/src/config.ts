@@ -1,4 +1,9 @@
-import { loadDatabaseTls, loadModelPolicy, parseSandboxRuntimes } from "@cela/session-core";
+import {
+  loadDatabaseTls,
+  loadModelPolicy,
+  parseSandboxRuntimes,
+  parseSessionMailServer,
+} from "@cela/session-core";
 import type { DatabaseTls, ModelPolicy, SandboxRuntimes } from "@cela/session-core";
 import { memoryLimitBytes, resolveBridgeCap } from "./bridge-cap.js";
 import type { BridgeCapSource } from "./bridge-cap.js";
@@ -143,6 +148,8 @@ export interface OrchestratorConfig {
      * manage by script (docs/onecli-host-rules.md). The chart turns it on with the egress proxy.
      */
     reconcileHostRules: boolean;
+    /** `PI_SESSION_MAIL_SERVER` (the chart's `sessionMail.server`, ADR 0067): the reserved mail server's catalog name; unset: off. */
+    sessionMailServer: string | undefined;
   };
 }
 
@@ -322,6 +329,7 @@ export function loadConfig(
       },
       namePrefix: validateNamePrefix(env.PI_ONECLI_NAME_PREFIX ?? DEFAULT_ONECLI_NAME_PREFIX),
       reconcileHostRules: hostRulesMode(env.PI_ONECLI_HOST_RULES),
+      sessionMailServer: parseSessionMailServer(env.PI_SESSION_MAIL_SERVER),
     },
   };
 }

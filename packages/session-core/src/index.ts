@@ -210,6 +210,7 @@ export type {
   RuntimeStatus,
   ShardStatus,
 } from "./shard-status.js";
+export { MAIL_OWNER_HEADER, parseSessionMailServer } from "./session-mail.js";
 export {
   DEFAULT_NETWORK_MODE,
   DIRECT_NOT_ALLOWED,

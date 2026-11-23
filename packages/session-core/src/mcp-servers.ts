@@ -309,6 +309,8 @@ async function writeHistoryAndNotify(
  */
 export interface CatalogWriteOptions {
   within?: (client: pg.PoolClient) => Promise<void>;
+  /** The deployment's session mail server (ADR 0067): browser profiles may name it although it is credentialed. */
+  mailServer?: string | undefined;
 }
 
 export interface PutResult {
@@ -368,7 +370,7 @@ export async function putMcpServer(
     // them, and this is the same check from the catalog side. The catalog lock above keeps a profile write from slipping
     // in between.
     if (next.onecliSecret !== null) {
-      const refusal = await credentialedRefusal(client, name);
+      const refusal = await credentialedRefusal(client, name, options.mailServer);
       if (refusal !== undefined) return refusal;
     }
     // An omitted `source` keeps the stored one (the body lays over the row), `null` clears it.
@@ -428,23 +430,28 @@ export async function putMcpServer(
 /**
  * Why `name` cannot be credentialed now, or undefined: the current version of a profile that names it is a browser or desktop
  * flavour or direct network mode one (the same pairs `untrustedFlavourConflict` and `directModeConflict` refuse when the
- * profile is written). The message for a 400.
+ * profile is written). The message for a 400. A browser profile does not count when `name` is the session mail server
+ * (`mailServer`, ADR 0067); a desktop or direct one does.
  */
 async function credentialedRefusal(
   client: Pick<pg.PoolClient, "query">,
   name: string,
+  mailServer: string | undefined,
 ): Promise<string | undefined> {
   const { rows } = await client.query<{ name: string; flavour: string | null; direct: boolean }>(
     `select p.name,
-            case when v.definition->>'sandboxFlavour' in ('browser', 'desktop')
+            case when v.definition->>'sandboxFlavour' = 'desktop'
+                   or (v.definition->>'sandboxFlavour' = 'browser' and $1 is distinct from $2::text)
                  then v.definition->>'sandboxFlavour' end as flavour,
             v.definition->>'networkMode' = 'direct' as direct
        from inbox.profiles p
        join inbox.profile_versions v on v.name = p.name and v.version = p.current_version
       where v.definition->'mcpServers' ? $1
-        and (v.definition->>'sandboxFlavour' in ('browser', 'desktop') or v.definition->>'networkMode' = 'direct')
+        and (v.definition->>'sandboxFlavour' = 'desktop'
+             or (v.definition->>'sandboxFlavour' = 'browser' and $1 is distinct from $2::text)
+             or v.definition->>'networkMode' = 'direct')
       order by p.name`,
-    [name],
+    [name, mailServer ?? null],
   );
   if (rows.length === 0) return undefined;
   const which = rows

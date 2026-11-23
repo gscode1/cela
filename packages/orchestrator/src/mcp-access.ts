@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import { isUntrustedContentFlavour, validateProfileDefinition } from "@cela/session-core";
+import {
+  isUntrustedContentFlavour,
+  MAIL_OWNER_HEADER,
+  validateProfileDefinition,
+} from "@cela/session-core";
 import type { McpServerConfig, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import type { OneCliAdmin } from "./onecli-admin.js";
@@ -34,6 +38,20 @@ import { hostPatternMatches } from "./providers.js";
 
 export class McpNotGrantedError extends Error {}
 
+/**
+ * `fetch` with the session mail server's owner header set to `owner` (docs/session-mail.md). The header is set on a
+ * copy, replacing any value the caller passed: the transport hands over `Headers` or a plain object, and appending
+ * would send two values the server must then refuse. Only the model-free transport reaches this, so a session cannot
+ * choose the owner; only `forConversation` applies it, so discovery and other servers never carry it.
+ */
+function withMailOwner(inner: McpFetch, owner: string): McpFetch {
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set(MAIL_OWNER_HEADER, owner);
+    return inner(input, { ...init, headers });
+  };
+}
+
 export interface McpAccessDeps {
   /** Undefined when `ONECLI_API_KEY` is not set: a credentialed server is then unavailable, not open. */
   onecli: OneCliAdmin | undefined;
@@ -44,6 +62,11 @@ export interface McpAccessDeps {
   caFile: string;
   noProxy: readonly string[];
   namePrefix?: string | undefined;
+  /**
+   * The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0067), or undefined: the feature
+   * is off, no server is special and no browser session is credentialed.
+   */
+  mailServer?: string | undefined;
   /** Only tests change these. */
   readCa?: (path: string) => Promise<string>;
   makeFetch?: (token: Redacted) => Promise<GatewayFetch>;
@@ -84,20 +107,28 @@ export class McpAccess {
   }
 
   /**
-   * The enabled, credentialed servers of the catalog that the session's profile names. A browser, desktop or direct session
-   * gets none, whatever the catalog says now (ADR 0041, 0065, 0038): the catalog may have changed since the session started.
+   * The enabled, credentialed servers of the catalog that the session's profile names. A desktop or direct session gets
+   * none, and a browser session at most the session mail server (ADR 0067), whatever the catalog says now (ADR 0041,
+   * 0065, 0038): the catalog may have changed since the session started.
    */
   credentialedFor(session: SessionRow): McpServerConfig[] {
     const definition = this.#definitionOf(session);
-    if (
-      isUntrustedContentFlavour(definition?.sandboxFlavour) ||
-      definition?.networkMode === "direct"
-    )
-      return [];
+    const flavour = definition?.sandboxFlavour;
+    if (definition?.networkMode === "direct") return [];
+    const { mailServer } = this.#deps;
+    // Refuse by the shared list, not by naming flavours here: a flavour added to it later must get nothing by default.
+    const untrusted = isUntrustedContentFlavour(flavour);
+    if (untrusted && (flavour !== "browser" || mailServer === undefined)) return [];
     const named = new Set(this.#named(session));
     return this.#deps
       .catalog()
-      .filter((spec) => spec.enabled && spec.onecliSecret !== null && named.has(spec.name));
+      .filter(
+        (spec) =>
+          spec.enabled &&
+          spec.onecliSecret !== null &&
+          named.has(spec.name) &&
+          (!untrusted || spec.name === mailServer),
+      );
   }
 
   async #makeFetch(token: Redacted): Promise<GatewayFetch> {
@@ -211,7 +242,10 @@ export class McpAccess {
     if (!servers.some((server) => server.name === spec.name)) {
       throw new McpNotGrantedError(`MCP server ${spec.name} is not a credentialed server now`);
     }
-    return (await this.#ensure(session, servers)).stable;
+    const { stable } = await this.#ensure(session, servers);
+    return spec.name === this.#deps.mailServer
+      ? withMailOwner(stable, mcpAgentIdentifier(session.id, this.#prefix))
+      : stable;
   }
 
   /** One provisioning at a time per session, so concurrent calls share the agent. */

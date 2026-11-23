@@ -106,7 +106,7 @@ denial), `ERR_TUNNEL_CONNECTION_FAILED` or `ERR_NAME_NOT_RESOLVED`; the skills t
 
 ### Security
 
-- **No credentials in a browser session.** The API refuses a `browser` profile that names a credentialed MCP server or
+- **No credentials in a browser session** (one opt-in exception: the session mail server, see the amendment of 2026-11-23). The API refuses a `browser` profile that names a credentialed MCP server or
   that an applying rule set gives a `route=onecli` allow rule (`browserFlavourConflict`, sharing `credentialSource` with the
   direct-mode check of ADR 0038), at the profile write and again at session create (the catalog and the rules may change),
   and refuses a session create that carries a `repo`. So github.com gets no credential injection: a test and the smoke
@@ -208,6 +208,22 @@ and CPU numbers above. The local kind cluster runs the sandboxes under **runc**,
   zero inside a gVisor sandbox, so no gVisor memory number exists yet. No sandbox was OOM-killed under the 1536 Mi limit.
 
 amd64 is built by CI (`images.yml`) and not run here.
+
+## Amendment: the session mail server (2026-11-23, issue #420, [0067](0067-session-mail.md))
+
+The "no credentials" rule above has one exception, off unless the deployment sets `sessionMail.server` (`PI_SESSION_MAIL_SERVER`):
+a `browser` profile may name that one credentialed catalog server. The sandbox still holds no credential: the operator's
+secret stays in OneCLI and the session's own OneCLI agent is granted it, as for any credentialed server (ADR 0040), so the
+model and the Pod never see it. What changes, for that name and for the browser flavour only:
+
+- `credentialSource` takes the excepted name as a browser-only parameter (`untrustedFlavourConflict`); `directModeConflict`
+  does not pass it, so `networkMode: direct` keeps refusing the server. A desktop profile keeps refusing it too.
+- The `credentialedRefusal` check of `PUT /admin/mcp-servers/{name}` skips browser profiles for that name only.
+- `McpAccess.credentialedFor` returns at most the mail server for a browser session, whatever else the profile names.
+- A `route=onecli` egress rule stays forbidden for browser, and `repo` stays refused.
+- Unset, there is no exception anywhere and everything above holds as written.
+
+The exception trusts whatever URL and secret an admin registers under the reserved name: it is a name, not a host pin.
 
 ## Amendment: the flavour is on by default (2026-11-19, issue #304)
 
