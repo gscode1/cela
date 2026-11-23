@@ -71,6 +71,10 @@ spec:
             - { name: PI_SANDBOX_RUNTIMES, value: {{ include "cela.runtimesJson" . | quote }} }
             # Lets profiles and sessions use networkMode direct (ADR 0038); without it the API answers 400.
             - { name: PI_ALLOW_DIRECT_SANDBOX_EGRESS, value: {{ .Values.security.allowDirectSandboxEgress | quote }} }
+            {{- if .Values.sessionMail.server }}
+            # Browser profiles may name this credentialed catalog server (ADR 0066); unset: no exception.
+            - { name: PI_SESSION_MAIL_SERVER, value: {{ .Values.sessionMail.server | quote }} }
+            {{- end }}
             # Owners (names from the api Secret, not secrets) who may call /admin/*.
             - { name: PI_API_ADMINS, value: {{ join "," .Values.api.admins | quote }} }
             {{- if .Values.console.enabled }}

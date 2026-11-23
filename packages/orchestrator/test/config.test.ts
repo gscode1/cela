@@ -35,6 +35,18 @@ describe("config timers", () => {
   });
 });
 
+describe("config: session mail server", () => {
+  it("is off by default and takes a catalog name", () => {
+    expect(loadConfig(env).repos.sessionMailServer).toBeUndefined();
+    expect(loadConfig({ ...env, PI_SESSION_MAIL_SERVER: "mail" }).repos.sessionMailServer).toBe(
+      "mail",
+    );
+    expect(() => loadConfig({ ...env, PI_SESSION_MAIL_SERVER: "Not A Name" })).toThrow(
+      /PI_SESSION_MAIL_SERVER/,
+    );
+  });
+});
+
 describe("config: OneCLI name prefix", () => {
   it("defaults to pi-session- and accepts a short lowercase prefix ending in a dash", () => {
     expect(loadConfig(env).repos.namePrefix).toBe("pi-session-");

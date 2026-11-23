@@ -27,6 +27,12 @@ const DOCS: McpServerSpec = {
   maxOutputBytes: 24_576,
   onecliSecret: "docs-key",
 };
+const MAIL: McpServerSpec = {
+  ...DOCS,
+  name: "mail",
+  url: "https://mail.example.com/mcp",
+  onecliSecret: "mail-key",
+};
 const OPEN: McpServerSpec = {
   ...DOCS,
   name: "open",
@@ -62,7 +68,11 @@ interface Made {
   closed: boolean;
 }
 
-function setUp(sessions: SessionRow[], catalog: McpServerSpec[] = [DOCS, OPEN]) {
+function setUp(
+  sessions: SessionRow[],
+  catalog: McpServerSpec[] = [DOCS, OPEN],
+  mailServer?: string,
+) {
   const fake = new FakeOneCli();
   // The operator's secret for the server, made in OneCLI before the catalog names it.
   fake.secrets.set("sec-docs", {
@@ -72,6 +82,13 @@ function setUp(sessions: SessionRow[], catalog: McpServerSpec[] = [DOCS, OPEN]) 
     hostPattern: "mcp.docs.example.com",
     injectionConfig: {},
   });
+  fake.secrets.set("sec-mail", {
+    id: "sec-mail",
+    name: "mail-key",
+    value: "dummy-mail-secret",
+    hostPattern: "mail.example.com",
+    injectionConfig: {},
+  });
   const onecli = new OneCliAdmin("http://onecli:10256", new Redacted("oc_admin"), fake.fetch, {
     timeoutMs: 1000,
     retries: 0,
@@ -79,6 +96,8 @@ function setUp(sessions: SessionRow[], catalog: McpServerSpec[] = [DOCS, OPEN]) 
     maxBackoffMs: 1,
   });
   const made: Made[] = [];
+  /** Every request any identity's fetch saw, with the headers that reached it. */
+  const seen: { token: string; headers: Headers }[] = [];
   const current = { catalog };
   const access = new McpAccess({
     onecli,
@@ -88,10 +107,14 @@ function setUp(sessions: SessionRow[], catalog: McpServerSpec[] = [DOCS, OPEN]) 
     gateway: "http://gateway:10255",
     caFile: "/nonexistent",
     noProxy: [],
+    mailServer,
     makeFetch: (token) => {
       const entry: Made = { token: token.reveal(), closed: false };
       made.push(entry);
-      const fetch = (() => Promise.resolve(new Response(entry.token))) as unknown as GatewayFetch;
+      const fetch = ((_input: unknown, init?: RequestInit) => {
+        seen.push({ token: entry.token, headers: new Headers(init?.headers) });
+        return Promise.resolve(new Response(entry.token));
+      }) as unknown as GatewayFetch;
       fetch.close = () => {
         entry.closed = true;
         return Promise.resolve();
@@ -99,7 +122,7 @@ function setUp(sessions: SessionRow[], catalog: McpServerSpec[] = [DOCS, OPEN]) 
       return Promise.resolve(fetch);
     },
   });
-  return { fake, access, made, current };
+  return { fake, access, made, current, seen };
 }
 
 const tokenOf = async (fetch: McpFetch): Promise<string> =>
@@ -298,6 +321,100 @@ describe("McpAccess: a session's MCP identity", () => {
     await access.reconcileDiscovery([{ ...DOCS, onecliSecret: null }]);
     expect(fake.agents.size).toBe(0);
     await expect(tokenOf(d)).rejects.toThrow(McpNotGrantedError);
+  });
+});
+
+describe("McpAccess: the session mail server (ADR 0066)", () => {
+  const OWNER = "x-cela-mail-owner";
+  const browser = (id: string, conversationId: number, servers: string[], extra = {}) => {
+    const row = session(id, conversationId, servers);
+    row.sandboxFlavour = "browser";
+    row.profile = {
+      name: "p",
+      version: 1,
+      snapshot: { mcpServers: servers, sandboxFlavour: "browser", ...extra },
+    };
+    return row;
+  };
+  const CATALOG = [DOCS, MAIL, OPEN];
+
+  it("grants a browser session at most the mail server, and a desktop or direct session nothing", () => {
+    const web = browser(A, 1, ["docs", "mail", "open"]);
+    const on = setUp([web], CATALOG, "mail").access;
+    expect(on.credentialedFor(web).map((s) => s.name)).toEqual(["mail"]);
+    const desktop = browser(B, 2, ["mail"], { sandboxFlavour: "desktop" });
+    expect(on.credentialedFor(desktop)).toEqual([]);
+    const direct = browser(C, 3, ["mail"], { networkMode: "direct" });
+    expect(on.credentialedFor(direct)).toEqual([]);
+    // A default-flavour session keeps every credentialed server it names.
+    const plain = session(A, 4, ["docs", "mail"]);
+    expect(on.credentialedFor(plain).map((s) => s.name)).toEqual(["docs", "mail"]);
+  });
+
+  it("grants a browser session nothing when the feature is off or names another server", () => {
+    const web = browser(A, 1, ["docs", "mail"]);
+    expect(setUp([web], CATALOG).access.credentialedFor(web)).toEqual([]);
+    expect(setUp([web], CATALOG, "docs").access.credentialedFor(browser(A, 1, ["mail"]))).toEqual(
+      [],
+    );
+  });
+
+  it("sets the owner header to the session's MCP agent name on the mail server only, overwriting any value", async () => {
+    const sessions = [session(A, 1, ["docs", "mail"]), session(B, 2, ["mail"])];
+    const { access, seen } = setUp(sessions, CATALOG, "mail");
+    const mailA = await access.forConversation(1, MAIL);
+    const docsA = await access.forConversation(1, DOCS);
+    const mailB = await access.forConversation(2, MAIL);
+
+    await mailA("https://mail.example.com/mcp", {});
+    // Plain object, Headers object and a forged value in either form: one value, the session's own.
+    await mailA("https://mail.example.com/mcp", { headers: { "X-Cela-Mail-Owner": "forged" } });
+    await mailA("https://mail.example.com/mcp", {
+      headers: new Headers([
+        [OWNER, "forged"],
+        ["accept", "text/event-stream"],
+      ]),
+    });
+    await mailB("https://mail.example.com/mcp");
+    await docsA("https://mcp.docs.example.com/mcp", { headers: { [OWNER]: "forged" } });
+
+    const owners = seen.map((r) => r.headers.get(OWNER));
+    expect(owners.slice(0, 3)).toEqual(Array(3).fill(mcpAgentIdentifier(A)));
+    // `get` joins duplicates with ", ": none of them was appended to.
+    expect(owners.slice(0, 3).every((v) => !(v ?? "").includes(","))).toBe(true);
+    expect(seen[2]?.headers.get("accept")).toBe("text/event-stream");
+    expect(owners[3]).toBe(mcpAgentIdentifier(B));
+    // Another server gets no correlator from the orchestrator (a caller's own header is not ours to strip).
+    expect(seen[4]?.headers.get(OWNER)).toBe("forged");
+    const docsOnly = setUp([session(A, 1, ["docs"])], CATALOG, "mail");
+    const plain = await docsOnly.access.forConversation(1, DOCS);
+    await plain("https://mcp.docs.example.com/mcp", {});
+    expect(docsOnly.seen[0]?.headers.has(OWNER)).toBe(false);
+  });
+
+  it("sends no owner header on discovery, and none when the feature is off", async () => {
+    const on = setUp([session(A, 1, ["mail"])], CATALOG, "mail");
+    await (
+      await on.access.discovery(MAIL)
+    )("https://mail.example.com/mcp", {});
+    expect(on.seen[0]?.headers.has(OWNER)).toBe(false);
+
+    const off = setUp([session(A, 1, ["mail"])], CATALOG);
+    await (
+      await off.access.forConversation(1, MAIL)
+    )("https://mail.example.com/mcp", {});
+    expect(off.seen[0]?.headers.has(OWNER)).toBe(false);
+  });
+
+  it("serves a browser session's mail calls through its own agent, with the header", async () => {
+    const web = browser(A, 1, ["mail"]);
+    const { access, seen, fake } = setUp([web], CATALOG, "mail");
+    await access.provision(web);
+    const fetch = await access.forConversation(1, MAIL);
+    await fetch("https://mail.example.com/mcp", {});
+    expect(seen[0]?.headers.get(OWNER)).toBe(mcpAgentIdentifier(A));
+    const agent = [...fake.agents.values()].find((a) => a.identifier === mcpAgentIdentifier(A));
+    expect([...(fake.grants.get(agent?.id ?? "")?.secrets ?? [])]).toEqual(["sec-mail"]);
   });
 });
 

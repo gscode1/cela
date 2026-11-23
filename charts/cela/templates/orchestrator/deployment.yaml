@@ -108,6 +108,10 @@ spec:
             {{- end }}
             - { name: PI_ONECLI_NAME_PREFIX, value: {{ $root.Values.onecli.namePrefix | quote }} }
             - { name: PI_ONECLI_CA_FILE, value: /etc/onecli/ca.pem }
+            {{- if $root.Values.sessionMail.server }}
+            # The reserved session mail server (docs/session-mail.md): only requests to it carry the owner header.
+            - { name: PI_SESSION_MAIL_SERVER, value: {{ $root.Values.sessionMail.server | quote }} }
+            {{- end }}
             # No process-wide HTTPS_PROXY: only pi-ai's model calls use a dispatcher scoped to the gateway.
             - { name: NO_PROXY, value: {{ join "," $root.Values.orchestrator.noProxy | quote }} }
             {{- if $root.Values.security.allowInsecureRuntime }}

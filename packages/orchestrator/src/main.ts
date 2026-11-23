@@ -259,6 +259,7 @@ async function main(): Promise<void> {
     caFile: config.onecli.caFile,
     noProxy: config.onecli.noProxy,
     namePrefix: config.repos.namePrefix,
+    mailServer: config.repos.sessionMailServer,
   });
   running.mcpAccess = mcpAccess;
   const hooks: SandboxHooks = {
