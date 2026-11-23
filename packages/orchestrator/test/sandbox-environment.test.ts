@@ -128,6 +128,7 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "desktop-launch",
       "desktop-find",
       "desktop-shot",
+      "desktop-text",
       "desktop-url",
     ]) {
       expect(desktop).toContain(tool);

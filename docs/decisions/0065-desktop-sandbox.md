@@ -131,7 +131,15 @@ visible nodes matching a regex or role, a summary without a filter), `desktop-ur
 a `python` link, and `agent-desktop-run` sets `NODE_NO_WARNINGS=1`. A heavy web page in Firefox overflows the 1 MB ref map
 even at `--max-depth 8`, and `--root` refs inside web content are refused as ambiguous, so on that overflow `desktop-find`
 falls back to `agent-desktop find` (one per `--role`, with `--text` when the pattern is a literal word) and filters it the
-same way; without a filter it refuses rather than print a tree. Screenshots were the second cost (28 full-screen PNGs, about
+same way; without a filter it refuses rather than print a tree. On a large page one element without a stable identity or
+bounds (offscreen, lazily rendered) makes a whole `find` fail with `STALE_REF`: on Allegro's all-offers page the unscoped and
+the `statictext` finds failed while `heading`, `link` and `button` answered, and the agent spent about 20 calls in Ctrl+F and
+screenshot loops (55 calls instead of 29). So the fallback skips a failing role and names it, retries a failing unscoped find
+role by role over the roles an agent acts on (heading, link, button, textfield, combobox, checkbox: every find walks the whole
+tree, about 7 s each on that page, and agent-desktop serialises parallel ones), and fails only when no role answered. `desktop-text` reads such a page without the tree: ctrl+l, Escape, F6
+(focus into the page), ctrl+a, ctrl+c, saves the text to `~/.agent-desktop-session/last-page.txt` and prints matching lines
+with one line of context. It gives text, not refs, and leaves the page selected until the next click; agent-desktop `get` on
+the page's `webarea` returns only its title in Firefox, so the clipboard is the way. Neither change knows any site. Screenshots were the second cost (28 full-screen PNGs, about
 31%): `desktop-shot` captures the focused window as an 800 px JPEG (about 500 image tokens instead of about 1,100) and prints
 the scale and origin for xdotool clicks, and the skills say text first, a screenshot only to check layout or when the tree has
 no answer, and one bash call per step (act, wait, check). The rule, in both skills: never print a full snapshot; use
