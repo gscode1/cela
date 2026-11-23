@@ -380,6 +380,16 @@
         },
         "allowDirectSandboxEgress": {
           "type": "boolean"
+        },
+        "probePodPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

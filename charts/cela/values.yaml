@@ -177,6 +177,13 @@ security:
   # Off (the default): the chart renders no direct template, pool or policy, and the API refuses `networkMode: direct`.
   # Needs egressProxy.enabled: without the proxy every sandbox already has the open internet.
   allowDirectSandboxEgress: false
+  # A ValidatingAdmissionPolicy (cluster-scoped, Kubernetes 1.30+) that limits the Pods the orchestrator may create to the
+  # isolation probe Pod: its image, no volume, no Secret, fixed labels and ServiceAccount (docs/decisions/0063). Without it
+  # the orchestrator's `create pods` right lets a compromised orchestrator mount any Secret of the namespace. Turn it off
+  # only on a cluster that cannot serve admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy, or when the installer may
+  # not create cluster-scoped objects.
+  probePodPolicy:
+    enabled: true
 
 networkPolicy:
   # cilium: also CiliumNetworkPolicies (kube-apiserver entity, FQDN rule for the GitHub App). Needs the Cilium CRDs.

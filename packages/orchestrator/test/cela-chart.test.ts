@@ -73,6 +73,9 @@ const allowedKinds = new Set([
   "SandboxWarmPool",
   "Service",
   "ServiceAccount",
+  // Cluster-scoped, the one exception (ADR 0063): the probe Pod admission policy and its binding.
+  "ValidatingAdmissionPolicy",
+  "ValidatingAdmissionPolicyBinding",
 ]);
 const allowedGroups = new Set([
   "v1",
@@ -82,6 +85,7 @@ const allowedGroups = new Set([
   "cilium.io/v2",
   "rbac.authorization.k8s.io/v1",
   "extensions.agents.x-k8s.io/v1beta1",
+  "admissionregistration.k8s.io/v1",
 ]);
 
 interface Mode {
@@ -117,7 +121,9 @@ describe.each(modes)(
         expect(allowedKinds.has(d.kind), `${d.kind} is not an expected kind`).toBe(true);
         expect(allowedGroups.has(d.apiVersion), `${d.kind} apiVersion ${d.apiVersion}`).toBe(true);
         expect(d.apiVersion).not.toMatch(/cnpg\.io|postgresql/);
-        expect(d.metadata.namespace ?? "ns").toBe("ns");
+        if (!d.kind.startsWith("ValidatingAdmissionPolicy")) {
+          expect(d.metadata.namespace ?? "ns").toBe("ns");
+        }
       }
       expect(ofKind(list, "CiliumNetworkPolicy").length > 0).toBe(m.provider === "cilium");
     });

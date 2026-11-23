@@ -35,6 +35,8 @@ while read -r name; do
     echo "sweep: would delete namespace $name (older than ${hours} h)"
   elif kc delete namespace "$name" --ignore-not-found --wait=false >/dev/null; then
     echo "sweep: deleting namespace $name (older than ${hours} h)"
+    # The cluster-scoped probe Pod admission policy of the chart (ADR 0063) is not removed with the namespace.
+    kc delete validatingadmissionpolicybinding,validatingadmissionpolicy "pi-orchestrator-probe-pod-$name" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   else
     echo "sweep: could not delete namespace $name" >&2
     failed=1
