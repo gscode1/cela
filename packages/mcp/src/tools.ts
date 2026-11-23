@@ -4,7 +4,7 @@
  */
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { ApiError, type CreateSessionInput, type SessionApi } from "./api.js";
+import { ApiError, type CreatedSession, type CreateSessionInput, type SessionApi } from "./api.js";
 import type { McpConfig } from "./config.js";
 import { clampTimeoutSec, waitForSession, type WaitOptions, type WaitResult } from "./wait.js";
 
@@ -132,11 +132,14 @@ export function registerTools(
     deleting.delete(id);
   };
   /** Frees the slots of sessions that finished deleting meanwhile; a failed read keeps the slot. */
-  const settleDeleting = async (): Promise<void> => {
+  const settleDeleting = async (signal: AbortSignal): Promise<void> => {
     await Promise.all(
       [...deleting].slice(0, SETTLE_BATCH).map(async (id) => {
         try {
-          const { status } = await api.getSession(id, AbortSignal.timeout(SETTLE_TIMEOUT_MS));
+          const { status } = await api.getSession(
+            id,
+            AbortSignal.any([signal, AbortSignal.timeout(SETTLE_TIMEOUT_MS)]),
+          );
           if (status === "deleted") release(id);
         } catch (error) {
           if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
@@ -146,8 +149,10 @@ export function registerTools(
       }),
     );
   };
-  const reserve = async (): Promise<boolean> => {
-    if (full() && deleting.size > 0) await settleDeleting();
+  const reserve = async (signal: AbortSignal): Promise<boolean> => {
+    signal.throwIfAborted();
+    if (full() && deleting.size > 0) await settleDeleting(signal);
+    signal.throwIfAborted();
     if (full()) return false;
     inFlight += 1;
     return true;
@@ -156,8 +161,32 @@ export function registerTools(
     inFlight -= 1;
     held.add(id);
   };
-  const createFailed = (): void => {
-    inFlight -= 1;
+  const create = async (
+    input: CreateSessionInput,
+    signal: AbortSignal,
+  ): Promise<CreatedSession> => {
+    // Let creation settle under the API's own timeout, even after the caller stops waiting.
+    const pending = api.createSession(input).then(
+      (session) => {
+        track(session.sessionId);
+        if (signal.aborted)
+          console.error("MCP session created after caller stopped waiting:", session.sessionId);
+        return session;
+      },
+      (error: unknown) => {
+        inFlight -= 1;
+        throw error;
+      },
+    );
+    const cancelled = Promise.withResolvers<never>();
+    const onAbort = (): void => cancelled.reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    try {
+      return await Promise.race([pending, cancelled.promise]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   };
   const capError = (): ToolResult =>
     fail(
@@ -180,14 +209,12 @@ export function registerTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
-      if (!(await reserve())) return capError();
+    async (args, extra) => {
+      if (!(await reserve(extra.mcpReq.signal))) return capError();
       try {
-        const session = await api.createSession(createInput(args));
-        track(session.sessionId);
+        const session = await create(createInput(args), extra.mcpReq.signal);
         return ok({ ...session });
       } catch (error) {
-        createFailed();
         return failFrom(error);
       }
     },
@@ -215,7 +242,7 @@ export function registerTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       let sourceEventId: string | undefined;
       if (args.idempotencyKey !== undefined) {
         sourceEventId = `mcp:${args.sessionId}:${args.idempotencyKey}`;
@@ -226,11 +253,15 @@ export function registerTools(
         }
       }
       try {
-        const posted = await api.postEvent(args.sessionId, {
-          kind: "message",
-          text: args.text,
-          ...(sourceEventId === undefined ? {} : { sourceEventId }),
-        });
+        const posted = await api.postEvent(
+          args.sessionId,
+          {
+            kind: "message",
+            text: args.text,
+            ...(sourceEventId === undefined ? {} : { sourceEventId }),
+          },
+          extra.mcpReq.signal,
+        );
         return ok({ sessionId: args.sessionId, ...posted });
       } catch (error) {
         return failFrom(error);
@@ -256,7 +287,7 @@ export function registerTools(
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async (args) => {
+    async (args, extra) => {
       if (!validCursor(args.cursor)) return fail("cursor must be a positive integer");
       const deadline = Date.now() + clampTimeoutSec(args.timeoutSec) * 1000;
       try {
@@ -266,6 +297,7 @@ export function registerTools(
             sessionId: args.sessionId,
             ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
             deadline,
+            signal: extra.mcpReq.signal,
           },
           opts.wait,
         );
@@ -285,9 +317,9 @@ export function registerTools(
       inputSchema: z.object({ sessionId }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
-        return ok({ ...(await api.getSession(args.sessionId)) });
+        return ok({ ...(await api.getSession(args.sessionId, extra.mcpReq.signal)) });
       } catch (error) {
         return failFrom(error);
       }
@@ -308,9 +340,9 @@ export function registerTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
-        const posted = await api.postEvent(args.sessionId, { kind: "cancel" });
+        const posted = await api.postEvent(args.sessionId, { kind: "cancel" }, extra.mcpReq.signal);
         return ok({ sessionId: args.sessionId, ...posted });
       } catch (error) {
         return failFrom(error);
@@ -332,15 +364,18 @@ export function registerTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
-        const { status } = await api.deleteSession(args.sessionId);
+        const { status } = await api.deleteSession(args.sessionId, extra.mcpReq.signal);
         if (held.has(args.sessionId)) {
           if (status === "deleted") release(args.sessionId);
           else deleting.add(args.sessionId);
         }
         return ok({ sessionId: args.sessionId, status });
       } catch (error) {
+        if (held.has(args.sessionId) && (!(error instanceof ApiError) || error.status === 0)) {
+          deleting.add(args.sessionId);
+        }
         return failFrom(error);
       }
     },
@@ -364,21 +399,26 @@ export function registerTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       const deadline = Date.now() + clampTimeoutSec(args.timeoutSec) * 1000;
-      const remaining = (): AbortSignal => AbortSignal.timeout(Math.max(1, deadline - Date.now()));
-      if (!(await reserve())) return capError();
+      const signal = AbortSignal.any([
+        extra.mcpReq.signal,
+        AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      ]);
+      if (!(await reserve(signal))) return capError();
       let id: string;
       try {
-        id = (await api.createSession(createInput(args), remaining())).sessionId;
+        id = (await create(createInput(args), signal)).sessionId;
       } catch (error) {
-        createFailed();
         return failFrom(error);
       }
-      track(id);
       try {
-        await api.postEvent(id, { kind: "message", text: args.text }, remaining());
-        const result = await waitForSession(api, { sessionId: id, deadline }, opts.wait);
+        await api.postEvent(id, { kind: "message", text: args.text }, signal);
+        const result = await waitForSession(
+          api,
+          { sessionId: id, deadline, signal: extra.mcpReq.signal },
+          opts.wait,
+        );
         return ok(waitResult(result));
       } catch (error) {
         return failFrom(error, { sessionId: id });

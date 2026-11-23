@@ -88,7 +88,17 @@ export class SessionApi {
     input: CreateSessionInput = {},
     signal?: AbortSignal,
   ): Promise<CreatedSession> {
-    return this.#json<CreatedSession>("POST", "/sessions", 201, input, signal);
+    const session = await this.#json<unknown>("POST", "/sessions", 201, input, signal);
+    if (
+      typeof session !== "object" ||
+      session === null ||
+      !("sessionId" in session) ||
+      typeof session.sessionId !== "string" ||
+      !UUID.test(session.sessionId)
+    ) {
+      throw new ApiError(0, "session API answered without a valid session id");
+    }
+    return session as CreatedSession;
   }
 
   async getSession(sessionId: string, signal?: AbortSignal): Promise<SessionSummary> {

@@ -27,6 +27,8 @@ export interface WaitInput {
   cursor?: number;
   /** Epoch ms. */
   deadline: number;
+  /** MCP request cancellation, independent of the normal wait deadline. */
+  signal?: AbortSignal;
 }
 
 export interface WaitOptions {
@@ -277,7 +279,13 @@ export async function waitForSession(
   };
 
   const get = (): Promise<SessionSummary> =>
-    api.getSession(sessionId, AbortSignal.timeout(Math.max(1000, deadline - now())));
+    api.getSession(
+      sessionId,
+      AbortSignal.any([
+        ...(input.signal === undefined ? [] : [input.signal]),
+        AbortSignal.timeout(Math.max(1000, deadline - now())),
+      ]),
+    );
 
   // A function, so the compiler does not keep `flags.idle` narrowed across the await of a refresh.
   const isIdle = (): boolean => flags.idle;
@@ -310,13 +318,20 @@ export async function waitForSession(
     }
   };
 
+  const onAbort = (): void => {
+    dropConnection();
+    signal();
+  };
+  input.signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    input.signal?.throwIfAborted();
     summary = await get();
     failedAtStart = summary.events.failed;
     apply(summary);
     let nextPoll = now() + pollMs;
 
     for (;;) {
+      input.signal?.throwIfAborted();
       if (flags.fatal !== undefined) throw flags.fatal;
       if (isTerminal(summary.status)) return result(true);
       const { stop } = flags;
@@ -359,6 +374,7 @@ export async function waitForSession(
       await sleep(Math.min(deadline, nextPoll, idleAt) - t);
     }
   } finally {
+    input.signal?.removeEventListener("abort", onAbort);
     dropConnection();
   }
 }
