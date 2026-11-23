@@ -7,6 +7,7 @@ import {
   validateMcpServer,
 } from "../src/mcp-servers.ts";
 import type { McpServerConfig } from "../src/mcp-servers.ts";
+import { putProfile } from "../src/profiles.ts";
 import { FakeSettingsDb } from "./fake-settings-db.ts";
 
 const BASE = { url: "https://mcp.example.com/mcp", readOnly: true };
@@ -212,5 +213,60 @@ describe("the catalog in the database", () => {
     expect(db.mcp.has("demo")).toBe(true);
     expect(await deleteMcpServer(pool, "demo", "bob", revision, { within })).toBe(true);
     expect(calls).toBe(2);
+  });
+});
+
+describe("a credential for a server that a browser or direct profile names (ADR 0041, 0038)", () => {
+  const KNOWN = {
+    tools: ["read"],
+    mcpServers: ["demo"],
+    browserFlavourEnabled: true,
+    allowDirectEgress: true,
+  };
+
+  it.each([
+    ["a browser", { sandboxFlavour: "browser" }, "sandboxFlavour browser"],
+    ["a direct", { networkMode: "direct" }, "networkMode direct"],
+  ])("refuses onecliSecret while %s profile names the server", async (_label, extra, words) => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    const pool = db.asPool();
+    await putMcpServer(pool, "demo", BASE, "alice");
+    await putProfile(
+      pool,
+      "web",
+      { definition: { tools: ["read"], mcpServers: ["demo"], ...extra } },
+      "alice",
+      KNOWN,
+    );
+    const refused = await putMcpServer(pool, "demo", { onecliSecret: "demo-key" }, "alice");
+    expect(refused).toEqual(expect.stringContaining(`web (${words})`));
+    expect(db.mcp.get("demo")?.onecli_secret).toBeNull();
+    // Clearing the secret and unrelated edits stay possible.
+    expect(await putMcpServer(pool, "demo", { enabled: false }, "alice")).toMatchObject({
+      created: false,
+    });
+    // Once the profile no longer names the server, the secret is accepted.
+    await putProfile(pool, "web", { definition: { tools: ["read"], ...extra } }, "alice", KNOWN);
+    expect(await putMcpServer(pool, "demo", { onecliSecret: "demo-key" }, "alice")).toMatchObject({
+      stored: { server: { onecliSecret: "demo-key" } },
+    });
+  });
+
+  it("allows onecliSecret when only a default-flavour proxied profile names the server", async () => {
+    const db = new FakeSettingsDb();
+    db.setRow();
+    const pool = db.asPool();
+    await putMcpServer(pool, "demo", BASE, "alice");
+    await putProfile(
+      pool,
+      "plain",
+      { definition: { tools: ["read"], mcpServers: ["demo"] } },
+      "alice",
+      KNOWN,
+    );
+    expect(await putMcpServer(pool, "demo", { onecliSecret: "demo-key" }, "alice")).toMatchObject({
+      stored: { server: { onecliSecret: "demo-key" } },
+    });
   });
 });

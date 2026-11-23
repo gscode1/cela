@@ -111,6 +111,12 @@ denial), `ERR_TUNNEL_CONNECTION_FAILED` or `ERR_NAME_NOT_RESOLVED`; the skills t
   direct-mode check of ADR 0038), at the profile write and again at session create (the catalog and the rules may change),
   and refuses a session create that carries a `repo`. So github.com gets no credential injection: a test and the smoke
   script check that the proxy routes it directly and that the session has no OneCLI binding.
+  The catalog side is checked too: `PUT /admin/mcp-servers/{name}` refuses (`400`) a non-null `onecliSecret` while the
+  current version of a browser (or direct) profile names the server, and `McpAccess.credentialedFor` grants a session
+  whose snapshot is `browser` or `direct` no credentialed server, so a session that is already running never gains a tool
+  credential from a later catalog write. A `route=onecli` rule added later to a rule set that applies to a browser session
+  injects nothing: the proxy denies that route for a session without a OneCLI binding (ADR 0037), and only repo sessions
+  get one; new sessions of the profile are refused at create.
 - No browser-specific NetworkPolicy: the proxied position (the proxy on 3128 and nothing else) is the whole network. Smoke:
   the cluster API and Service names, the platform's Services, the OneCLI gateway, the metadata address and a LAN address are
   all refused; no UDP socket exists after browsing; the sandbox itself resolves no name.

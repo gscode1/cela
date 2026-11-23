@@ -125,6 +125,22 @@ describe("McpAccess: a session's MCP identity", () => {
     expect(agentA?.accessToken).not.toBe(agentB?.accessToken);
   });
 
+  it.each([
+    ["browser flavour", { sandboxFlavour: "browser" }],
+    ["direct network mode", { networkMode: "direct" }],
+  ])(
+    "grants a %s session nothing, even when the catalog now credentials a server it names",
+    async (_label, extra) => {
+      const web = session(A, 1, ["docs"]);
+      web.profile = { name: "p", version: 1, snapshot: { mcpServers: ["docs"], ...extra } };
+      const { access, fake } = setUp([web]);
+      expect(access.credentialedFor(web)).toEqual([]);
+      await access.provision(web);
+      await expect(access.forConversation(1, DOCS)).rejects.toBeInstanceOf(McpNotGrantedError);
+      expect(fake.agents.size).toBe(0);
+    },
+  );
+
   it("gives a session whose profile does not name the server no agent and no way to ask for a grant", async () => {
     const sessions = [session(A, 1, ["open"]), session(B, 2, []), session(C, 3, null)];
     const { fake, access } = setUp(sessions);
