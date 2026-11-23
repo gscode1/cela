@@ -148,7 +148,7 @@ export interface OrchestratorConfig {
      * manage by script (docs/onecli-host-rules.md). The chart turns it on with the egress proxy.
      */
     reconcileHostRules: boolean;
-    /** `PI_SESSION_MAIL_SERVER` (the chart's `sessionMail.server`, ADR 0067): the reserved mail server's catalog name; unset: off. */
+    /** `PI_SESSION_MAIL_SERVER` (the chart's `sessionMail.server`, ADR 0068): the reserved mail server's catalog name; unset: off. */
     sessionMailServer: string | undefined;
   };
 }

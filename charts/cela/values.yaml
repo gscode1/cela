@@ -313,7 +313,7 @@ ingest:
 # to /admin/*. Reach it by `kubectl port-forward svc/pi-ingest 8080` or a route restricted to operators
 # (ingest.httpRoute or ingest.ingress): where ingest also serves ordinary clients, route /console and /admin through
 # operator access only.
-# The session mail server (docs/session-mail.md, ADR 0067). Off by default. Set `server` to the catalog name of an MCP server
+# The session mail server (docs/session-mail.md, ADR 0068). Off by default. Set `server` to the catalog name of an MCP server
 # you register (with a OneCLI `onecliSecret`) that implements the mail contract: the orchestrator then sets the owner
 # header on its requests only, and browser profiles may name it although it is credentialed. cela ships no mail backend.
 sessionMail:

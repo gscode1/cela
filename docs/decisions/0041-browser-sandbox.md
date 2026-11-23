@@ -209,7 +209,7 @@ and CPU numbers above. The local kind cluster runs the sandboxes under **runc**,
 
 amd64 is built by CI (`images.yml`) and not run here.
 
-## Amendment: the session mail server (2026-11-23, issue #420, [0067](0067-session-mail.md))
+## Amendment: the session mail server (2026-11-23, issue #420, [0068](0068-session-mail.md))
 
 The "no credentials" rule above has one exception, off unless the deployment sets `sessionMail.server` (`PI_SESSION_MAIL_SERVER`):
 a `browser` profile may name that one credentialed catalog server. The sandbox still holds no credential: the operator's

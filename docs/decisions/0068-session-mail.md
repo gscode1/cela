@@ -1,4 +1,4 @@
-# 0067: Session mail: a credentialed MCP server that scopes inboxes by an owner header
+# 0068: Session mail: a credentialed MCP server that scopes inboxes by an owner header
 
 Status: accepted, 2026-11-23 (issue #420). Its gates are met: the egress smoke of issue #419 showed, live, that the OneCLI
 gateway forwards a custom request header unchanged and once ([0040](0040-mcp-egress-flow.md), Live verification); a one-off

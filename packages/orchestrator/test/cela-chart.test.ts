@@ -1704,7 +1704,7 @@ describe("network cutover and network modes (ADR 0038)", () => {
   });
 });
 
-describe("session mail server (ADR 0067)", () => {
+describe("session mail server (ADR 0068)", () => {
   it("is off by default: neither the orchestrator nor ingest gets the setting", () => {
     const list = docs(external);
     expect(envOf(named(list, "Deployment", "pi-orchestrator")).PI_SESSION_MAIL_SERVER).toBe(
