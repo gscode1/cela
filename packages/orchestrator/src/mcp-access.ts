@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import { MAIL_OWNER_HEADER, validateProfileDefinition } from "@cela/session-core";
+import {
+  isUntrustedContentFlavour,
+  MAIL_OWNER_HEADER,
+  validateProfileDefinition,
+} from "@cela/session-core";
 import type { McpServerConfig, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import type { OneCliAdmin } from "./onecli-admin.js";
@@ -110,8 +114,11 @@ export class McpAccess {
   credentialedFor(session: SessionRow): McpServerConfig[] {
     const definition = this.#definitionOf(session);
     const flavour = definition?.sandboxFlavour;
-    if (flavour === "desktop" || definition?.networkMode === "direct") return [];
+    if (definition?.networkMode === "direct") return [];
     const { mailServer } = this.#deps;
+    // Refuse by the shared list, not by naming flavours here: a flavour added to it later must get nothing by default.
+    const untrusted = isUntrustedContentFlavour(flavour);
+    if (untrusted && (flavour !== "browser" || mailServer === undefined)) return [];
     const named = new Set(this.#named(session));
     return this.#deps
       .catalog()
@@ -120,7 +127,7 @@ export class McpAccess {
           spec.enabled &&
           spec.onecliSecret !== null &&
           named.has(spec.name) &&
-          (flavour !== "browser" || (mailServer !== undefined && spec.name === mailServer)),
+          (!untrusted || spec.name === mailServer),
       );
   }
 
