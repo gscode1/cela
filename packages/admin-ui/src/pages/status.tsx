@@ -8,7 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, Td, Th } from "@/components/ui/table";
-import { requestProbe, runtimeText } from "@/lib/api/status";
+import { namedRuntimes, requestProbe, runtimeStatusText, runtimeText } from "@/lib/api/status";
 import { keys } from "@/lib/queries";
 import { configuredProviders, mcpState, networkPolicyOf } from "@/lib/status-rows";
 import type { Level, StatusInputs, StatusRow } from "@/lib/status-rows";
@@ -66,25 +66,40 @@ function RuntimeDetails({ inputs }: { inputs: StatusInputs }) {
   if (inputs.status.state !== "ok") return null;
   const shards = inputs.status.data.shards;
   const several = shards.length > 1;
+  const named = shards.some((shard) => namedRuntimes(shard).length > 0);
   return (
     <Table>
       <thead>
         <tr>
           {several && <Th>Shard</Th>}
+          {named && <Th>Name</Th>}
           <Th>Runtime</Th>
         </tr>
       </thead>
       <tbody>
-        {shards.map((shard) => {
+        {shards.flatMap((shard) => {
           const runtime = runtimeText(shard);
-          return (
-            <tr key={shard.shard} data-testid={`runtime-${String(shard.shard)}`}>
+          const rows = [
+            { name: "default", text: runtime.text, mismatch: runtime.mismatch, insecure: false },
+            ...namedRuntimes(shard).map(([name, status]) => ({
+              name,
+              ...runtimeStatusText(status),
+              insecure: status.insecure,
+            })),
+          ];
+          return rows.map((row) => (
+            <tr
+              key={`${String(shard.shard)}-${row.name}`}
+              data-testid={`runtime-${String(shard.shard)}${row.name === "default" ? "" : `-${row.name}`}`}
+            >
               {several && <Td>{shard.shard}</Td>}
-              <Td className={runtime.mismatch ? "font-medium text-destructive" : undefined}>
-                {runtime.text}
+              {named && <Td>{row.name}</Td>}
+              <Td className={row.mismatch ? "font-medium text-destructive" : undefined}>
+                {row.text}
+                {row.insecure ? " (not gVisor)" : ""}
               </Td>
             </tr>
-          );
+          ));
         })}
       </tbody>
     </Table>

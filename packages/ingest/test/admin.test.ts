@@ -51,6 +51,10 @@ async function start(
             shard: 0,
             configuredRuntime: "gvisor",
             observedRuntime: null,
+            runtimes: {
+              default: { configured: "gvisor", observed: null, insecure: false },
+              runc: { configured: "runc-sandbox", observed: "runc-sandbox", insecure: true },
+            },
             networkPolicy: "unknown",
             networkPolicyCheckedAt: null,
             networkPolicyDetail: null,
@@ -378,6 +382,11 @@ describe("admin shard status", () => {
           shard: 0,
           configuredRuntime: "gvisor",
           observedRuntime: null,
+          // Per runtime (ADR 0064); the top-level fields stay the default runtime's.
+          runtimes: {
+            default: { configured: "gvisor", observed: null, insecure: false },
+            runc: { configured: "runc-sandbox", observed: "runc-sandbox", insecure: true },
+          },
           networkPolicy: "unknown",
           networkPolicyCheckedAt: null,
           networkPolicyDetail: null,

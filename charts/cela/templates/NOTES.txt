@@ -15,6 +15,17 @@ cela is installed in namespace {{ .Release.Namespace }}: {{ .Values.orchestrator
 WARNING: sandboxes do NOT run under gVisor (security.allowInsecureRuntime=true, runtime {{ .Values.sandbox.runtimeClassName | default "(node default)" | quote }}).
 Agent code runs with container isolation only. Use this for evaluation, never for untrusted code.
 {{- end }}
+{{- range $name := keys .Values.sandbox.runtimes | sortAlpha }}
+{{- $rt := index $.Values.sandbox.runtimes $name }}
+
+Sandbox runtime {{ $name | quote }}: RuntimeClass {{ $rt.runtimeClassName | quote }}, flavours {{ ($rt.flavours | default (list "default")) | join ", " }}; a profile picks it with sandboxRuntime: {{ $name }}.
+{{- if not (include "cela.isGvisor" $rt.runtimeClassName) }}
+WARNING: sandbox runtime {{ $name | quote }} does NOT run under gVisor (sandbox.runtimes.{{ $name }}.allowInsecureRuntime=true).
+Its agent code runs with container isolation only, on the node kernel it shares with other Pods. Give the RuntimeClass
+scheduling.nodeSelector and tolerations onto tainted nodes that run nothing else. Anyone who can write a profile can put a
+session on it (there is no per-principal profile allowlist yet), so use it for code you trust (docs/decisions/0064-sandbox-runtimes.md).
+{{- end }}
+{{- end }}
 {{- if .Values.security.allowDirectSandboxEgress }}
 
 WARNING: security.allowDirectSandboxEgress=true. A profile with networkMode "direct" gets sandboxes that reach the open

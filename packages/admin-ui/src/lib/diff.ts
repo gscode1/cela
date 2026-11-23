@@ -38,6 +38,8 @@ function showProfile(
       return definition.networkMode ?? "proxied (default)";
     case "sandboxFlavour":
       return definition.sandboxFlavour ?? "default";
+    case "sandboxRuntime":
+      return definition.sandboxRuntime ?? "default";
     case "skills":
       return list(
         (definition.skills ?? []).map((pin) => `${pin.name}@v${String(pin.version)}`),
@@ -73,6 +75,7 @@ const DEFINITION_FIELDS = [
   "sandboxSizes",
   "networkMode",
   "sandboxFlavour",
+  "sandboxRuntime",
 ] as const;
 
 /** The fields that differ between two stored definitions, in the order of the editor. A change of spelling alone is none. */

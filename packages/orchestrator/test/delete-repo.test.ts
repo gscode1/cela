@@ -126,6 +126,7 @@ async function setup(repo: SessionRow["repo"]) {
     sandboxSize: null,
     networkMode: "proxied",
     sandboxFlavour: "default",
+    sandboxRuntime: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };

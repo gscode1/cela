@@ -7,6 +7,9 @@ cela.dev/network-mode, which the NetworkPolicies select on. The label is baked i
 cannot be relabelled without RBAC the orchestrator must not have; choosing the warm pool chooses the network position.
 With sandbox.flavours.browser.enabled every one of them also has a `browser` twin, pi-env-browser[-direct]-template[-<size>]
 (docs/decisions/0041-browser-sandbox.md): the browser image, its own resources and a memory-backed /dev/shm.
+Each entry of sandbox.runtimes (ADR 0064) adds the same set under its own RuntimeClass, for the flavours it lists, proxied
+mode only: pi-env-rt-<runtime>[-browser]-template[-<size>]. The default runtime keeps the names above. Every object carries
+the label pi-durable.dev/sandbox-runtime (the runtime's name, or `default`), which the orchestrator's start guard groups by.
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
@@ -14,14 +17,23 @@ With sandbox.flavours.browser.enabled every one of them also has a `browser` twi
 {{- $browser := $root.Values.sandbox.flavours.browser -}}
 {{- $flavours := list "default" -}}
 {{- if $browser.enabled }}{{- $flavours = append $flavours "browser" -}}{{- end -}}
+{{- /* The default runtime first, then the named ones; each has its own class, flavours and modes. */ -}}
+{{- $runtimes := list (dict "name" "default" "infix" "" "class" $root.Values.sandbox.runtimeClassName "flavours" $flavours "modes" $modes) -}}
+{{- range $rname := keys $root.Values.sandbox.runtimes | sortAlpha -}}
+{{- $rt := index $root.Values.sandbox.runtimes $rname -}}
+{{- $runtimes = append $runtimes (dict "name" $rname "infix" (printf "rt-%s-" $rname) "class" $rt.runtimeClassName "flavours" ($rt.flavours | default (list "default")) "modes" (list "proxied")) -}}
+{{- end -}}
 {{- $templates := list -}}
-{{- range $flavour := $flavours -}}
-{{- range $mode := $modes -}}
+{{- range $rt := $runtimes -}}
+{{- range $flavour := $rt.flavours -}}
+{{- range $mode := $rt.modes -}}
 {{- $prefix := ternary "pi-env-direct-template" "pi-env-template" (eq $mode "direct") -}}
 {{- if eq $flavour "browser" }}{{- $prefix = replace "pi-env-" "pi-env-browser-" $prefix -}}{{- end -}}
-{{- $templates = append $templates (dict "name" $prefix "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour) -}}
+{{- $prefix = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $prefix -}}
+{{- $templates = append $templates (dict "name" $prefix "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour "runtime" $rt.name "class" $rt.class) -}}
 {{- range $name := keys $root.Values.sandbox.sizes | sortAlpha -}}
-{{- $templates = append $templates (dict "name" (printf "%s-%s" $prefix $name) "size" $name "mode" $mode "flavour" $flavour) -}}
+{{- $templates = append $templates (dict "name" (printf "%s-%s" $prefix $name) "size" $name "mode" $mode "flavour" $flavour "runtime" $rt.name "class" $rt.class) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -42,6 +54,7 @@ metadata:
     cela.dev/sandbox-size: {{ $t.size }}
     cela.dev/network-mode: {{ $t.mode }}
     cela.dev/sandbox-flavour: {{ $t.flavour }}
+    pi-durable.dev/sandbox-runtime: {{ $t.runtime }}
 spec:
   # Each SandboxClaim carries its own SANDBOXD_AUTH_TOKEN_SHA256 (the hash of HMAC(master, claimName), set by the
   # orchestrator). Allowed lets a claim ADD that variable; the template must not define it, because Allowed rejects an
@@ -68,9 +81,10 @@ spec:
         # The policies select on it (ADR 0038); absent or unknown means proxied, never direct.
         cela.dev/network-mode: {{ $t.mode }}
         cela.dev/sandbox-flavour: {{ $t.flavour }}
+        pi-durable.dev/sandbox-runtime: {{ $t.runtime }}
     spec:
-      {{- if $root.Values.sandbox.runtimeClassName }}
-      runtimeClassName: {{ $root.Values.sandbox.runtimeClassName }}
+      {{- if $t.class }}
+      runtimeClassName: {{ $t.class }}
       {{- end }}
       automountServiceAccountToken: false
       restartPolicy: Always

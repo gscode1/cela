@@ -64,6 +64,8 @@ spec:
             - { name: PI_SANDBOX_DEFAULT_SIZE, value: {{ .Values.sandbox.defaultSize | quote }} }
             # The flavours rendered besides the default (ADR 0041); without `browser` the API refuses sandboxFlavour browser.
             - { name: PI_SANDBOX_FLAVOURS, value: {{ ternary "browser" "" .Values.sandbox.flavours.browser.enabled | quote }} }
+            # The named sandbox runtimes rendered (ADR 0064): what a profile's sandboxRuntime may name. {} without any.
+            - { name: PI_SANDBOX_RUNTIMES, value: {{ include "cela.runtimesJson" . | quote }} }
             # Lets profiles and sessions use networkMode direct (ADR 0038); without it the API answers 400.
             - { name: PI_ALLOW_DIRECT_SANDBOX_EGRESS, value: {{ .Values.security.allowDirectSandboxEgress | quote }} }
             # Owners (names from the api Secret, not secrets) who may call /admin/*.

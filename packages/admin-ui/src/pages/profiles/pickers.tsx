@@ -13,6 +13,7 @@ import type {
   NetworkModeCatalog,
   SandboxFlavour,
   SandboxFlavourCatalog,
+  SandboxRuntimeCatalog,
   SandboxSize,
   SandboxSizeCatalog,
   SkillInfo,
@@ -72,6 +73,8 @@ export function SandboxPicker({
   modeCatalog,
   flavour,
   flavourCatalog,
+  runtime,
+  runtimeCatalog,
   onChange,
 }: {
   size: string;
@@ -81,22 +84,30 @@ export function SandboxPicker({
   modeCatalog: NetworkModeCatalog | undefined;
   flavour: SandboxFlavour;
   flavourCatalog: SandboxFlavourCatalog | undefined;
+  /** Empty for the default runtime. */
+  runtime: string;
+  runtimeCatalog: SandboxRuntimeCatalog | undefined;
   onChange: (
     change:
       | { sandboxSize: string }
       | { sandboxSizes: string[] }
       | { networkMode: NetworkMode }
-      | { sandboxFlavour: SandboxFlavour },
+      | { sandboxFlavour: SandboxFlavour }
+      | { sandboxRuntime: string },
   ) => void;
 }) {
   const sizes = sizeCatalog?.sizes ?? [];
   const defined = (name: string): boolean => sizes.some((entry) => entry.name === name);
   const directAllowed = modeCatalog?.directAllowed === true;
   const browserEnabled = flavourCatalog?.browserEnabled === true;
+  const runtimes = runtimeCatalog?.runtimes ?? [];
   const nothingToPick =
     sizeCatalog !== undefined &&
     modeCatalog !== undefined &&
     flavourCatalog !== undefined &&
+    runtimeCatalog !== undefined &&
+    runtimes.length === 0 &&
+    runtime === "" &&
     sizes.length <= 1 &&
     size === "" &&
     allowedSizes.length === 0 &&
@@ -114,7 +125,7 @@ export function SandboxPicker({
   const effective = size === "" ? (sizeCatalog?.defaultSize ?? "") : size;
   return (
     <Fieldset legend="Sandbox">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="profile-sandbox-size">{fieldLabel("sandboxSize")}</Label>
           <Select
@@ -180,7 +191,35 @@ export function SandboxPicker({
             </option>
           </Select>
         </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="profile-sandbox-runtime">{fieldLabel("sandboxRuntime")}</Label>
+          <Select
+            id="profile-sandbox-runtime"
+            value={runtime}
+            onChange={(event) => {
+              onChange({ sandboxRuntime: event.target.value });
+            }}
+          >
+            <option value="">Default runtime</option>
+            {runtimes.map((entry) => (
+              <option key={entry.name} value={entry.name}>
+                {entry.name}
+                {entry.insecure ? " (not gVisor)" : ""}
+              </option>
+            ))}
+            {runtime !== "" &&
+              runtimeCatalog !== undefined &&
+              !runtimes.some((entry) => entry.name === runtime) && (
+                <option value={runtime}>{runtime} (not defined)</option>
+              )}
+          </Select>
+        </div>
       </div>
+      {runtime !== "" && mode === "direct" && (
+        <p className="text-sm text-destructive" data-testid="runtime-direct-note">
+          A named runtime is proxied only: it cannot be combined with the direct network mode.
+        </p>
+      )}
       {mode === "direct" && (
         <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="direct-warning">
           <UnfilteredBadge /> No egress rule applies and nothing is audited. Not combinable with

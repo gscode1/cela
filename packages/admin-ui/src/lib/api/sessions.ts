@@ -23,6 +23,7 @@ export interface CreatedSession {
   sandboxSize?: string;
   networkMode?: string;
   sandboxFlavour?: string;
+  sandboxRuntime?: string;
 }
 
 export type SessionStatus = "active" | "failed" | "deleting" | "deleted";

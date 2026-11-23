@@ -53,6 +53,9 @@ import {
   DIRECT_NOT_ALLOWED,
   networkModeOf,
   sandboxFlavourOf,
+  DEFAULT_SANDBOX_RUNTIME,
+  sandboxRuntimeConflict,
+  sandboxRuntimeOf,
   browserFlavourConflict,
   BROWSER_NOT_ENABLED,
   BROWSER_WITH_REPO,
@@ -85,6 +88,7 @@ import type {
   Principal,
   ProfileDefinition,
   ProfileSnapshot,
+  SandboxRuntimes,
   SandboxSizes,
   SessionRow,
   Settings,
@@ -120,6 +124,8 @@ export interface IngestDeps {
   allowDirectSandboxEgress?: boolean | undefined;
   /** Browser sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `browser`, ADR 0041); default: refused with a 400. */
   browserFlavourEnabled?: boolean | undefined;
+  /** The named sandbox runtimes (`PI_SANDBOX_RUNTIMES`, the chart's `sandbox.runtimes`, issue #406); default: none. */
+  sandboxRuntimes?: SandboxRuntimes | undefined;
 }
 
 export interface SettingsView {
@@ -226,6 +232,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       ...(session.sandboxSize === null ? {} : { sandboxSize: session.sandboxSize }),
       networkMode: session.networkMode,
       sandboxFlavour: session.sandboxFlavour,
+      sandboxRuntime: session.sandboxRuntime ?? DEFAULT_SANDBOX_RUNTIME,
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,
@@ -454,6 +461,22 @@ async function handleAdminRoutes(
       flavours: browser ? ["default", "browser"] : ["default"],
       defaultFlavour: "default",
       browserEnabled: browser,
+    });
+    return;
+  }
+  if (parts[1] === "sandbox-runtimes" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    // Names and flavours only: the RuntimeClass names are deployment detail the console does not need.
+    sendJson(res, 200, {
+      runtimes: Object.entries(deps.sandboxRuntimes ?? {}).map(([name, runtime]) => ({
+        name,
+        flavours: runtime.flavours,
+        insecure: runtime.insecure,
+      })),
+      defaultRuntime: DEFAULT_SANDBOX_RUNTIME,
     });
     return;
   }
@@ -911,6 +934,7 @@ async function handleAdminProfiles(
         directConflict: directConflictOf(catalog.servers, await readEgress(deps.pool)),
         browserFlavourEnabled: deps.browserFlavourEnabled === true,
         browserConflict: browserConflictOf(catalog.servers, await readEgress(deps.pool)),
+        sandboxRuntimes: deps.sandboxRuntimes ?? {},
       },
     );
     if (!result.ok) {
@@ -1155,6 +1179,15 @@ async function postSession(
     });
     return;
   }
+  // The environment may have changed since the profile was written (issue #406).
+  const runtimeRefusal = sandboxRuntimeConflict(snapshot.definition, deps.sandboxRuntimes ?? {});
+  if (runtimeRefusal !== null) {
+    sendJson(res, 400, {
+      error: `profile "${snapshot.name}" v${String(snapshot.version)}: ${runtimeRefusal}`,
+    });
+    return;
+  }
+  const sandboxRuntime = sandboxRuntimeOf(snapshot.definition);
   const networkMode = networkModeOf(snapshot.definition);
   if (networkMode === "direct") {
     const refusal = await directRefusal(deps, snapshot.definition, repo !== undefined);
@@ -1187,6 +1220,7 @@ async function postSession(
       sized.size,
       networkMode,
       sandboxFlavour,
+      sandboxRuntime,
     );
   } catch (error) {
     // The profile got a new version, was closed or deleted since it was read: nothing was stored.
@@ -1203,6 +1237,7 @@ async function postSession(
     ...(sized.size === null ? {} : { sandboxSize: sized.size }),
     networkMode,
     sandboxFlavour,
+    sandboxRuntime: sandboxRuntime ?? DEFAULT_SANDBOX_RUNTIME,
     ...(repo === undefined
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),

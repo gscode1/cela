@@ -5,7 +5,8 @@ keep no warm Pods: they are template aliases, so allowing direct egress doubles 
 (replicas is always 0, and the schema caps every warmPoolReplicas at 0): claims carry env, so they are never adopted (ADR 0001).
 The pool objects stay because a SandboxClaim must reference one (plan.md). With
 sandbox.flavours.browser.enabled the browser flavour has the same set, pi-env-browser[-direct]-pool[-<size>]
-(docs/decisions/0041-browser-sandbox.md).
+(docs/decisions/0041-browser-sandbox.md). Each entry of sandbox.runtimes (ADR 0064) has the proxied set of its flavours,
+pi-env-rt-<runtime>[-browser]-pool[-<size>], over its own templates.
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
@@ -13,18 +14,27 @@ sandbox.flavours.browser.enabled the browser flavour has the same set, pi-env-br
 {{- $browser := $root.Values.sandbox.flavours.browser -}}
 {{- $flavours := list "default" -}}
 {{- if $browser.enabled }}{{- $flavours = append $flavours "browser" -}}{{- end -}}
+{{- $runtimes := list (dict "name" "default" "infix" "" "flavours" $flavours "modes" $modes) -}}
+{{- range $rname := keys $root.Values.sandbox.runtimes | sortAlpha -}}
+{{- $rt := index $root.Values.sandbox.runtimes $rname -}}
+{{- $runtimes = append $runtimes (dict "name" $rname "infix" (printf "rt-%s-" $rname) "flavours" ($rt.flavours | default (list "default")) "modes" (list "proxied")) -}}
+{{- end -}}
 {{- $pools := list -}}
-{{- range $flavour := $flavours -}}
-{{- range $mode := $modes -}}
+{{- range $rt := $runtimes -}}
+{{- range $flavour := $rt.flavours -}}
+{{- range $mode := $rt.modes -}}
 {{- $pool := ternary "pi-env-direct-pool" "pi-env-pool" (eq $mode "direct") -}}
 {{- $template := ternary "pi-env-direct-template" "pi-env-template" (eq $mode "direct") -}}
 {{- if eq $flavour "browser" }}
 {{- $pool = replace "pi-env-" "pi-env-browser-" $pool -}}
 {{- $template = replace "pi-env-" "pi-env-browser-" $template -}}
 {{- end -}}
-{{- $pools = append $pools (dict "name" $pool "template" $template "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour) -}}
+{{- $pool = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $pool -}}
+{{- $template = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $template -}}
+{{- $pools = append $pools (dict "name" $pool "template" $template "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour "runtime" $rt.name) -}}
 {{- range $name := keys $root.Values.sandbox.sizes | sortAlpha -}}
-{{- $pools = append $pools (dict "name" (printf "%s-%s" $pool $name) "template" (printf "%s-%s" $template $name) "size" $name "mode" $mode "flavour" $flavour) -}}
+{{- $pools = append $pools (dict "name" (printf "%s-%s" $pool $name) "template" (printf "%s-%s" $template $name) "size" $name "mode" $mode "flavour" $flavour "runtime" $rt.name) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -41,6 +51,7 @@ metadata:
     cela.dev/sandbox-size: {{ $p.size }}
     cela.dev/network-mode: {{ $p.mode }}
     cela.dev/sandbox-flavour: {{ $p.flavour }}
+    pi-durable.dev/sandbox-runtime: {{ $p.runtime }}
 spec:
   replicas: 0
   sandboxTemplateRef:

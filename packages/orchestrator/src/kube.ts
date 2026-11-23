@@ -375,6 +375,39 @@ export async function configuredRuntime(namespace: string, warmPool: string): Pr
   return template.spec?.podTemplate?.spec?.runtimeClassName ?? "";
 }
 
+/** A chart-rendered SandboxTemplate as the startup guard sees it. `runtime` is undefined for one rendered before ADR 0064. */
+export interface TemplateRuntime {
+  name: string;
+  runtime: string | undefined;
+  runtimeClassName: string;
+}
+
+/** The label the chart puts on every SandboxTemplate it renders (`app.kubernetes.io/part-of=cela`, `cela.labels`). */
+const CHART_SELECTOR = "app.kubernetes.io/part-of=cela";
+export const RUNTIME_LABEL = "pi-durable.dev/sandbox-runtime";
+
+/** Lists the chart's own SandboxTemplates once, for the per-runtime startup guard (ADR 0064). */
+export async function listTemplateRuntimes(namespace: string): Promise<TemplateRuntime[]> {
+  const { custom } = clients();
+  const list = (await custom.listNamespacedCustomObject({
+    group: "extensions.agents.x-k8s.io",
+    version: "v1beta1",
+    namespace,
+    plural: "sandboxtemplates",
+    labelSelector: CHART_SELECTOR,
+  })) as {
+    items?: {
+      metadata?: { name?: string; labels?: Record<string, string> };
+      spec?: { podTemplate?: { spec?: { runtimeClassName?: string } } };
+    }[];
+  };
+  return (list.items ?? []).map((item) => ({
+    name: item.metadata?.name ?? "",
+    runtime: item.metadata?.labels?.[RUNTIME_LABEL],
+    runtimeClassName: item.spec?.podTemplate?.spec?.runtimeClassName ?? "",
+  }));
+}
+
 export async function observedRuntime(namespace: string, claimName: string): Promise<string> {
   return (await observedPod(namespace, claimName)).runtime;
 }

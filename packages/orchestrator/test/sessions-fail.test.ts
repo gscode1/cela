@@ -23,6 +23,7 @@ const session = (status: SessionRow["status"]): SessionRow => ({
   sandboxSize: null,
   networkMode: "proxied",
   sandboxFlavour: "default",
+  sandboxRuntime: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

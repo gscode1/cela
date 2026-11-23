@@ -39,6 +39,8 @@ export interface FakeAdmin {
   directAllowed: boolean;
   /** The chart's sandbox.flavours.browser.enabled, as `GET /admin/sandbox-flavours` reports it. */
   browserEnabled: boolean;
+  /** The chart's sandbox.runtimes, as `GET /admin/sandbox-runtimes` reports them (none: the default only). */
+  sandboxRuntimes: { name: string; flavours: string[]; insecure: boolean }[];
   /** The chart's sandbox sizes, as `GET /admin/sandbox-sizes` reports them (none: the default only). */
   sandboxSizes: SandboxSize[];
   /** The `GET /admin/models` answer (default view). */
@@ -105,6 +107,7 @@ export function createFakeAdmin(): FakeAdmin {
     tools: ["read", "write", "edit", "bash"],
     directAllowed: false,
     browserEnabled: false,
+    sandboxRuntimes: [],
     sandboxSizes: [],
     models: {
       models: [
@@ -161,6 +164,7 @@ export function createFakeAdmin(): FakeAdmin {
         model: typeof body.model === "string" ? body.model : "scripted-1",
         networkMode: "proxied",
         sandboxFlavour: "default",
+        sandboxRuntime: "default",
       });
     }
     const sessionRoute = /^\/sessions\/([^/]+)(?:\/(events|stream))?$/.exec(route);
@@ -315,6 +319,8 @@ export function createFakeAdmin(): FakeAdmin {
         sizes: admin.sandboxSizes,
         defaultSize: admin.sandboxSizes[0]?.name ?? null,
       });
+    if (route === "/admin/sandbox-runtimes")
+      return reply(200, { runtimes: admin.sandboxRuntimes, defaultRuntime: "default" });
     if (route === "/admin/sandbox-flavours") {
       return reply(200, {
         flavours: admin.browserEnabled ? ["default", "browser"] : ["default"],

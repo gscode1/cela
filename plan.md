@@ -27,6 +27,7 @@ Run Pi Durable agents on your own Kubernetes cluster so that:
 | `@parcha/pi-transport` | Not used | Retired by its maintainers |
 | Self-hosted Claude Managed Agents | Not used | Limited to Claude models; this project stays on Pi and model-agnostic |
 | Isolation runtime | gVisor | Confirmed working in the target environment |
+| Sandbox runtimes | `sandbox.runtimeClassName` stays the default runtime; `sandbox.runtimes` adds named runtimes, each with its own RuntimeClass and acknowledgement, that a profile picks with `sandboxRuntime` ([ADR 0064](docs/decisions/0064-sandbox-runtimes.md)) | Some workloads need another runtime (nested virtualisation, a gVisor variant, runc); the choice stays with the operator and the profile, never the session caller |
 
 ## 3. Architecture
 

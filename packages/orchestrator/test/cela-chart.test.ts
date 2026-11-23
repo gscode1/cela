@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { parseSandboxRuntimes } from "@cela/session-core";
 import { describe, expect, it } from "vitest";
+import { warmPoolFor } from "../src/warm-pool.js";
 import {
   chartsDir,
   helmTemplate,
@@ -2003,6 +2005,284 @@ describe("custom model providers (ADR 0056)", () => {
       expect(() =>
         docs([...providers({ ...omlx, egress: undefined }), "--skip-schema-validation"]),
       ).toThrow(/needs egress/);
+    });
+  });
+});
+
+describe("named sandbox runtimes (ADR 0064)", () => {
+  const rt = (name: string, entry: string, value: string): string[] => [
+    "--set",
+    `sandbox.runtimes.${name}.${entry}=${value}`,
+  ];
+  const kvm = rt("gvisorkvm", "runtimeClassName", "gvisor-kvm");
+  const runc = [
+    ...rt("runc", "runtimeClassName", "runc-sandbox"),
+    ...rt("runc", "allowInsecureRuntime", "true"),
+  ];
+  const both = ["--set", "sandbox.runtimes.gvisorkvm.flavours={default,browser}"];
+  const bothRunc = ["--set", "sandbox.runtimes.runc.flavours={default,browser}"];
+  const c2 = [...kvm, ...both, ...runc, ...bothRunc];
+  const runtimeLabel = "pi-durable.dev/sandbox-runtime";
+  const sizes = ["l", "m", "s", "xl"];
+  const names = (list: Obj[], kind: string): string[] =>
+    ofKind(list, kind).map((d) => d.metadata.name);
+
+  it("renders the same objects as before when sandbox.runtimes is empty, labelled default", () => {
+    const list = docs(external);
+    const templates = names(list, "SandboxTemplate");
+    expect(templates).toEqual([
+      "pi-env-template",
+      ...sizes.map((s) => `pi-env-template-${s}`),
+      "pi-env-browser-template",
+      ...sizes.map((s) => `pi-env-browser-template-${s}`),
+    ]);
+    for (const d of [...ofKind(list, "SandboxTemplate"), ...ofKind(list, "SandboxWarmPool")]) {
+      expect(d.metadata.labels[runtimeLabel]).toBe("default");
+    }
+    for (const d of ofKind(list, "SandboxTemplate")) {
+      expect(d.spec.podTemplate.metadata.labels[runtimeLabel]).toBe("default");
+    }
+    const orchestrator = envOf(named(list, "Deployment", "pi-orchestrator"));
+    expect(orchestrator.PI_SANDBOX_RUNTIMES?.value).toBe("{}");
+    expect(orchestrator.PI_ALLOW_INSECURE_RUNTIMES?.value).toBe("");
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_RUNTIMES?.value).toBe("{}");
+  });
+
+  it("lets the orchestrator list SandboxTemplates for its start guard", () => {
+    const role = named(docs(external), "Role", "pi-orchestrator");
+    const verbs = role.rules
+      .filter((r: Obj) => r.resources.includes("sandboxtemplates"))
+      .flatMap((r: Obj) => r.verbs);
+    expect(verbs.sort()).toEqual(["get", "list"]);
+  });
+
+  it("renders templates and pools per runtime, flavour and size, proxied only, under the entry's class", () => {
+    const list = docs([...external, ...c2]);
+    const expectedTemplates = ["gvisorkvm", "runc"].flatMap((r) =>
+      ["", "-browser"].flatMap((f) => [
+        `pi-env-rt-${r}${f}-template`,
+        ...sizes.map((s) => `pi-env-rt-${r}${f}-template-${s}`),
+      ]),
+    );
+    const templates = names(list, "SandboxTemplate").filter((n) => n.includes("-rt-"));
+    expect(templates.sort()).toEqual(expectedTemplates.sort());
+    expect(
+      names(list, "SandboxWarmPool")
+        .filter((n) => n.includes("-rt-"))
+        .sort(),
+    ).toEqual(expectedTemplates.map((n) => n.replace("template", "pool")).sort());
+    // The default runtime's objects are untouched.
+    expect(names(list, "SandboxTemplate").filter((n) => !n.includes("-rt-"))).toHaveLength(10);
+    const classes: Record<string, string> = { gvisorkvm: "gvisor-kvm", runc: "runc-sandbox" };
+    for (const [r, cls] of Object.entries(classes)) {
+      for (const flavour of ["", "-browser"]) {
+        const t = named(list, "SandboxTemplate", `pi-env-rt-${r}${flavour}-template-m`);
+        expect(t.spec.podTemplate.spec.runtimeClassName).toBe(cls);
+        expect(t.metadata.labels[runtimeLabel]).toBe(r);
+        expect(t.spec.podTemplate.metadata.labels[runtimeLabel]).toBe(r);
+        expect(t.spec.podTemplate.metadata.labels["cela.dev/network-mode"]).toBe("proxied");
+        expect(t.spec.podTemplate.metadata.labels["cela.dev/sandbox-flavour"]).toBe(
+          flavour === "" ? "default" : "browser",
+        );
+        const pool = named(list, "SandboxWarmPool", `pi-env-rt-${r}${flavour}-pool-m`);
+        expect(pool.metadata.labels[runtimeLabel]).toBe(r);
+        expect(pool.spec.replicas).toBe(0);
+        expect(pool.spec.sandboxTemplateRef.name).toBe(`pi-env-rt-${r}${flavour}-template-m`);
+      }
+    }
+    // Only the flavours an entry lists.
+    const onlyDefault = docs([...external, ...kvm]);
+    expect(names(onlyDefault, "SandboxTemplate").filter((n) => n.includes("-rt-"))).toHaveLength(5);
+  });
+
+  it("renders no direct twin for a named runtime, even with the gate on", () => {
+    const list = docs([...external, "--set", "security.allowDirectSandboxEgress=true", ...c2]);
+    for (const n of [...names(list, "SandboxTemplate"), ...names(list, "SandboxWarmPool")]) {
+      expect(n.includes("-rt-") && n.includes("direct"), n).toBe(false);
+    }
+    expect(names(list, "SandboxTemplate").filter((n) => n.includes("-rt-"))).toHaveLength(20);
+    // The default runtime still has its direct twins.
+    expect(names(list, "SandboxTemplate")).toContain("pi-env-direct-template-m");
+  });
+
+  it("has warmPoolFor name a rendered pool, whose template has the entry's class and label", () => {
+    const list = docs([...external, "--set", "security.allowDirectSandboxEgress=true", ...c2]);
+    const entries: [string | null, string, string[]][] = [
+      [null, "gvisor", ["default", "browser"]],
+      ["gvisorkvm", "gvisor-kvm", ["default", "browser"]],
+      ["runc", "runc-sandbox", ["default", "browser"]],
+    ];
+    let checked = 0;
+    for (const [runtime, cls, flavours] of entries) {
+      for (const flavour of flavours as ("default" | "browser")[]) {
+        for (const mode of ["proxied", "direct"] as const) {
+          if (runtime !== null && mode === "direct") continue; // refused at ingest; no pool exists
+          for (const size of [null, ...sizes]) {
+            const pool = named(
+              list,
+              "SandboxWarmPool",
+              warmPoolFor("pi-env-pool", size, mode, flavour, runtime),
+            );
+            const template = named(list, "SandboxTemplate", pool.spec.sandboxTemplateRef.name);
+            expect(template.spec.podTemplate.spec.runtimeClassName).toBe(cls);
+            expect(template.metadata.labels[runtimeLabel]).toBe(runtime ?? "default");
+            expect(pool.metadata.labels[runtimeLabel]).toBe(runtime ?? "default");
+            expect(template.metadata.labels["cela.dev/network-mode"]).toBe(mode);
+            expect(template.metadata.labels["cela.dev/sandbox-flavour"]).toBe(flavour);
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBe(40);
+    // Every rendered pool is reachable that way: no pool exists that warmPoolFor cannot name.
+    const reachable = new Set<string>();
+    for (const [runtime, , flavours] of entries)
+      for (const flavour of flavours as ("default" | "browser")[])
+        for (const mode of runtime === null
+          ? (["proxied", "direct"] as const)
+          : (["proxied"] as const))
+          for (const size of [null, ...sizes])
+            reachable.add(warmPoolFor("pi-env-pool", size, mode, flavour, runtime));
+    expect(new Set(names(list, "SandboxWarmPool"))).toEqual(reachable);
+  });
+
+  it("never renders two objects with the same kind and name", () => {
+    for (const args of [
+      [...external, ...c2],
+      [...external, "--set", "security.allowDirectSandboxEgress=true", ...c2],
+    ]) {
+      const keys = docs(args).map((d) => `${d.kind}/${d.metadata.name}`);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+
+  it("tells ingest and the orchestrator the runtimes, and the orchestrator which are acknowledged", () => {
+    const list = docs([...external, ...c2]);
+    const expected = {
+      gvisorkvm: {
+        runtimeClassName: "gvisor-kvm",
+        insecure: false,
+        flavours: ["default", "browser"],
+      },
+      runc: { runtimeClassName: "runc-sandbox", insecure: true, flavours: ["default", "browser"] },
+    };
+    const orchestrator = envOf(named(list, "Deployment", "pi-orchestrator"));
+    expect(JSON.parse(orchestrator.PI_SANDBOX_RUNTIMES?.value)).toEqual(expected);
+    expect(orchestrator.PI_ALLOW_INSECURE_RUNTIMES?.value).toBe("runc");
+    expect(
+      JSON.parse(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_RUNTIMES?.value),
+    ).toEqual(expected);
+    // The default runtime's own variable is unchanged by named runtimes.
+    expect(orchestrator.PI_ALLOW_INSECURE_RUNTIME).toBeUndefined();
+  });
+
+  it("renders an env value that session-core's strict parser accepts, in ingest and the orchestrator", () => {
+    for (const args of [external, [...external, ...c2], [...external, ...kvm]]) {
+      const list = docs(args);
+      for (const name of ["pi-ingest", "pi-orchestrator"]) {
+        const value = envOf(named(list, "Deployment", name)).PI_SANDBOX_RUNTIMES?.value;
+        const parsed = parseSandboxRuntimes({ PI_SANDBOX_RUNTIMES: value });
+        expect(Object.keys(parsed).sort()).toEqual(Object.keys(JSON.parse(value)).sort());
+      }
+    }
+  });
+
+  it("warns in the notes for each runtime that is not gVisor", () => {
+    const text = execNotes(c2);
+    expect(text).toMatch(/sandbox runtime "runc" does NOT run under gVisor/);
+    expect(text).not.toMatch(/sandbox runtime "gvisorkvm" does NOT/);
+    expect(text).toMatch(/nodeSelector/);
+    expect(execNotes([])).not.toMatch(/Sandbox runtime "/);
+  });
+
+  describe("refuses", () => {
+    const both2 = (args: string[]) => [
+      [...external, ...args],
+      [...external, ...args, "--skip-schema-validation"],
+    ];
+    const refused = (args: string[], message: RegExp) => {
+      for (const a of both2(args)) expect(() => helmTemplate(chart, a)).toThrow(message);
+    };
+
+    it("a class that is not gVisor without the entry's own ack, with and without the schema", () => {
+      refused(rt("runc", "runtimeClassName", "runc-sandbox"), /runc|allowInsecureRuntime/);
+      refused(
+        [
+          ...rt("runc", "runtimeClassName", "runc-sandbox"),
+          ...rt("runc", "allowInsecureRuntime", "false"),
+        ],
+        /runc|allowInsecureRuntime/,
+      );
+      refused(rt("kata", "runtimeClassName", "gvisorx"), /kata|allowInsecureRuntime/);
+    });
+
+    it("also when the global ack is set: it covers the default runtime only", () => {
+      refused(
+        [
+          "--set",
+          "security.allowInsecureRuntime=true",
+          ...rt("runc", "runtimeClassName", "runc-sandbox"),
+        ],
+        /runc|allowInsecureRuntime/,
+      );
+      refused(
+        [...insecure, ...rt("runc", "runtimeClassName", "runc-sandbox")],
+        /runc|allowInsecureRuntime/,
+      );
+      // Under --skip-schema-validation the template names the entry.
+      expect(() =>
+        helmTemplate(chart, [
+          ...external,
+          ...insecure,
+          ...rt("runc", "runtimeClassName", "runc-sandbox"),
+          "--skip-schema-validation",
+        ]),
+      ).toThrow(/sandbox\.runtimes\.runc\.runtimeClassName is "runc-sandbox"/);
+    });
+
+    it("an empty class", () => {
+      refused(rt("empty", "runtimeClassName", ""), /runtimeClassName/);
+      refused([...rt("empty", "allowInsecureRuntime", "true")], /runtimeClassName/);
+    });
+
+    it("a reserved name and a name with a hyphen", () => {
+      for (const reserved of ["default", "browser", "direct", "pool", "template", "rt"]) {
+        refused(
+          rt(reserved, "runtimeClassName", "gvisor-kvm"),
+          /reserved|runtimes|propertyNames|not/,
+        );
+      }
+      expect(() =>
+        helmTemplate(chart, [
+          ...external,
+          ...rt("default", "runtimeClassName", "gvisor-kvm"),
+          "--skip-schema-validation",
+        ]),
+      ).toThrow(/"default" is reserved/);
+      refused(rt("my-rt", "runtimeClassName", "gvisor-kvm"), /runtimes|runtime name/);
+      expect(() =>
+        helmTemplate(chart, [
+          ...external,
+          ...rt("my-rt", "runtimeClassName", "gvisor-kvm"),
+          "--skip-schema-validation",
+        ]),
+      ).toThrow(/"my-rt" is not a runtime name/);
+      refused(rt("Upper", "runtimeClassName", "gvisor-kvm"), /runtimes|runtime name/);
+    });
+
+    it("an unknown flavour, and browser while the browser flavour is off", () => {
+      refused([...kvm, "--set", "sandbox.runtimes.gvisorkvm.flavours={default,gpu}"], /flavour/);
+      const off = [...external, "--set", "sandbox.flavours.browser.enabled=false", ...kvm, ...both];
+      for (const a of [off, [...off, "--skip-schema-validation"]]) {
+        expect(() => helmTemplate(chart, a)).toThrow(/browser/);
+      }
+    });
+
+    it("unknown keys in an entry", () => {
+      expect(() =>
+        helmTemplate(chart, [...external, ...kvm, ...rt("gvisorkvm", "nodeSelector", "x")]),
+      ).toThrow(/nodeSelector|additional/);
     });
   });
 });

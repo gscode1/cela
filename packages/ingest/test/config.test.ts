@@ -24,6 +24,17 @@ describe("loadConfig", () => {
     );
   });
 
+  it("reads PI_SANDBOX_RUNTIMES: absent is none, malformed refuses to start", () => {
+    expect(loadConfig(base).sandboxRuntimes).toEqual({});
+    const runtimes = {
+      runc: { runtimeClassName: "runc-sandbox", insecure: true, flavours: ["default"] },
+    };
+    expect(
+      loadConfig({ ...base, PI_SANDBOX_RUNTIMES: JSON.stringify(runtimes) }).sandboxRuntimes,
+    ).toEqual(runtimes);
+    expect(() => loadConfig({ ...base, PI_SANDBOX_RUNTIMES: "{" })).toThrow(/PI_SANDBOX_RUNTIMES/);
+  });
+
   it("rejects an empty, blank, zero or malformed port instead of binding a random one", () => {
     for (const port of ["", "  ", "0", "65536", "80x", "-1", "8.5"]) {
       expect(() => loadConfig({ ...base, PI_INGEST_PORT: port }), port).toThrow(/PI_INGEST_PORT/);

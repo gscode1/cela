@@ -49,7 +49,7 @@ import { NetworkProbeLoop, runNetworkProbe } from "./netprobe.js";
 import { observedPod, listClaims, listPvcs } from "./kube.js";
 import { claimNameFor, conversationOfName } from "./lifecycle.js";
 import { EgressPrincipals } from "./egress.js";
-import { warmPoolFor } from "./warm-pool.js";
+import { SandboxRuntimeNotConfiguredError, warmPoolOfSession } from "./sandbox-runtime.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -65,7 +65,12 @@ const FEED_MAINTENANCE_INTERVAL_MS = 10 * 60_000;
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
-  const runtime = await checkRuntime(config.namespace, config.warmPool);
+  const { runtime, named: namedRuntimes } = await checkRuntime(
+    config.namespace,
+    config.warmPool,
+    config.sandboxRuntimes,
+    config.allowInsecureRuntimes,
+  );
   const { maxOpenBridges, bridgeCap } = config.sandbox;
   log("bridge-cap", bridgeCapFields(maxOpenBridges, bridgeCap.source, bridgeCap.memoryLimitBytes));
   if (config.customProviders.length > 0) {
@@ -146,7 +151,18 @@ async function main(): Promise<void> {
   await mcpCatalog.start();
 
   const storage = await openStorageWhenFree(config, stop.signal);
-  await startShardStatus(pool, config.shard, runtime);
+  await startShardStatus(
+    pool,
+    config.shard,
+    runtime,
+    Object.fromEntries(
+      Object.entries(config.sandboxRuntimes).map(([name, entry]) => [
+        name,
+        // The class the templates really use; the chart's value when it rendered none (a runtime without a default flavour).
+        { configured: namedRuntimes[name] ?? entry.runtimeClassName, insecure: entry.insecure },
+      ]),
+    ),
+  );
   log("network-policy-unknown", {
     level: "warn",
     shard: config.shard,
@@ -237,19 +253,31 @@ async function main(): Promise<void> {
     warmPoolOf: async (conversationId) => {
       const session = await sessionByConversation(pool, config.shard, conversationId);
       if (session === undefined) return undefined;
-      return warmPoolFor(
-        config.warmPool,
-        session.sandboxSize,
-        session.networkMode,
-        session.sandboxFlavour,
-      );
+      try {
+        return warmPoolOfSession(config.warmPool, config.sandboxRuntimes, session);
+      } catch (error) {
+        if (error instanceof SandboxRuntimeNotConfiguredError) {
+          log("sandbox-runtime-not-configured", {
+            level: "error",
+            session: session.id,
+            runtime: session.sandboxRuntime,
+          });
+        }
+        throw error;
+      }
     },
     // Status only: a failed read or write must never fail the attach, and with it the session's tool call.
     attached: async (claimName) => {
       let pod: Awaited<ReturnType<typeof observedPod>> | undefined;
       try {
         pod = await observedPod(config.namespace, claimName);
-        await observeShardRuntime(pool, config.shard, pod.runtime);
+        // The session's runtime says which status entry this Pod's class belongs to; without it nothing is written.
+        const id = conversationOfName(config.shard, claimName);
+        const owner =
+          id === undefined ? undefined : await sessionByConversation(pool, config.shard, id);
+        if (owner !== undefined) {
+          await observeShardRuntime(pool, config.shard, pod.runtime, owner.sandboxRuntime);
+        }
       } catch (error) {
         log("runtime-observe-failed", { claim: claimName, error: errorMessage(error) });
       }

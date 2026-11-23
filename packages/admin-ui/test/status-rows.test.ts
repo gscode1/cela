@@ -132,6 +132,61 @@ describe("status rows", () => {
     expect(row(all, "runtime").sentence).toBe("Sandboxes run under gVisor on all shards.");
   });
 
+  it("shows named runtimes: a differing class is a problem, an insecure one needs attention, the probe covers the default only", () => {
+    const named = (over: Record<string, unknown> = {}) => ({
+      default: { configured: "gvisor", observed: "gvisor", insecure: false },
+      gvisorkvm: { configured: "gvisor-kvm", observed: "gvisor-kvm", insecure: false },
+      ...over,
+    });
+    const ordinary = statusRows(inputs({ status: ok(report([shard({ runtimes: named() })])) }));
+    expect(row(ordinary, "runtime")).toMatchObject({
+      level: "ok",
+      sentence:
+        "Sandboxes run under gVisor. The isolation probe runs under the default runtime only.",
+    });
+    const wrong = statusRows(
+      inputs({
+        status: ok(
+          report([
+            shard({
+              runtimes: named({
+                gvisorkvm: { configured: "gvisor-kvm", observed: "gvisor", insecure: false },
+              }),
+            }),
+          ]),
+        ),
+      }),
+    );
+    expect(row(wrong, "runtime")).toMatchObject({ level: "problem" });
+    expect(row(wrong, "runtime").sentence).toContain(
+      "Runtime gvisorkvm: configured gvisor-kvm, observed gvisor.",
+    );
+    expect(hasProblem(wrong)).toBe(true);
+    const insecure = statusRows(
+      inputs({
+        status: ok(
+          report([
+            shard({
+              runtimes: named({
+                runc: { configured: "runc-sandbox", observed: null, insecure: true },
+              }),
+            }),
+            shard({
+              shard: 1,
+              runtimes: named({
+                runc: { configured: "runc-sandbox", observed: null, insecure: true },
+              }),
+            }),
+          ]),
+        ),
+      }),
+    );
+    expect(row(insecure, "runtime")).toMatchObject({ level: "attention" });
+    expect(row(insecure, "runtime").sentence).toContain("Insecure runtimes (not gVisor): runc.");
+    // A runtime not observed yet is not a mismatch.
+    expect(row(insecure, "runtime").sentence).not.toContain("configured runc-sandbox, observed");
+  });
+
   it("reads network isolation once for the cluster, and sorts a problem first", () => {
     const rows = statusRows(
       inputs({

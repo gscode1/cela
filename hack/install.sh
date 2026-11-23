@@ -303,6 +303,8 @@ if (shards.length < Number(expected)) { console.error("waiting: " + String(shard
 // Shard 0 probes the network policies a short while after it starts; wait for it, but never fail the install on it.
 if (["unknown", "running"].includes(networkPolicy.state) && final !== "1") { console.error("waiting: the isolation probe has not finished"); process.exit(3); }
 for (const s of shards) console.log("shard " + String(s.shard) + " configuredRuntime=" + s.configuredRuntime + " observedRuntime=" + String(s.observedRuntime) + " networkPolicy=" + s.networkPolicy);
+// One line per named sandbox runtime (ADR 0064); the shard line above stays the default runtime.
+for (const s of shards) for (const [name, r] of Object.entries(s.runtimes ?? {})) if (name !== "default") console.log("runtime shard=" + String(s.shard) + " name=" + name + " configuredRuntime=" + r.configured + " observedRuntime=" + String(r.observed) + " insecure=" + String(r.insecure));
 console.log("isolation-probe state=" + networkPolicy.state + " checkedAt=" + String(networkPolicy.checkedAt) + " reason=" + (networkPolicy.detail?.reason ?? "-"));
 '
 status=
@@ -331,6 +333,17 @@ while read -r kind shard configured _ network; do
     not-enforced) echo "WARNING: network policy is NOT ENFORCED (isolation probe): a sandbox can reach cluster services. The CNI does not enforce NetworkPolicy, or the policies are missing; nothing is blocked" >&2 ;;
     *) echo "WARNING: shard $shard network policy is ${network#networkPolicy=}: isolation is not verified. NetworkPolicies work only on a CNI that enforces them (nothing is blocked)" >&2 ;;
     esac
+    warned=1
+  fi
+done <<<"$status"
+while read -r kind shard name configured observed insecure; do
+  [[ $kind == runtime ]] || continue
+  if [[ ${insecure#insecure=} == true ]]; then
+    echo "WARNING: sandbox runtime ${name#name=} on ${shard/=/ } runs with ${configured#configuredRuntime=}, not gVisor: agent code has container isolation only" >&2
+    warned=1
+  fi
+  if [[ ${observed#observedRuntime=} != null && ${observed#observedRuntime=} != "${configured#configuredRuntime=}" ]]; then
+    echo "WARNING: sandbox runtime ${name#name=} on ${shard/=/ } was observed with ${observed#observedRuntime=}, configured ${configured#configuredRuntime=}" >&2
     warned=1
   fi
 done <<<"$status"

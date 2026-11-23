@@ -154,6 +154,7 @@ export function createFakeAdmin() {
         ...(body.reasoning === undefined ? {} : { reasoning: body.reasoning }),
         networkMode: "proxied",
         sandboxFlavour: "default",
+        sandboxRuntime: "default",
       });
     }
     const session = sessions.get(parts[1] ?? "");

@@ -112,6 +112,23 @@ sandbox:
   # Only the operator picks the runtime, never a session caller. Anything but gvisor (including "": the node default,
   # usually runc) needs security.allowInsecureRuntime, or the chart refuses to render (docs/decisions/0020).
   runtimeClassName: gvisor
+  # Further named runtimes (docs/decisions/0064-sandbox-runtimes.md): a profile picks one with `sandboxRuntime: <name>`; a
+  # session never does. The runtime above (with security.allowInsecureRuntime) stays the default runtime, called `default`
+  # in the API, and every session without a choice uses it. Each entry renders, for the flavours it lists and for the
+  # proxied network mode only (no direct twin), the SandboxTemplates and SandboxWarmPools
+  # pi-env-rt-<name>[-browser]-template[-<size>] and -pool[-<size>], under its own RuntimeClass. Empty (the default) renders nothing more.
+  # Name: 1 to 16 of [a-z0-9], starting with a letter, no hyphen; not default, browser, direct, pool, template or rt.
+  # runtimeClassName: a RuntimeClass that exists on the nodes (not checked here). gVisor means the class `gvisor` or
+  # `gvisor-<anything>`; any other class needs its own `allowInsecureRuntime: true`. security.allowInsecureRuntime covers
+  # the default runtime only, never a named one. An insecure runtime shares the node kernel with other Pods: give its
+  # RuntimeClass `scheduling.nodeSelector` and `tolerations` onto tainted nodes that run nothing else.
+  # flavours: which flavours it renders; each must be enabled (sandbox.flavours). Default: [default].
+  # The isolation probe still runs under the default runtime only.
+  # Example:
+  #   runtimes:
+  #     gvisorkvm: { runtimeClassName: gvisor-kvm, flavours: [default, browser] }
+  #     runc: { runtimeClassName: runc-insecure, allowInsecureRuntime: true, flavours: [default] }
+  runtimes: {}
   storageClass: "" # workspace PVCs; "" = the cluster default. Use a class that reclaims with Delete.
   masterSecret: sandboxd-auth # Secret with key `master`: HMAC key of every sandbox's token. A backup asset.
   # Named sandbox sizes (docs/decisions/0030-sandbox-sizes.md). Each renders a SandboxTemplate pi-env-template-<name> and

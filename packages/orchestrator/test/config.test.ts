@@ -91,6 +91,21 @@ describe("config", () => {
     });
   });
 
+  it("reads the named sandbox runtimes and the acknowledged insecure ones", () => {
+    expect(loadConfig(env)).toMatchObject({ sandboxRuntimes: {}, allowInsecureRuntimes: [] });
+    const runtimes = {
+      runc: { runtimeClassName: "runc-sandbox", insecure: true, flavours: ["default"] },
+    };
+    expect(
+      loadConfig({
+        ...env,
+        PI_SANDBOX_RUNTIMES: JSON.stringify(runtimes),
+        PI_ALLOW_INSECURE_RUNTIMES: " runc, other ,",
+      }),
+    ).toMatchObject({ sandboxRuntimes: runtimes, allowInsecureRuntimes: ["runc", "other"] });
+    expect(() => loadConfig({ ...env, PI_SANDBOX_RUNTIMES: "[]" })).toThrow(/PI_SANDBOX_RUNTIMES/);
+  }, 1000);
+
   it("sets keepalive and timeouts so a silent drop fails closed instead of hanging", () => {
     expect(poolConfig(loadConfig(env))).toMatchObject({
       keepAlive: true,
