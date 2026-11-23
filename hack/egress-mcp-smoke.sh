@@ -22,7 +22,7 @@
 #      the origin sees only that session's credential, and deleting a session removes its agent
 #      The same agent's request carries a custom header (X-Cela-Mail-Owner, what the session-email design sets on a session's
 #      MCP request): it reaches the origin through the gateway with the exact value, once. A response the origin holds for
-#      20 s (the longest httpbingo.org allows: /delay, /drip and /sse refuse more than 10 s per parameter, so no public
+#      10 s (the longest httpbingo.org allows: /delay, /drip and /sse refuse more than 10 s in all, so no public
 #      endpoint holds the design's 120 s) completes through the gateway, or the check fails with the observed cut-off time.
 #      The 120 s case is NOT proven by this script; it needs an origin that holds a response that long (docs/decisions/0040).
 #   5. the reconciler is idempotent (a second look, 35 s later, changes nothing)
@@ -302,12 +302,13 @@ fh=$(driver agent-fetch "$ida" https://httpbingo.org/anything/a --header "X-Cela
 check "the custom header reached the origin through the gateway with its exact value" "$fh" "^header X-Cela-Mail-Owner $owner_value$"
 refute "and not comma-joined or duplicated" "$fh" "X-Cela-Mail-Owner [^ ]*,"
 check "while the agent's own credential is still injected next to it" "$fh" "header X-Smoke-A dummy-credential-a"
-# A response held at the origin: httpbingo.org caps every delay at 10 s, so /drip holds 10 s before the first byte and then
-# drips for 10 s more (20 s in all). The driver gives up after 60 s. A cut by the gateway shows as status 0 and its elapsed ms.
-hold=$(driver agent-fetch "$ida" "https://httpbingo.org/drip?delay=10&duration=10&numbytes=5&code=200" --timeout-s 60)
+# A response held at the origin: httpbingo.org refuses more than 10 s in all (delay plus duration), so /drip holds 5 s before
+# the first byte and then drips for 5 s more. The driver gives up after 60 s. A cut by the gateway shows as status 0 and its
+# elapsed ms.
+hold=$(driver agent-fetch "$ida" "https://httpbingo.org/drip?delay=5&duration=5&numbytes=5&code=200" --timeout-s 60)
 held_ms=$(sed -n 's/^elapsed //p' <<<"$hold")
-check "a response the origin holds for 20 s completes through the gateway (the gateway did not cut it; took ${held_ms:-?} ms)" "$hold" "^status 200$"
-((${held_ms:-0} >= 19000)) || fail "the held response came back after only ${held_ms:-?} ms: the origin did not hold it for 20 s" "$hold"
+check "a response the origin holds for 10 s completes through the gateway (the gateway did not cut it; took ${held_ms:-?} ms)" "$hold" "^status 200$"
+((${held_ms:-0} >= 9500)) || fail "the held response came back after only ${held_ms:-?} ms: the origin did not hold it for 10 s" "$hold"
 ok "and it really was held: ${held_ms} ms from request to the last byte"
 
 t2=$(now_ms)
