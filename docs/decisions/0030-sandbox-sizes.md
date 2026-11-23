@@ -19,8 +19,8 @@ agent-sandbox v1.0.11's `SandboxClaim.spec` has `env`, `volumeClaimTemplates`, `
   `workspaceSize`, `ephemeralStorage` and `warmPoolReplicas`; `sandbox.defaultSize` names one). Defaults: `s` (the old
   fixed size), `m`, `l`, `xl`. A name is 1 to 16 characters of `[a-z0-9-]`, starting with a letter.
 - **One SandboxTemplate and one SandboxWarmPool per size**: `pi-env-template-<size>` and `pi-env-pool-<size>`. A claim
-  picks its size through `warmPoolRef`. The pool with `replicas: 0` is a plain template alias, as before; each size can
-  keep its own warm Pods.
+  picks its size through `warmPoolRef`. The pool with `replicas: 0` is a plain template alias, as before. (Amended 2026-11-23: the
+  original text said each size could keep its own warm Pods. It cannot; see the note under Consequences.)
 - **The unsized `pi-env-template` and `pi-env-pool` stay**, rendered with the default size. Claims made before sizes
   reference `pi-env-pool`, and the e2e suites create claims on it directly.
 - **Not through the admin API.** A size is a cluster object (a template) that the chart owns; creating templates at
@@ -56,3 +56,13 @@ agent-sandbox v1.0.11's `SandboxClaim.spec` has `env`, `volumeClaimTemplates`, `
 - **Per-claim resource overrides.** Not in agent-sandbox v1.0.11's claim spec.
 - **Sizes in Postgres, managed through the admin API.** See above: it needs runtime write access to cluster objects.
 - **Free CPU and memory numbers in `POST /sessions`.** Clients must not pick their own limits.
+
+## Amendment 2026-11-23: warm pools stay at zero
+
+`warmPoolReplicas` was offered as a latency knob and is not one. Every claim the orchestrator makes carries `spec.env` (the
+per-sandbox token, ADR 0001), and agent-sandbox v1.0.11 never adopts a warm Pod for a claim with env. Warm Pods are made
+from the template without the env, so sandboxd refuses to start and they crash-loop, each holding its requests and a
+workspace PVC. The chart schema now caps `sandbox.sizes.*.warmPoolReplicas` and `sandbox.flavours.browser.warmPoolReplicas`
+at 0 (the keys stay so existing values files still render), and every SandboxWarmPool renders `replicas: 0`. The pools
+remain, since a claim must reference one; each is a template alias. Warm pools would need a per-sandbox token that does not
+ride in claim env, which is a new decision.

@@ -1,9 +1,11 @@
 {{- /*
 One SandboxWarmPool per size, plus the unsized pi-env-pool on the default size (see template.yaml), and with
 security.allowDirectSandboxEgress the same set for the direct mode, pi-env-direct-pool[-<size>] (ADR 0038). Direct pools
-keep no warm Pods: they are template aliases, so allowing direct egress doubles nothing. With
+keep no warm Pods: they are template aliases, so allowing direct egress doubles nothing. No pool keeps warm Pods
+(replicas is always 0, and the schema caps every warmPoolReplicas at 0): claims carry env, so they are never adopted (ADR 0001).
+The pool objects stay because a SandboxClaim must reference one (plan.md). With
 sandbox.flavours.browser.enabled the browser flavour has the same set, pi-env-browser[-direct]-pool[-<size>]
-(docs/decisions/0041-browser-sandbox.md); its sized proxied pools keep sandbox.flavours.browser.warmPoolReplicas Pods.
+(docs/decisions/0041-browser-sandbox.md).
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
@@ -40,9 +42,7 @@ metadata:
     cela.dev/network-mode: {{ $p.mode }}
     cela.dev/sandbox-flavour: {{ $p.flavour }}
 spec:
-  {{- /* The unsized pools keep no warm Pods: they would duplicate the default size's pool. */}}
-  {{- $replicas := ternary $browser.warmPoolReplicas (index $root.Values.sandbox.sizes $p.size).warmPoolReplicas (eq $p.flavour "browser") }}
-  replicas: {{ if or (eq $p.mode "direct") (eq $p.name "pi-env-pool") (eq $p.name "pi-env-browser-pool") }}0{{ else }}{{ $replicas }}{{ end }}
+  replicas: 0
   sandboxTemplateRef:
     name: {{ $p.template }}
 {{ end -}}

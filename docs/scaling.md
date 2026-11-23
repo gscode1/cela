@@ -82,8 +82,8 @@ Nothing above 100 open bridges has been run; the V8 heap limit may be reached be
   still hold.
 
 **Pods.** An evicted env's Pod keeps running until idle suspend (30 minutes), so the cap bounds neither Pods nor claim
-creation. Bound them with a ResourceQuota on the namespace (`count/pods`, and CPU and memory requests) and the warm pool
-size.
+creation. Bound them with a ResourceQuota on the namespace (`count/pods`, and CPU and memory requests). Warm pools
+are not a lever: `warmPoolReplicas` is capped at 0 because claims carry env and are never adopted (ADR 0030).
 
 ## Behaviour to know
 
