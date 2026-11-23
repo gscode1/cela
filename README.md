@@ -144,6 +144,17 @@ orchestrator, but not to hostNetwork Pods (the Kubernetes API server, kubelet, e
 on kind because the `kube-api` target is reachable; the smoke test accepts that one finding and fails on any other.
 CI runs this on every pull request, and the Cilium lane on main, nightly and by hand ([workflow](.github/workflows/kind.yml)).
 
+The scripts run on macOS (Docker Desktop) and Linux. CI uses Ubuntu 24.04 with rootful Docker. On Linux:
+
+- Your user must reach the Docker daemon without sudo (the `docker` group). Rootless Docker and Podman are not
+  supported: the scripts call `docker` and read the `kind` Docker network.
+- If kind fails with "too many open files", raise the inotify limits
+  (`sudo sysctl fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288`), a
+  [known kind issue](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files).
+- The copy-to-clipboard commands use `wl-copy` or `xclip` when one is installed. Without either, they print to the terminal.
+
+Native Windows is not supported. WSL2 with Docker Desktop may work, since the scripts then run on Linux, but it is untested.
+
 ## Deploy on your cluster
 
 The app is the Helm chart [`charts/cela`](charts/cela/README.md), installed with `hack/install.sh`
