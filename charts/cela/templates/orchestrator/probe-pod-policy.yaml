@@ -1,0 +1,86 @@
+{{- if .Values.security.probePodPolicy.enabled }}
+# Constrains every Pod the orchestrator's ServiceAccount creates to the shape of the isolation probe Pod
+# (packages/orchestrator/src/netprobe-pod.ts), docs/decisions/0063-probe-pod-admission-policy.md. Why: RBAC cannot limit
+# what a `create pods` grant may put in the Pod, and a Pod can mount any Secret of the namespace (the database
+# superuser, OneCLI's encryption key) and wear any label (the pi-postgres and OneCLI NetworkPolicies admit by label).
+# The policy and its binding are cluster-scoped (ValidatingAdmissionPolicy, GA in Kubernetes 1.30), named after the
+# namespace; the binding applies to this namespace only. Set security.probePodPolicy.enabled=false only on a cluster
+# without the API, and accept the residual risk of the ADR.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pi-orchestrator-probe-pod-{{ .Release.Namespace }}
+  labels:
+    {{- include "cela.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: created-by-the-orchestrator
+      expression: {{ printf "request.userInfo.username == 'system:serviceaccount:%s:pi-orchestrator'" .Release.Namespace | toJson }}
+  variables:
+    - name: container
+      expression: "object.spec.containers[0]"
+  validations:
+    - messageExpression: "'the orchestrator may only create the isolation probe Pod: ' + string(object.metadata.name)"
+      expression: >-
+        object.metadata.name.startsWith('pi-netprobe-')
+        && has(object.metadata.labels)
+        && object.metadata.labels.size() == 3
+        && object.metadata.labels['app.kubernetes.io/name'] == 'pi-sandbox'
+        && object.metadata.labels['cela.dev/network-mode'] == 'proxied'
+        && 'cela/netprobe' in object.metadata.labels
+    - message: "the probe Pod runs as the default ServiceAccount without a token"
+      expression: >-
+        has(object.spec.serviceAccountName) && object.spec.serviceAccountName == 'default'
+        && has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false
+    - message: "the probe Pod has no volume, no host namespace and one container"
+      expression: >-
+        (!has(object.spec.volumes) || object.spec.volumes.size() == 0)
+        && (!has(object.spec.hostNetwork) || object.spec.hostNetwork == false)
+        && (!has(object.spec.hostPID) || object.spec.hostPID == false)
+        && (!has(object.spec.hostIPC) || object.spec.hostIPC == false)
+        && object.spec.containers.size() == 1
+        && (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0)
+        && (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0)
+    - message: "the probe Pod uses the sandbox runtime class"
+      expression: >-
+        {{ if .Values.sandbox.runtimeClassName -}}
+        has(object.spec.runtimeClassName) && object.spec.runtimeClassName == {{ .Values.sandbox.runtimeClassName | toJson }}
+        {{- else -}}
+        !has(object.spec.runtimeClassName) || object.spec.runtimeClassName == ''
+        {{- end }}
+    - message: "the probe container runs the orchestrator image with node, and takes no Secret or ConfigMap"
+      expression: >-
+        variables.container.image == {{ include "cela.image" (dict "name" "orchestrator" "image" .Values.images.orchestrator) | toJson }}
+        && variables.container.command.size() == 3
+        && variables.container.command[0] == 'node'
+        && variables.container.command[1] == '-e'
+        && (!has(variables.container.envFrom) || variables.container.envFrom.size() == 0)
+        && (!has(variables.container.env) || variables.container.env.all(e, !has(e.valueFrom)))
+        && (!has(variables.container.volumeMounts) || variables.container.volumeMounts.size() == 0)
+        && (!has(variables.container.volumeDevices) || variables.container.volumeDevices.size() == 0)
+        && (!has(variables.container.ports) || variables.container.ports.size() == 0)
+        && has(variables.container.securityContext)
+        && has(variables.container.securityContext.privileged) && variables.container.securityContext.privileged == false
+        && has(variables.container.securityContext.allowPrivilegeEscalation) && variables.container.securityContext.allowPrivilegeEscalation == false
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pi-orchestrator-probe-pod-{{ .Release.Namespace }}
+  labels:
+    {{- include "cela.labels" . | nindent 4 }}
+spec:
+  policyName: pi-orchestrator-probe-pod-{{ .Release.Namespace }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+{{- end }}

@@ -144,6 +144,7 @@ holds no OneCLI management key (only the orchestrator pods do).
 | --------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | Namespace, labels                             | cluster                              | created and deleted by `run.sh`; label `cela-e2e=true`                                     |
 | RBAC (driver, runner, orchestrator)           | Roles and RoleBindings in the namespace | nothing is cluster-wide; the orchestrator's comes from the chart, the driver's from the stack |
+| ValidatingAdmissionPolicy and binding `pi-orchestrator-probe-pod-<ns>` | cluster | created by the chart (ADR 0063), bound to the run namespace; `run.sh` deletes both with the namespace |
 | NetworkPolicy, CiliumNetworkPolicy            | in the namespace                     | created by the chart and the stack. They name other namespaces (`kube-system`, `postgres-system`, `envoy-gateway-system`, `onecli`) by name; unchanged |
 | CNPG operator (`postgres-system`)             | shared                               | not used by a run; the lab stack's Postgres still runs on it, untouched                          |
 | agent-sandbox controller, `gvisor` RuntimeClass | shared                             | cluster-wide, unchanged                                                                          |

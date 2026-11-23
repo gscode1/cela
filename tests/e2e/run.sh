@@ -146,6 +146,8 @@ cleanup() {
     return "$rc"
   fi
   # Deleting the namespace removes the Job and its pods, the Postgres release, the PVCs, sandboxes and secrets with it.
+  # The probe Pod admission policy of the chart is cluster-scoped (ADR 0063): it does not go with the namespace.
+  kc delete validatingadmissionpolicybinding,validatingadmissionpolicy "pi-orchestrator-probe-pod-$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   log "delete namespace $ns"
   kc delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || echo "could not delete namespace $ns; run tests/e2e/sweep.sh" >&2
   for _ in $(seq 1 "${NS_DELETE_WAIT_SECONDS:-300}"); do

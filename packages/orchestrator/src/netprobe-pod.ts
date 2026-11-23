@@ -8,6 +8,11 @@ export const SANDBOX_NAME_LABEL = "app.kubernetes.io/name";
 export const SANDBOX_NAME = "pi-sandbox";
 /** Hard stop in case the orchestrator dies mid-probe; its next start also deletes leftovers. */
 export const PROBE_DEADLINE_SECONDS = 120;
+/**
+ * The ServiceAccount of the probe Pod, with no token mounted. The chart's ValidatingAdmissionPolicy
+ * (charts/cela/templates/orchestrator/probe-pod-policy.yaml, docs/decisions/0063) admits no other Pod from the orchestrator.
+ */
+export const PROBE_SERVICE_ACCOUNT = "default";
 
 export interface ProbePlan {
   /** The name for the DNS control; absent: none (a proxied sandbox has no DNS, docs/decisions/0038-network-modes.md). */
@@ -55,7 +60,8 @@ export interface ProbePodInput {
 /**
  * A plain Pod with the sandbox's label, so every NetworkPolicy that selects sandboxes applies to it. It meets the
  * restricted Pod Security level (docs/decisions/0019) and has no service account token, no volume and no secret. It
- * stays out of the Sandbox controllers' sight: no claim, no PVC, no per-sandbox token.
+ * stays out of the Sandbox controllers' sight: no claim, no PVC, no per-sandbox token. The chart's admission policy
+ * admits exactly this shape from the orchestrator and nothing else: change the two together (netprobe-policy.test.ts).
  */
 export function buildProbePod(input: ProbePodInput): V1Pod {
   return {
@@ -72,6 +78,7 @@ export function buildProbePod(input: ProbePodInput): V1Pod {
     },
     spec: {
       restartPolicy: "Never",
+      serviceAccountName: PROBE_SERVICE_ACCOUNT,
       activeDeadlineSeconds: PROBE_DEADLINE_SECONDS,
       automountServiceAccountToken: false,
       enableServiceLinks: false,

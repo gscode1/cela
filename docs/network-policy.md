@@ -278,7 +278,12 @@ it never gates readiness, sessions or tools.
   every run that is not `enforced`; NOTES.txt tells the installer and `hack/install.sh` waits up to two minutes for the
   first result and prints it.
 - **RBAC.** The orchestrator's Role gets `create` and `list` on `pods` (it already had `get` and `delete`) and `get` on
-  `pods/log`, in the release namespace only (chart `rbac.yaml`).
+  `pods/log`, in the release namespace only (chart `rbac.yaml`). `create pods` would also let a compromised orchestrator
+  mount any Secret of the namespace (the database superuser, OneCLI's encryption key) and give a Pod any label or
+  ServiceAccount. A chart-shipped `ValidatingAdmissionPolicy` therefore admits only the probe Pod shape from the
+  orchestrator's ServiceAccount: the orchestrator image, no volume, no `envFrom` or `secretKeyRef`, fixed labels, the
+  `default` ServiceAccount without a token. It needs Kubernetes 1.30 or newer and is cluster-scoped; turn it off with
+  `security.probePodPolicy.enabled=false` on a cluster without the API, and the exposure returns ([ADR 0063](decisions/0063-probe-pod-admission-policy.md), with the residual risk).
 - **Live-verified:** not yet. To see `not-enforced`, remove the policies in a scratch namespace (`kubectl -n <ns> delete
   networkpolicy --all`) or install on a CNI that ignores them (flannel alone), then `POST /admin/status/probe`.
 
