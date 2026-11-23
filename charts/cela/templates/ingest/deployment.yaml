@@ -51,6 +51,9 @@ spec:
           env:
             - { name: HOME, value: /tmp }
             - { name: PI_INGEST_PORT, value: "8080" }
+            {{- if .Values.egressProxy.enabled }}
+            - { name: PI_EGRESS_READER_ROLE, value: {{ .Values.egressProxy.database.role | quote }} }
+            {{- end }}
             # Shards can only grow: a session stays on its shard (ADR 0017). Ingest refuses to start when stored
             # sessions name a shard without a route.
             - { name: PI_ORCH_SHARDS, value: {{ $shards | quote }} }

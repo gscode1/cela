@@ -27,8 +27,9 @@ the proxy needs no access to schema `inbox` (the single owner per schema stays, 
 set that was deleted later simply matches nothing. The profile name and version are kept for explain and audit.
 
 `grant_proxy_reader` now also grants `select` on the principal columns **except `token_salt`** (a column grant), still no
-write besides `proxy_status`. A reader named other than `pi_egress` runs `select egress.grant_proxy_reader('<role>')` once
-more after upgrading.
+write besides `proxy_status`. With `PI_EGRESS_READER_ROLE` configured, the migrator reapplies missing grants after
+upgrading, including for custom reader names (issue #378; see ADR 0035). Without it, a custom reader still needs
+`select egress.grant_proxy_reader('<role>')` as the owner after upgrading.
 
 ### The token
 

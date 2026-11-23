@@ -18,8 +18,11 @@ On 2026-11-16 ingest pods crash-looped while repo sessions were starting:
 ## Decision
 
 - `inbox.schema_migrations(version, applied_at)` records each applied file. A start reads it with a plain SELECT;
-  when every file is recorded it returns without a lock or any DDL. Only a missing file takes the advisory lock, under
-  `lock_timeout = 3s`, and runs just the missing files (still idempotent). The caller retries on failure.
+  when every file is recorded it returns without a lock or any DDL. With `PI_EGRESS_READER_ROLE` configured, it also
+  checks the reader's privileges using SELECTs. Missing files or reader grants take the advisory lock under
+  `lock_timeout = 3s`: run just the missing files (still idempotent), then recheck and repair missing reader grants
+  using `egress.grant_proxy_reader`. A missing reader role skips grants with a caller-logged warning, not a migration
+  failure; the next start rechecks it. Healthy restarts remain lock-free. The caller retries on failure.
 - Rollout: a database that predates the table has everything applied but nothing recorded. Its first start takes the
   slow path once: the idempotent files re-run (no change) and are recorded. That one run still needs the DDL locks,
   so it can fail fast behind a long drain and retry until the orchestrator is between rows; afterwards no start does

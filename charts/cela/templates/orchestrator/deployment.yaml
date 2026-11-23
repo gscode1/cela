@@ -96,6 +96,7 @@ spec:
             # Every session's tool commands go through the egress proxy with a per-session token (ADR 0036); a repo
             # session's OneCLI token is sealed for the proxy with the binding key and never reaches the sandbox (ADR 0037).
             - { name: PI_EGRESS_PROXY_URL, value: "http://pi-egress-proxy.{{ $root.Release.Namespace }}.svc:3128" }
+            - { name: PI_EGRESS_READER_ROLE, value: {{ $root.Values.egressProxy.database.role | quote }} }
             {{- if include "cela.egressOnecliRoute" $root }}
             - { name: PI_EGRESS_BINDING_KEY_FILE, value: /etc/pi-egress-binding/key }
             {{- end }}

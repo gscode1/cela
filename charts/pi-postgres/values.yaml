@@ -30,8 +30,8 @@ auth:
       passwordKey: onecli-password
   # The egress proxy's read-only role (charts/cela egressProxy, ADR 0035), created in the `pi` database: it may
   # connect and gets the grants of egress.grant_proxy_reader (read the egress rule tables, write its own status row).
-  # Off by default; the app's migration 025 grants a role named pi_egress, and the init sidecar grants any name once the
-  # egress schema exists.
+  # Off by default. Match charts/cela egressProxy.database.role to this role: the app reconciles grants after
+  # migrations, without restarting Postgres. The init sidecar grants only if the grant function already exists.
   egressReader:
     enabled: false
     role: pi_egress

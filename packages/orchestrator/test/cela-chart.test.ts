@@ -1292,6 +1292,41 @@ describe("egressProxy (ADR 0035)", () => {
     );
   });
 
+  it("configures every migrator with the reader role only when the proxy is enabled", () => {
+    for (const [args, role] of [
+      [on, "pi_egress"],
+      [
+        [
+          ...on,
+          "--set",
+          "egressProxy.database.role=custom-reader",
+          "--set",
+          "orchestrator.shards=3",
+        ],
+        "custom-reader",
+      ],
+      [proxyOff, undefined],
+    ] as const) {
+      const migrators = docs([...args]).filter(
+        (d) =>
+          d.kind === "Deployment" &&
+          (d.metadata.name === "pi-ingest" || d.metadata.name.startsWith("pi-orchestrator")),
+      );
+      expect(migrators.some((d) => d.metadata.name === "pi-ingest")).toBe(true);
+      expect(migrators.some((d) => d.metadata.name.startsWith("pi-orchestrator"))).toBe(true);
+      for (const deployment of migrators) {
+        const env = envOf(deployment);
+        if (role === undefined) {
+          expect(env).not.toHaveProperty("PI_EGRESS_READER_ROLE");
+          expect(env).not.toHaveProperty("PI_EGRESS_PROXY_URL");
+        } else {
+          expect(env.PI_EGRESS_READER_ROLE?.value).toBe(role);
+        }
+      }
+    }
+    expect(() => docs([...on, "--set", "egressProxy.database.role="])).toThrow();
+  });
+
   it("tells the orchestrators where the proxy is only when it is enabled, and requires a token unless told otherwise", () => {
     const orchestrator = (list: Obj[]) =>
       envOf(

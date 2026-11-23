@@ -48,7 +48,19 @@ async function main(): Promise<void> {
   void (async () => {
     while (!state.stopping) {
       try {
-        await applyMigrations(pool);
+        const { missingEgressReaderRole } = await applyMigrations(
+          pool,
+          undefined,
+          process.env.PI_EGRESS_READER_ROLE || undefined,
+        );
+        if (missingEgressReaderRole !== undefined) {
+          log("egress-reader-role-missing", {
+            level: "warn",
+            role: missingEgressReaderRole,
+            message:
+              "Reader role does not exist; skipping grants. Create it and restart the app to retry.",
+          });
+        }
         await assertSessionShardRoutes(pool, config.shards);
         // Seed once from the environment (a no-op when the row exists); after that the table wins.
         await seedSettings(pool, config.seed);

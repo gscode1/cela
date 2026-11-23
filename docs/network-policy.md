@@ -375,7 +375,12 @@ does not match Pod or Service addresses with a `cidr` rule, so use selectors for
 The proxy needs two Secrets and a role. The database Secret (`egressProxy.database.existingSecret`; `hack/install.sh` names
 it `pi-egress-database` and creates it from `EGRESS_DATABASE_URL`) holds the URI of the read-only role `pi_egress`, which
 only a database admin can create: `auth.egressReader.enabled=true` with charts/pi-postgres, otherwise once by hand (the
-statements are in `egressProxy.database` of [values.yaml](../charts/cela/values.yaml)). With OneCLI the binding key
+statements are in `egressProxy.database` of [values.yaml](../charts/cela/values.yaml)). Set `egressProxy.database.role`
+to the URI username (default `pi_egress`) and match `auth.egressReader.role` for bundled Postgres. Ingest and orchestrator
+pass it as `PI_EGRESS_READER_ROLE` to the migrator, which repairs missing grants after migrations without restarting
+Postgres. External Postgres uses the same mechanism: provision the role and CONNECT privilege first; the app must own
+the egress tables, not have CREATEROLE. If the role is missing, the app warns and skips grants without blocking app
+readiness; create the role and restart the app to retry. The proxy stays fail-closed until it can read. With OneCLI the binding key
 (`egressProxy.binding.existingSecret`, `pi-egress-binding`) seals the OneCLI tokens; `hack/install.sh` creates it once.
 The chart refuses to render with the proxy on and either name empty. The database must admit the proxy's pods on 5432
 (charts/pi-postgres does, `networkPolicy.clientSelectors`).
