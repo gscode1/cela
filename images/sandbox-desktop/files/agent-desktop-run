@@ -83,6 +83,20 @@ pgrep -u "$(id -u)" -x openbox >/dev/null || {
   setsid openbox >/dev/null 2>&1 </dev/null &
   sleep 0.5
 }
+# Lab live view (ADR 0065): x11vnc (view-only, enforced here, not in the client) and noVNC behind websockify, both on loopback,
+# so only `kubectl port-forward pod/<pod> 6080:6080` reaches them. No password: loopback plus the cluster's pods/portforward
+# RBAC is the gate. Checked on every call like openbox; PI_DESKTOP_LIVE_VIEW=0 turns it off. The agent does not use it.
+if [ "${PI_DESKTOP_LIVE_VIEW:-1}" != 0 ]; then
+  log_dir=/tmp/pi-desktop
+  mkdir -p "$log_dir"
+  pgrep -u "$(id -u)" -x x11vnc >/dev/null || {
+    setsid x11vnc -display :99 -listen 127.0.0.1 -rfbport 5900 -localhost -viewonly -shared -forever -nopw -noxdamage \
+      -noipv6 -quiet -o "$log_dir/x11vnc.log" >/dev/null 2>&1 </dev/null &
+  }
+  pgrep -u "$(id -u)" -f 'websockify.*127\.0\.0\.1:6080' >/dev/null || {
+    setsid websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900 >"$log_dir/websockify.log" 2>&1 </dev/null &
+  }
+fi
 # Toolkit accessibility switches for every app the session runs. NO_AT_BRIDGE would turn the GTK bridge off.
 export QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 SAL_USE_VCLPLUGIN=gtk3
 unset NO_AT_BRIDGE
