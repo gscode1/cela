@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Starts one of the sandbox's desktop apps, detached, in the desktop session with the accessibility switches it needs
+# (docs/decisions/0065-desktop-sandbox.md). Waits until a new window is visible, then prints the pid.
+#
+#   desktop-launch mousepad [file...]
+#   desktop-launch writer [file...]            LibreOffice Writer
+#   desktop-launch firefox [url]               default about:blank; web traffic only through the egress proxy
+#
+# Environment: HTTPS_PROXY (the session's egress proxy; when absent Firefox runs without a proxy, which only a network-mode
+# direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_STATE (/tmp/pi-desktop), PI_DESKTOP_WAIT_SECONDS (60).
+set -euo pipefail
+export NODE_NO_WARNINGS=1 # the platform sets NODE_USE_ENV_PROXY, whose experimental warning would fill the forwarder log
+
+proxy_port=${PI_BROWSER_PROXY_PORT:-3129}
+state=${PI_DESKTOP_STATE:-/tmp/pi-desktop}
+wait_seconds=${PI_DESKTOP_WAIT_SECONDS:-60}
+run=(agent-desktop-run --exec)
+
+usage() { echo "usage: desktop-launch mousepad|writer|firefox [args]" >&2; exit 64; }
+[[ $# -ge 1 ]] || usage
+app=$1
+shift
+
+mkdir -p "$state" /workspace/downloads /workspace/.cache 2>/dev/null || true
+chmod 700 "$state"
+
+# Starts the loopback forwarder that adds the egress token to CONNECT requests; Firefox's proxy policy points at it.
+start_forwarder() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$proxy_port") 2>/dev/null && return
+  BROWSER_PROXY_PORT=$proxy_port setsid node /opt/browser-proxy/dist/main.js >"$state/forwarder.log" 2>&1 </dev/null &
+  for _ in $(seq 1 50); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$proxy_port") 2>/dev/null && return
+    sleep 0.1
+  done
+  echo "the egress forwarder did not start; see $state/forwarder.log" >&2
+  exit 1
+}
+
+# xdotool exits 1 when it finds no window, which is a count of 0 here.
+visible_windows() { { "${run[@]}" xdotool search --onlyvisible --name '.' 2>/dev/null || true; } | wc -l; }
+
+case $app in
+  mousepad) cmd=(mousepad "$@") ;;
+  writer) cmd=(soffice --writer --norestore --nologo "$@") ;;
+  firefox)
+    # A fresh profile at every launch: no history, cookies or sign-in survive a restart. The policy file does the rest.
+    profile=$state/firefox-profile
+    rm -rf "$profile"
+    mkdir -p "$profile"
+    {
+      echo 'user_pref("browser.aboutwelcome.enabled", false);'
+      echo 'user_pref("browser.startup.homepage_override.mstone", "ignore");'
+      echo 'user_pref("browser.shell.checkDefaultBrowser", false);'
+      echo 'user_pref("browser.sessionstore.resume_from_crash", false);'
+      echo 'user_pref("browser.tabs.warnOnClose", false);'
+      echo 'user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);'
+      echo 'user_pref("datareporting.policy.dataSubmissionEnabled", false);'
+    } >"$profile/user.js"
+    if [[ -n ${HTTPS_PROXY:-${https_proxy:-}} ]]; then
+      start_forwarder
+    else
+      echo 'user_pref("network.proxy.type", 0);' >>"$profile/user.js"
+    fi
+    # GNOME_ACCESSIBILITY: without it Firefox does not register on the accessibility bus. No Firefox content sandbox: it
+    # needs user namespaces, which the Pod does not have; the sandbox runtime is the boundary.
+    export MOZ_ENABLE_WAYLAND=0 MOZ_DISABLE_CONTENT_SANDBOX=1 GNOME_ACCESSIBILITY=1 MOZ_CRASHREPORTER_DISABLE=1
+    cmd=(firefox-esr --no-remote --profile "$profile" "${1:-about:blank}")
+    ;;
+  *) usage ;;
+esac
+
+before=$(visible_windows)
+setsid "${run[@]}" "${cmd[@]}" >"$state/$app.log" 2>&1 </dev/null &
+pid=$!
+for _ in $(seq 1 $((wait_seconds * 2))); do
+  [[ $(visible_windows) -gt $before ]] && break
+  sleep 0.5
+done
+if [[ $(visible_windows) -le $before ]]; then
+  echo "$app did not show a window within ${wait_seconds}s; see $state/$app.log" >&2
+  tail -n 10 "$state/$app.log" >&2 || true
+  exit 1
+fi
+# The window exists before the toolkit has published its accessibility tree.
+sleep 2
+echo "$app started, pid $pid"

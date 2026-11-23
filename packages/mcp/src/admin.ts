@@ -84,10 +84,10 @@ export const PROFILE_DEFINITION_SHAPE = {
       "proxied (default: egress proxy and rules) or direct (open internet; only where the deployment allows it).",
     ),
   sandboxFlavour: z
-    .enum(["default", "browser"])
+    .enum(["default", "browser", "desktop"])
     .optional()
     .describe(
-      "Sandbox image; browser adds Chromium and only works where the deployment enables it.",
+      "Sandbox image; browser adds Chromium and desktop adds a virtual desktop with apps; both only work where the deployment enables them.",
     ),
   sandboxRuntime: z
     .string()

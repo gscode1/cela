@@ -1827,6 +1827,187 @@ describe("browser flavour (ADR 0041)", () => {
   });
 });
 
+describe("desktop flavour (ADR 0065)", () => {
+  const desktop = [
+    "--set",
+    "sandbox.flavours.desktop.enabled=true",
+    "--set",
+    "images.sandboxDesktop.tag=test",
+  ];
+  const gate = [
+    "--set",
+    "egressProxy.enabled=true",
+    "--set",
+    "egressProxy.database.existingSecret=pi-egress-database",
+    "--set",
+    "egressProxy.binding.existingSecret=pi-egress-binding",
+    "--set",
+    "security.allowDirectSandboxEgress=true",
+  ];
+  const sizes = ["l", "m", "s", "xl"];
+  const sandboxd = (template: Obj): Obj => template.spec.podTemplate.spec.containers[0];
+  const names = (list: Obj[], kind: string): string[] =>
+    ofKind(list, kind).map((d) => d.metadata.name);
+  const isDesktop = (n: string): boolean => n.includes("desktop");
+
+  it("is off by default: nothing desktop is rendered and ingest is not told of it", () => {
+    const list = docs(external);
+    expect(names(list, "SandboxTemplate").filter(isDesktop)).toEqual([]);
+    expect(names(list, "SandboxWarmPool").filter(isDesktop)).toEqual([]);
+    expect(JSON.stringify(list)).not.toContain("pi-sandbox-desktop");
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe(
+      "browser",
+    );
+  });
+
+  it("needs no desktop image while it is off, and requires one when it is on", () => {
+    expect(() => docs(external)).not.toThrow();
+    expect(() => docs([...external, "--set", "sandbox.flavours.desktop.enabled=true"])).toThrow(
+      /images\.sandboxDesktop/,
+    );
+    expect(() => docs([...external, ...desktop])).not.toThrow();
+  });
+
+  it("renders a template and a non-warm pool per size, plus the unsized pair, and tells ingest", () => {
+    const list = docs([...external, ...desktop]);
+    const expected = [
+      "pi-env-desktop-template",
+      ...sizes.map((s) => `pi-env-desktop-template-${s}`),
+    ];
+    expect(names(list, "SandboxTemplate").filter(isDesktop)).toEqual(expected);
+    expect(names(list, "SandboxWarmPool").filter(isDesktop)).toEqual(
+      expected.map((n) => n.replace("template", "pool")),
+    );
+    for (const pool of ofKind(list, "SandboxWarmPool").filter((d) => isDesktop(d.metadata.name))) {
+      expect(pool.spec.replicas).toBe(0);
+      expect(pool.spec.sandboxTemplateRef.name).toBe(
+        pool.metadata.name.replace("pool", "template"),
+      );
+    }
+    // The default and browser flavours are unchanged.
+    expect(names(list, "SandboxTemplate").filter((n) => !isDesktop(n))).toHaveLength(10);
+    expect(envOf(named(list, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe(
+      "browser,desktop",
+    );
+    const onlyDesktop = docs([
+      ...external,
+      ...desktop,
+      "--set",
+      "sandbox.flavours.browser.enabled=false",
+    ]);
+    expect(envOf(named(onlyDesktop, "Deployment", "pi-ingest")).PI_SANDBOX_FLAVOURS?.value).toBe(
+      "desktop",
+    );
+  });
+
+  it("gives the desktop pods their own image, resources, /dev/shm and the restricted Pod security", () => {
+    const list = docs([...external, ...desktop]);
+    const template = named(list, "SandboxTemplate", "pi-env-desktop-template-m");
+    const container = sandboxd(template);
+    expect(container.image).toBe("ghcr.io/gscode1/pi-sandbox-desktop:test");
+    expect(container.resources).toEqual({
+      requests: { cpu: "1", memory: "2Gi" },
+      limits: { cpu: "4", memory: "6Gi", "ephemeral-storage": "4Gi" },
+    });
+    expect(container.volumeMounts).toContainEqual({ name: "dshm", mountPath: "/dev/shm" });
+    expect(template.spec.podTemplate.spec.volumes).toEqual([
+      { name: "dshm", emptyDir: { medium: "Memory", sizeLimit: "256Mi" } },
+    ]);
+    expect(template.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("5Gi");
+    expect(template.spec.podTemplate.spec.runtimeClassName).toBe("gvisor");
+    expect(template.spec.podTemplate.spec.automountServiceAccountToken).toBe(false);
+    expect(container.securityContext.capabilities).toEqual({ drop: ["ALL"] });
+    expect(container.securityContext.allowPrivilegeEscalation).toBe(false);
+    expect(template.spec.podTemplate.spec.securityContext.runAsNonRoot).toBe(true);
+    expect(template.spec.podTemplate.metadata.labels).toMatchObject({
+      "app.kubernetes.io/name": "pi-sandbox",
+      "cela.dev/network-mode": "proxied",
+      "cela.dev/sandbox-flavour": "desktop",
+    });
+  });
+
+  it("renders the direct twins with the gate", () => {
+    const list = docs([...external, ...gate, ...desktop]);
+    const templates = names(list, "SandboxTemplate").filter(isDesktop);
+    expect(templates).toHaveLength(10);
+    expect(templates).toContain("pi-env-desktop-direct-template-xl");
+    expect(
+      named(list, "SandboxTemplate", "pi-env-desktop-direct-template-s").spec.podTemplate.metadata
+        .labels["cela.dev/network-mode"],
+    ).toBe("direct");
+    expect(named(list, "SandboxWarmPool", "pi-env-desktop-direct-pool-m").spec.replicas).toBe(0);
+  });
+
+  it("refuses warm pool replicas above 0", () => {
+    const key = "sandbox.flavours.desktop.warmPoolReplicas";
+    expect(() => docs([...external, ...desktop, "--set", `${key}=1`])).toThrow(
+      /warmPoolReplicas|maximum/,
+    );
+  });
+
+  describe("with a named runtime", () => {
+    const kvm = [
+      "--set",
+      "sandbox.runtimes.gvisorkvm.runtimeClassName=gvisor-kvm",
+      "--set",
+      "sandbox.runtimes.gvisorkvm.flavours={default,desktop}",
+    ];
+
+    it("renders pi-env-rt-<runtime>-desktop-* under the entry's class, proxied only", () => {
+      const list = docs([...external, ...gate, ...desktop, ...kvm]);
+      const expected = [
+        "pi-env-rt-gvisorkvm-desktop-template",
+        ...sizes.map((s) => `pi-env-rt-gvisorkvm-desktop-template-${s}`),
+      ];
+      expect(
+        names(list, "SandboxTemplate").filter((n) => n.includes("-rt-") && isDesktop(n)),
+      ).toEqual(expected);
+      expect(
+        names(list, "SandboxWarmPool").filter((n) => n.includes("-rt-") && isDesktop(n)),
+      ).toEqual(expected.map((n) => n.replace("template", "pool")));
+      const t = named(list, "SandboxTemplate", "pi-env-rt-gvisorkvm-desktop-template-m");
+      expect(t.spec.podTemplate.spec.runtimeClassName).toBe("gvisor-kvm");
+      expect(t.metadata.labels["cela.dev/sandbox-flavour"]).toBe("desktop");
+      expect(sandboxd(t).image).toBe("ghcr.io/gscode1/pi-sandbox-desktop:test");
+    });
+
+    it("has warmPoolFor name every rendered desktop pool, and no pool exists that it cannot name", () => {
+      const list = docs([...external, ...gate, ...desktop, ...kvm]);
+      const reachable = new Set<string>();
+      for (const [runtime, modes] of [
+        [null, ["proxied", "direct"]],
+        ["gvisorkvm", ["proxied"]],
+      ] as const)
+        for (const mode of modes)
+          for (const size of [null, ...sizes]) {
+            const pool = warmPoolFor("pi-env-pool", size, mode, "desktop", runtime);
+            reachable.add(pool);
+            const rendered = named(list, "SandboxWarmPool", pool);
+            expect(
+              named(list, "SandboxTemplate", rendered.spec.sandboxTemplateRef.name),
+            ).toBeDefined();
+          }
+      expect(new Set(names(list, "SandboxWarmPool").filter(isDesktop))).toEqual(reachable);
+    });
+
+    it("refuses desktop in a runtime while the flavour is off, with and without the schema", () => {
+      const off = [...external, ...kvm];
+      expect(() => helmTemplate(chart, off)).toThrow(/desktop/);
+      expect(() => helmTemplate(chart, [...off, "--skip-schema-validation"])).toThrow(/desktop/);
+    });
+
+    it("reserves desktop as a runtime name", () => {
+      expect(() =>
+        helmTemplate(chart, [
+          ...external,
+          "--set",
+          "sandbox.runtimes.desktop.runtimeClassName=gvisor-kvm",
+        ]),
+      ).toThrow(/reserved|runtimes|propertyNames|not/);
+    });
+  });
+});
+
 describe("custom model providers (ADR 0056)", () => {
   const omlx = {
     id: "omlx",

@@ -62,7 +62,7 @@ export function sizeSummary(size: SandboxSize): string {
  * 0041). When the deployment offers one choice for each and the profile uses the default, there is nothing to pick and
  * one muted line says what the sandbox is. Otherwise one row of three selects, so a value the profile already has stays
  * visible. Sizes are the deployment's (chart values); one that is no longer defined stays visible with a way to drop it,
- * since the API refuses to store it again. `direct` and `browser` are disabled while the chart does not allow them, and a
+ * since the API refuses to store it again. `direct`, `browser` and `desktop` are disabled while the chart does not allow them, and a
  * profile that already says so keeps showing it.
  */
 export function SandboxPicker({
@@ -100,6 +100,7 @@ export function SandboxPicker({
   const defined = (name: string): boolean => sizes.some((entry) => entry.name === name);
   const directAllowed = modeCatalog?.directAllowed === true;
   const browserEnabled = flavourCatalog?.browserEnabled === true;
+  const desktopEnabled = flavourCatalog?.desktopEnabled === true;
   const runtimes = runtimeCatalog?.runtimes ?? [];
   const nothingToPick =
     sizeCatalog !== undefined &&
@@ -114,6 +115,7 @@ export function SandboxPicker({
     !directAllowed &&
     mode === "proxied" &&
     !browserEnabled &&
+    !desktopEnabled &&
     flavour === "default";
   if (nothingToPick) {
     return (
@@ -176,7 +178,10 @@ export function SandboxPicker({
             value={flavour}
             onChange={(event) => {
               onChange({
-                sandboxFlavour: event.target.value === "browser" ? "browser" : "default",
+                sandboxFlavour:
+                  event.target.value === "browser" || event.target.value === "desktop"
+                    ? event.target.value
+                    : "default",
               });
             }}
           >
@@ -188,6 +193,14 @@ export function SandboxPicker({
             >
               Browser: Chromium and agent-browser
               {browserEnabled ? "" : " (not enabled)"}
+            </option>
+            <option
+              value="desktop"
+              disabled={!desktopEnabled && flavour !== "desktop"}
+              {...(desktopEnabled ? {} : { title: "Not enabled in this deployment" })}
+            >
+              Desktop: virtual desktop, Firefox, LibreOffice and agent-desktop
+              {desktopEnabled ? "" : " (not enabled)"}
             </option>
           </Select>
         </div>
@@ -226,8 +239,8 @@ export function SandboxPicker({
           repositories, credentialed MCP servers or rule sets with a OneCLI route.
         </p>
       )}
-      {flavour === "browser" && (
-        <p className="text-sm text-muted-foreground" data-testid="browser-note">
+      {(flavour === "browser" || flavour === "desktop") && (
+        <p className="text-sm text-muted-foreground" data-testid={`${flavour}-note`}>
           Pair it with the proxied network mode and an egress rule set that allows the sites. Not
           combinable with repositories, credentialed MCP servers or rule sets with a OneCLI route.
         </p>

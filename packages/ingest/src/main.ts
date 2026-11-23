@@ -34,6 +34,7 @@ async function main(): Promise<void> {
     sandboxSizes: config.sandboxSizes,
     allowDirectSandboxEgress: config.allowDirectSandboxEgress,
     browserFlavourEnabled: config.browserFlavourEnabled,
+    desktopFlavourEnabled: config.desktopFlavourEnabled,
     sandboxRuntimes: config.sandboxRuntimes,
     schemaReady: () => schemaReady,
   });

@@ -20,7 +20,11 @@ const seed: Settings = {
 };
 
 const runtimes: SandboxRuntimes = {
-  gvisorkvm: { runtimeClassName: "gvisor-kvm", insecure: false, flavours: ["default", "browser"] },
+  gvisorkvm: {
+    runtimeClassName: "gvisor-kvm",
+    insecure: false,
+    flavours: ["default", "browser", "desktop"],
+  },
   runc: { runtimeClassName: "runc-sandbox", insecure: true, flavours: ["default"] },
 };
 
@@ -55,6 +59,7 @@ async function start(
     sandboxRuntimes,
     allowDirectSandboxEgress: options.allowDirect ?? false,
     browserFlavourEnabled: options.browser ?? true,
+    desktopFlavourEnabled: true,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
   return { base: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, db };
@@ -102,6 +107,15 @@ describe("sandbox runtimes", () => {
     const written = await put(base, "kvmweb", {
       sandboxRuntime: "gvisorkvm",
       sandboxFlavour: "browser",
+    });
+    expect(written.status).toBe(201);
+  });
+
+  it("accepts a runtime that lists the desktop flavour", async () => {
+    const { base } = await start(runtimes);
+    const written = await put(base, "kvmdesk", {
+      sandboxRuntime: "gvisorkvm",
+      sandboxFlavour: "desktop",
     });
     expect(written.status).toBe(201);
   });
@@ -204,7 +218,7 @@ describe("sandbox runtimes", () => {
     const { base } = await start(runtimes);
     expect(await json(await call(base, "alice", "GET", "/admin/sandbox-runtimes"))).toEqual({
       runtimes: [
-        { name: "gvisorkvm", flavours: ["default", "browser"], insecure: false },
+        { name: "gvisorkvm", flavours: ["default", "browser", "desktop"], insecure: false },
         { name: "runc", flavours: ["default"], insecure: true },
       ],
       defaultRuntime: "default",

@@ -364,7 +364,7 @@ export async function putMcpServer(
     }
     const next = validateMcpServer(name, body, current?.server);
     if (typeof next === "string") return next;
-    // A browser or direct session holds no credential (ADR 0041, 0038): profile writes refuse a credentialed server for
+    // A browser, desktop or direct session holds no credential (ADR 0041, 0065, 0038): profile writes refuse a credentialed server for
     // them, and this is the same check from the catalog side. The catalog lock above keeps a profile write from slipping
     // in between.
     if (next.onecliSecret !== null) {
@@ -426,27 +426,32 @@ export async function putMcpServer(
 }
 
 /**
- * Why `name` cannot be credentialed now, or undefined: the current version of a profile that names it is a browser
- * flavour or direct network mode one (the same pairs `browserFlavourConflict` and `directModeConflict` refuse when the
+ * Why `name` cannot be credentialed now, or undefined: the current version of a profile that names it is a browser or desktop
+ * flavour or direct network mode one (the same pairs `untrustedFlavourConflict` and `directModeConflict` refuse when the
  * profile is written). The message for a 400.
  */
 async function credentialedRefusal(
   client: Pick<pg.PoolClient, "query">,
   name: string,
 ): Promise<string | undefined> {
-  const { rows } = await client.query<{ name: string; browser: boolean; direct: boolean }>(
-    `select p.name, v.definition->>'sandboxFlavour' = 'browser' as browser,
+  const { rows } = await client.query<{ name: string; flavour: string | null; direct: boolean }>(
+    `select p.name,
+            case when v.definition->>'sandboxFlavour' in ('browser', 'desktop')
+                 then v.definition->>'sandboxFlavour' end as flavour,
             v.definition->>'networkMode' = 'direct' as direct
        from inbox.profiles p
        join inbox.profile_versions v on v.name = p.name and v.version = p.current_version
       where v.definition->'mcpServers' ? $1
-        and (v.definition->>'sandboxFlavour' = 'browser' or v.definition->>'networkMode' = 'direct')
+        and (v.definition->>'sandboxFlavour' in ('browser', 'desktop') or v.definition->>'networkMode' = 'direct')
       order by p.name`,
     [name],
   );
   if (rows.length === 0) return undefined;
   const which = rows
-    .map((row) => `${row.name} (${row.browser ? "sandboxFlavour browser" : "networkMode direct"})`)
+    .map(
+      (row) =>
+        `${row.name} (${row.flavour !== null ? `sandboxFlavour ${row.flavour}` : "networkMode direct"})`,
+    )
     .join(", ");
   return `MCP server ${name} cannot have an onecliSecret while profiles that cannot hold credentials name it: ${which}. Remove it from them first`;
 }

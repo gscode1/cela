@@ -216,16 +216,18 @@ describe("the catalog in the database", () => {
   });
 });
 
-describe("a credential for a server that a browser or direct profile names (ADR 0041, 0038)", () => {
+describe("a credential for a server that a browser, desktop or direct profile names (ADR 0041, 0065, 0038)", () => {
   const KNOWN = {
     tools: ["read"],
     mcpServers: ["demo"],
     browserFlavourEnabled: true,
+    desktopFlavourEnabled: true,
     allowDirectEgress: true,
   };
 
   it.each([
     ["a browser", { sandboxFlavour: "browser" }, "sandboxFlavour browser"],
+    ["a desktop", { sandboxFlavour: "desktop" }, "sandboxFlavour desktop"],
     ["a direct", { networkMode: "direct" }, "networkMode direct"],
   ])("refuses onecliSecret while %s profile names the server", async (_label, extra, words) => {
     const db = new FakeSettingsDb();

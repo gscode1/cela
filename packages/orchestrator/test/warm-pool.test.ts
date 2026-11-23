@@ -35,6 +35,19 @@ describe("warmPoolFor", () => {
     );
   });
 
+  // ADR 0065: the desktop flavour composes the same way, as a third flavour.
+  it("picks the desktop pool of the session's size, mode and runtime", () => {
+    expect(warmPoolFor("pi-env-pool", "m", "proxied", "desktop", null)).toBe(
+      "pi-env-desktop-pool-m",
+    );
+    expect(warmPoolFor("pi-env-pool", null, "direct", "desktop", null)).toBe(
+      "pi-env-desktop-direct-pool",
+    );
+    expect(warmPoolFor("pi-env-pool", "m", "proxied", "desktop", "gvisorkvm")).toBe(
+      "pi-env-rt-gvisorkvm-desktop-pool-m",
+    );
+  });
+
   it("keeps the default flavour's names, and no size can reach the browser pools", () => {
     expect(warmPoolFor("pi-env-pool", "m", "proxied", "default", null)).toBe("pi-env-pool-m");
     const browser = new Set(
@@ -67,9 +80,9 @@ describe("warmPoolFor", () => {
   it("never lets a runtime name, a flavour, a mode or a size reach another pool", () => {
     const all = new Map<string, string>();
     for (const runtime of [null, "runc", "gvisorkvm", "a1"])
-      for (const flavour of ["default", "browser"] as const)
+      for (const flavour of ["default", "browser", "desktop"] as const)
         for (const mode of ["proxied", "direct"] as const)
-          for (const size of [null, "s", "m", "direct-s", "browser-s"]) {
+          for (const size of [null, "s", "m", "direct-s", "browser-s", "desktop-s"]) {
             const key = JSON.stringify([runtime, flavour, mode, size]);
             const name = warmPoolFor("pi-env-pool", size, mode, flavour, runtime);
             expect(all.get(name), `${name}: ${key} and ${all.get(name) ?? ""}`).toBeUndefined();

@@ -27,7 +27,11 @@ afterEach(async () => {
   await cache?.stop();
 });
 
-async function start(browserFlavourEnabled: boolean, shared?: FakeSettingsDb) {
+async function start(
+  browserFlavourEnabled: boolean,
+  shared?: FakeSettingsDb,
+  desktopFlavourEnabled = false,
+) {
   const db = shared ?? new FakeSettingsDb();
   await seedSettings(db.asPool(), seed);
   cache = new SettingsCache(db.asPool(), { pollMs: 60_000 });
@@ -45,6 +49,7 @@ async function start(browserFlavourEnabled: boolean, shared?: FakeSettingsDb) {
     admins: ["alice"],
     schemaReady: () => true,
     browserFlavourEnabled,
+    desktopFlavourEnabled,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
   return { base: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, db };
@@ -162,7 +167,7 @@ describe("sandbox flavours", () => {
       definition: { sandboxFlavour: "gpu" },
     });
     expect(put.status).toBe(400);
-    expect((await json(put)).error).toBe("sandboxFlavour must be one of default, browser");
+    expect((await json(put)).error).toBe("sandboxFlavour must be one of default, browser, desktop");
   });
 
   it("lists the flavours for admins: browser only when enabled", async () => {
@@ -171,11 +176,78 @@ describe("sandbox flavours", () => {
       flavours: ["default"],
       defaultFlavour: "default",
       browserEnabled: false,
+      desktopEnabled: false,
     });
     expect((await call(off.base, "bob", "GET", "/admin/sandbox-flavours")).status).toBe(403);
     const on = await start(true);
     expect(
       (await json(await call(on.base, "alice", "GET", "/admin/sandbox-flavours"))).flavours,
     ).toEqual(["default", "browser"]);
+  });
+
+  it("lists desktop when it is enabled", async () => {
+    const on = await start(false, undefined, true);
+    expect(await json(await call(on.base, "alice", "GET", "/admin/sandbox-flavours"))).toEqual({
+      flavours: ["default", "desktop"],
+      defaultFlavour: "default",
+      browserEnabled: false,
+      desktopEnabled: true,
+    });
+  });
+});
+
+// ADR 0065: the desktop flavour has the same credential rules as the browser one.
+const desktop = { definition: { sandboxFlavour: "desktop" } };
+
+describe("the desktop sandbox flavour", () => {
+  it("refuses a desktop profile when the chart does not enable the flavour", async () => {
+    const { base } = await start(true);
+    const put = await call(base, "alice", "PUT", "/admin/profiles/desk", desktop);
+    expect(put.status).toBe(400);
+    expect((await json(put)).error).toMatch(/sandbox\.flavours\.desktop\.enabled/);
+  });
+
+  it("refuses a session of a stored desktop profile once the flavour is switched off", async () => {
+    const on = await start(false, undefined, true);
+    expect((await call(on.base, "alice", "PUT", "/admin/profiles/desk", desktop)).status).toBe(201);
+    const off = await start(true, on.db);
+    const refused = await call(off.base, "bob", "POST", "/sessions", { profile: "desk" });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error).toMatch(/sandbox\.flavours\.desktop\.enabled/);
+  });
+
+  it("with the flavour: stores desktop on the session and reports it", async () => {
+    const { base, db } = await start(false, undefined, true);
+    expect((await call(base, "alice", "PUT", "/admin/profiles/desk", desktop)).status).toBe(201);
+    const created = await json(await call(base, "bob", "POST", "/sessions", { profile: "desk" }));
+    expect(created.sandboxFlavour).toBe("desktop");
+    expect(db.sessions.get(String(created.sessionId))?.sandbox_flavour).toBe("desktop");
+  });
+
+  it("refuses a desktop session with a repo", async () => {
+    const { base } = await start(false, undefined, true);
+    await call(base, "alice", "PUT", "/admin/profiles/desk", desktop);
+    const refused = await call(base, "bob", "POST", "/sessions", { profile: "desk", repo: "o/r" });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error).toMatch(
+      /sandboxFlavour desktop cannot be combined with a repo/,
+    );
+  });
+
+  it("refuses a desktop profile with a credentialed MCP server", async () => {
+    const { base } = await start(false, undefined, true);
+    const server = await call(base, "alice", "PUT", "/admin/mcp-servers/crm", {
+      url: "https://crm.example.com/mcp",
+      readOnly: true,
+      onecliSecret: "crm-token",
+    });
+    expect(server.status).toBe(201);
+    const refused = await call(base, "alice", "PUT", "/admin/profiles/desk", {
+      definition: { sandboxFlavour: "desktop", mcpServers: ["crm"] },
+    });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error).toMatch(
+      /sandboxFlavour desktop cannot be combined with the credentialed MCP server "crm"/,
+    );
   });
 });

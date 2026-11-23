@@ -14,6 +14,7 @@ export const SANDBOX_RUNTIME_NAME = /^[a-z][a-z0-9]{0,15}$/;
 export const RESERVED_SANDBOX_RUNTIME_NAMES = [
   "default",
   "browser",
+  "desktop",
   "direct",
   "pool",
   "template",

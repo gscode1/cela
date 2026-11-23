@@ -6,17 +6,20 @@ pi-env-direct-template[-<size>] (docs/decisions/0038-network-modes.md): the same
 cela.dev/network-mode, which the NetworkPolicies select on. The label is baked into the template because Pods
 cannot be relabelled without RBAC the orchestrator must not have; choosing the warm pool chooses the network position.
 With sandbox.flavours.browser.enabled every one of them also has a `browser` twin, pi-env-browser[-direct]-template[-<size>]
-(docs/decisions/0041-browser-sandbox.md): the browser image, its own resources and a memory-backed /dev/shm.
+(docs/decisions/0041-browser-sandbox.md): the browser image, its own resources and a memory-backed /dev/shm. The same holds for
+sandbox.flavours.desktop.enabled and the `desktop` twin, pi-env-desktop[-direct]-template[-<size>] (docs/decisions/0065-desktop-sandbox.md).
 Each entry of sandbox.runtimes (ADR 0064) adds the same set under its own RuntimeClass, for the flavours it lists, proxied
-mode only: pi-env-rt-<runtime>[-browser]-template[-<size>]. The default runtime keeps the names above. Every object carries
+mode only: pi-env-rt-<runtime>[-browser|-desktop]-template[-<size>]. The default runtime keeps the names above. Every object carries
 the label pi-durable.dev/sandbox-runtime (the runtime's name, or `default`), which the orchestrator's start guard groups by.
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
 {{- if .Values.security.allowDirectSandboxEgress }}{{- $modes = append $modes "direct" -}}{{- end -}}
 {{- $browser := $root.Values.sandbox.flavours.browser -}}
+{{- $desktop := $root.Values.sandbox.flavours.desktop -}}
 {{- $flavours := list "default" -}}
 {{- if $browser.enabled }}{{- $flavours = append $flavours "browser" -}}{{- end -}}
+{{- if $desktop.enabled }}{{- $flavours = append $flavours "desktop" -}}{{- end -}}
 {{- /* The default runtime first, then the named ones; each has its own class, flavours and modes. */ -}}
 {{- $runtimes := list (dict "name" "default" "infix" "" "class" $root.Values.sandbox.runtimeClassName "flavours" $flavours "modes" $modes) -}}
 {{- range $rname := keys $root.Values.sandbox.runtimes | sortAlpha -}}
@@ -28,7 +31,7 @@ the label pi-durable.dev/sandbox-runtime (the runtime's name, or `default`), whi
 {{- range $flavour := $rt.flavours -}}
 {{- range $mode := $rt.modes -}}
 {{- $prefix := ternary "pi-env-direct-template" "pi-env-template" (eq $mode "direct") -}}
-{{- if eq $flavour "browser" }}{{- $prefix = replace "pi-env-" "pi-env-browser-" $prefix -}}{{- end -}}
+{{- if ne $flavour "default" }}{{- $prefix = replace "pi-env-" (printf "pi-env-%s-" $flavour) $prefix -}}{{- end -}}
 {{- $prefix = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $prefix -}}
 {{- $templates = append $templates (dict "name" $prefix "size" $root.Values.sandbox.defaultSize "mode" $mode "flavour" $flavour "runtime" $rt.name "class" $rt.class) -}}
 {{- range $name := keys $root.Values.sandbox.sizes | sortAlpha -}}
@@ -39,9 +42,12 @@ the label pi-durable.dev/sandbox-runtime (the runtime's name, or `default`), whi
 {{- end -}}
 {{- range $i, $t := $templates -}}
 {{- $size := index $root.Values.sandbox.sizes $t.size -}}
-{{- $isBrowser := eq $t.flavour "browser" -}}
-{{- $resources := ternary $browser.resources $size.resources $isBrowser -}}
-{{- $ephemeral := ternary $browser.ephemeralStorage $size.ephemeralStorage $isBrowser -}}
+{{- /* A flavour has its own limits, ephemeral storage, shm and image, whatever the size; the size still sets the workspace volume. */ -}}
+{{- $flavoured := ne $t.flavour "default" -}}
+{{- $fconf := dict "browser" $browser "desktop" $desktop -}}
+{{- $fc := ternary (index $fconf $t.flavour) (dict) $flavoured -}}
+{{- $resources := ternary $fc.resources $size.resources $flavoured -}}
+{{- $ephemeral := ternary $fc.ephemeralStorage $size.ephemeralStorage $flavoured -}}
 {{- if $i }}
 ---
 {{ end -}}
@@ -96,9 +102,11 @@ spec:
       {{- end }}
       containers:
         - name: sandboxd
-          {{- if $isBrowser }}
-          image: {{ include "cela.image" (dict "name" "sandboxBrowser" "image" $root.Values.images.sandboxBrowser) }}
-          imagePullPolicy: {{ $root.Values.images.sandboxBrowser.pullPolicy }}
+          {{- if $flavoured }}
+          {{- $imageName := printf "sandbox%s" (title $t.flavour) }}
+          {{- $image := index $root.Values.images $imageName }}
+          image: {{ include "cela.image" (dict "name" $imageName "image" $image) }}
+          imagePullPolicy: {{ $image.pullPolicy }}
           {{- else }}
           image: {{ include "cela.image" (dict "name" "sandbox" "image" $root.Values.images.sandbox) }}
           imagePullPolicy: {{ $root.Values.images.sandbox.pullPolicy }}
@@ -121,17 +129,17 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
-            {{- if $isBrowser }}
+            {{- if $flavoured }}
             - name: dshm
               mountPath: /dev/shm
             {{- end }}
-      {{- if $isBrowser }}
+      {{- if $flavoured }}
       volumes:
-        # Chromium keeps shared memory for its renderers here; the 64Mi default of a Pod crashes tabs. It counts against
-        # the container's memory limit.
+        # Chromium and Firefox keep shared memory for their renderers here; the 64Mi default of a Pod crashes tabs. It
+        # counts against the container's memory limit.
         - name: dshm
           emptyDir:
             medium: Memory
-            sizeLimit: {{ $browser.shmSize }}
+            sizeLimit: {{ $fc.shmSize }}
       {{- end }}
 {{ end -}}

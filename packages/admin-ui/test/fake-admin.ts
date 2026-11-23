@@ -39,6 +39,7 @@ export interface FakeAdmin {
   directAllowed: boolean;
   /** The chart's sandbox.flavours.browser.enabled, as `GET /admin/sandbox-flavours` reports it. */
   browserEnabled: boolean;
+  desktopEnabled: boolean;
   /** The chart's sandbox.runtimes, as `GET /admin/sandbox-runtimes` reports them (none: the default only). */
   sandboxRuntimes: { name: string; flavours: string[]; insecure: boolean }[];
   /** The chart's sandbox sizes, as `GET /admin/sandbox-sizes` reports them (none: the default only). */
@@ -107,6 +108,7 @@ export function createFakeAdmin(): FakeAdmin {
     tools: ["read", "write", "edit", "bash"],
     directAllowed: false,
     browserEnabled: false,
+    desktopEnabled: false,
     sandboxRuntimes: [],
     sandboxSizes: [],
     models: {
@@ -323,9 +325,14 @@ export function createFakeAdmin(): FakeAdmin {
       return reply(200, { runtimes: admin.sandboxRuntimes, defaultRuntime: "default" });
     if (route === "/admin/sandbox-flavours") {
       return reply(200, {
-        flavours: admin.browserEnabled ? ["default", "browser"] : ["default"],
+        flavours: [
+          "default",
+          ...(admin.browserEnabled ? ["browser"] : []),
+          ...(admin.desktopEnabled ? ["desktop"] : []),
+        ],
         defaultFlavour: "default",
         browserEnabled: admin.browserEnabled,
+        desktopEnabled: admin.desktopEnabled,
       });
     }
     if (route === "/admin/mcp-servers")

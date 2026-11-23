@@ -9,7 +9,11 @@ import {
 import type { SandboxRuntimes } from "../src/index.js";
 
 const runtimes: SandboxRuntimes = {
-  gvisorkvm: { runtimeClassName: "gvisor-kvm", insecure: false, flavours: ["default", "browser"] },
+  gvisorkvm: {
+    runtimeClassName: "gvisor-kvm",
+    insecure: false,
+    flavours: ["default", "browser", "desktop"],
+  },
   runc: { runtimeClassName: "runc-sandbox", insecure: true, flavours: ["default"] },
 };
 const known = { tools: [], mcpServers: [], sandboxRuntimes: runtimes };
@@ -53,6 +57,7 @@ describe("parseSandboxRuntimes", () => {
     ['{"Bad":{}}', 'PI_SANDBOX_RUNTIMES: "Bad" is not a runtime name'],
     ['{"default":{}}', '"default" is not a runtime name'],
     ['{"browser":{}}', '"browser" is not a runtime name'],
+    ['{"desktop":{}}', '"desktop" is not a runtime name'],
     ['{"x":1}', 'runtime "x" must be an object'],
     ['{"x":{"runtimeClassName":"","insecure":false,"flavours":["default"]}}', "runtimeClassName"],
     ['{"x":{"runtimeClassName":"c","flavours":["default"]}}', "insecure"],

@@ -134,7 +134,7 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if and (ne $runtime "gvisor") (not .Values.security.allowInsecureRuntime) -}}
 {{- fail (printf "sandbox.runtimeClassName is %q, not gvisor. Sandboxes would run agent code without gVisor isolation. Set security.allowInsecureRuntime=true to accept that, or install the gvisor RuntimeClass." $runtime) -}}
 {{- end -}}
-{{- $reserved := list "default" "browser" "direct" "pool" "template" "rt" -}}
+{{- $reserved := list "default" "browser" "desktop" "direct" "pool" "template" "rt" -}}
 {{- range $name, $rt := .Values.sandbox.runtimes -}}
 {{- if not (regexMatch "^[a-z][a-z0-9]{0,15}$" $name) -}}
 {{- fail (printf "sandbox.runtimes: %q is not a runtime name (1 to 16 of [a-z0-9], starting with a letter, no hyphen)" $name) -}}
@@ -149,8 +149,11 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- fail (printf "sandbox.runtimes.%s.runtimeClassName is %q, not gvisor or gvisor-*. Sandboxes of that runtime would run agent code without gVisor isolation. Set sandbox.runtimes.%s.allowInsecureRuntime=true to accept that (security.allowInsecureRuntime covers only the default runtime), or use a gVisor RuntimeClass." $name $rt.runtimeClassName $name) -}}
 {{- end -}}
 {{- range $flavour := ($rt.flavours | default (list "default")) -}}
-{{- if not (has $flavour (list "default" "browser")) -}}
-{{- fail (printf "sandbox.runtimes.%s.flavours: %q is not a flavour (default or browser)" $name $flavour) -}}
+{{- if not (has $flavour (list "default" "browser" "desktop")) -}}
+{{- fail (printf "sandbox.runtimes.%s.flavours: %q is not a flavour (default, browser or desktop)" $name $flavour) -}}
+{{- end -}}
+{{- if and (eq $flavour "desktop") (not $.Values.sandbox.flavours.desktop.enabled) -}}
+{{- fail (printf "sandbox.runtimes.%s.flavours lists desktop, but sandbox.flavours.desktop.enabled is false" $name) -}}
 {{- end -}}
 {{- if and (eq $flavour "browser") (not $.Values.sandbox.flavours.browser.enabled) -}}
 {{- fail (printf "sandbox.runtimes.%s.flavours lists browser, but sandbox.flavours.browser.enabled is false" $name) -}}

@@ -128,6 +128,7 @@ describe("McpAccess: a session's MCP identity", () => {
 
   it.each([
     ["browser flavour", { sandboxFlavour: "browser" }],
+    ["desktop flavour", { sandboxFlavour: "desktop" }],
     ["direct network mode", { networkMode: "direct" }],
   ])(
     "grants a %s session nothing, even when the catalog now credentials a server it names",

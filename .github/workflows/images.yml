@@ -1,6 +1,6 @@
-# Builds the six images (orchestrator, ingest, sandbox, sandbox-browser, egress-proxy, e2e-driver) for linux/amd64 and linux/arm64 with
-# images/build.sh and pushes them to ghcr.io/<owner>, tagged <version>-<short sha>. Pull requests from forks only
-# build: their token cannot write packages.
+# Builds the seven images (orchestrator, ingest, sandbox, sandbox-browser, sandbox-desktop, egress-proxy, e2e-driver) for
+# linux/amd64 and linux/arm64 with images/build.sh and pushes them to ghcr.io/<owner>, tagged <version>-<short sha>. Pull
+# requests from forks only build: their token cannot write packages.
 name: images
 
 on:
@@ -8,7 +8,7 @@ on:
     branches: [main]
   pull_request:
     # Docs-only pull requests skip this workflow (issue #277); check.yml still runs Prettier and the tests on them. Markdown
-    # under images/ and packages/ ships in images (BROWSER.md, the browser skills), so it still counts. Pushes to main always
+    # under images/ and packages/ ships in images (BROWSER.md, DESKTOP.md, the browser and desktop skills), so it still counts. Pushes to main always
     # run, because hack/kind-up.sh pulls the images tagged with each main commit.
     paths:
       - "**"

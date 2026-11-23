@@ -51,7 +51,7 @@ export interface ProfileForm {
   sandboxSize: string;
   sandboxSizes: string[];
   networkMode: "proxied" | "direct";
-  sandboxFlavour: "default" | "browser";
+  sandboxFlavour: "default" | "browser" | "desktop";
   /** Empty for the default runtime. */
   sandboxRuntime: string;
 }
@@ -112,7 +112,7 @@ export function definitionFromForm(
     definition.sandboxSizes = form.sandboxSizes;
   if (form.networkMode === "direct" || original.networkMode !== undefined)
     definition.networkMode = form.networkMode;
-  if (form.sandboxFlavour === "browser" || original.sandboxFlavour !== undefined)
+  if (form.sandboxFlavour !== "default" || original.sandboxFlavour !== undefined)
     definition.sandboxFlavour = form.sandboxFlavour;
   if (form.sandboxRuntime !== "") definition.sandboxRuntime = form.sandboxRuntime;
   return definition;
@@ -184,8 +184,13 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
   if (mode !== undefined && mode !== "proxied" && mode !== "direct")
     problems.push("networkMode must be one of proxied, direct");
   const flavour: string | undefined = definition.sandboxFlavour;
-  if (flavour !== undefined && flavour !== "default" && flavour !== "browser")
-    problems.push("sandboxFlavour must be one of default, browser");
+  if (
+    flavour !== undefined &&
+    flavour !== "default" &&
+    flavour !== "browser" &&
+    flavour !== "desktop"
+  )
+    problems.push("sandboxFlavour must be one of default, browser, desktop");
   if (
     definition.sandboxRuntime !== undefined &&
     !SANDBOX_RUNTIME_NAME.test(definition.sandboxRuntime)

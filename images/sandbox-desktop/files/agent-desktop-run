@@ -1,0 +1,94 @@
+#!/bin/sh
+# Runs agent-desktop (or any command) inside the sandbox's one desktop session, which it starts on first use: Xvfb :99
+# (1280x800), a D-Bus session bus, the accessibility bus, openbox (docs/decisions/0065-desktop-sandbox.md). The session
+# lives in this container only: a Pod recycle loses it, and the next call starts a fresh one.
+#
+#   agent-desktop-run <agent-desktop args>      run agent-desktop in the session
+#   agent-desktop-run --exec <cmd> [args]       run any command in the session (desktop-launch, xdotool, scrot)
+#
+# Adapted from the agent-desktop Docker guide.
+set -eu
+
+export HOME="${HOME:-/home/pi}"
+state_dir="${AGENT_DESKTOP_SESSION_DIR:-$HOME/.agent-desktop-session}"
+env_file="$state_dir/env"
+lock_dir="$state_dir/starting"
+
+mkdir -p "$state_dir"
+chmod 700 "$state_dir"
+
+display_live() {
+  [ -s "$env_file" ] || return 1
+  . "$env_file"
+  xdpyinfo >/dev/null 2>&1
+}
+
+bus_live() {
+  [ -s "$env_file" ] || return 1
+  . "$env_file"
+  dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
+    --print-reply / org.freedesktop.DBus.GetId >/dev/null 2>&1
+}
+
+desktop_ready() {
+  display_live && bus_live
+}
+
+start_desktop() {
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-$(id -u)}"
+  mkdir -p "$XDG_RUNTIME_DIR"
+  chmod 700 "$XDG_RUNTIME_DIR"
+  display_live || {
+    rm -f /tmp/.X99-lock
+    export DISPLAY=:99
+    Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
+    i=0
+    until xdpyinfo >/dev/null 2>&1; do
+      i=$((i + 1))
+      [ "$i" -le 50 ] || { echo "agent-desktop-run: Xvfb did not start" >&2; exit 1; }
+      sleep 0.2
+    done
+  }
+  bus_live || {
+    DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --fork --print-address)
+    export DBUS_SESSION_BUS_ADDRESS
+  }
+  printf "export DISPLAY=%s\nexport DBUS_SESSION_BUS_ADDRESS='%s'\nexport XDG_RUNTIME_DIR='%s'\n" \
+    "$DISPLAY" "$DBUS_SESSION_BUS_ADDRESS" "$XDG_RUNTIME_DIR" > "$env_file"
+}
+
+if ! desktop_ready; then
+  if mkdir "$lock_dir" 2>/dev/null; then
+    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+    start_desktop
+    rmdir "$lock_dir"
+    trap - EXIT INT TERM
+  else
+    i=0
+    until desktop_ready; do
+      i=$((i + 1))
+      [ "$i" -le 150 ] || {
+        echo "agent-desktop-run: the desktop session did not start; remove $lock_dir and run again" >&2
+        exit 1
+      }
+      sleep 0.2
+    done
+  fi
+fi
+
+. "$env_file"
+# The window manager is checked on every call, not only at session start: without it agent-desktop cannot prove a window's
+# type (`native_window_unproven`), and a fresh session was seen to lose it. Started after the bus so apps see both.
+pgrep -u "$(id -u)" -x openbox >/dev/null || {
+  setsid openbox >/dev/null 2>&1 </dev/null &
+  sleep 0.5
+}
+# Toolkit accessibility switches for every app the session runs. NO_AT_BRIDGE would turn the GTK bridge off.
+export QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 SAL_USE_VCLPLUGIN=gtk3
+unset NO_AT_BRIDGE
+if [ "${1:-}" = "--exec" ]; then
+  shift
+  [ "$#" -gt 0 ] || { echo "usage: agent-desktop-run --exec <command> [args]" >&2; exit 64; }
+  exec "$@"
+fi
+exec agent-desktop "$@"
