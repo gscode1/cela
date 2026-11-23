@@ -177,6 +177,14 @@ last run in full; two earlier runs found the 50-character identifier limit below
 | idempotency | the rule list (priorities included) was identical 35 s later: nothing was recreated |
 | DELETE of the servers | the gateway blocked the host again 0.9 to 1.1 s later; the owned rules and derived rules were gone; a new call of a session that had the tool is `tool_unavailable` |
 
+Since #419 the smoke also sends a custom request header (`X-Cela-Mail-Owner`) through the gateway as a session's MCP agent and
+checks that the origin echoes it with the exact value, once, and holds a 10 s response through the gateway (a cut shows as a
+failed check with the elapsed time). Not covered: a response held 120 s. httpbingo.org refuses a `/delay`, `/drip` (delay plus
+duration) or `/sse` over 10 s in all (`400`), so 10 s is the longest a public endpoint can hold; the 120 s case needs an origin
+the smoke controls. Run live 2026-11-23 on a throwaway kind cluster (Cilium, bundled OneCLI, the egress proxy): the header
+arrived once with its exact value next to the injected credential, and the 10 s response completed in 10.4 s. An in-cluster
+origin did not work for the 120 s case: under Cilium the gateway's private-range `ipBlock` egress does not reach a Pod.
+
 Found live: OneCLI refuses an agent identifier over 50 characters (`400`), which sized the names above; and a catalog PUT that
 changes nothing writes nothing, so a hand-removed owned rule comes back with the next 30 s poll, not at once.
 
