@@ -14,9 +14,11 @@
 //                                  creates a generic OneCLI secret (a dummy credential) unless one of that name exists
 //   drop-secret <name>
 //   grants <agent identifier>      the names of the secrets the agent holds, or `no-agent`
-//   agent-fetch <agent identifier> <url>
+//   agent-fetch <agent identifier> <url> [--header Name=Value]... [--timeout-s N]
 //                                  GET <url> through the gateway AS that agent (its token is read from OneCLI and never
-//                                  printed); prints `status <code>` and the X-Smoke-* request headers the origin echoed
+//                                  printed), with the extra request headers; prints `status <code>`, `elapsed <ms>` and the
+//                                  X-Smoke-* and X-Cela-* request headers the origin echoed (a header the origin saw twice
+//                                  prints comma-joined). --timeout-s defaults to 15
 //   agents <prefix>                the identifiers of the agents that start with it
 import { readFile } from "node:fs/promises";
 import { rootCertificates } from "node:tls";
@@ -42,14 +44,36 @@ const admin = new OneCliAdmin(
 );
 const ca = await readFile(config.onecli.caFile, "utf8");
 
-async function through(token, url) {
+// `--header Name=Value` and `--timeout-s N` after the positional arguments of agent-fetch.
+function options(args) {
+  const out = { headers: {}, timeoutS: 15 };
+  for (let i = 0; i < args.length; i += 2) {
+    const value = args[i + 1];
+    if (value === undefined) throw new Error(`${args[i]} needs a value`);
+    if (args[i] === "--header") {
+      const at = value.indexOf("=");
+      if (at < 1) throw new Error("--header wants Name=Value");
+      out.headers[value.slice(0, at)] = value.slice(at + 1);
+    } else if (args[i] === "--timeout-s") {
+      out.timeoutS = Number(value);
+      if (!(out.timeoutS > 0)) throw new Error("--timeout-s wants a positive number");
+    } else throw new Error(`unknown option ${args[i]}`);
+  }
+  return out;
+}
+
+async function through(token, url, { headers = {}, timeoutS = 15 } = {}) {
   const agent = new ProxyAgent({
     uri: config.onecli.gateway,
     token: `Basic ${Buffer.from(`x:${token}`).toString("base64")}`,
     requestTls: { ca: [...rootCertificates, ca] },
   });
   try {
-    const res = await undiciFetch(url, { dispatcher: agent, signal: AbortSignal.timeout(15000) });
+    const res = await undiciFetch(url, {
+      dispatcher: agent,
+      headers,
+      signal: AbortSignal.timeout(timeoutS * 1000),
+    });
     return { status: res.status, text: await res.text() };
   } catch (error) {
     return { status: 0, text: String(error.cause?.code ?? error.message) };
@@ -131,8 +155,13 @@ switch (command) {
       console.log("no-agent");
       break;
     }
-    const got = await through(agent.accessToken.reveal(), b);
+    const opts = options(process.argv.slice(4));
+    const started = Date.now();
+    const got = await through(agent.accessToken.reveal(), b, opts);
     console.log(`status ${got.status}`);
+    console.log(`elapsed ${Date.now() - started}`);
+    // A status 0 carries the error code (e.g. UND_ERR_HEADERS_TIMEOUT) in the text: print it, the cut-off needs a reason.
+    if (got.status === 0) console.log(`error ${got.text}`);
     let headers = {};
     try {
       headers = JSON.parse(got.text).headers ?? {};
@@ -140,7 +169,7 @@ switch (command) {
       /* not the echo */
     }
     for (const [name, value] of Object.entries(headers)) {
-      if (name.toLowerCase().startsWith("x-smoke-"))
+      if (/^x-(smoke|cela)-/i.test(name))
         console.log(`header ${name} ${Array.isArray(value) ? value.join(",") : value}`);
     }
     break;
