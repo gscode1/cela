@@ -153,6 +153,7 @@ describe("turn budget", () => {
     networkMode: "proxied",
     sandboxFlavour: "default",
     sandboxRuntime: null,
+    liveViewToken: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

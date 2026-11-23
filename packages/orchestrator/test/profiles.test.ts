@@ -67,6 +67,7 @@ const session = (profile: SessionRow["profile"], conversationId: number | null):
   networkMode: "proxied",
   sandboxFlavour: "default",
   sandboxRuntime: null,
+  liveViewToken: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

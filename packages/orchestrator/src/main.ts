@@ -50,6 +50,7 @@ import { observedPod, listClaims, listPvcs } from "./kube.js";
 import { claimNameFor, conversationOfName } from "./lifecycle.js";
 import { EgressPrincipals } from "./egress.js";
 import { SandboxRuntimeNotConfiguredError, warmPoolOfSession } from "./sandbox-runtime.js";
+import { LiveViewProxy } from "./live-view.js";
 import { log } from "./log.js";
 import { SessionService } from "./sessions.js";
 import { materializeSkills, SkillLibrary } from "./skills.js";
@@ -61,6 +62,8 @@ import { FeedMaintenanceLoop } from "./feed-maintenance.js";
 
 /** How often shard 0 re-reads OneCLI's secrets for the credential hint: one cheap listing (the sweep makes the same). */
 const MODEL_CREDENTIALS_INTERVAL_MS = 30_000;
+/** Viewers of the public live view across the shard; the per-session cap is `liveView.maxViewers`. */
+const LIVE_VIEW_MAX_PER_SHARD = 32;
 const FEED_MAINTENANCE_INTERVAL_MS = 10 * 60_000;
 
 async function main(): Promise<void> {
@@ -93,7 +96,18 @@ async function main(): Promise<void> {
     INBOX_POOL_SIZE,
     config.databaseTls,
   );
+  // Resolved per connection from the claim, never stored: a recycled Pod has a new address.
+  const liveView = config.liveView.enabled
+    ? new LiveViewProxy({
+        pool,
+        shard: config.shard,
+        podIp: async (claimName) => (await observedPod(config.namespace, claimName)).podIp,
+        maxPerSession: config.liveView.maxViewers,
+        maxPerShard: LIVE_VIEW_MAX_PER_SHARD,
+      })
+    : undefined;
   const server = createOrchestratorServer({
+    liveView,
     lifecycle,
     authenticate: tokenAuthenticator(config.apiTokens),
     pool,
@@ -103,7 +117,7 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve) => server.listen(config.port, resolve));
   log("listening", { instance: config.instance, port: config.port });
 
-  const running: Running = {};
+  const running: Running = { ...(liveView === undefined ? {} : { liveView }) };
   const stop = new AbortController();
   const shuttingDown = (): boolean => stop.signal.aborted;
   const shutdown = createShutdown({

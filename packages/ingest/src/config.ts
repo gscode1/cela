@@ -47,6 +47,13 @@ export interface IngestConfig {
   browserFlavourEnabled: boolean;
   /** `PI_SANDBOX_FLAVOURS` names `desktop` (the chart's `sandbox.flavours.desktop.enabled`, ADR 0065). */
   desktopFlavourEnabled: boolean;
+  /**
+   * `PI_LIVE_VIEW_PUBLIC_URL` (the chart's `liveView.publicUrl`): the origin viewers reach `/live/*` at, with no path.
+   * Set means the public live view is on (ADR 0066); undefined: its routes are 404s and the API refuses `liveView`.
+   */
+  liveViewPublicUrl: string | undefined;
+  /** `PI_LIVE_VIEW_DIR`: the viewer page, its script and the noVNC modules baked into the image. */
+  liveViewDir: string | undefined;
   /** `PI_SANDBOX_RUNTIMES` (the chart's `sandbox.runtimes`, issue #406); `{}` when the deployment has none. */
   sandboxRuntimes: SandboxRuntimes;
 }
@@ -62,6 +69,25 @@ function assertHttpUrl(value: string): void {
   if ((url.protocol !== "http:" && url.protocol !== "https:") || url.hostname === "") {
     throw new Error("PI_ORCH_URL must be an http or https URL");
   }
+}
+
+/** `PI_LIVE_VIEW_PUBLIC_URL` as an origin, or undefined when unset. A path or a query would end up inside every URL handed out. */
+export function parseLiveViewPublicUrl(value: string | undefined): string | undefined {
+  const text = value?.trim() ?? "";
+  if (text === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("PI_LIVE_VIEW_PUBLIC_URL must be an http or https URL");
+  }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.hostname === "") {
+    throw new Error("PI_LIVE_VIEW_PUBLIC_URL must be an http or https URL");
+  }
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || url.username !== "") {
+    throw new Error("PI_LIVE_VIEW_PUBLIC_URL must have no path, query or credentials");
+  }
+  return url.origin;
 }
 
 /** The orchestrator URL of one shard: the `{shard}` placeholder replaced, or the URL as it is. */
@@ -88,6 +114,10 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
   if (shards < 1) throw new Error("PI_ORCH_SHARDS must be an integer of 1 or more");
   if (shards > 1 && !orchestratorUrl.includes("{shard}"))
     throw new Error("PI_ORCH_URL must contain {shard} when PI_ORCH_SHARDS is above 1");
+  const liveViewPublicUrl = parseLiveViewPublicUrl(env.PI_LIVE_VIEW_PUBLIC_URL);
+  const liveViewDir = env.PI_LIVE_VIEW_DIR?.trim() || undefined;
+  if (liveViewPublicUrl !== undefined && liveViewDir === undefined)
+    throw new Error("PI_LIVE_VIEW_DIR is required when PI_LIVE_VIEW_PUBLIC_URL is set");
   return {
     databaseUrl,
     databaseTls: loadDatabaseTls(env),
@@ -104,6 +134,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     allowDirectSandboxEgress: env.PI_ALLOW_DIRECT_SANDBOX_EGRESS?.trim() === "true",
     browserFlavourEnabled: enabledFlavours.includes("browser"),
     desktopFlavourEnabled: enabledFlavours.includes("desktop"),
+    liveViewPublicUrl,
+    liveViewDir,
     sandboxRuntimes: parseSandboxRuntimes(env),
   };
 }

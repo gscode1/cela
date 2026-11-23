@@ -283,6 +283,9 @@ importers:
       '@cela/session-core':
         specifier: workspace:*
         version: link:../session-core
+      '@novnc/novnc':
+        specifier: 1.7.0
+        version: 1.7.0
     devDependencies:
       '@types/node':
         specifier: 22.20.5
@@ -828,6 +831,9 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
+
+  '@novnc/novnc@1.7.0':
+    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -3370,6 +3376,8 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.4
     optional: true
+
+  '@novnc/novnc@1.7.0': {}
 
   '@opentelemetry/api@1.9.0': {}
 

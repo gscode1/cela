@@ -11,6 +11,8 @@ export interface Running {
   feedMaintenance?: { stop(): void };
   modelCredentials?: { stop(): void };
   hostRules?: { stop(): void };
+  /** Upgraded viewer sockets leave the HTTP server's own bookkeeping, so closing the server leaves them open. */
+  liveView?: { close(): void };
   mcpAccess?: { close(): Promise<void> };
   /** The Harness host, once opened. */
   host?: { close(): Promise<void> };
@@ -42,6 +44,7 @@ export function createShutdown(deps: ShutdownDeps): (signal: string) => void {
       running.feedMaintenance?.stop();
       running.modelCredentials?.stop();
       running.hostRules?.stop();
+      running.liveView?.close();
       await running.inbox?.stop();
       await running.settings?.stop();
       await running.mcpCatalog?.stop();

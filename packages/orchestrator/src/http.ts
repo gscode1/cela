@@ -11,6 +11,7 @@ import {
 import type { Authenticator } from "@cela/session-core";
 import type pg from "pg";
 import type { Host } from "./host.js";
+import type { LiveViewProxy } from "./live-view.js";
 import { log } from "./log.js";
 import { parseScript } from "./model.js";
 import type { SessionService } from "./sessions.js";
@@ -33,6 +34,8 @@ export interface ServerDeps {
   shard: number;
   /** Mounts the test-only /control surface (PI_ORCH_CONTROL=1). */
   control: boolean;
+  /** The public live view's data-plane hop (`PI_LIVE_VIEW=1`, ADR 0066); undefined: every upgrade is dropped. */
+  liveView?: LiveViewProxy | undefined;
 }
 
 const readBody = (req: IncomingMessage): Promise<string> => readBodyText(req, 64 * 1024);
@@ -53,6 +56,17 @@ export function createOrchestratorServer(deps: ServerDeps): Server {
     });
   });
   server.requestTimeout = 0;
+  // Only the live view upgrades. It authenticates by the viewer's token, not the bearer gate: ingest holds no bearer for
+  // an anonymous viewer, and the route is reachable from ingest only (NetworkPolicy).
+  server.on("upgrade", (req, socket, head) => {
+    // Node has removed its error listener by now; a reset must not become an unhandled 'error' (live-view.ts adds its own).
+    socket.on("error", () => socket.destroy());
+    if (deps.liveView === undefined) {
+      socket.destroy();
+      return;
+    }
+    void deps.liveView.handleUpgrade(req, socket, head);
+  });
   return server;
 }
 

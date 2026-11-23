@@ -46,6 +46,9 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 9090 }
+        {{- if .Values.liveView.enabled }}
+        - { protocol: TCP, port: 6080 } # websockify of a desktop, the public live view (ADR 0066)
+        {{- end }}
     {{- if ne .Values.onecli.mode "disabled" }}
     - to:
         {{- include "cela.onecliTo" . | nindent 8 }}

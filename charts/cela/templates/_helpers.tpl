@@ -130,6 +130,23 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- if and .Values.security.allowDirectSandboxEgress (not .Values.egressProxy.enabled) -}}
 {{- fail "security.allowDirectSandboxEgress needs egressProxy.enabled: without the egress proxy every sandbox already has the open internet (the network cutover is off), so there is no direct mode to allow (docs/decisions/0038-network-modes.md)" -}}
 {{- end -}}
+{{- if .Values.liveView.enabled -}}
+{{- if not .Values.sandbox.flavours.desktop.enabled -}}
+{{- fail "liveView.enabled needs sandbox.flavours.desktop.enabled: the live view shows desktop sessions (docs/decisions/0066-desktop-public-live-view.md)" -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^/?#@]+/?$" (toString .Values.liveView.publicUrl)) -}}
+{{- fail "liveView.enabled needs liveView.publicUrl: the origin viewers open, http:// or https:// and a host, with no path (for example https://live.example.lan)" -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.liveView.httpRoute.enabled (not .Values.liveView.enabled) -}}
+{{- fail "liveView.httpRoute.enabled needs liveView.enabled" -}}
+{{- end -}}
+{{- if and .Values.liveView.httpRoute.enabled (not .Values.networkPolicy.ingest.clients) -}}
+{{- fail "liveView.httpRoute.enabled needs networkPolicy.ingest.clients: the policy that admits the gateway's pods to ingest (the route reaches ingest like ingest.httpRoute does)" -}}
+{{- end -}}
+{{- if and .Values.liveView.httpRoute.enabled (not .Values.liveView.httpRoute.parentRefs) -}}
+{{- fail "liveView.httpRoute.enabled needs liveView.httpRoute.parentRefs" -}}
+{{- end -}}
 {{- $runtime := .Values.sandbox.runtimeClassName -}}
 {{- if and (ne $runtime "gvisor") (not .Values.security.allowInsecureRuntime) -}}
 {{- fail (printf "sandbox.runtimeClassName is %q, not gvisor. Sandboxes would run agent code without gVisor isolation. Set security.allowInsecureRuntime=true to accept that, or install the gvisor RuntimeClass." $runtime) -}}

@@ -16,4 +16,6 @@ Pod recycle loses them, so save files to `/workspace`. Firefox reaches the web o
 docs/decisions/0065-desktop-sandbox.md.
 
 For humans (lab, runc only): `kubectl port-forward pod/<sandbox pod> 6080:6080`, then open http://localhost:6080/ for a view-only
-live view of the desktop (loopback only; `PI_DESKTOP_LIVE_VIEW=0` turns it off). The agent does not need it.
+live view of the desktop (loopback only; `PI_DESKTOP_LIVE_VIEW=0` turns it off). The agent does not need it. With the chart's
+`liveView.enabled` the same websockify also listens on the Pod address (`PI_DESKTOP_LIVE_VIEW_LISTEN=0.0.0.0`) for the session's
+public view-only URL (ADR 0066); x11vnc stays on loopback.

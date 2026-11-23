@@ -761,6 +761,7 @@ export class FakeSettingsDb {
       const networkMode = (params[13] ?? null) as string | null;
       const sandboxFlavour = (params[14] ?? null) as string | null;
       const sandboxRuntime = (params[15] ?? null) as string | null;
+      const liveViewToken = (params[16] ?? null) as string | null;
       if (pName !== null) {
         // Only while the profile is still at the snapshot's version and open to new sessions (store.ts).
         const current = this.profiles.get(String(pName));
@@ -795,6 +796,7 @@ export class FakeSettingsDb {
         network_mode: networkMode,
         sandbox_flavour: sandboxFlavour,
         sandbox_runtime: sandboxRuntime,
+        live_view_token: liveViewToken,
         created_at: new Date(),
         last_activity_at: new Date(),
       });
@@ -806,6 +808,20 @@ export class FakeSettingsDb {
           .filter((row) => row.shard === params[0] && row.conversation_id === params[1])
           .map((row) => ({ ...row })),
       );
+    }
+    if (text.startsWith("select * from inbox.sessions where live_view_token = $1")) {
+      return done(
+        [...this.sessions.values()]
+          .filter((row) => row.live_view_token === params[0])
+          .map((row) => ({ ...row })),
+      );
+    }
+    // store.ts `setLiveViewToken`: a token is stored only on an active session; null (off) always.
+    if (text.startsWith("update inbox.sessions set live_view_token = $2")) {
+      const row = this.sessions.get(String(params[0]));
+      if (row === undefined || (params[1] !== null && row.status !== "active")) return done([]);
+      row.live_view_token = params[1];
+      return done([{}]);
     }
     if (text.startsWith("select * from inbox.sessions")) {
       const row = this.sessions.get(String(params[0]));

@@ -19,6 +19,8 @@ import {
   enqueueEvent,
   errorMessage,
   getSession,
+  newLiveViewToken,
+  setLiveViewToken,
   deleteMcpServer,
   deleteProfile,
   deleteSkill,
@@ -100,6 +102,7 @@ import type {
 } from "@cela/session-core";
 import { eventView, parseEventBody, parseEventId } from "./events.js";
 import { getFeed, streamFeed } from "./feed-routes.js";
+import { handleLiveUpgrade, isLivePath, liveViewUrl, serveLive } from "./live-view.js";
 import { log } from "./log.js";
 
 export interface IngestDeps {
@@ -129,6 +132,10 @@ export interface IngestDeps {
   desktopFlavourEnabled?: boolean | undefined;
   /** The named sandbox runtimes (`PI_SANDBOX_RUNTIMES`, the chart's `sandbox.runtimes`, issue #406); default: none. */
   sandboxRuntimes?: SandboxRuntimes | undefined;
+  /** `PI_LIVE_VIEW_PUBLIC_URL` (the chart's `liveView.publicUrl`, ADR 0066); undefined: no live view, `/live/*` is a 404. */
+  liveViewPublicUrl?: string | undefined;
+  /** `PI_LIVE_VIEW_DIR`: the viewer page, its script and noVNC, served at `/live/_assets/*`. */
+  liveViewDir?: string | undefined;
 }
 
 export interface SettingsView {
@@ -138,14 +145,32 @@ export interface SettingsView {
   refresh(): Promise<void>;
 }
 
+const liveViewOf = (deps: IngestDeps) => ({
+  pool: deps.pool,
+  publicUrl: deps.liveViewPublicUrl,
+  dir: deps.liveViewDir,
+  orchestratorUrl: deps.orchestratorUrl,
+});
+
 export function createIngestServer(deps: IngestDeps): Server {
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     void handle(req, res, deps).catch((error: unknown) => {
       log("http-error", { message: errorMessage(error) });
       if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
       else res.destroy();
     });
   });
+  // The only upgrade ingest serves is the anonymous live view's WebSocket; every other one is dropped.
+  server.on("upgrade", (req, socket, head) => {
+    // Node has removed its error listener by now: a reset during the token lookup would otherwise end the process.
+    socket.on("error", () => socket.destroy());
+    if (!deps.schemaReady() || !isLivePath(req.url ?? "")) {
+      socket.destroy();
+      return;
+    }
+    void handleLiveUpgrade(req, socket, head, liveViewOf(deps));
+  });
+  return server;
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDeps): Promise<void> {
@@ -182,6 +207,13 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
 
   if (!deps.schemaReady()) {
     sendJson(res, 503, { error: "starting" }, { "retry-after": "2" });
+    return;
+  }
+
+  // The live view's viewer page and assets (ADR 0066): the token in the URL is the credential, so no bearer. Only when
+  // the schema is ready, because the token is looked up in it.
+  if (isLivePath(url.pathname)) {
+    await serveLive(req, res, url.pathname, liveViewOf(deps));
     return;
   }
 
@@ -236,6 +268,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
       networkMode: session.networkMode,
       sandboxFlavour: session.sandboxFlavour,
       sandboxRuntime: session.sandboxRuntime ?? DEFAULT_SANDBOX_RUNTIME,
+      ...liveViewFields(deps, session.liveViewToken),
       createdAt: session.createdAt.toISOString(),
       lastActivityAt: summary.lastActivityAt.toISOString(),
       events: summary.events,
@@ -244,6 +277,16 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   }
   if (parts.length === 2 && method === "DELETE") {
     await queueDelete(deps.pool, session, res);
+    return;
+  }
+  if (parts.length === 3 && parts[2] === "live-view" && method === "PUT") {
+    await putLiveView(deps, session, res);
+    return;
+  }
+  if (parts.length === 3 && parts[2] === "live-view" && method === "DELETE") {
+    await setLiveViewToken(deps.pool, session.id, null);
+    res.writeHead(204);
+    res.end();
     return;
   }
   if (parts.length === 3 && parts[2] === "events" && method === "POST") {
@@ -1131,6 +1174,10 @@ async function postSession(
     }
     throw error;
   }
+  if (body.liveView !== undefined && typeof body.liveView !== "boolean") {
+    sendJson(res, 400, { error: "liveView must be a boolean" });
+    return;
+  }
   const resolved = await chooseProfile(deps, body);
   if ("status" in resolved) {
     sendJson(res, resolved.status, { error: resolved.error });
@@ -1219,6 +1266,13 @@ async function postSession(
       return;
     }
   }
+  const liveViewRefused =
+    body.liveView === true ? liveViewRefusal(deps, sandboxFlavour) : undefined;
+  if (liveViewRefused !== undefined) {
+    sendJson(res, 400, { error: liveViewRefused });
+    return;
+  }
+  const liveViewToken = body.liveView === true ? newLiveViewToken() : null;
   let sessionId: string;
   try {
     sessionId = await createSession(
@@ -1232,6 +1286,7 @@ async function postSession(
       networkMode,
       sandboxFlavour,
       sandboxRuntime,
+      liveViewToken,
     );
   } catch (error) {
     // The profile got a new version, was closed or deleted since it was read: nothing was stored.
@@ -1249,10 +1304,51 @@ async function postSession(
     networkMode,
     sandboxFlavour,
     sandboxRuntime: sandboxRuntime ?? DEFAULT_SANDBOX_RUNTIME,
+    ...liveViewFields(deps, liveViewToken),
     ...(repo === undefined
       ? {}
       : { repo: repo.repo, ...(repo.branch === undefined ? {} : { branch: repo.branch }) }),
   });
+}
+
+/** `liveViewUrl` for a response, only while the live view is on. Never for a session whose owner did not ask. */
+function liveViewFields(deps: IngestDeps, token: string | null): { liveViewUrl?: string } {
+  return token === null || deps.liveViewPublicUrl === undefined
+    ? {}
+    : { liveViewUrl: liveViewUrl(deps.liveViewPublicUrl, token) };
+}
+
+/** Why a session of this flavour cannot have a live view, or undefined (ADR 0066). */
+function liveViewRefusal(deps: IngestDeps, flavour: string): string | undefined {
+  if (deps.liveViewPublicUrl === undefined)
+    return "liveView is not available: this deployment has not set liveView.enabled";
+  if (flavour !== "desktop") return "liveView needs a desktop session (sandboxFlavour desktop)";
+  return undefined;
+}
+
+/** `PUT /sessions/{id}/live-view`: turns the live view on, or replaces its URL. The old URL stops working at once. */
+async function putLiveView(
+  deps: IngestDeps,
+  session: SessionRow,
+  res: ServerResponse,
+): Promise<void> {
+  const refusal = liveViewRefusal(deps, session.sandboxFlavour);
+  if (refusal !== undefined) {
+    sendJson(res, 400, { error: refusal });
+    return;
+  }
+  if (session.status !== "active") {
+    sendJson(res, session.status === "deleted" ? 410 : 409, {
+      error: `session is ${session.status}`,
+    });
+    return;
+  }
+  const token = newLiveViewToken();
+  if (!(await setLiveViewToken(deps.pool, session.id, token))) {
+    sendJson(res, 409, { error: "session is not active" });
+    return;
+  }
+  sendJson(res, 200, { liveViewUrl: liveViewUrl(deps.liveViewPublicUrl ?? "", token) });
 }
 
 /** `directModeConflict` over the catalog and the rules as they are now, for `checkProfileNames`. */

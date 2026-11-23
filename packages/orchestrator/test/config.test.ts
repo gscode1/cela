@@ -230,3 +230,18 @@ describe("feed retention (ADR 0058)", () => {
     }
   });
 });
+
+describe("config live view", () => {
+  it("is off by default and takes a per-session viewer cap", () => {
+    expect(loadConfig(env).liveView).toEqual({ enabled: false, maxViewers: 4 });
+    expect(
+      loadConfig({ ...env, PI_LIVE_VIEW: "1", PI_LIVE_VIEW_MAX_VIEWERS: "2" }).liveView,
+    ).toEqual({
+      enabled: true,
+      maxViewers: 2,
+    });
+    expect(() => loadConfig({ ...env, PI_LIVE_VIEW_MAX_VIEWERS: "many" })).toThrow(
+      /PI_LIVE_VIEW_MAX_VIEWERS/,
+    );
+  });
+});

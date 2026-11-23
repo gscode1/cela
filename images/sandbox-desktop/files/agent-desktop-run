@@ -93,8 +93,14 @@ if [ "${PI_DESKTOP_LIVE_VIEW:-1}" != 0 ]; then
     setsid x11vnc -display :99 -listen 127.0.0.1 -rfbport 5900 -localhost -viewonly -shared -forever -nopw -noxdamage \
       -noipv6 -quiet -o "$log_dir/x11vnc.log" >/dev/null 2>&1 </dev/null &
   }
-  pgrep -u "$(id -u)" -f 'websockify.*127\.0\.0\.1:6080' >/dev/null || {
-    setsid websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900 >"$log_dir/websockify.log" 2>&1 </dev/null &
+  # PI_DESKTOP_LIVE_VIEW_LISTEN=0.0.0.0 (set by the chart's liveView.enabled, ADR 0066) lets the orchestrator reach websockify
+  # for the public live view; x11vnc stays on loopback. The pattern ignores the address so either bind counts as running.
+  # The variable is on the container; PID 1 (tini) still holds it if sandboxd does not hand it to the commands it runs.
+  live_listen="${PI_DESKTOP_LIVE_VIEW_LISTEN:-}"
+  [ -n "$live_listen" ] || live_listen=$(tr '\0' '\n' 2>/dev/null </proc/1/environ | sed -n 's/^PI_DESKTOP_LIVE_VIEW_LISTEN=//p' | head -n 1)
+  case "$live_listen" in 0.0.0.0) ;; *) live_listen=127.0.0.1 ;; esac
+  pgrep -u "$(id -u)" -f 'websockify .*:6080 ' >/dev/null || {
+    setsid websockify --web /usr/share/novnc "$live_listen:6080" 127.0.0.1:5900 >"$log_dir/websockify.log" 2>&1 </dev/null &
   }
 fi
 # Toolkit accessibility switches for every app the session runs. NO_AT_BRIDGE would turn the GTK bridge off.

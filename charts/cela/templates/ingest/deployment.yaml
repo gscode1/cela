@@ -79,6 +79,12 @@ spec:
             # manage | readOnly: served to the page as /console/config.json; it hides write controls, the API is unchanged.
             - { name: PI_CONSOLE_CATALOGS, value: {{ .Values.console.catalogs | quote }} }
             {{- end }}
+            {{- if .Values.liveView.enabled }}
+            # The public live view (ADR 0066): the origin its URLs start with, and the viewer page and noVNC in the image
+            # (images/ingest/Dockerfile). Without them `/live/*` is a 404 and the API refuses `liveView`.
+            - { name: PI_LIVE_VIEW_PUBLIC_URL, value: {{ .Values.liveView.publicUrl | quote }} }
+            - { name: PI_LIVE_VIEW_DIR, value: /app/live-view }
+            {{- end }}
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL
