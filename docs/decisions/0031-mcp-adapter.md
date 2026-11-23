@@ -111,15 +111,18 @@ Support on 2026-11-17, checked against docs, changelogs and source:
 
 ## Amendment: request cancellation and uncertain creates (issue #382)
 
-- Every session tool forwards MCP request cancellation to its HTTP calls. `wait` also wakes its polling loop and closes
-  its SSE connection promptly. `run_task` combines cancellation with its shared deadline; cancelling the MCP request
-  does not cancel or delete the durable session (use the `cancel` or `delete_session` tool for that).
-- A create rejected with an HTTP error frees its reserved slot. A timeout, cancellation, network failure or unreadable
-  success response leaves the outcome unknown: ingest may already have committed the row. Both `start_session` and
-  `run_task` keep that reservation rather than undercount a possibly live session. With no returned id or create
-  idempotency key, the adapter cannot reconcile it; the reservation remains until this adapter process exits. This is
-  deliberately fail-closed, and may exhaust the process-local cap after repeated failed creates. A future idempotent
-  create API would allow reconciliation without restarting the adapter.
+- Session tools forward MCP request cancellation to HTTP calls except creation. `wait` also wakes its polling loop and
+  closes its SSE connection promptly. `run_task` combines cancellation with its shared deadline; cancelling the MCP
+  request does not cancel or delete the durable session (use the `cancel` or `delete_session` tool for that).
+- Both `start_session` and `run_task` let creation settle under the API client's independent 30-second request timeout,
+  not the MCP request signal or `run_task` deadline. Cancellation or deadline expiry returns promptly while creation
+  continues in the background, holding its reserved slot until it settles. Success tracks the returned id against the
+  cap until deletion; a late success logs the id to stderr so the client can recover it and delete the session. An
+  abandoned `run_task` does not send its message after creation completes.
+- An HTTP rejection frees the reservation, as does a network failure, unreadable response or the create's own timeout.
+  In those uncertain cases ingest may already have committed a session whose id was lost: this bounded waiting accepts
+  a possible undercount rather than permanently leaking local slots. No reservation requires an adapter restart to free
+  it. A future idempotent create API would allow reconciliation of unknown ids.
 - An uncertain delete keeps its known session id eligible for the existing deletion settlement reads, so cancellation
   cannot strand its slot after cleanup completes.
 

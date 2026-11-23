@@ -4,7 +4,7 @@
  */
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { ApiError, type CreateSessionInput, type SessionApi } from "./api.js";
+import { ApiError, type CreatedSession, type CreateSessionInput, type SessionApi } from "./api.js";
 import type { McpConfig } from "./config.js";
 import { clampTimeoutSec, waitForSession, type WaitOptions, type WaitResult } from "./wait.js";
 
@@ -161,9 +161,32 @@ export function registerTools(
     inFlight -= 1;
     held.add(id);
   };
-  const createFailed = (error: unknown): void => {
-    // Without an HTTP rejection, ingest may have committed a session whose id we never received.
-    if (error instanceof ApiError && error.status !== 0) inFlight -= 1;
+  const create = async (
+    input: CreateSessionInput,
+    signal: AbortSignal,
+  ): Promise<CreatedSession> => {
+    // Let creation settle under the API's own timeout, even after the caller stops waiting.
+    const pending = api.createSession(input).then(
+      (session) => {
+        track(session.sessionId);
+        if (signal.aborted)
+          console.error("MCP session created after caller stopped waiting:", session.sessionId);
+        return session;
+      },
+      (error: unknown) => {
+        inFlight -= 1;
+        throw error;
+      },
+    );
+    const cancelled = Promise.withResolvers<never>();
+    const onAbort = (): void => cancelled.reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    try {
+      return await Promise.race([pending, cancelled.promise]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   };
   const capError = (): ToolResult =>
     fail(
@@ -189,11 +212,9 @@ export function registerTools(
     async (args, extra) => {
       if (!(await reserve(extra.mcpReq.signal))) return capError();
       try {
-        const session = await api.createSession(createInput(args), extra.mcpReq.signal);
-        track(session.sessionId);
+        const session = await create(createInput(args), extra.mcpReq.signal);
         return ok({ ...session });
       } catch (error) {
-        createFailed(error);
         return failFrom(error);
       }
     },
@@ -387,12 +408,10 @@ export function registerTools(
       if (!(await reserve(signal))) return capError();
       let id: string;
       try {
-        id = (await api.createSession(createInput(args), signal)).sessionId;
+        id = (await create(createInput(args), signal)).sessionId;
       } catch (error) {
-        createFailed(error);
         return failFrom(error);
       }
-      track(id);
       try {
         await api.postEvent(id, { kind: "message", text: args.text }, signal);
         const result = await waitForSession(

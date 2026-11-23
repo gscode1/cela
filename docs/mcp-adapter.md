@@ -65,7 +65,7 @@ To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, 
 
 | Tool | What it does |
 |---|---|
-| `run_task { text, profile?, repo?, branch?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline (`timeoutSec` as in `wait`). Returns as `wait`, always with the `sessionId`. |
+| `run_task { text, profile?, repo?, branch?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline (`timeoutSec` as in `wait`). Returns as `wait`, with the `sessionId` once creation has returned. |
 | `start_session { profile?, repo?, branch? }` | `POST /sessions`. The profile decides model and tools. |
 | `send_message { sessionId, text, idempotencyKey? }` | Queues a message and returns at once with `{ eventId, duplicate }`. The same key on the same session never runs the message twice. |
 | `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (integer, 1 to 50, default 45; out-of-range values are rejected) and returns `{ done, status, phase, tools?, elapsedSec?, cursor, text, truncated, runFailure?, failure?, failedSinceStart?, events }`. `cursor` is an integer of 1 or more, checked in the tool schema. |
@@ -79,13 +79,16 @@ A failed session tool returns `{ error, status?, retryAfter? }` and `isError`, l
 HTTP status of the session API (absent when no answer came), `retryAfter` is in seconds and only on a 503. `run_task`
 adds the `sessionId` when the session was already created.
 
-Cancelling an MCP request stops its HTTP calls, polling and SSE stream promptly, but does not cancel or delete the
-remote session. Use `cancel` to stop the agent's turn or `delete_session` to remove the session.
+Cancelling an MCP request stops its HTTP calls (except creation), polling and SSE stream promptly, but does not cancel
+or delete the remote session. Use `cancel` to stop the agent's turn or `delete_session` to remove the session.
 
-If creation times out, is cancelled or loses its response, ingest may already have created the session without returning
-its id. The adapter keeps the reserved `PI_MCP_MAX_SESSIONS` slot until the process exits, rather than undercounting a
-possibly live session. An explicit HTTP rejection frees the reservation. Restarting the adapter resets its local cap;
-it does not clean up remote sessions with unknown ids.
+Creation has its own 30-second HTTP timeout, independent of MCP cancellation and `run_task`'s deadline. Either stops
+waiting promptly, but creation continues in the background with its `PI_MCP_MAX_SESSIONS` slot reserved until it settles.
+Success tracks the returned session id until deletion; a late success logs the id to stderr so you can recover and
+`delete_session` it. A cancelled or expired `run_task` does not send its message after the late create. An HTTP rejection,
+network failure, unreadable response or create timeout frees the reservation; no unknown reservation lasts until restart.
+Ingest may have committed a session even when its response was lost, so these uncertain failures can undercount remote
+sessions with unknown ids.
 
 `steer`, model overrides and a transcript reader are not in this slice.
 

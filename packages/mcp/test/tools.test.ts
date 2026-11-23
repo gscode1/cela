@@ -101,12 +101,13 @@ describe("tools", () => {
   );
 
   it.each(["start_session", "run_task"])(
-    "%s cancellation during create retains an unknown session's slot",
+    "%s cancellation during create tracks the late session until deletion",
     { timeout: TIMEOUT },
     async (name) => {
       await close();
       await setup(1);
       fake.createResponseDelayMs = 200;
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
       const abort = new AbortController();
       const pending = client.callTool(
         { name, arguments: name === "run_task" ? { text: "x" } : {} },
@@ -116,26 +117,46 @@ describe("tools", () => {
       await vi.waitFor(() => expect(fake.requestsTo("POST", "/sessions")).toHaveLength(1));
       abort.abort();
       await rejected;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect((await call("start_session", {})).isError).toBe(true);
+      await vi.waitFor(() => expect(log).toHaveBeenCalled());
+      const id = String(log.mock.calls[0]?.[1]);
+      expect(fake.session(id).status).toBe("active");
       expect((await call("start_session", {})).isError).toBe(true);
       expect(fake.requestsTo("POST", "/sessions")).toHaveLength(1);
       expect(fake.requestsTo("POST", "/events")).toHaveLength(0);
+      await call("delete_session", { sessionId: id });
+      expect((await call("start_session", {})).isError).toBeUndefined();
     },
   );
 
   it(
-    "run_task create timeout keeps the slot even after the late response",
+    "run_task deadline returns before create settles and tracks the late session",
     { timeout: TIMEOUT },
     async () => {
       await close();
       await setup(1);
-      fake.createResponseDelayMs = 1200;
+      const gate = Promise.withResolvers<undefined>();
+      const api = new SessionApi({ apiUrl: fake.url, token: fake.token });
+      const create = api.createSession.bind(api);
+      const creating = vi
+        .spyOn(SessionApi.prototype, "createSession")
+        .mockImplementation(async (input, signal) => {
+          const session = await create(input, signal);
+          await gate.promise;
+          return session;
+        });
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
       const result = await call("run_task", { text: "x", timeoutSec: 1 });
       expect(result.isError).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(log).not.toHaveBeenCalled();
+      expect(creating.mock.calls[0]?.[1]).toBeUndefined();
       expect((await call("start_session", {})).isError).toBe(true);
-      expect(fake.requestsTo("POST", "/sessions")).toHaveLength(1);
+      gate.resolve(undefined);
+      await vi.waitFor(() => expect(log).toHaveBeenCalled());
+      const id = String(log.mock.calls[0]?.[1]);
       expect(fake.requestsTo("POST", "/events")).toHaveLength(0);
+      await call("delete_session", { sessionId: id });
+      expect((await call("start_session", {})).isError).toBeUndefined();
     },
   );
 
@@ -232,69 +253,119 @@ describe("tools", () => {
     expect(r.content[0]?.text).toContain("untrusted");
   });
 
-  it.each([
-    "start_session",
-    "send_message",
-    "wait",
-    "get_session",
-    "cancel",
-    "delete_session",
-    "run_task",
-  ])("%s cancellation aborts an in-flight HTTP request", { timeout: TIMEOUT }, async (name) => {
-    let requestSignal: AbortSignal | null | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
-      requestSignal = init?.signal;
-      return new Promise((_resolve, reject) => {
-        requestSignal?.addEventListener(
-          "abort",
-          () => reject(new DOMException("cancelled", "AbortError")),
-          {
-            once: true,
-          },
-        );
-      });
-    });
-    const abort = new AbortController();
-    const pending = client.callTool(
-      { name, arguments: { sessionId: fake.addSession().id, text: "work", timeoutSec: 50 } },
-      { signal: abort.signal },
-    );
-    const cancelled = expect(pending).rejects.toThrow();
-    await vi.waitFor(() => expect(requestSignal).toBeDefined());
-    abort.abort();
-    await cancelled;
-    await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true), { timeout: 1000 });
-  });
-
-  it.each(["start_session", "run_task"])(
-    "%s keeps its slot when creation has an unknown outcome",
+  it.each(["send_message", "wait", "get_session", "cancel", "delete_session"])(
+    "%s cancellation aborts an in-flight HTTP request",
     { timeout: TIMEOUT },
     async (name) => {
-      await close();
-      await setup(1);
-      const api = new SessionApi({ apiUrl: fake.url, token: fake.token });
-      const create = api.createSession.bind(api);
-      vi.spyOn(SessionApi.prototype, "createSession").mockImplementation(async (input, signal) => {
-        await create(input, signal);
-        // Ingest committed, but the response never reached the caller.
-        if (name === "start_session" || signal === undefined)
-          throw new ApiError(0, "session API request failed");
-        await new Promise<void>((_resolve, reject) => {
-          signal.addEventListener(
+      let requestSignal: AbortSignal | null | undefined;
+      vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+        requestSignal = init?.signal;
+        return new Promise((_resolve, reject) => {
+          requestSignal?.addEventListener(
             "abort",
-            () => reject(new ApiError(0, "session API request failed")),
+            () => reject(new DOMException("cancelled", "AbortError")),
             {
               once: true,
             },
           );
         });
-        throw new Error("unreachable");
       });
+      const abort = new AbortController();
+      const pending = client.callTool(
+        { name, arguments: { sessionId: fake.addSession().id, text: "work", timeoutSec: 50 } },
+        { signal: abort.signal },
+      );
+      const cancelled = expect(pending).rejects.toThrow();
+      await vi.waitFor(() => expect(requestSignal).toBeDefined());
+      abort.abort();
+      await cancelled;
+      await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true), { timeout: 1000 });
+    },
+  );
+
+  it.each(["start_session", "run_task"])(
+    "%s cancellation keeps the reservation until a late create failure frees it",
+    { timeout: TIMEOUT },
+    async (name) => {
+      await close();
+      await setup(1);
+      const gate = Promise.withResolvers<never>();
+      const create = vi
+        .spyOn(SessionApi.prototype, "createSession")
+        .mockReturnValueOnce(gate.promise);
+      const abort = new AbortController();
+      const pending = client.callTool(
+        { name, arguments: { text: "work" } },
+        { signal: abort.signal },
+      );
+      const cancelled = expect(pending).rejects.toThrow();
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      abort.abort();
+      await cancelled;
+      expect((await call("start_session", {})).isError).toBe(true);
+      gate.reject(new ApiError(503, "create rejected"));
+      await vi.waitFor(async () => {
+        expect((await call("start_session", {})).isError).toBeUndefined();
+      });
+    },
+  );
+
+  it.each(["start_session", "run_task"])(
+    "%s releases a stuck create after its independent API timeout",
+    { timeout: TIMEOUT },
+    async (name) => {
+      await close();
+      await setup(1);
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      const ownTimeout = timeout(100);
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockImplementation((ms) => (ms === 30_000 ? ownTimeout : timeout(ms)));
+      const fetch = vi.spyOn(globalThis, "fetch").mockImplementationOnce(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("timed out", "TimeoutError")),
+              {
+                once: true,
+              },
+            );
+          }),
+      );
       expect((await call(name, { text: "work", timeoutSec: 1 })).isError).toBe(true);
-      const retry = await call("start_session", {});
-      expect(retry.isError).toBe(true);
-      expect(String(retry.structuredContent?.error)).toContain("PI_MCP_MAX_SESSIONS");
-      expect(fake.requestsTo("POST", "/sessions")).toHaveLength(1);
+      expect(ownTimeout.aborted).toBe(true);
+      fetch.mockRestore();
+      timeoutSpy.mockRestore();
+      expect((await call("start_session", {})).isError).toBeUndefined();
+    },
+  );
+
+  it.each([0, 503])(
+    "a settled create failure (%i) frees its slot",
+    { timeout: TIMEOUT },
+    async (status) => {
+      await close();
+      await setup(1);
+      vi.spyOn(SessionApi.prototype, "createSession").mockRejectedValueOnce(
+        new ApiError(status, "failed"),
+      );
+      expect((await call("start_session", {})).isError).toBe(true);
+      expect((await call("start_session", {})).isError).toBeUndefined();
+    },
+  );
+
+  it.each([null, {}, { sessionId: "not-a-uuid" }])(
+    "an unreadable create response (%j) frees its reservation",
+    { timeout: TIMEOUT },
+    async (body) => {
+      await close();
+      await setup(1);
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify(body), { status: 201 }),
+      );
+      expect((await call("start_session", {})).isError).toBe(true);
+      expect((await call("start_session", {})).isError).toBeUndefined();
     },
   );
 
