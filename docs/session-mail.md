@@ -1,6 +1,6 @@
 # Session mail: the MCP contract
 
-Status: proposed ([ADR 0067](decisions/0067-session-mail.md), issue #420). Off unless the deployment sets
+Status: proposed ([ADR 0068](decisions/0068-session-mail.md), issue #420). Off unless the deployment sets
 `sessionMail.server`. cela ships no mail backend; this is what a backend must serve.
 
 ## What cela does

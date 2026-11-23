@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live check of the session mail hook (ADR 0067, docs/session-mail.md, issue #420) against a real backend, on a THROWAWAY kind
+# Live check of the session mail hook (ADR 0068, docs/session-mail.md, issue #420) against a real backend, on a THROWAWAY kind
 # cluster whose chart sets sessionMail.server:
 #
 #   hack/kind-up.sh --name pi-egress --no-expose --cni cilium --build --onecli --set sessionMail.server=smokemail

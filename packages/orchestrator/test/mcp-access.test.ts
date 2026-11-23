@@ -324,7 +324,7 @@ describe("McpAccess: a session's MCP identity", () => {
   });
 });
 
-describe("McpAccess: the session mail server (ADR 0067)", () => {
+describe("McpAccess: the session mail server (ADR 0068)", () => {
   const OWNER = "x-cela-mail-owner";
   const browser = (id: string, conversationId: number, servers: string[], extra = {}) => {
     const row = session(id, conversationId, servers);

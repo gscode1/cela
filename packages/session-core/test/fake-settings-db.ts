@@ -559,7 +559,7 @@ export class FakeSettingsDb {
               sandboxFlavour?: string;
               networkMode?: string;
             };
-            // A browser profile may name the session mail server (ADR 0067); the SQL leaves it out the same way.
+            // A browser profile may name the session mail server (ADR 0068); the SQL leaves it out the same way.
             const flavour =
               definition.sandboxFlavour === "desktop" ||
               (definition.sandboxFlavour === "browser" && name !== mailServer)

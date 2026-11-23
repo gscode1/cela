@@ -44,7 +44,7 @@ export interface IngestConfig {
    * use `networkMode: direct` (docs/decisions/0038-network-modes.md). Default false: the API refuses it.
    */
   allowDirectSandboxEgress: boolean;
-  /** `PI_SESSION_MAIL_SERVER` (the chart's `sessionMail.server`, ADR 0067): the reserved mail server's catalog name; unset: off. */
+  /** `PI_SESSION_MAIL_SERVER` (the chart's `sessionMail.server`, ADR 0068): the reserved mail server's catalog name; unset: off. */
   sessionMailServer: string | undefined;
   /** `PI_SANDBOX_FLAVOURS` names `browser` (the chart's `sandbox.flavours.browser.enabled`, ADR 0041). */
   browserFlavourEnabled: boolean;
