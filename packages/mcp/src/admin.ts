@@ -100,7 +100,7 @@ export const PROFILE_DEFINITION_SHAPE = {
     .enum(["off", "images", "full"])
     .optional()
     .describe(
-      "Old tool output left out of model requests: off, images (old screenshots) or full (also large old text results). Absent: full for browser and desktop, images for default.",
+      "Old tool output left out of model requests: off, images (old screenshots) or full (also large old text results). Absent: images.",
     ),
 };
 // Prefix of every result, and the short clause of the tool descriptions (the server instructions say it in full).

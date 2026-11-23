@@ -34,7 +34,7 @@ export interface ProfileDefinition {
   sandboxFlavour?: SandboxFlavour;
   /** A named runtime of the deployment's `sandbox.runtimes`; absent: the default runtime. */
   sandboxRuntime?: string;
-  /** Old tool output left out of model requests (ADR 0067); absent: `full` for browser and desktop, `images` for default. */
+  /** Old tool output left out of model requests (ADR 0067); absent: `images`. */
   contextTrim?: ContextTrim;
 }
 

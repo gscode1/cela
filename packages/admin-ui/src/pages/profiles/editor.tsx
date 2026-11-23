@@ -421,7 +421,7 @@ export function ProfileEditor({
                 });
               }}
             >
-              <option value="">Default (full for browser and desktop, images otherwise)</option>
+              <option value="">Default (images)</option>
               <option value="off">off: send everything</option>
               <option value="images">images: leave out old screenshots</option>
               <option value="full">full: also leave out large old text results</option>

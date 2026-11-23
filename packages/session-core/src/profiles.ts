@@ -147,8 +147,7 @@ export interface ProfileDefinition {
   sandboxRuntime?: string;
   /**
    * How much old tool output is left out of the model's requests (docs/decisions/0067-trim-context.md): `off`,
-   * `images` (old screenshots) or `full` (also large old text results). Absent: `full` for the browser and desktop
-   * flavours, `images` for `default`.
+   * `images` (old screenshots) or `full` (also large old text results). Absent: `images`.
    */
   contextTrim?: ContextTrim;
 }

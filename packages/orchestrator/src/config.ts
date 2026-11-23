@@ -37,7 +37,7 @@ export interface OrchestratorConfig {
   shard: number;
   /**
    * The trim-context extension (`PI_TRIM_CONTEXT=0` turns it off; `PI_TRIM_CONTEXT_IMAGES`, `_TEXT_CHARS`, `_TURNS`,
-   * `_STEP` override its constants; ADR 0067).
+   * `_MIN_PROMPT`, `_MIN_RATIO` override its constants; ADR 0067).
    */
   trimContext: { enabled: boolean; options: TrimContextOptions };
   /** How long the owner feed keeps its rows (ADR 0058); shard 0 prunes. */
@@ -339,6 +339,12 @@ function trimContext(
       throw new Error(`${name} must be a whole number from ${String(min)} to ${String(max)}`);
     return value;
   };
+  const ratio = (name: string, fallback: number): number => {
+    const value = Number(env[name]?.trim() || String(fallback));
+    if (!Number.isFinite(value) || value <= 0 || value > 1)
+      throw new Error(`${name} must be a number above 0 and at most 1`);
+    return value;
+  };
   return {
     enabled: flag !== "0",
     options: {
@@ -347,7 +353,8 @@ function trimContext(
       // Above the 600 characters an elided text keeps, so an elided result is never elided again.
       textMaxChars: number("PI_TRIM_CONTEXT_TEXT_CHARS", d.textMaxChars, 1_000, 10_000_000),
       turnsKept: number("PI_TRIM_CONTEXT_TURNS", d.turnsKept, 1, 1_000),
-      stepTurns: number("PI_TRIM_CONTEXT_STEP", d.stepTurns, 1, 1_000),
+      minPrompt: number("PI_TRIM_CONTEXT_MIN_PROMPT", d.minPrompt, 1_000, 100_000_000),
+      minRatio: ratio("PI_TRIM_CONTEXT_MIN_RATIO", d.minRatio),
     },
   };
 }
