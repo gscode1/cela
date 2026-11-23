@@ -5,9 +5,10 @@ accessibility by agent-desktop 1.3.1. Every call goes through the lazy wrapper, 
 
     agent-desktop-run status
     desktop-launch mousepad|writer|firefox [args]
-    agent-desktop-run snapshot --app mousepad -i --compact --timeout-ms 60000
+    desktop-find --app mousepad --role textfield     # compact snapshot filter; never print a raw snapshot
+    desktop-url                                      # URL of the focused Firefox window
     agent-desktop-run --exec xdotool key ctrl+s       # any command in the same session
-    agent-desktop-run --exec scrot /workspace/screen.png
+    desktop-shot                                     # focused window as an 800 px JPEG; text first, shots to verify
 
 Work in `/workspace`; downloads land in `/workspace/downloads`. The desktop and its apps live in this container only: a
 Pod recycle loses them, so save files to `/workspace`. Firefox reaches the web only through the session's egress proxy

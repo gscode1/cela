@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Screenshot for the agent's eyes, cheap to read back.
+
+A full 1280x800 PNG costs about 1,100 tokens every time the agent reads it, and it stays in the context
+(docs/decisions/0065-desktop-sandbox.md, "Token budget"). This captures the focused window (or the screen, or a region),
+scales it so the longer side is at most --width pixels (default 800), saves a JPEG and prints one line:
+
+    /workspace/shots/shot-3.jpg 800x488 scale=1.6 origin=0,38
+
+To click with xdotool from that image: screen_x = origin_x + image_x * scale, screen_y = origin_y + image_y * scale.
+Use --region to read small text at full resolution instead of a bigger full shot.
+
+    desktop-shot                       focused window, 800 px
+    desktop-shot --full                whole screen
+    desktop-shot --region 200,300,600,200 --width 1200   one area, up to full resolution
+    desktop-shot --out /workspace/cheapest.jpg           a named file (a deliverable)
+"""
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+
+from PIL import Image
+
+
+def run(*cmd: str) -> str:
+    return subprocess.run(["agent-desktop-run", "--exec", *cmd], check=True, capture_output=True, text=True).stdout
+
+
+def window_box() -> tuple[int, int, int, int]:
+    geo = dict(
+        line.split("=", 1)
+        for line in run("xdotool", "getactivewindow", "getwindowgeometry", "--shell").split()
+        if "=" in line
+    )
+    return int(geo["X"]), int(geo["Y"]), int(geo["WIDTH"]), int(geo["HEIGHT"])
+
+
+def next_path(directory: str) -> str:
+    os.makedirs(directory, exist_ok=True)
+    n = 1
+    while os.path.exists(os.path.join(directory, f"shot-{n}.jpg")):
+        n += 1
+    return os.path.join(directory, f"shot-{n}.jpg")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Small JPEG screenshot of the focused window, the screen or a region.")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--full", action="store_true", help="whole screen instead of the focused window")
+    g.add_argument("--region", help="x,y,w,h in screen pixels")
+    p.add_argument("--width", type=int, default=800, help="longest side in pixels (default 800)")
+    p.add_argument("--quality", type=int, default=70, help="JPEG quality (default 70)")
+    p.add_argument("--out", help="output path (default /workspace/shots/shot-N.jpg)")
+    a = p.parse_args()
+    if a.width < 100:
+        p.error("--width must be at least 100")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = os.path.join(tmp, "screen.png")
+        run("scrot", "-o", raw)
+        img = Image.open(raw).convert("RGB")
+        sw, sh = img.size
+        if a.full:
+            box = (0, 0, sw, sh)
+        elif a.region:
+            try:
+                x, y, w, h = (int(v) for v in a.region.split(","))
+            except ValueError:
+                p.error("--region needs x,y,w,h")
+            box = (x, y, x + w, y + h)
+        else:
+            try:
+                x, y, w, h = window_box()
+                box = (x, y, x + w, y + h)
+            except (subprocess.CalledProcessError, KeyError, ValueError):
+                box = (0, 0, sw, sh)  # no focused window: the screen is the next best thing
+        box = (max(0, box[0]), max(0, box[1]), min(sw, box[2]), min(sh, box[3]))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            print("desktop-shot: empty area", file=sys.stderr)
+            return 1
+        img = img.crop(box)
+        scale = max(1.0, max(img.size) / a.width)
+        if scale > 1.0:
+            img = img.resize((round(img.width / scale), round(img.height / scale)), Image.LANCZOS)
+        out = a.out or next_path("/workspace/shots")
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        img.save(out, "JPEG", quality=a.quality, optimize=True)
+    print(f"{out} {img.width}x{img.height} scale={scale:.3g} origin={box[0]},{box[1]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

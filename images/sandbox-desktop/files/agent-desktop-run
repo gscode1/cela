@@ -105,4 +105,5 @@ if [ "${1:-}" = "--exec" ]; then
   [ "$#" -gt 0 ] || { echo "usage: agent-desktop-run --exec <command> [args]" >&2; exit 64; }
   exec "$@"
 fi
-exec agent-desktop "$@"
+# The platform sets NODE_USE_ENV_PROXY, whose experimental warning (UNDICI-EHPA) would otherwise land in the agent's results.
+NODE_NO_WARNINGS=1 exec agent-desktop "$@"

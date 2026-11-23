@@ -119,6 +119,24 @@ RBAC runs `kubectl port-forward pod/<sandbox pod> 6080:6080` and opens `http://l
 `/tmp/pi-desktop/`. `PI_DESKTOP_LIVE_VIEW=0` in the sandbox environment turns it off. It works under runc; port-forward does
 not work under gVisor (plan.md), so there is no live view there. The console view stays deferred.
 
+### Token budget
+
+A raw snapshot is the expensive call. In one Allegro task a desktop agent used 2.84M tokens; 37% came from a single
+`agent-desktop snapshot -i --compact` printed to stdout: 364 kB of JSON of which `dom_classes` were 21k characters,
+`available_actions` 7.8k and the real names 3.1k. Pi kept the last 50 kB (offscreen nodes) and the agent re-read it every
+turn; later snapshots failed with `RefMap exceeds 1MB`. Seven more turns went to copying the Firefox URL (no `xclip`), one to
+`python: command not found`, and Node printed an `UNDICI-EHPA` warning into results. The image therefore ships `desktop-find`
+(takes the snapshot, saves the JSON to `~/.agent-desktop-session/last-snapshot.json`, prints only `@ref role "name"` lines for
+visible nodes matching a regex or role, a summary without a filter), `desktop-url` (ctrl+l, ctrl+c, `xclip`), `xclip`, `jq`,
+a `python` link, and `agent-desktop-run` sets `NODE_NO_WARNINGS=1`. A heavy web page in Firefox overflows the 1 MB ref map
+even at `--max-depth 8`, and `--root` refs inside web content are refused as ambiguous, so on that overflow `desktop-find`
+falls back to `agent-desktop find` (one per `--role`, with `--text` when the pattern is a literal word) and filters it the
+same way; without a filter it refuses rather than print a tree. Screenshots were the second cost (28 full-screen PNGs, about
+31%): `desktop-shot` captures the focused window as an 800 px JPEG (about 500 image tokens instead of about 1,100) and prints
+the scale and origin for xdotool clicks, and the skills say text first, a screenshot only to check layout or when the tree has
+no answer, and one bash call per step (act, wait, check). The rule, in both skills: never print a full snapshot; use
+`desktop-find`, or write to a file and filter it.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through

@@ -1,0 +1,217 @@
+#!/usr/bin/env node
+// Takes one accessibility snapshot, saves the full JSON to a file and prints only the matching nodes, one short line each.
+// A raw `agent-desktop snapshot` is hundreds of kB (class lists, action lists, offscreen nodes) and would be re-read on every
+// turn; this prints a few hundred bytes (docs/decisions/0065-desktop-sandbox.md, "Token budget"). No dependencies.
+//
+//   desktop-find --app firefox-esr "add to cart"        nodes whose name, value or description match the regex (any case)
+//   desktop-find --app firefox-esr --role button,link   all visible buttons and links, first --limit of them
+//   desktop-find --app mousepad                         no filter: a summary (windows, counts by role), not the tree
+//   desktop-find --from FILE [filters]                  filter a saved snapshot without walking the tree again
+//
+// Flags: --app NAME, --skeleton, --root @ref, --max-depth N, --timeout-ms N (passed to snapshot; default 60000), --role R[,R] (repeatable),
+// --limit N (default 40), --all (also offscreen/hidden nodes and non-interactive ones), --out FILE (default
+// $AGENT_DESKTOP_SESSION_DIR or ~/.agent-desktop-session, last-snapshot.json), --from FILE.
+// Line: @ref role "name" =value [states]. Refs are valid for the snapshot they came from, so act soon after.
+"use strict";
+// getBuiltinModule works whether Node treats this extensionless file as CommonJS (the image) or as an ES module (the repo).
+const { execFileSync } = process.getBuiltinModule("node:child_process");
+const fs = process.getBuiltinModule("node:fs");
+const os = process.getBuiltinModule("node:os");
+const path = process.getBuiltinModule("node:path");
+
+const NAME_MAX = 120;
+const VALUE_MAX = 80;
+const HIDDEN = new Set(["offscreen", "hidden"]);
+
+function fail(message, code = 1) {
+  process.stderr.write(`desktop-find: ${message}\n`);
+  process.exit(code);
+}
+
+function parseArgs(argv) {
+  const o = { roles: [], limit: 40, all: false, pattern: undefined, passthrough: [], timeout: "60000" };
+  const value = (i, flag) => {
+    if (i + 1 >= argv.length) fail(`${flag} needs a value`, 64);
+    return argv[i + 1];
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--app") (o.app = value(i, a)), i++;
+    else if (a === "--root") (o.root = value(i, a)), i++;
+    else if (a === "--max-depth") (o.maxDepth = value(i, a)), i++;
+    else if (a === "--skeleton") o.skeleton = true;
+    else if (a === "--timeout-ms") (o.timeout = value(i, a)), i++;
+    else if (a === "--role") o.roles.push(...value(i++, a).split(",").map((r) => r.trim().toLowerCase()).filter(Boolean));
+    else if (a === "--limit") (o.limit = Number(value(i, a))), i++;
+    else if (a === "--from") (o.from = value(i, a)), i++;
+    else if (a === "--out") (o.out = value(i, a)), i++;
+    else if (a === "--all") o.all = true;
+    else if (a === "--interactive") o.all = false;
+    else if (a === "-h" || a === "--help") {
+      process.stdout.write("usage: desktop-find [--app NAME] [--role R[,R]] [--limit N] [--all] [--from FILE] [regex]\n");
+      process.exit(0);
+    } else if (a.startsWith("--")) fail(`unknown flag ${a}`, 64);
+    else if (o.pattern === undefined) o.pattern = a;
+    else fail(`unexpected argument ${a}`, 64);
+  }
+  if (!Number.isInteger(o.limit) || o.limit < 1) fail("--limit needs a positive integer", 64);
+  return o;
+}
+
+function takeSnapshot(o) {
+  const args = ["snapshot"];
+  if (o.app) args.push("--app", o.app);
+  if (!o.all) args.push("-i");
+  args.push("--compact", "--timeout-ms", o.timeout);
+  if (o.skeleton) args.push("--skeleton");
+  if (o.root) args.push("--root", o.root);
+  if (o.maxDepth) args.push("--max-depth", o.maxDepth);
+  try {
+    return execFileSync("agent-desktop-run", args, { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+  } catch (e) {
+    // agent-desktop exits non-zero with an error envelope on stdout (for example RefMap exceeds 1MB).
+    if (typeof e.stdout === "string" && e.stdout.trim() !== "") return e.stdout;
+    return fail(`snapshot failed: ${String(e.stderr || e.message).trim().slice(0, 300)}`);
+  }
+}
+
+// A heavy web page in Firefox can overflow agent-desktop's 1 MB ref map even at a small --max-depth, and --root refs inside
+// web content are rejected as ambiguous. `agent-desktop find` still answers, so with a filter we fall back to one find per
+// role (or one unscoped find) and apply the same regex here. The result has the same line format.
+function findFallback(o) {
+  const literal = o.pattern !== undefined && !/[\\^$.*+?()[\]{}|]/.test(o.pattern) ? o.pattern : undefined;
+  const matches = [];
+  let truncated = false;
+  for (const role of o.roles.length > 0 ? o.roles : [undefined]) {
+    const args = ["find"];
+    if (o.app) args.push("--app", o.app);
+    if (role) args.push("--role", role);
+    if (literal) args.push("--text", literal);
+    if (o.root) args.push("--root", o.root);
+    args.push("--limit", "500", "--timeout-ms", o.timeout);
+    let text;
+    try {
+      text = execFileSync("agent-desktop-run", args, { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+    } catch (e) {
+      text = typeof e.stdout === "string" ? e.stdout : "";
+      if (text.trim() === "") return fail(`find failed: ${String(e.stderr || e.message).trim().slice(0, 300)}`);
+    }
+    const env = parseEnvelope(text);
+    matches.push(...env.data.matches);
+    truncated ||= env.data.truncated === true;
+  }
+  return { ok: true, data: { app: o.app, tree: { children: matches }, viaFind: true, truncated } };
+}
+
+function parseEnvelope(text, allowOverflow = false) {
+  const start = text.indexOf("{");
+  let env;
+  try {
+    env = JSON.parse(start < 0 ? text : text.slice(start));
+  } catch {
+    return fail(`not a snapshot (not JSON): ${text.slice(0, 120).replace(/\s+/g, " ")}`);
+  }
+  if (env.ok === false) {
+    const err = env.error ?? {};
+    if (allowOverflow && /RefMap exceeds/.test(err.message ?? "")) return { overflow: true };
+    return fail(`${err.code ?? "ERROR"}: ${err.message ?? "snapshot failed"}${err.suggestion ? ` (${err.suggestion})` : ""}`);
+  }
+  if (!env.data?.tree && !Array.isArray(env.data?.matches)) return fail("no tree in the snapshot");
+  return env;
+}
+
+const clip = (s, n) => {
+  const t = String(s).replace(/\s+/g, " ").trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+};
+
+function flatten(tree) {
+  const out = [];
+  const walk = (n) => {
+    if (n && typeof n === "object") {
+      if (typeof n.ref_id === "string") out.push(n);
+      for (const c of n.children ?? []) walk(c);
+    }
+  };
+  walk(tree);
+  return out;
+}
+
+const isHidden = (n) => (n.states ?? []).some((s) => HIDDEN.has(s));
+
+function line(n) {
+  const name = clip(n.name || n.description || "", NAME_MAX);
+  const states = (n.states ?? []).filter((s) => !HIDDEN.has(s));
+  const parts = [n.ref_id, n.role ?? "node"];
+  if (name) parts.push(`"${name.replace(/"/g, "'")}"`);
+  if (n.value !== undefined && n.value !== null && n.value !== "") parts.push(`=${clip(n.value, VALUE_MAX)}`);
+  if (states.length > 0) parts.push(`[${states.join(",")}]`);
+  return parts.join(" ");
+}
+
+function summary(env, nodes, visible) {
+  const counts = new Map();
+  for (const n of visible) counts.set(n.role ?? "node", (counts.get(n.role ?? "node") ?? 0) + 1);
+  const roles = [...counts].sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} ${c}`);
+  const windows = nodes.filter((n) => n.role === "window" && n.name).map((n) => `"${clip(n.name, NAME_MAX)}"`);
+  const tree = env.data.tree;
+  if (tree.role === "window" && tree.name && !windows.includes(`"${clip(tree.name, NAME_MAX)}"`)) windows.unshift(`"${clip(tree.name, NAME_MAX)}"`);
+  const lines = [
+    `${env.data.app ?? "app"}: ${nodes.length} nodes, ${visible.length} visible${env.data.complete === false ? " (incomplete: raise --timeout-ms)" : ""}`,
+    `windows: ${windows.length > 0 ? windows.join(", ") : "(none named)"}`,
+    `roles: ${roles.join(", ") || "(none)"}`,
+    "Add a regex or --role to list nodes, for example: desktop-find --role button,textfield",
+  ];
+  return lines.join("\n");
+}
+
+function main() {
+  const o = parseArgs(process.argv.slice(2));
+  let re;
+  if (o.pattern !== undefined) {
+    try {
+      re = new RegExp(o.pattern, "iu");
+    } catch (e) {
+      fail(`bad regex: ${e.message}`, 64);
+    }
+  }
+  let raw = o.from ? fs.readFileSync(o.from, "utf8") : takeSnapshot(o);
+  let env = parseEnvelope(raw, !o.from);
+  if (env.overflow) {
+    if (re === undefined && o.roles.length === 0) {
+      fail("the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find");
+    }
+    env = findFallback(o);
+    raw = JSON.stringify(env);
+  }
+  let file = o.from;
+  if (!o.from) {
+    const dir = o.out ? path.dirname(o.out) : (process.env.AGENT_DESKTOP_SESSION_DIR ?? path.join(process.env.HOME ?? os.homedir(), ".agent-desktop-session"));
+    file = o.out ?? path.join(dir, "last-snapshot.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, raw);
+  }
+  const out = [`snapshot: ${file}`];
+  const nodes = flatten(env.data.tree);
+  const visible = nodes.filter((n) => !isHidden(n));
+  if (re === undefined && o.roles.length === 0) {
+    out.push(summary(env, nodes, visible));
+  } else {
+    const pool = o.all ? nodes : visible;
+    const hits = pool.filter(
+      (n) =>
+        (o.roles.length === 0 || o.roles.includes(String(n.role ?? "").toLowerCase())) &&
+        (re === undefined || [n.name, n.value, n.description].some((s) => typeof s === "string" && re.test(s))),
+    );
+    for (const n of hits.slice(0, o.limit)) out.push(line(n));
+    if (hits.length > o.limit) out.push(`${hits.length - o.limit} more, narrow the filter (regex, --role, --limit)`);
+    if (hits.length === 0) {
+      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}`);
+    }
+    if (env.data.complete === false) out.push("snapshot incomplete: raise --timeout-ms");
+    if (env.data.viaFind) out.push(`(tree too large to snapshot; used agent-desktop find${env.data.truncated ? ", which hit its 500-match limit: add --role or a literal word" : ""})`);
+  }
+  process.stdout.write(`${out.join("\n")}\n`);
+}
+
+main();
