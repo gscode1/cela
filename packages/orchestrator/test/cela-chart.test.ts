@@ -1249,6 +1249,19 @@ describe("egressProxy (ADR 0035)", () => {
     expect(env.EGRESS_PLATFORM_HOSTS?.value).toContain("kubernetes.default.svc");
   });
 
+  it("blocks the bundled Postgres's headless Service as a platform host only when it is bundled (issue 380)", () => {
+    const hosts = (extra: string[]) =>
+      envOf(named(docs([...on, ...extra]), "Deployment", "pi-egress-proxy")).EGRESS_PLATFORM_HOSTS
+        ?.value ?? "";
+    expect(hosts([])).not.toContain("headless");
+    expect(hosts(["--set", "database.bundled.release=pi-postgres"]).split(",")).toContain(
+      "pi-postgres-headless.ns.svc",
+    );
+    expect(hosts(["--set", "database.bundled.release=prod"]).split(",")).toContain(
+      "prod-pi-postgres-headless.ns.svc",
+    );
+  });
+
   it("tells the orchestrators where the proxy is only when it is enabled, and requires a token unless told otherwise", () => {
     const orchestrator = (list: Obj[]) =>
       envOf(

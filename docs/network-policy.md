@@ -356,8 +356,15 @@ the pods `app.kubernetes.io/name=pi-egress-proxy` get these policies on top of `
 | `egress-proxy-allow-private-egress-<i>` | egress | one per `egressProxy.privateEgress` entry: its cidr or namespace/pod selector, on its ports |
 
 Two layers decide a private destination: the **network** (`privateEgress`, operator, chart) and the **proxy** (a `private: true`
-rule in the database, admin). Either alone connects nothing. The platform itself (Postgres, ingest, the orchestrators, the
-OneCLI API, the Kubernetes API) is blocked by the proxy whatever the rules say. Kubelet probes use :3130 from the node. Cilium
+rule in the database, admin). Either alone connects nothing, with one exception: the
+proxy's own NetworkPolicies open the Postgres Pod (:5432) and the OneCLI gateway Pod (:10255) directly, so a private rule that
+covers the pod network (a cidr, or the headless Service name of Postgres without `database.bundled.release`) is
+enough for a sandbox to reach them. The proxy blocks the platform by address, whatever the rules say: the Service addresses
+of Postgres, ingest, the orchestrators, the OneCLI API and gateway and the Kubernetes API (names resolved every 30 s, so a
+new Pod address behind a headless name is followed), and with `database.bundled.release` the headless Service of the bundled
+Postgres. A Pod address that no name resolves to is blocked only if the operator lists the pod range in
+`egressProxy.platform.cidrs` (ADR 0035); do that wherever a private rule may cover the pod network. Postgres still needs its
+password, but "a sandbox never reaches the database" holds at the network layer only with that cidr. Kubelet probes use :3130 from the node. Cilium
 does not match Pod or Service addresses with a `cidr` rule, so use selectors for in-cluster destinations there.
 
 The proxy needs two Secrets and a role. The database Secret (`egressProxy.database.existingSecret`; `hack/install.sh` names

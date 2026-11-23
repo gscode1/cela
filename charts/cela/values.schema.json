@@ -60,6 +60,15 @@
       "additionalProperties": false,
       "required": ["external", "tls"],
       "properties": {
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "release": {
+              "type": "string"
+            }
+          }
+        },
         "tls": {
           "type": "object",
           "additionalProperties": false,

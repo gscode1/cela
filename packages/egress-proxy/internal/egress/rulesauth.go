@@ -35,7 +35,7 @@ func (r *Rules) Authorize(p Principal, host string, port int, addrs []string) De
 			}
 			for _, x := range append([]netip.Addr{a}, embeddedIPv4(a)...) {
 				if _, blocked := r.Platform.Blocks(x); blocked {
-					return Decision{Kind: KindAlwaysBlocked, Reason: fmt.Sprintf("%s:%d is denied: it resolves to %s, an address of the platform itself (the cluster's own services, the database or the Kubernetes API) that no rule can allow", normalizeHost(host), port, text)}
+					return Decision{Kind: KindAlwaysBlocked, Reason: fmt.Sprintf("%s:%d is denied: it resolves to %s, an address of the platform itself (the cluster's own Services, the database or the Kubernetes API) that no rule can allow; Pod addresses are covered only where the operator lists the pod range in platform.cidrs", normalizeHost(host), port, text)}
 				}
 			}
 		}
