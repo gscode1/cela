@@ -53,6 +53,10 @@ describe("image delivery replaces mutable code uploads", () => {
       "sandbox-browser",
       /FROM registry\.k8s\.io\/agent-sandbox\/sandboxd:v1\.0\.11@sha256:[a-f0-9]{64}/,
     ],
+    [
+      "sandbox-desktop",
+      /FROM registry\.k8s\.io\/agent-sandbox\/sandboxd:v1\.0\.11@sha256:[a-f0-9]{64}/,
+    ],
   ])("pins the %s base image by digest (%s)", (name, reference) => {
     expect(readFileSync(join(root, `images/${name}/Dockerfile`), "utf8")).toMatch(reference);
   });
@@ -60,17 +64,23 @@ describe("image delivery replaces mutable code uploads", () => {
   it("builds all images for both architectures without publishing by default", () => {
     const result = run(["all"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(6);
+    expect(log().trim().split("\n")).toHaveLength(7);
     expect(log()).toContain("--platform linux/amd64,linux/arm64");
     expect(log()).toContain("type=oci,dest=");
     expect(log()).not.toMatch(/--push|--load/);
-    expect(result.stdout.match(/digest:/g)).toHaveLength(6);
+    expect(result.stdout.match(/digest:/g)).toHaveLength(7);
   });
 
   it("builds the browser sandbox image from its own Dockerfile", () => {
     expect(run(["sandbox-browser", "--platform", "linux/arm64"]).status).toBe(0);
     expect(log()).toContain(`-f ${root}/images/sandbox-browser/Dockerfile`);
     expect(log()).toMatch(/-t pi-sandbox-browser:0\.0\.0-[a-f0-9]+/);
+  });
+
+  it("builds the desktop sandbox image from its own Dockerfile", () => {
+    expect(run(["sandbox-desktop", "--platform", "linux/arm64"]).status).toBe(0);
+    expect(log()).toContain(`-f ${root}/images/sandbox-desktop/Dockerfile`);
+    expect(log()).toMatch(/-t pi-sandbox-desktop:0\.0\.0-[a-f0-9]+/);
   });
 
   it("ships the default sandbox's tools from pinned sources, as a non-root user (ADR 0048)", () => {
@@ -171,8 +181,37 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(policy.DnsOverHttpsMode).toBe("off");
   });
 
-  it("runs sandboxd under tini in both sandbox images, so orphans are reaped (issue #327)", () => {
-    for (const name of ["sandbox", "sandbox-browser"]) {
+  it("keeps the desktop image on the sandbox's pi-env, a pinned agent-desktop and a non-root user", () => {
+    const base = readFileSync(join(root, "images/sandbox/Dockerfile"), "utf8");
+    const desktop = readFileSync(join(root, "images/sandbox-desktop/Dockerfile"), "utf8");
+    const stage = (text: string): string =>
+      text.slice(text.indexOf("FROM node"), text.indexOf("\n\n", text.indexOf("FROM node")));
+    expect(stage(desktop)).toBe(stage(base));
+    expect(desktop.trimEnd().endsWith("USER 1000:1000")).toBe(true);
+    expect(
+      desktop.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} .*agent-desktop\/releases\/download\/v1\.3\.1\//g,
+      ),
+    ).toHaveLength(2);
+    // The forwarder is the browser image's, and Firefox's proxy policy points at it.
+    expect(desktop).toContain("--filter @cela/browser-proxy...");
+    const policy = JSON.parse(
+      readFileSync(join(root, "images/sandbox-desktop/files/firefox-policies.json"), "utf8"),
+    ) as { policies: { Proxy: Record<string, unknown>; WebsiteFilter: { Block: string[] } } };
+    expect(policy.policies.Proxy.HTTPProxy).toBe("127.0.0.1:3129");
+    expect(policy.policies.Proxy.SSLProxy).toBe("127.0.0.1:3129");
+    expect(policy.policies.WebsiteFilter.Block).toContain("file:///*");
+    for (const skill of ["agent-desktop", "desktop-sandbox"]) {
+      const text = readFileSync(
+        join(root, "images/sandbox-desktop/skills", skill, "SKILL.md"),
+        "utf8",
+      );
+      expect(text).toMatch(new RegExp(`^---\\nname: ${skill}\\n`));
+    }
+  });
+
+  it("runs sandboxd under tini in every sandbox image, so orphans are reaped (issue #327)", () => {
+    for (const name of ["sandbox", "sandbox-browser", "sandbox-desktop"]) {
       const text = readFileSync(join(root, "images", name, "Dockerfile"), "utf8");
       expect(text, name).toMatch(/apt-get install[^&]*\btini\b/);
       expect(text, name).toContain('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sandboxd"]');
@@ -189,7 +228,7 @@ describe("image delivery replaces mutable code uploads", () => {
   it("accepts build flags without an image target", () => {
     const result = run(["--platform", "linux/arm64"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(log().trim().split("\n")).toHaveLength(6);
+    expect(log().trim().split("\n")).toHaveLength(7);
     expect(log()).toContain("--load");
   });
 

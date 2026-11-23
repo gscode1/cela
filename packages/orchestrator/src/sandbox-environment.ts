@@ -20,6 +20,10 @@ export const FLAVOUR_FACTS: Readonly<Record<SandboxFlavour, { tools: string }>> 
     tools:
       "git, node 22, a headless Chromium with pi-browser, patchright-run and agent-browser (usage: /usr/local/share/pi-browser/BROWSER.md)",
   },
+  desktop: {
+    tools:
+      "git, node 22, a virtual X desktop (Xvfb, openbox) with mousepad, LibreOffice Writer and Firefox, driven through agent-desktop-run agent-desktop, desktop-launch, xdotool and scrot (usage: /usr/local/share/pi-desktop/DESKTOP.md)",
+  },
 };
 
 export interface EnvironmentFacts {

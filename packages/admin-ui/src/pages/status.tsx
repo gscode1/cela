@@ -279,6 +279,12 @@ function DeploymentDetails({ inputs }: { inputs: StatusInputs }) {
           <span className="text-muted-foreground">(sandbox.flavours.browser.enabled)</span>
         </Fact>
       )}
+      {d.flavours.state === "ok" && (
+        <Fact label="Desktop image">
+          {d.flavours.data.desktopEnabled ? "enabled" : "disabled"}{" "}
+          <span className="text-muted-foreground">(sandbox.flavours.desktop.enabled)</span>
+        </Fact>
+      )}
       {sizes !== undefined && (
         <Fact label="Sandbox sizes">
           {sizes.sizes.length === 0

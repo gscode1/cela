@@ -222,12 +222,18 @@ export {
   BROWSER_NOT_ENABLED,
   BROWSER_WITH_REPO,
   DEFAULT_SANDBOX_FLAVOUR,
+  DESKTOP_NOT_ENABLED,
+  DESKTOP_WITH_REPO,
   SANDBOX_FLAVOURS,
-  browserFlavourConflict,
+  UNTRUSTED_CONTENT_FLAVOURS,
+  flavourNotEnabled,
+  flavourWithRepo,
   isSandboxFlavour,
+  isUntrustedContentFlavour,
   sandboxFlavourOf,
+  untrustedFlavourConflict,
 } from "./sandbox-flavour.js";
-export type { SandboxFlavour } from "./sandbox-flavour.js";
+export type { SandboxFlavour, UntrustedContentFlavour } from "./sandbox-flavour.js";
 export {
   DEFAULT_SANDBOX_RUNTIME,
   RESERVED_SANDBOX_RUNTIME_NAMES,

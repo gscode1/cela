@@ -56,9 +56,10 @@ import {
   DEFAULT_SANDBOX_RUNTIME,
   sandboxRuntimeConflict,
   sandboxRuntimeOf,
-  browserFlavourConflict,
-  BROWSER_NOT_ENABLED,
-  BROWSER_WITH_REPO,
+  flavourNotEnabled,
+  flavourWithRepo,
+  isUntrustedContentFlavour,
+  untrustedFlavourConflict,
   readProfile,
   readProfiles,
   readJsonObject,
@@ -124,6 +125,8 @@ export interface IngestDeps {
   allowDirectSandboxEgress?: boolean | undefined;
   /** Browser sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `browser`, ADR 0041); default: refused with a 400. */
   browserFlavourEnabled?: boolean | undefined;
+  /** Desktop sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `desktop`, ADR 0065); default: refused with a 400. */
+  desktopFlavourEnabled?: boolean | undefined;
   /** The named sandbox runtimes (`PI_SANDBOX_RUNTIMES`, the chart's `sandbox.runtimes`, issue #406); default: none. */
   sandboxRuntimes?: SandboxRuntimes | undefined;
 }
@@ -457,10 +460,12 @@ async function handleAdminRoutes(
       return;
     }
     const browser = deps.browserFlavourEnabled === true;
+    const desktop = deps.desktopFlavourEnabled === true;
     sendJson(res, 200, {
-      flavours: browser ? ["default", "browser"] : ["default"],
+      flavours: ["default", ...(browser ? ["browser"] : []), ...(desktop ? ["desktop"] : [])],
       defaultFlavour: "default",
       browserEnabled: browser,
+      desktopEnabled: desktop,
     });
     return;
   }
@@ -933,7 +938,8 @@ async function handleAdminProfiles(
         allowDirectEgress: deps.allowDirectSandboxEgress === true,
         directConflict: directConflictOf(catalog.servers, await readEgress(deps.pool)),
         browserFlavourEnabled: deps.browserFlavourEnabled === true,
-        browserConflict: browserConflictOf(catalog.servers, await readEgress(deps.pool)),
+        desktopFlavourEnabled: deps.desktopFlavourEnabled === true,
+        untrustedConflict: untrustedConflictOf(catalog.servers, await readEgress(deps.pool)),
         sandboxRuntimes: deps.sandboxRuntimes ?? {},
       },
     );
@@ -1199,8 +1205,13 @@ async function postSession(
     }
   }
   const sandboxFlavour = sandboxFlavourOf(snapshot.definition);
-  if (sandboxFlavour === "browser") {
-    const refusal = await browserRefusal(deps, snapshot.definition, repo !== undefined);
+  if (isUntrustedContentFlavour(sandboxFlavour)) {
+    const refusal = await untrustedFlavourRefusal(
+      deps,
+      sandboxFlavour,
+      snapshot.definition,
+      repo !== undefined,
+    );
     if (refusal !== undefined) {
       sendJson(res, 400, {
         error: `profile "${snapshot.name}" v${String(snapshot.version)}: ${refusal}`,
@@ -1252,28 +1263,30 @@ function directConflictOf(
   return (definition) => directModeConflict(definition, { mcpServers, egress });
 }
 
-/** `browserFlavourConflict` over the catalog and the rules as they are now, for `checkProfileNames`. */
-function browserConflictOf(
-  mcpServers: Parameters<typeof browserFlavourConflict>[1]["mcpServers"],
-  egress: Parameters<typeof browserFlavourConflict>[1]["egress"],
+/** `untrustedFlavourConflict` over the catalog and the rules as they are now, for `checkProfileNames`. */
+function untrustedConflictOf(
+  mcpServers: Parameters<typeof untrustedFlavourConflict>[1]["mcpServers"],
+  egress: Parameters<typeof untrustedFlavourConflict>[1]["egress"],
 ): (definition: ProfileDefinition) => string | undefined {
-  return (definition) => browserFlavourConflict(definition, { mcpServers, egress });
+  return (definition) => untrustedFlavourConflict(definition, { mcpServers, egress });
 }
 
 /**
- * Why a new session of a `browser` profile is refused, or undefined (ADR 0041): the deployment does not render browser
- * sandboxes, the request names a repo, or the profile now has a credentialed MCP server or a `onecli` rule that
+ * Why a new session of a `browser` or `desktop` profile is refused, or undefined (ADR 0041, 0065): the deployment does
+ * not render that flavour's sandboxes, the request names a repo, or the profile now has a credentialed MCP server or a `onecli` rule that
  * applies to it (the catalog and the rules may have changed since the profile was written).
  */
-async function browserRefusal(
+async function untrustedFlavourRefusal(
   deps: IngestDeps,
+  flavour: "browser" | "desktop",
   definition: ProfileDefinition,
   hasRepo: boolean,
 ): Promise<string | undefined> {
-  if (deps.browserFlavourEnabled !== true) return BROWSER_NOT_ENABLED;
-  if (hasRepo) return BROWSER_WITH_REPO;
+  const enabled = flavour === "browser" ? deps.browserFlavourEnabled : deps.desktopFlavourEnabled;
+  if (enabled !== true) return flavourNotEnabled(flavour);
+  if (hasRepo) return flavourWithRepo(flavour);
   const [catalog, egress] = await Promise.all([readMcpServers(deps.pool), readEgress(deps.pool)]);
-  return browserFlavourConflict(definition, { mcpServers: catalog.servers, egress });
+  return untrustedFlavourConflict(definition, { mcpServers: catalog.servers, egress });
 }
 
 /**

@@ -12,7 +12,7 @@ CI (`.github/workflows/images.yml`) runs the same script for every push to `main
 repository and publishes to `ghcr.io/<owner>/pi-*:<version>-<short sha>`; the job summary lists the digests.
 
 `IMAGE_REPO` is a registry/repository **prefix**: images are named `pi-orchestrator`, `pi-ingest`, `pi-sandbox`,
-`pi-sandbox-browser`, `pi-egress-proxy`, `pi-e2e-driver` beneath it (default: those local names). Every tag is `<root package version>-<git short sha>`.
+`pi-sandbox-browser`, `pi-sandbox-desktop`, `pi-egress-proxy`, `pi-e2e-driver` beneath it (default: those local names). Every tag is `<root package version>-<git short sha>`.
 Use a clean checkout so the tag identifies its source. The script prints image references and content digests;
 use `registry.example.com/team/pi-orchestrator@sha256:…` in your values file (`charts/cela`). Without `--push`, a single native
 platform is loaded into Docker; other builds write `pi-<name>-<tag>.oci.tar` in the current directory. No images
@@ -35,6 +35,13 @@ build-essential, curl, jq, unzip and `gh` 2.103.3 (release `.deb` by sha256); th
 ADR 0046), Patchright and agent-browser 0.43.0 (release binaries by sha256), and the
 loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/sandbox-browser/package-lock.json`. It is
 about 1.6 GB (arm64, uncompressed) and needed by the chart's `sandbox.flavours.browser.enabled` (the default; `false` skips it); `hack/kind-up.sh --build` builds it unless `--no-browser`.
+
+`pi-sandbox-desktop` (`images/sandbox-desktop`, ADR 0065) is the sandbox base plus a headless desktop (Xvfb, openbox, the
+AT-SPI accessibility bus), Mousepad, LibreOffice Writer, Firefox ESR, xdotool and scrot, agent-desktop 1.3.1 (release
+archives by sha256 for amd64 and arm64) with the `agent-desktop-run` and `desktop-launch` wrappers, the two skills in
+`images/sandbox-desktop/skills`, and the loopback forwarder `packages/browser-proxy` for Firefox's egress proxy. Debian
+packages come from the pinned base's bookworm repositories, unpinned. It is about 1.9 GB (arm64, uncompressed) and needed
+by the chart's `sandbox.flavours.desktop.enabled` (default false).
 
 The sandbox selects `pi-env` 1.6.0 from its npm tarball by `TARGETARCH`. Verified binary SHA-256 values:
 

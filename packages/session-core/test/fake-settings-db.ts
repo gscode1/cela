@@ -546,7 +546,11 @@ export class FakeSettingsDb {
           .map((p) => ({ name: p.name, version: p.current_version })),
       );
     }
-    if (text.startsWith("select p.name, v.definition->>'sandboxFlavour' = 'browser' as browser")) {
+    if (
+      text.startsWith(
+        "select p.name, case when v.definition->>'sandboxFlavour' in ('browser', 'desktop')",
+      )
+    ) {
       const [name] = params as [string];
       return done(
         [...this.profiles.values()]
@@ -559,10 +563,13 @@ export class FakeSettingsDb {
               sandboxFlavour?: string;
               networkMode?: string;
             };
-            const browser = definition.sandboxFlavour === "browser";
+            const flavour =
+              definition.sandboxFlavour === "browser" || definition.sandboxFlavour === "desktop"
+                ? definition.sandboxFlavour
+                : null;
             const direct = definition.networkMode === "direct";
-            return (definition.mcpServers ?? []).includes(name) && (browser || direct)
-              ? [{ name: p.name, browser, direct }]
+            return (definition.mcpServers ?? []).includes(name) && (flavour !== null || direct)
+              ? [{ name: p.name, flavour, direct }]
               : [];
           }),
       );

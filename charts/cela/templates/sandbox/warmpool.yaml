@@ -5,15 +5,18 @@ keep no warm Pods: they are template aliases, so allowing direct egress doubles 
 (replicas is always 0, and the schema caps every warmPoolReplicas at 0): claims carry env, so they are never adopted (ADR 0001).
 The pool objects stay because a SandboxClaim must reference one (plan.md). With
 sandbox.flavours.browser.enabled the browser flavour has the same set, pi-env-browser[-direct]-pool[-<size>]
-(docs/decisions/0041-browser-sandbox.md). Each entry of sandbox.runtimes (ADR 0064) has the proxied set of its flavours,
-pi-env-rt-<runtime>[-browser]-pool[-<size>], over its own templates.
+(docs/decisions/0041-browser-sandbox.md), and with sandbox.flavours.desktop.enabled so does the desktop flavour,
+pi-env-desktop[-direct]-pool[-<size>] (docs/decisions/0065-desktop-sandbox.md). Each entry of sandbox.runtimes (ADR 0064) has the proxied set of its flavours,
+pi-env-rt-<runtime>[-browser|-desktop]-pool[-<size>], over its own templates.
 */ -}}
 {{- $root := . -}}
 {{- $modes := list "proxied" -}}
 {{- if .Values.security.allowDirectSandboxEgress }}{{- $modes = append $modes "direct" -}}{{- end -}}
 {{- $browser := $root.Values.sandbox.flavours.browser -}}
+{{- $desktop := $root.Values.sandbox.flavours.desktop -}}
 {{- $flavours := list "default" -}}
 {{- if $browser.enabled }}{{- $flavours = append $flavours "browser" -}}{{- end -}}
+{{- if $desktop.enabled }}{{- $flavours = append $flavours "desktop" -}}{{- end -}}
 {{- $runtimes := list (dict "name" "default" "infix" "" "flavours" $flavours "modes" $modes) -}}
 {{- range $rname := keys $root.Values.sandbox.runtimes | sortAlpha -}}
 {{- $rt := index $root.Values.sandbox.runtimes $rname -}}
@@ -25,9 +28,9 @@ pi-env-rt-<runtime>[-browser]-pool[-<size>], over its own templates.
 {{- range $mode := $rt.modes -}}
 {{- $pool := ternary "pi-env-direct-pool" "pi-env-pool" (eq $mode "direct") -}}
 {{- $template := ternary "pi-env-direct-template" "pi-env-template" (eq $mode "direct") -}}
-{{- if eq $flavour "browser" }}
-{{- $pool = replace "pi-env-" "pi-env-browser-" $pool -}}
-{{- $template = replace "pi-env-" "pi-env-browser-" $template -}}
+{{- if ne $flavour "default" }}
+{{- $pool = replace "pi-env-" (printf "pi-env-%s-" $flavour) $pool -}}
+{{- $template = replace "pi-env-" (printf "pi-env-%s-" $flavour) $template -}}
 {{- end -}}
 {{- $pool = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $pool -}}
 {{- $template = replace "pi-env-" (printf "pi-env-%s" $rt.infix) $template -}}

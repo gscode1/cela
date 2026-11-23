@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { McpFetch } from "@earendil-works/pi-mcp";
-import { validateProfileDefinition } from "@cela/session-core";
+import { isUntrustedContentFlavour, validateProfileDefinition } from "@cela/session-core";
 import type { McpServerConfig, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import type { OneCliAdmin } from "./onecli-admin.js";
@@ -84,12 +84,16 @@ export class McpAccess {
   }
 
   /**
-   * The enabled, credentialed servers of the catalog that the session's profile names. A browser or direct session gets
-   * none, whatever the catalog says now (ADR 0041, 0038): the catalog may have changed since the session started.
+   * The enabled, credentialed servers of the catalog that the session's profile names. A browser, desktop or direct session
+   * gets none, whatever the catalog says now (ADR 0041, 0065, 0038): the catalog may have changed since the session started.
    */
   credentialedFor(session: SessionRow): McpServerConfig[] {
     const definition = this.#definitionOf(session);
-    if (definition?.sandboxFlavour === "browser" || definition?.networkMode === "direct") return [];
+    if (
+      isUntrustedContentFlavour(definition?.sandboxFlavour) ||
+      definition?.networkMode === "direct"
+    )
+      return [];
     const named = new Set(this.#named(session));
     return this.#deps
       .catalog()

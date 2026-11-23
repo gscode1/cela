@@ -3,7 +3,12 @@ import { RULE_SET_NAME } from "./egress-rules.js";
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
 import { DIRECT_NOT_ALLOWED, isNetworkMode, NETWORK_MODES } from "./network-mode.js";
 import type { NetworkMode } from "./network-mode.js";
-import { BROWSER_NOT_ENABLED, isSandboxFlavour, SANDBOX_FLAVOURS } from "./sandbox-flavour.js";
+import {
+  flavourNotEnabled,
+  isSandboxFlavour,
+  isUntrustedContentFlavour,
+  SANDBOX_FLAVOURS,
+} from "./sandbox-flavour.js";
 import type { SandboxFlavour } from "./sandbox-flavour.js";
 import { sandboxRuntimeConflict, SANDBOX_RUNTIME_NAME } from "./sandbox-runtime.js";
 import type { SandboxRuntimes } from "./sandbox-runtime.js";
@@ -128,8 +133,8 @@ export interface ProfileDefinition {
    */
   networkMode?: NetworkMode;
   /**
-   * The sandbox image of this profile's sessions (docs/decisions/0041-browser-sandbox.md): `default`, or `browser`
-   * (Chromium and browser tools; only where the chart enables it, and never with credentials). Absent: `default`.
+   * The sandbox image of this profile's sessions (docs/decisions/0041-browser-sandbox.md): `default`, `browser`
+   * (Chromium and browser tools) or `desktop` (virtual desktop and apps, ADR 0065); only where the chart enables it, and never with credentials. Absent: `default`.
    */
   sandboxFlavour?: SandboxFlavour;
   /**
@@ -390,17 +395,23 @@ export function checkProfileNames(
     directConflict?: (definition: ProfileDefinition) => string | undefined;
     /** Whether the deployment renders browser sandboxes (sandbox.flavours.browser.enabled); absent: no. */
     browserFlavourEnabled?: boolean;
-    /** Why a browser profile cannot have these credentials (browserFlavourConflict), evaluated by the caller. */
-    browserConflict?: (definition: ProfileDefinition) => string | undefined;
+    /** Whether the deployment renders desktop sandboxes (sandbox.flavours.desktop.enabled); absent: no. */
+    desktopFlavourEnabled?: boolean;
+    /** Why a browser or desktop profile cannot have these credentials (untrustedFlavourConflict), evaluated by the caller. */
+    untrustedConflict?: (definition: ProfileDefinition) => string | undefined;
     /** The deployment's named runtimes (PI_SANDBOX_RUNTIMES); absent: none, so any `sandboxRuntime` is refused. */
     sandboxRuntimes?: SandboxRuntimes;
   },
 ): string | undefined {
   const runtimeConflict = sandboxRuntimeConflict(definition, known.sandboxRuntimes ?? {});
   if (runtimeConflict !== null) return runtimeConflict;
-  if (definition.sandboxFlavour === "browser") {
-    if (known.browserFlavourEnabled !== true) return BROWSER_NOT_ENABLED;
-    const conflict = known.browserConflict?.(definition);
+  if (isUntrustedContentFlavour(definition.sandboxFlavour)) {
+    const enabled =
+      definition.sandboxFlavour === "browser"
+        ? known.browserFlavourEnabled
+        : known.desktopFlavourEnabled;
+    if (enabled !== true) return flavourNotEnabled(definition.sandboxFlavour);
+    const conflict = known.untrustedConflict?.(definition);
     if (conflict !== undefined) return conflict;
   }
   if (definition.networkMode === "direct") {

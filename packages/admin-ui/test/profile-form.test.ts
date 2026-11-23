@@ -80,6 +80,8 @@ describe("profile form round trips", () => {
     expect(definitionFromForm(formFromDefinition(plain), plain)).toEqual(plain);
     const browser: ProfileDefinition = { sandboxFlavour: "browser" };
     expect(definitionFromForm(formFromDefinition(browser), browser)).toEqual(browser);
+    const desktop: ProfileDefinition = { sandboxFlavour: "desktop" };
+    expect(definitionFromForm(formFromDefinition(desktop), desktop)).toEqual(desktop);
     const explicit: ProfileDefinition = { sandboxFlavour: "default" };
     expect(definitionFromForm(formFromDefinition(explicit), explicit)).toEqual(explicit);
   });

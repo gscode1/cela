@@ -324,6 +324,11 @@ describe("admin_put_profile definition schema", { timeout: 10_000 }, () => {
     }
   });
 
+  it("accepts the desktop sandbox flavour", () => {
+    expect(PROFILE_DEFINITION_SHAPE.sandboxFlavour.safeParse("desktop").success).toBe(true);
+    expect(PROFILE_DEFINITION_SHAPE.sandboxFlavour.safeParse("gpu").success).toBe(false);
+  });
+
   it("types the known fields and passes unknown ones on for ingest to judge", async () => {
     const fetcher = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetcher);

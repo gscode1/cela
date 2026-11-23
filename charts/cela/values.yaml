@@ -29,6 +29,13 @@ images:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
+  # Needed with sandbox.flavours.desktop.enabled (off by default): a tag or a digest, like the sandbox image (the chart fails
+  # without one).
+  sandboxDesktop:
+    repository: ghcr.io/gscode1/pi-sandbox-desktop
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
   # Needed with egressProxy.enabled (the default).
   egressProxy:
     repository: ghcr.io/gscode1/pi-egress-proxy
@@ -116,8 +123,8 @@ sandbox:
   # session never does. The runtime above (with security.allowInsecureRuntime) stays the default runtime, called `default`
   # in the API, and every session without a choice uses it. Each entry renders, for the flavours it lists and for the
   # proxied network mode only (no direct twin), the SandboxTemplates and SandboxWarmPools
-  # pi-env-rt-<name>[-browser]-template[-<size>] and -pool[-<size>], under its own RuntimeClass. Empty (the default) renders nothing more.
-  # Name: 1 to 16 of [a-z0-9], starting with a letter, no hyphen; not default, browser, direct, pool, template or rt.
+  # pi-env-rt-<name>[-browser|-desktop]-template[-<size>] and -pool[-<size>], under its own RuntimeClass. Empty (the default) renders nothing more.
+  # Name: 1 to 16 of [a-z0-9], starting with a letter, no hyphen; not default, browser, desktop, direct, pool, template or rt.
   # runtimeClassName: a RuntimeClass that exists on the nodes (not checked here). gVisor means the class `gvisor` or
   # `gvisor-<anything>`; any other class needs its own `allowInsecureRuntime: true`. security.allowInsecureRuntime covers
   # the default runtime only, never a named one. An insecure runtime shares the node kernel with other Pods: give its
@@ -182,6 +189,22 @@ sandbox:
         requests: { cpu: 500m, memory: 768Mi }
         limits: { cpu: "1", memory: 1536Mi }
       ephemeralStorage: 2Gi # the browser's profile and cache live outside /workspace and are wiped at each start
+      shmSize: 256Mi # memory-backed /dev/shm; counts against the memory limit
+      warmPoolReplicas: 0 # must be 0 (the schema refuses more); see sandbox.sizes
+    # The desktop flavour (docs/decisions/0065-desktop-sandbox.md): the sandbox image plus a virtual X desktop (Xvfb, openbox),
+    # mousepad, LibreOffice Writer, Firefox and agent-desktop (images/sandbox-desktop).
+    # Off (the default): none of it exists and the API refuses `sandboxFlavour: desktop`. On: renders
+    # pi-env-desktop[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and for each named runtime that lists
+    # `desktop`; needs images.sandboxDesktop. It costs nothing until a session asks for it (no warm Pods). A desktop session never has
+    # credentials (no repo, no onecli route, no credentialed MCP), and its desktop is lost when the Pod is recycled.
+    desktop:
+      enabled: false
+      # Its own limits, whatever the size: a desktop with Firefox or LibreOffice needs far more than a shell (measured: ADR 0065).
+      # The size still sets the workspace volume.
+      resources:
+        requests: { cpu: "1", memory: 2Gi }
+        limits: { cpu: "4", memory: 6Gi }
+      ephemeralStorage: 4Gi # the apps' profiles and caches live outside /workspace and are wiped at each start
       shmSize: 256Mi # memory-backed /dev/shm; counts against the memory limit
       warmPoolReplicas: 0 # must be 0 (the schema refuses more); see sandbox.sizes
 

@@ -331,7 +331,12 @@ describe("status rows", () => {
       inputs({
         deployment: {
           networkModes: ok({ modes: ["proxied"], defaultMode: "proxied", directAllowed: false }),
-          flavours: ok({ flavours: ["default"], defaultFlavour: "default", browserEnabled: true }),
+          flavours: ok({
+            flavours: ["default"],
+            defaultFlavour: "default",
+            browserEnabled: true,
+            desktopEnabled: false,
+          }),
           sizes: ok({ sizes: [], defaultSize: null }),
           tools: ok({ tools: [], source: "orchestrator" }),
         },

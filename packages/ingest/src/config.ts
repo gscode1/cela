@@ -45,6 +45,8 @@ export interface IngestConfig {
   allowDirectSandboxEgress: boolean;
   /** `PI_SANDBOX_FLAVOURS` names `browser` (the chart's `sandbox.flavours.browser.enabled`, ADR 0041). */
   browserFlavourEnabled: boolean;
+  /** `PI_SANDBOX_FLAVOURS` names `desktop` (the chart's `sandbox.flavours.desktop.enabled`, ADR 0065). */
+  desktopFlavourEnabled: boolean;
   /** `PI_SANDBOX_RUNTIMES` (the chart's `sandbox.runtimes`, issue #406); `{}` when the deployment has none. */
   sandboxRuntimes: SandboxRuntimes;
 }
@@ -70,6 +72,7 @@ export function orchestratorUrlFor(template: string, shard: number): string {
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): IngestConfig {
   const databaseUrl = env.PI_DURABLE_DATABASE_URL;
   if (!databaseUrl) throw new Error("PI_DURABLE_DATABASE_URL is required");
+  const enabledFlavours = (env.PI_SANDBOX_FLAVOURS ?? "").split(",").map((name) => name.trim());
   const apiTokens = env.PI_API_TOKENS;
   if (!apiTokens) throw new Error("PI_API_TOKENS is required");
   // Only an unset variable takes the default. An empty value must not become Number("") === 0, and port 0
@@ -99,10 +102,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
     consoleCatalogs: parseConsoleCatalogs(env.PI_CONSOLE_CATALOGS),
     sandboxSizes: parseSandboxSizes(env),
     allowDirectSandboxEgress: env.PI_ALLOW_DIRECT_SANDBOX_EGRESS?.trim() === "true",
-    browserFlavourEnabled: (env.PI_SANDBOX_FLAVOURS ?? "")
-      .split(",")
-      .map((name) => name.trim())
-      .includes("browser"),
+    browserFlavourEnabled: enabledFlavours.includes("browser"),
+    desktopFlavourEnabled: enabledFlavours.includes("desktop"),
     sandboxRuntimes: parseSandboxRuntimes(env),
   };
 }

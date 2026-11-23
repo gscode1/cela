@@ -107,10 +107,31 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       expect(browser).toContain(tool);
     }
     expect(browser).toContain("/usr/local/share/pi-browser/BROWSER.md");
+
+    const desktop = dockerfile("sandbox-desktop");
+    expect(desktop).not.toMatch(/apt-get install[^&]*\b(curl|python3)\b/);
+    expect(FLAVOUR_FACTS.desktop.tools).not.toMatch(/\b(curl|gh|python3)\b/);
+    for (const tool of [
+      "xvfb",
+      "openbox",
+      "xdotool",
+      "scrot",
+      "mousepad",
+      "libreoffice-writer",
+      "firefox-esr",
+      "git",
+      "/usr/local/bin/node",
+      "agent-desktop-run",
+      "desktop-launch",
+    ]) {
+      expect(desktop).toContain(tool);
+    }
+    expect(desktop).toContain("/usr/local/share/pi-desktop/DESKTOP.md");
+    expect(FLAVOUR_FACTS.desktop.tools).toContain("/usr/local/share/pi-desktop/DESKTOP.md");
   });
 
   it("match the user both images run as: pi, uid and gid 1000, with a writable home (issue #324)", () => {
-    for (const name of ["sandbox", "sandbox-browser"]) {
+    for (const name of ["sandbox", "sandbox-browser", "sandbox-desktop"]) {
       const text = dockerfile(name);
       expect(text, name).toContain(`HOME=${SANDBOX_HOME}`);
       expect(text, name).toContain(`useradd -U -u 1000 -d ${SANDBOX_HOME} -M -s /bin/bash pi`);

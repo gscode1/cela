@@ -30,7 +30,7 @@ export interface ProfileDefinition {
   sandboxSizes?: string[];
   /** `proxied` (the default) or `direct` (open internet, unfiltered and unaudited; ADR 0038). */
   networkMode?: NetworkMode;
-  /** `default` or `browser` (Chromium and browser tools; ADR 0041). */
+  /** `default`, `browser` (Chromium and browser tools; ADR 0041) or `desktop` (virtual desktop and apps; ADR 0065). */
   sandboxFlavour?: SandboxFlavour;
   /** A named runtime of the deployment's `sandbox.runtimes`; absent: the default runtime. */
   sandboxRuntime?: string;
@@ -52,13 +52,15 @@ export function listSandboxRuntimes(
   );
 }
 
-export type SandboxFlavour = "default" | "browser";
+export type SandboxFlavour = "default" | "browser" | "desktop";
 
 export interface SandboxFlavourCatalog {
   flavours: SandboxFlavour[];
   defaultFlavour: SandboxFlavour;
   /** The chart's sandbox.flavours.browser.enabled. */
   browserEnabled: boolean;
+  /** The chart's sandbox.flavours.desktop.enabled. */
+  desktopEnabled: boolean;
 }
 
 export function listSandboxFlavours(

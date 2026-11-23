@@ -62,8 +62,11 @@ spec:
             # profiles may name, and what GET /admin/sandbox-sizes lists.
             - { name: PI_SANDBOX_SIZES, value: {{ .Values.sandbox.sizes | toJson | quote }} }
             - { name: PI_SANDBOX_DEFAULT_SIZE, value: {{ .Values.sandbox.defaultSize | quote }} }
-            # The flavours rendered besides the default (ADR 0041); without `browser` the API refuses sandboxFlavour browser.
-            - { name: PI_SANDBOX_FLAVOURS, value: {{ ternary "browser" "" .Values.sandbox.flavours.browser.enabled | quote }} }
+            # The flavours rendered besides the default (ADR 0041, 0065); without one the API refuses it as sandboxFlavour.
+            {{- $enabledFlavours := list }}
+            {{- if .Values.sandbox.flavours.browser.enabled }}{{- $enabledFlavours = append $enabledFlavours "browser" }}{{- end }}
+            {{- if .Values.sandbox.flavours.desktop.enabled }}{{- $enabledFlavours = append $enabledFlavours "desktop" }}{{- end }}
+            - { name: PI_SANDBOX_FLAVOURS, value: {{ join "," $enabledFlavours | quote }} }
             # The named sandbox runtimes rendered (ADR 0064): what a profile's sandboxRuntime may name. {} without any.
             - { name: PI_SANDBOX_RUNTIMES, value: {{ include "cela.runtimesJson" . | quote }} }
             # Lets profiles and sessions use networkMode direct (ADR 0038); without it the API answers 400.

@@ -2,10 +2,10 @@
 # Build context is always the repository root. Nothing is published without --push.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-usage() { echo 'usage: images/build.sh [orchestrator|ingest|sandbox|sandbox-browser|egress-proxy|e2e-driver|all] [--push] [--platform linux/amd64,linux/arm64]' >&2; exit 64; }
+usage() { echo 'usage: images/build.sh [orchestrator|ingest|sandbox|sandbox-browser|sandbox-desktop|egress-proxy|e2e-driver|all] [--push] [--platform linux/amd64,linux/arm64]' >&2; exit 64; }
 image=all
 if [[ $# -gt 0 && $1 != --* ]]; then image=$1; shift; fi
-case $image in orchestrator|ingest|sandbox|sandbox-browser|egress-proxy|e2e-driver|all) ;; *) usage ;; esac
+case $image in orchestrator|ingest|sandbox|sandbox-browser|sandbox-desktop|egress-proxy|e2e-driver|all) ;; *) usage ;; esac
 push=0
 platform=linux/amd64,linux/arm64
 while [[ $# -gt 0 ]]; do
@@ -21,7 +21,7 @@ done
 version=$(node -p "JSON.parse(require('node:fs').readFileSync('$root/package.json', 'utf8')).version")
 tag="$version-$(git -C "$root" rev-parse --short HEAD)"
 images=("$image")
-[[ $image != all ]] || images=(orchestrator ingest sandbox sandbox-browser egress-proxy e2e-driver)
+[[ $image != all ]] || images=(orchestrator ingest sandbox sandbox-browser sandbox-desktop egress-proxy e2e-driver)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 output=()

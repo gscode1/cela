@@ -541,6 +541,30 @@ describe("sandbox flavour", () => {
   });
 });
 
+describe("desktop sandbox flavour", () => {
+  it("disables desktop while the chart does not enable it", async () => {
+    const admin = createFakeAdmin();
+    admin.browserEnabled = true;
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox flavour");
+    expect(within(select).getByRole("option", { name: /^Desktop/ })).toBeDisabled();
+  });
+
+  it("offers desktop when enabled and explains what it cannot combine with", async () => {
+    const admin = createFakeAdmin();
+    admin.desktopEnabled = true;
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox flavour");
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: /^Desktop/ })).toBeEnabled();
+    });
+    await userEvent.selectOptions(select, "desktop");
+    expect(await screen.findByTestId("desktop-note")).toHaveTextContent("credentialed MCP servers");
+  });
+});
+
 describe("sandbox runtime", () => {
   it("shows no runtime choice beyond the default when the chart defines none", async () => {
     const admin = createFakeAdmin();

@@ -1,0 +1,60 @@
+{
+  "policies": {
+    "Proxy": {
+      "Mode": "manual",
+      "HTTPProxy": "127.0.0.1:3129",
+      "SSLProxy": "127.0.0.1:3129",
+      "Passthrough": "127.0.0.1,localhost",
+      "UseProxyForDNS": true,
+      "Locked": false
+    },
+    "WebsiteFilter": {
+      "Block": ["file:///*", "ftp://*"],
+      "Exceptions": ["file:///workspace/*"]
+    },
+    "DNSOverHTTPS": { "Enabled": false, "Locked": true },
+    "DisableTelemetry": true,
+    "DisableAppUpdate": true,
+    "DisableSystemAddonUpdate": true,
+    "ExtensionUpdate": false,
+    "DisableFirefoxAccounts": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableFeedbackCommands": true,
+    "DisableProfileImport": true,
+    "DisableSetDesktopBackground": true,
+    "DisableFormHistory": true,
+    "DisableDeveloperTools": true,
+    "BlockAboutConfig": true,
+    "BlockAboutAddons": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "PasswordManagerEnabled": false,
+    "OfferToSaveLogins": false,
+    "AutofillAddressEnabled": false,
+    "AutofillCreditCardEnabled": false,
+    "DontCheckDefaultBrowser": true,
+    "NoDefaultBookmarks": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "CaptivePortal": false,
+    "NetworkPrediction": false,
+    "Homepage": { "URL": "about:blank", "StartPage": "homepage" },
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true,
+      "MoreFromMozilla": false
+    },
+    "SearchSuggestEnabled": false,
+    "DownloadDirectory": "/workspace/downloads",
+    "PromptForDownloadLocation": false,
+    "Preferences": {
+      "browser.safebrowsing.malware.enabled": false,
+      "browser.safebrowsing.phishing.enabled": false,
+      "media.peerconnection.enabled": false
+    }
+  }
+}

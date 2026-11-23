@@ -4,6 +4,7 @@ import { lockCatalog } from "./deletion.js";
 import { THINKING_LEVELS } from "./models.js";
 import type { ModelChoice } from "./models.js";
 import type { NetworkMode } from "./network-mode.js";
+import { isSandboxFlavour } from "./sandbox-flavour.js";
 import type { SandboxFlavour } from "./sandbox-flavour.js";
 import type { ProfileSnapshot } from "./profiles.js";
 import type { RepoSpec } from "./repo.js";
@@ -180,7 +181,7 @@ const toSession = (row: SessionDbRow): SessionRow => ({
   usage: row.usage ?? null,
   sandboxSize: row.sandbox_size ?? null,
   networkMode: row.network_mode === "direct" ? "direct" : "proxied",
-  sandboxFlavour: row.sandbox_flavour === "browser" ? "browser" : "default",
+  sandboxFlavour: isSandboxFlavour(row.sandbox_flavour) ? row.sandbox_flavour : "default",
   sandboxRuntime: row.sandbox_runtime ?? null,
   createdAt: row.created_at,
   lastActivityAt: row.last_activity_at,

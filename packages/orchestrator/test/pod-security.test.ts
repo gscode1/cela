@@ -112,6 +112,17 @@ const variants: Record<string, string[][]> = {
       "--set",
       "sandbox.runtimes.runc.allowInsecureRuntime=true",
     ],
+    // The desktop flavour (ADR 0065), default and named runtime, direct twins included.
+    [
+      "--set",
+      "sandbox.flavours.desktop.enabled=true",
+      "--set",
+      "images.sandboxDesktop.tag=test",
+      "--set",
+      "sandbox.runtimes.gvisorkvm.runtimeClassName=gvisor-kvm",
+      "--set",
+      "sandbox.runtimes.gvisorkvm.flavours={default,desktop}",
+    ],
   ],
 };
 for (const chart of chartNames()) {
