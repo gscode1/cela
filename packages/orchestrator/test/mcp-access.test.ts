@@ -146,21 +146,22 @@ describe("McpAccess: a session's MCP identity", () => {
     await expect(access.forConversation(1, DOCS)).rejects.toThrow(/not a credentialed server/);
   });
 
-  it("refuses an agent name OneCLI would reject (it limits an identifier to 50 characters) instead of failing with a 400", async () => {
+  it("refuses a name prefix whose MCP agent name OneCLI would reject (50 characters) when it is built, not with a 400", () => {
     const sessions = [session(A, 1, ["docs"])];
     const { fake } = setUp(sessions);
-    const long = new McpAccess({
-      onecli: new OneCliAdmin("http://onecli:10256", new Redacted("oc_admin"), fake.fetch),
-      catalog: () => [DOCS],
-      sessionOf: () => Promise.resolve(sessions[0]),
-      gateway: "http://g",
-      caFile: "/x",
-      noProxy: [],
-      namePrefix: "pi-session-extra-",
-    });
-    await expect(long.forConversation(1, DOCS)).rejects.toThrow(/longer than 50 characters/);
+    expect(
+      () =>
+        new McpAccess({
+          onecli: new OneCliAdmin("http://onecli:10256", new Redacted("oc_admin"), fake.fetch),
+          catalog: () => [DOCS],
+          sessionOf: () => Promise.resolve(sessions[0]),
+          gateway: "http://g",
+          caFile: "/x",
+          noProxy: [],
+          namePrefix: "pi-session-extra-",
+        }),
+    ).toThrow(/PI_ONECLI_NAME_PREFIX.*12 characters/);
     expect(mcpAgentIdentifier(A).length).toBeLessThanOrEqual(50);
-    expect(fake.agents.size).toBe(0);
   });
 
   it("refuses a secret that does not exist or is for another host, and fails closed without the admin key", async () => {

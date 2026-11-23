@@ -8,6 +8,7 @@ import { narrowAgent } from "./onecli-grants.js";
 import {
   DEFAULT_ONECLI_NAME_PREFIX,
   ONECLI_IDENTIFIER_MAX,
+  ONECLI_NAME_PREFIX_MAX,
   mcpAgentIdentifier,
   mcpDiscoveryPrefix,
   validateNamePrefix,
@@ -140,7 +141,7 @@ export class McpAccess {
     }
     if (identifier.length > ONECLI_IDENTIFIER_MAX) {
       throw new McpNotGrantedError(
-        `the OneCLI agent name ${identifier} is longer than ${String(ONECLI_IDENTIFIER_MAX)} characters: PI_ONECLI_NAME_PREFIX is too long for MCP agents (at most 12 characters)`,
+        `the OneCLI agent name ${identifier} is longer than ${String(ONECLI_IDENTIFIER_MAX)} characters: PI_ONECLI_NAME_PREFIX is too long for MCP agents (at most ${String(ONECLI_NAME_PREFIX_MAX)} characters)`,
       );
     }
     const secretIds = await this.#secretIds(onecli, servers);

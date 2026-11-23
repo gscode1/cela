@@ -1,6 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import { poolConfig } from "../src/storage.ts";
+import {
+  ONECLI_IDENTIFIER_MAX,
+  ONECLI_NAME_PREFIX_MAX,
+  mcpAgentIdentifier,
+} from "../src/onecli-names.ts";
 import { claimNameFor } from "../src/lifecycle.ts";
 
 const env = {
@@ -32,13 +38,32 @@ describe("config timers", () => {
 describe("config: OneCLI name prefix", () => {
   it("defaults to pi-session- and accepts a short lowercase prefix ending in a dash", () => {
     expect(loadConfig(env).repos.namePrefix).toBe("pi-session-");
-    expect(loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: "pi-e2e-ab12cd-" }).repos.namePrefix).toBe(
-      "pi-e2e-ab12cd-",
+    expect(loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: "pi-e2e-ab12-" }).repos.namePrefix).toBe(
+      "pi-e2e-ab12-",
+    );
+  });
+
+  it("accepts the longest prefix whose MCP agent still fits OneCLI's 50 characters, and no longer one", () => {
+    const longest = `${"a".repeat(ONECLI_NAME_PREFIX_MAX - 1)}-`;
+    expect(ONECLI_NAME_PREFIX_MAX).toBe(12);
+    expect(mcpAgentIdentifier(randomUUID(), longest).length).toBe(ONECLI_IDENTIFIER_MAX);
+    expect(loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: longest }).repos.namePrefix).toBe(longest);
+    expect(() => loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: `a${longest}` })).toThrow(
+      /PI_ONECLI_NAME_PREFIX.*12 characters/,
     );
   });
 
   it("rejects anything else", () => {
-    for (const bad of ["", "pi-session", "Pi-", "pi_e2e-", "pi e2e-", "-", `${"a".repeat(40)}-`])
+    for (const bad of [
+      "",
+      "pi-session",
+      "Pi-",
+      "pi_e2e-",
+      "pi e2e-",
+      "-",
+      `${"a".repeat(12)}-`,
+      `${"a".repeat(40)}-`,
+    ])
       expect(() => loadConfig({ ...env, PI_ONECLI_NAME_PREFIX: bad })).toThrow(
         /PI_ONECLI_NAME_PREFIX/,
       );

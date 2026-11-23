@@ -127,7 +127,7 @@ describe("mcpSecretCandidates", () => {
       mcpSecretCandidates([
         { name: secretName(SESSION, "git") },
         { name: secretName(SESSION, "api") },
-        { name: secretName(SESSION, "git", "pi-e2e-ab12cd-session-") },
+        { name: secretName(SESSION, "git", "pi-e2e-ab12-session-") },
         { name: `my-${SESSION}-notes` },
         { name: "github-mcp" },
       ]),

@@ -39,7 +39,7 @@
 #                      (database.tls verify-full), with a throwaway CA made for the run (docs/e2e.md)
 #   KEEP_NS=1          keep the namespace after the run (debugging); the script prints how to delete it
 #   KEEP_NS_ON_FAIL=1  keep it only when the run did not pass
-#   RUN_ID=<id>        use pi-e2e-<id> (default: 6 random hex digits); an existing e2e namespace is reused (re-run in a kept one)
+#   RUN_ID=<id>        use pi-e2e-<id> (default: 4 random hex digits; at most 4 characters, see the OneCLI prefix below); an existing e2e namespace is reused (re-run in a kept one)
 #   SKIP_SWEEP=1       do not delete e2e namespaces older than SWEEP_MAX_AGE_HOURS (default 6, tests/e2e/sweep.sh) first
 # An unfinished Job (exit 2) always keeps the namespace so the Job can still be read.
 #
@@ -71,7 +71,7 @@ IMAGE=${DRIVER_IMAGE:-pi-e2e-driver:$tag}
 ctx=${KUBE_CONTEXT:-}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-run_id=${RUN_ID:-$(openssl rand -hex 3)}
+run_id=${RUN_ID:-$(openssl rand -hex 2)}
 ns=pi-e2e-$run_id
 # The prefix is the whole safety net: nothing below may ever run against cela-dev or any other namespace.
 [[ $ns =~ ^pi-e2e-[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || { echo "bad RUN_ID '$run_id': the namespace must be pi-e2e-<lowercase letters, digits, dashes>" >&2; exit 64; }
@@ -118,10 +118,10 @@ egress_proxy=0
 if has_phase phase3 || has_phase phase4c || has_phase browser; then egress_proxy=${EGRESS_PROXY:-1}; fi
 if has_phase browser && [[ $egress_proxy != 1 ]]; then echo "the browser suite needs the egress proxy: unset EGRESS_PROXY" >&2; exit 64; fi
 export EGRESS_PROXY=$egress_proxy # read by chart-values.py
-# OneCLI refuses an agent identifier over 50 characters (ADR 0040), and a session's agent is <prefix><uuid> (36). A longer
-# RUN_ID would make every repo or MCP session fail at `POST /v1/agents` with a 400 that looks like a OneCLI fault.
-if { has_phase phase4c || has_phase mcp; } && ((${#onecli_prefix} + 36 > 50)); then
-  echo "RUN_ID '$run_id' is too long for ${1}: OneCLI agent names would exceed 50 characters (at most 6 characters; the default has 6)" >&2
+# OneCLI refuses an agent identifier over 50 characters (ADR 0040), and the longest agent is <prefix><uuid>-m (38 more). The
+# orchestrator refuses a prefix over 12 characters at startup (onecli-names.ts), so a longer RUN_ID would fail every suite there.
+if ((${#onecli_prefix} > 12)); then
+  echo "RUN_ID '$run_id' is too long: the OneCLI name prefix $onecli_prefix must be at most 12 characters (at most 4 characters for the id; the default has 4)" >&2
   exit 64
 fi
 

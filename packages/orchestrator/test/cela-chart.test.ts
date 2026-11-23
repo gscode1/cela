@@ -925,6 +925,11 @@ describe("values are validated", () => {
     ["zero shards", ["--set", "orchestrator.shards=0"], /shards/],
     ["an unknown key", ["--set", "bogus=1"], /bogus|additional/],
     ["a bad OneCLI name prefix", ["--set", "onecli.namePrefix=Bad_"], /namePrefix|pattern/],
+    [
+      "a OneCLI name prefix over 12 characters",
+      ["--set", "onecli.namePrefix=cela-prod-session-"],
+      /namePrefix|pattern/,
+    ],
     ["no admins", ["--set-json", "api.admins=[]"], /admins/],
     ["a bad CIDR", ["--set-json", 'networkPolicy.kubeApiCidrs=["nope"]'], /kubeApiCidrs|pattern/],
     ["a model without a provider", ["--set-json", 'models.allowlist=["x"]'], /allowlist|pattern/],

@@ -213,7 +213,7 @@ describe("planSweep: OneCLI agents", () => {
   });
 
   it("never judges an agent or secret of another stack's prefix (a shared OneCLI workspace)", () => {
-    const other = "pi-e2e-ab12cd-";
+    const other = "pi-e2e-ab12-";
     const foreign = {
       agents: [{ id: "fa", identifier: `${other}${UNKNOWN}` }],
       secrets: [

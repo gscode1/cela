@@ -10,7 +10,7 @@ namespace `cela-dev` is never touched: the script refuses any namespace that doe
 tests/e2e/run.sh smoke                    # ~5 minutes of tests plus deployment and teardown time
 KEEP_NS=1 tests/e2e/run.sh phase4         # keep the namespace for debugging
 KEEP_NS_ON_FAIL=1 tests/e2e/run.sh all    # keep it only when something failed
-RUN_ID=ab12cd tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept namespace pi-e2e-ab12cd
+RUN_ID=ab12 tests/e2e/run.sh phase4b    # reuse (and redeploy into) the kept namespace pi-e2e-ab12
 tests/e2e/sweep.sh 6                      # delete e2e namespaces older than 6 hours (DRY_RUN=1 lists them)
 ```
 
@@ -29,7 +29,7 @@ for `mcp.deepwiki.com`.
 | `KUBE_CONTEXT`      | kubectl context (default: the current one)                                                                |
 | `KEEP_NS=1`         | never delete the namespace at the end                                                                     |
 | `KEEP_NS_ON_FAIL=1` | keep it if the exit code is not 0. Exit code 2 (the operator machine lost the Job) always keeps it, the Job is still in it |
-| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 6 random hex digits); an existing e2e namespace is reused. At most 6 characters for `phase4c` and `mcp`: OneCLI refuses agent names over 50 characters |
+| `RUN_ID`            | the id in `pi-e2e-<id>` (default: 4 random hex digits); an existing e2e namespace is reused. At most 4 characters: the orchestrator refuses a OneCLI name prefix over 12 characters (`pi-e2e-<id>-`), because OneCLI refuses agent names over 50 |
 | `SKIP_SWEEP=1`      | do not run the sweeper at the start                                                                       |
 | `SWEEP_MAX_AGE_HOURS` | age limit of the sweeper (default 6)                                                                    |
 | `NS_DELETE_WAIT_SECONDS` | how long the end of a run waits for the namespace to be gone (default 300)                           |
@@ -127,7 +127,7 @@ production. They also share one OneCLI **workspace**, and every orchestrator's o
 not know (`docs/decisions/0002-orphan-sweep.md`). So each stack names its agents and secrets with its own prefix
 (`PI_ONECLI_NAME_PREFIX`): `pi-session-` for the long-lived stack (the default, unchanged), `pi-e2e-<run id>-` for a run, so a
 run's agent is `pi-e2e-<run id>-<session uuid>` and its secrets end in `-git` and `-api`. The sweep matches names anchored at the
-start, so it judges only its own prefix: `pi-session-` does not match `pi-e2e-ab12cd-<uuid>`, nor the reverse. `run.sh` sets the
+start, so it judges only its own prefix: `pi-session-` does not match `pi-e2e-ab12-<uuid>`, nor the reverse. `run.sh` sets the
 value `onecli.namePrefix` of the chart (through `chart-values.py`) and the variable in the Job (`PI_ONECLI_NAME_PREFIX`); `run-phase4c.sh` finds the
 session's agent and secrets by it, for "the OneCLI agent is gone" and "its secrets are gone" too. No other suite looks up OneCLI
 objects. Every suite deletes what it created.
