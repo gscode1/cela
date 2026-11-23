@@ -35,8 +35,10 @@ The ACL decision does three things. It judges the **name** (no rule names it: de
 oracle). It then resolves the host and judges **every address** (always-blocked ranges, the platform block list, then the
 private tier by `private: true` rules), exactly as `Evaluate` does with `addresses`. Smokescreen then resolves once more and
 picks the first address its own IP policy allows. The direct route **dials that address only if the decision judged it
-too**; when the two answers share no address the tunnel is refused (amended for #373: dialling the first judged address
-meant Smokescreen's second layer approved one address and the proxy connected to another). `dialContext` reuses that
+too** (amended for #373: dialling the first judged address meant Smokescreen's second layer approved one address and the
+proxy connected to another). When the two answers share no address (a CDN or GeoDNS that hands out one rotating address
+per query, as `allegro.pl` does; #412), the proxy judges Smokescreen's pick on its own with the same rules and route, and
+dials it only if that allows it; a pick the rules deny (a private or platform address behind an allowed name) refuses the tunnel. `dialContext` reuses that
 address, so there is no third lookup that attacker-controlled DNS could answer differently (rebinding). Smokescreen's own
 classification stays as a second layer for loopback, link-local, multicast, reserved and IPv4-embedding IPv6 addresses; private, ULA and CGNAT ranges are opened to the evaluator
 (`OpenPrivateRanges`) because the evaluator, with the platform list, is the authority for them. IP literals are never a rule
