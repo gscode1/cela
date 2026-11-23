@@ -36,7 +36,7 @@ FROM scratch AS agent-browser
 ADD --checksum=sha256:8e69c9fb662514c9cf36e4911e94e913742ba066e55102486350e049dd847612 https://github.com/vercel-labs/agent-browser/releases/download/v0.43.0/agent-browser-linux-x64 /amd64
 ADD --checksum=sha256:34be55c2b92d8d199fb9d1d62a905ee5b6ac5b1f3e8c24e5b20597f370d905e5 https://github.com/vercel-labs/agent-browser/releases/download/v0.43.0/agent-browser-linux-arm64 /arm64
 
-FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
+FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11@sha256:c4719d5dd70a29b6c0ce9f90a2bf56c52938b0467684510b0fd78e4a3a775fe9
 ARG TARGETARCH
 USER root
 # Commands run as uid 1000, user `pi` (added below): tools that look the user up need a passwd entry, and HOME must be

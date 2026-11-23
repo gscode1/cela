@@ -1243,6 +1243,18 @@ describe("egressProxy (ADR 0035)", () => {
     );
   });
 
+  it("omits the PDB at one replica so node drains can proceed", () => {
+    const all = docs([...on, "--set", "egressProxy.replicas=1"]);
+    expect(named(all, "Deployment", "pi-egress-proxy").spec.replicas).toBe(1);
+    expect(named(all, "Service", "pi-egress-proxy").spec.ports[0].port).toBe(3128);
+    expect(named(all, "ServiceAccount", "pi-egress-proxy").automountServiceAccountToken).toBe(
+      false,
+    );
+    expect(
+      ofKind(all, "PodDisruptionBudget").find((p) => p.metadata.name === "pi-egress-proxy"),
+    ).toBeUndefined();
+  });
+
   it("references the database Secret and holds no value", () => {
     const env = envOf(named(docs(on), "Deployment", "pi-egress-proxy"));
     expect(env.EGRESS_DATABASE_URL?.valueFrom.secretKeyRef).toEqual({

@@ -20,6 +20,7 @@ metadata:
   labels:
     {{- include "cela.labels" . | nindent 4 }}
 automountServiceAccountToken: false
+{{- if gt (int .Values.egressProxy.replicas) 1 }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -32,4 +33,5 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: pi-egress-proxy
+{{- end }}
 {{- end }}

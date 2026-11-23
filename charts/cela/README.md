@@ -104,6 +104,9 @@ per database: the schema `inbox` is fixed.
 | `github.repoAllowlist`                                     | seeds the repositories a session may clone (`owner/name`, `owner/*`, `*`; ADR 0032); empty refuses every repo session. Seed only: change later on the console or with `PUT /admin/settings`                                                                                                                                                                                                                                                                                                 |
 | `imagePullSecrets`                                         | for private registries                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
+The egress proxy's PodDisruptionBudget (`minAvailable: 1`) is rendered only when `egressProxy.replicas > 1`.
+At one replica it is omitted so node drains can proceed, with proxy downtime.
+
 ### Admin console
 
 `console.enabled: true` makes ingest serve the console (a React app, [docs/admin-ui-plan.md](../../docs/admin-ui-plan.md))
