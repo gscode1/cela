@@ -54,7 +54,7 @@ export interface ProfileForm {
   sandboxFlavour: "default" | "browser" | "desktop";
   /** Empty for the default runtime. */
   sandboxRuntime: string;
-  /** Empty for the default of the flavour (`full` for browser and desktop, `images` for default). */
+  /** Empty for the default of the flavour (`images`). */
   contextTrim: ContextTrim | "";
 }
 

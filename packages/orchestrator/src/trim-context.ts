@@ -1,4 +1,10 @@
-import type { ImageContent, Message, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  ImageContent,
+  Message,
+  TextContent,
+  ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import { defineExtension, GenerationTask, hook } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
 import { errorMessage, log } from "./log.js";
@@ -10,7 +16,8 @@ import type { ContextTrim, SessionRow } from "@cela/session-core";
  * outputs that are several turns old are replaced by a short stub in the copy of the history sent to the provider. The
  * stored transcript, the events and what a user sees are never touched (`beforeRequest` results are for that request
  * only). How much is trimmed is a mode per session (the profile's `contextTrim`, ADR 0067): `images` leaves out old
- * screenshots, `full` also large old text results, `off` nothing.
+ * screenshots, `full` also large old text results, `off` nothing. Trimming is a context-window tool, not a cost tool:
+ * it is gated on the prompt size (see `boundaryOf`).
  */
 
 export interface TrimContextOptions {
@@ -20,8 +27,10 @@ export interface TrimContextOptions {
   readonly textMaxChars: number;
   /** The newest assistant turns are never touched. */
   readonly turnsKept: number;
-  /** The elision boundary moves in steps of this many assistant turns (prompt-cache friendliness). */
-  readonly stepTurns: number;
+  /** Nothing is trimmed until the last request's prompt has at least this many tokens. */
+  readonly minPrompt: number;
+  /** ... and the tokens a trim would remove are at least this fraction of that prompt (0 < x <= 1). */
+  readonly minRatio: number;
   /** How much of an elided text stays, from its start. */
   readonly textHeadChars: number;
 }
@@ -31,9 +40,13 @@ export const TRIM_CONTEXT_DEFAULTS: TrimContextOptions = {
   imageKeep: 2,
   textMaxChars: 4_000,
   turnsKept: 3,
-  stepTurns: 8,
+  minPrompt: 100_000,
+  minRatio: 0.5,
   textHeadChars: 600,
 };
+
+/** How removed content is turned into tokens, for the gate's "would remove" estimate. */
+export const TOKEN_ESTIMATE = { charsPerToken: 4, imageTokens: 1_000 } as const;
 
 const IMAGE_STUB_PREFIX = "[image elided to save context: ";
 const FALLBACK_IMAGE_NAME = "earlier screenshot";
@@ -62,20 +75,86 @@ function pathOf(messages: readonly Message[], result: ToolResultMessage): string
   return undefined;
 }
 
+/** Tokens of a message's tool-result content by the estimate (text chars / 4, a fixed cost per image). */
+function estimatedTokens(message: Message): number {
+  if (message.role !== "toolResult") return 0;
+  let tokens = 0;
+  for (const part of message.content) {
+    tokens +=
+      part.type === "image"
+        ? TOKEN_ESTIMATE.imageTokens
+        : part.text.length / TOKEN_ESTIMATE.charsPerToken;
+  }
+  return tokens;
+}
+
+/** The prompt of the request that produced an assistant message, from the provider's own usage; undefined if absent. */
+function promptTokens(message: Message): number | undefined {
+  if (message.role !== "assistant") return undefined;
+  const usage = message.usage as Partial<AssistantMessage["usage"]> | undefined;
+  if (usage === undefined) return undefined;
+  const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+  return Number.isFinite(total) && total > 0 ? total : undefined;
+}
+
+/** Estimated tokens `end` removes: what the messages before it weigh now, minus what the trimmed copy weighs. */
+function removedBy(
+  messages: readonly Message[],
+  end: number,
+  mode: ContextTrim,
+  options: TrimContextOptions,
+): number {
+  if (end === 0) return 0;
+  const trimmed = applyTrim(messages, end, mode, options);
+  let removed = 0;
+  for (let index = 0; index < end; index++) {
+    const before = messages[index];
+    const after = trimmed[index];
+    if (before !== undefined && after !== undefined && before !== after)
+      removed += estimatedTokens(before) - estimatedTokens(after);
+  }
+  return removed;
+}
+
 /**
- * How many leading messages may change. It depends on the count of assistant turns only, in steps of `stepTurns`, and
- * leaves the newest `turnsKept` turns out: between two steps the same messages are eligible, so the trimmed prefix is
- * the same bytes request after request and the provider's prompt cache holds.
+ * How many leading messages may change: the trim boundary, a pure function of `messages` (and the constants). It is
+ * derived by replaying the conversation, oldest request to newest. The request that carries `k` assistant messages has
+ * the usage of the newest of them (the last request's prompt, exact from the provider) and may trim the results of all
+ * but the newest `turnsKept` of those turns. At each such request the boundary jumps to that point when
+ *   - the last prompt is at least `minPrompt` tokens, and
+ *   - what the jump removes (on top of what the boundary already removed) is at least `minRatio` of that prompt.
+ * Otherwise it stays. Replaying a prefix of the history gives the same boundary for that prefix, so between two jumps
+ * the trimmed part is the same bytes request after request (prompt cache), and a request whose boundary has moved is
+ * the one request that rewrites the prefix. After a jump the recorded prompts are the trimmed size, so the gate
+ * re-arms only when the prompt has grown back above `minPrompt` with enough to remove again. Why a gate and no
+ * schedule: docs/decisions/0067-trim-context.md (a rewrite costs about as much as a full prompt and rarely pays).
  */
-function eligibleEnd(messages: readonly Message[], options: TrimContextOptions): number {
+function boundaryOf(
+  messages: readonly Message[],
+  mode: ContextTrim,
+  options: TrimContextOptions,
+): number {
   const assistants: number[] = [];
   messages.forEach((message, index) => {
     if (message.role === "assistant") assistants.push(index);
   });
-  const old = Math.max(0, assistants.length - options.turnsKept);
-  const turns = Math.floor(old / options.stepTurns) * options.stepTurns;
-  const last = turns === 0 ? undefined : assistants[turns - 1];
-  return last === undefined ? 0 : last + 1;
+  let boundary = 0;
+  let removed = 0;
+  for (let count = 1; count <= assistants.length; count++) {
+    const newest = assistants[count - 1];
+    const last = newest === undefined ? undefined : messages[newest];
+    const prompt = last === undefined ? undefined : promptTokens(last);
+    if (prompt === undefined || prompt < options.minPrompt) continue;
+    // Everything before the oldest of the newest `turnsKept` assistant turns (their results are theirs).
+    const candidate = assistants[count - options.turnsKept] ?? 0;
+    if (candidate <= boundary) continue;
+    const total = removedBy(messages, candidate, mode, options);
+    if (total - removed >= options.minRatio * prompt) {
+      boundary = candidate;
+      removed = total;
+    }
+  }
+  return boundary;
 }
 
 function elideText(text: string, options: TrimContextOptions): string | undefined {
@@ -115,28 +194,20 @@ function trimResult(
   return { ...message, content };
 }
 
-/**
- * The messages of a request without the weight of old tool results. A pure function of `messages` and `options`: no
- * clock, no randomness, so the same input gives the same bytes, and trimming trimmed messages changes nothing. Only
- * tool results before `eligibleEnd` change; system, user and assistant messages (tool call arguments included) never do.
- * The images that stay are those of the last `imageKeep` image-holding results among the eligible ones, so what is kept
- * does not change while the boundary stays.
- */
-export function trimMessages(
+/** The messages with the tool results before `end` trimmed. */
+function applyTrim(
   messages: readonly Message[],
+  end: number,
   mode: ContextTrim,
-  options: TrimContextOptions = TRIM_CONTEXT_DEFAULTS,
+  options: TrimContextOptions,
 ): readonly Message[] {
-  if (mode === "off") return messages;
-  const end = eligibleEnd(messages, options);
-  if (end === 0) return messages;
   const withImages: number[] = [];
   for (let index = 0; index < end; index++) {
     const message = messages[index];
     if (message?.role === "toolResult" && hasImage(message)) withImages.push(index);
   }
   const kept = new Set(options.imageKeep === 0 ? [] : withImages.slice(-options.imageKeep));
-  const result = messages.map((message, index) => {
+  return messages.map((message, index) => {
     if (index >= end || message.role !== "toolResult") return message;
     return trimResult(
       messages,
@@ -146,6 +217,24 @@ export function trimMessages(
       options,
     );
   });
+}
+
+/**
+ * The messages of a request without the weight of old tool results. A pure function of `messages` and `options`: no
+ * clock, no randomness, so the same input gives the same bytes, and trimming trimmed messages changes nothing. Only
+ * tool results before `boundaryOf` change; system, user and assistant messages (tool call arguments included) never do.
+ * The images that stay are those of the last `imageKeep` image-holding results before the boundary, so what is kept
+ * does not change while the boundary stays. Below the gate the same array comes back.
+ */
+export function trimMessages(
+  messages: readonly Message[],
+  mode: ContextTrim,
+  options: TrimContextOptions = TRIM_CONTEXT_DEFAULTS,
+): readonly Message[] {
+  if (mode === "off") return messages;
+  const end = boundaryOf(messages, mode, options);
+  if (end === 0) return messages;
+  const result = applyTrim(messages, end, mode, options);
   return result.some((message, index) => message !== messages[index]) ? result : messages;
 }
 
@@ -153,20 +242,17 @@ export function trimMessages(
 export type ContextTrimOf = (conversationId: number) => Promise<ContextTrim>;
 
 /**
- * The mode of a session: its profile snapshot's `contextTrim`, else the default of its flavour (`full` for browser and
- * desktop, `images` for default). A session without a profile, or with a snapshot that no longer validates, has the
- * default of its flavour.
+ * The mode of a session: its profile snapshot's `contextTrim`, else `images`. A session without a profile, or with a
+ * snapshot that no longer validates, has `images`.
  */
-export function sessionContextTrim(
-  session: Pick<SessionRow, "profile" | "sandboxFlavour"> | undefined,
-): ContextTrim {
-  if (session === undefined) return contextTrimOf(undefined, "default");
+export function sessionContextTrim(session: Pick<SessionRow, "profile"> | undefined): ContextTrim {
+  if (session === undefined) return contextTrimOf(undefined);
   const snapshot =
     session.profile === null ? undefined : validateProfileDefinition(session.profile.snapshot);
-  return contextTrimOf(typeof snapshot === "string" ? undefined : snapshot, session.sandboxFlavour);
+  return contextTrimOf(typeof snapshot === "string" ? undefined : snapshot);
 }
 
-/** Without a lookup (tests, control sessions) every conversation has the mode of the default flavour. */
+/** Without a lookup (tests, control sessions) every conversation has the default mode. */
 const DEFAULT_MODE: ContextTrimOf = () => Promise.resolve(sessionContextTrim(undefined));
 
 /**

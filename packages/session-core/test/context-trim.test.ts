@@ -24,16 +24,14 @@ describe("contextTrim (docs/decisions/0067-trim-context.md)", () => {
     expect(validateProfileDefinition({ contextTrim: 1 })).toBe(message);
   });
 
-  it("defaults to full for browser and desktop, images for default", { timeout: 5_000 }, () => {
-    expect(defaultContextTrim("browser")).toBe("full");
-    expect(defaultContextTrim("desktop")).toBe("full");
-    expect(defaultContextTrim("default")).toBe("images");
+  it("defaults to images", { timeout: 5_000 }, () => {
+    expect(defaultContextTrim()).toBe("images");
   });
 
   it("takes the profile's own value over the default of the flavour", { timeout: 5_000 }, () => {
-    expect(contextTrimOf({}, "default")).toBe("images");
-    expect(contextTrimOf(undefined, "desktop")).toBe("full");
-    expect(contextTrimOf({ contextTrim: "off" }, "desktop")).toBe("off");
-    expect(contextTrimOf({ contextTrim: "full" }, "default")).toBe("full");
+    expect(contextTrimOf({})).toBe("images");
+    expect(contextTrimOf(undefined)).toBe("images");
+    expect(contextTrimOf({ contextTrim: "off" })).toBe("off");
+    expect(contextTrimOf({ contextTrim: "full" })).toBe("full");
   });
 });
