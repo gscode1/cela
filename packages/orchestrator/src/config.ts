@@ -1,5 +1,5 @@
-import { loadDatabaseTls, loadModelPolicy } from "@cela/session-core";
-import type { DatabaseTls, ModelPolicy } from "@cela/session-core";
+import { loadDatabaseTls, loadModelPolicy, parseSandboxRuntimes } from "@cela/session-core";
+import type { DatabaseTls, ModelPolicy, SandboxRuntimes } from "@cela/session-core";
 import { memoryLimitBytes, resolveBridgeCap } from "./bridge-cap.js";
 import type { BridgeCapSource } from "./bridge-cap.js";
 import { GITHUB_APP_DIR } from "./github-app.js";
@@ -41,6 +41,10 @@ export interface OrchestratorConfig {
    * sized pools (`<warmPool>-<size>`, docs/decisions/0030-sandbox-sizes.md).
    */
   warmPool: string;
+  /** The named sandbox runtimes (`PI_SANDBOX_RUNTIMES`, the chart's `sandbox.runtimes`, ADR 0064); `{}` when none. */
+  sandboxRuntimes: SandboxRuntimes;
+  /** Named runtimes whose chart entry sets `allowInsecureRuntime` (`PI_ALLOW_INSECURE_RUNTIMES`, comma-separated). */
+  allowInsecureRuntimes: string[];
   port: number;
   /** Names this process in pg_stat_activity and logs. */
   instance: string;
@@ -255,6 +259,11 @@ export function loadConfig(
     feedRetentionHours,
     namespace,
     warmPool,
+    sandboxRuntimes: parseSandboxRuntimes(env),
+    allowInsecureRuntimes: (env.PI_ALLOW_INSECURE_RUNTIMES ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== ""),
     port,
     instance: env.POD_NAME ?? `orchestrator-${String(process.pid)}`,
     apiTokens,

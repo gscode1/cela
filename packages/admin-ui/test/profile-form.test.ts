@@ -84,6 +84,17 @@ describe("profile form round trips", () => {
     expect(definitionFromForm(formFromDefinition(explicit), explicit)).toEqual(explicit);
   });
 
+  it("round-trips the sandbox runtime: the default is left out, a named one is sent", () => {
+    const plain: ProfileDefinition = { instructions: "x" };
+    expect(formFromDefinition(plain).sandboxRuntime).toBe("");
+    expect(definitionFromForm(formFromDefinition(plain), plain)).toEqual(plain);
+    const named: ProfileDefinition = { sandboxRuntime: "runc" };
+    expect(definitionFromForm(formFromDefinition(named), named)).toEqual(named);
+    expect(definitionFromForm({ ...formFromDefinition(named), sandboxRuntime: "" }, named)).toEqual(
+      {},
+    );
+  });
+
   it("keeps sandbox sizes set through the API when the console saves an edit elsewhere", () => {
     const stored: ProfileDefinition = { instructions: "x", sandboxSize: "l", sandboxSizes: ["xl"] };
     expect(

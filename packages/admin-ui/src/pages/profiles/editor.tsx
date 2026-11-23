@@ -40,6 +40,7 @@ import {
   useMcpPickerQuery,
   useNetworkModesQuery,
   useSandboxFlavoursQuery,
+  useSandboxRuntimesQuery,
   useRuleSetsQuery,
   useSandboxSizesQuery,
   useProfilesQuery,
@@ -94,6 +95,7 @@ export function ProfileEditor({
   const sandboxSizes = useSandboxSizesQuery();
   const networkModes = useNetworkModesQuery();
   const sandboxFlavours = useSandboxFlavoursQuery();
+  const sandboxRuntimes = useSandboxRuntimesQuery();
   const skills = useSkillPickerQuery();
   const models = useModelView();
   const [conflict, setConflict] = useState<ConflictView | undefined>(undefined);
@@ -399,6 +401,8 @@ export function ProfileEditor({
             modeCatalog={networkModes.data}
             flavour={form.sandboxFlavour}
             flavourCatalog={sandboxFlavours.data}
+            runtime={form.sandboxRuntime}
+            runtimeCatalog={sandboxRuntimes.data}
             onChange={(change) => {
               edit(change);
             }}

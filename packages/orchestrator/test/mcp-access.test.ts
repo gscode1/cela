@@ -51,6 +51,7 @@ const session = (id: string, conversationId: number, mcpServers: string[] | null
   sandboxSize: null,
   networkMode: "proxied",
   sandboxFlavour: "default",
+  sandboxRuntime: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
 });

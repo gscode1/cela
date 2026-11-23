@@ -92,6 +92,7 @@ describe("SessionService when an abort does not go idle in time", () => {
     sandboxSize: null,
     networkMode: "proxied",
     sandboxFlavour: "default",
+    sandboxRuntime: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

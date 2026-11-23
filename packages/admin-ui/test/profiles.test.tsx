@@ -541,6 +541,46 @@ describe("sandbox flavour", () => {
   });
 });
 
+describe("sandbox runtime", () => {
+  it("shows no runtime choice beyond the default when the chart defines none", async () => {
+    const admin = createFakeAdmin();
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    expect(await screen.findByTestId("sandbox-default")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Sandbox runtime")).not.toBeInTheDocument();
+  });
+
+  it("offers the named runtimes, defaults to the default runtime and saves the choice", async () => {
+    const admin = createFakeAdmin();
+    admin.sandboxRuntimes = [
+      { name: "gvisorkvm", flavours: ["default"], insecure: false },
+      { name: "runc", flavours: ["default"], insecure: true },
+    ];
+    addProfile(admin, "review", { instructions: "x" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox runtime");
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: "runc (not gVisor)" })).toBeEnabled();
+    });
+    expect(select).toHaveValue("");
+    expect(within(select).getByRole("option", { name: "Default runtime" })).toBeInTheDocument();
+    await userEvent.selectOptions(select, "runc");
+    await userEvent.click(publish());
+    await screen.findByText(/Published version 2/);
+    expect(admin.writes[0]?.body.definition).toEqual({ instructions: "x", sandboxRuntime: "runc" });
+  });
+
+  it("marks a stored runtime the chart no longer defines", async () => {
+    const admin = createFakeAdmin();
+    admin.sandboxRuntimes = [{ name: "runc", flavours: ["default"], insecure: true }];
+    addProfile(admin, "review", { sandboxRuntime: "gone" });
+    await openProfile(admin, "review");
+    const select = await screen.findByLabelText("Sandbox runtime");
+    expect(select).toHaveValue("gone");
+    expect(within(select).getByRole("option", { name: "gone (not defined)" })).toBeInTheDocument();
+  });
+});
+
 describe("network mode", () => {
   it("disables direct while the chart gate is off", async () => {
     const admin = createFakeAdmin();

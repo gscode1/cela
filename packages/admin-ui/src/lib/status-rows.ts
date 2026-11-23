@@ -7,7 +7,7 @@ import type {
   SandboxSizeCatalog,
   ToolCatalog,
 } from "@/lib/api/profiles";
-import { runtimeName, runtimeText } from "@/lib/api/status";
+import { namedRuntimes, runtimeName, runtimeStatusText, runtimeText } from "@/lib/api/status";
 import type { NetworkPolicyState, ShardStatus, StatusReport } from "@/lib/api/status";
 
 /** What a query has so far, without the query library: loading, failed with a message, or an answer. */
@@ -72,7 +72,41 @@ function pending(
   };
 }
 
+/**
+ * The default runtime's row (the top-level fields), then the named runtimes of ADR 0064 on top: a class that differs from
+ * the configured one is a problem, an insecure runtime needs attention, and the isolation probe only covers the default.
+ */
 function runtimeRow(source: Source<StatusReport>): StatusRow {
+  const base = defaultRuntimeRow(source);
+  if (source.state !== "ok") return base;
+  const shards = source.data.shards;
+  const several = shards.length > 1;
+  const named = shards.flatMap((shard) =>
+    namedRuntimes(shard).map(([name, status]) => ({ shard, name, status })),
+  );
+  if (named.length === 0) return base;
+  const wrong = named.filter(({ status }) => runtimeStatusText(status).mismatch);
+  const insecure = [...new Set(named.filter(({ status }) => status.insecure).map((n) => n.name))];
+  const parts = [base.sentence];
+  for (const { shard, name, status } of wrong) {
+    parts.push(
+      `${several ? `Shard ${String(shard.shard)}, runtime` : "Runtime"} ${name}: ${runtimeStatusText(status).text}.`,
+    );
+  }
+  if (insecure.length > 0) parts.push(`Insecure runtimes (not gVisor): ${insecure.join(", ")}.`);
+  parts.push("The isolation probe runs under the default runtime only.");
+  return {
+    ...base,
+    level: worst([
+      base.level === "info" ? "ok" : base.level,
+      ...(wrong.length > 0 ? (["problem"] as const) : []),
+      ...(insecure.length > 0 ? (["attention"] as const) : []),
+    ]),
+    sentence: parts.join(" "),
+  };
+}
+
+function defaultRuntimeRow(source: Source<StatusReport>): StatusRow {
   if (source.state !== "ok") return pending("runtime", "Sandbox runtime", source);
   const shards = source.data.shards;
   const row = { id: "runtime", title: "Sandbox runtime" } as const;

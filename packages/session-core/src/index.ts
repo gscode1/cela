@@ -201,7 +201,12 @@ export {
   requestNetworkProbe,
   claimNetworkProbeRequest,
 } from "./shard-status.js";
-export type { NetworkPolicyState, ProbeRequest, ShardStatus } from "./shard-status.js";
+export type {
+  NetworkPolicyState,
+  ProbeRequest,
+  RuntimeStatus,
+  ShardStatus,
+} from "./shard-status.js";
 export {
   DEFAULT_NETWORK_MODE,
   DIRECT_NOT_ALLOWED,
@@ -223,6 +228,15 @@ export {
   sandboxFlavourOf,
 } from "./sandbox-flavour.js";
 export type { SandboxFlavour } from "./sandbox-flavour.js";
+export {
+  DEFAULT_SANDBOX_RUNTIME,
+  RESERVED_SANDBOX_RUNTIME_NAMES,
+  SANDBOX_RUNTIME_NAME,
+  parseSandboxRuntimes,
+  sandboxRuntimeConflict,
+  sandboxRuntimeOf,
+} from "./sandbox-runtime.js";
+export type { SandboxRuntime, SandboxRuntimes } from "./sandbox-runtime.js";
 export { SANDBOX_SIZE_NAME, chooseSandboxSize, parseSandboxSizes } from "./sandbox-sizes.js";
 export type { SandboxSize, SandboxSizes } from "./sandbox-sizes.js";
 export {

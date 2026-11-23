@@ -101,6 +101,17 @@ const variants: Record<string, string[][]> = {
       "--set",
       "orchestrator.shards=3",
     ],
+    // Named sandbox runtimes (ADR 0064): their templates are pods too.
+    [
+      "--set",
+      "sandbox.runtimes.gvisorkvm.runtimeClassName=gvisor-kvm",
+      "--set",
+      "sandbox.runtimes.gvisorkvm.flavours={default,browser}",
+      "--set",
+      "sandbox.runtimes.runc.runtimeClassName=runc-sandbox",
+      "--set",
+      "sandbox.runtimes.runc.allowInsecureRuntime=true",
+    ],
   ],
 };
 for (const chart of chartNames()) {

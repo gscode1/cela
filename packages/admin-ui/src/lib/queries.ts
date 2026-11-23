@@ -9,6 +9,7 @@ import {
   listProfiles,
   listNetworkModes,
   listSandboxFlavours,
+  listSandboxRuntimes,
   listSandboxSizes,
   listSkillInfos,
   listTools,
@@ -19,6 +20,7 @@ import type {
   ProfileList,
   NetworkModeCatalog,
   SandboxFlavourCatalog,
+  SandboxRuntimeCatalog,
   SandboxSizeCatalog,
   SkillInfo,
   ToolCatalog,
@@ -64,6 +66,7 @@ export const keys = {
   sandboxSizes: ["sandbox-sizes"] as const,
   networkModes: ["network-modes"] as const,
   sandboxFlavours: ["sandbox-flavours"] as const,
+  sandboxRuntimes: ["sandbox-runtimes"] as const,
   pickerMcp: ["profile-editor", "mcp-servers"] as const,
   pickerSkills: ["profile-editor", "skills"] as const,
   /** A write invalidates `egress` as a whole: every egress view moves with the one schema revision. */
@@ -136,6 +139,14 @@ export function useSandboxFlavoursQuery(): UseQueryResult<SandboxFlavourCatalog>
   return useQuery({
     queryKey: keys.sandboxFlavours,
     queryFn: ({ signal }) => listSandboxFlavours(token ?? "", signal),
+  });
+}
+
+export function useSandboxRuntimesQuery(): UseQueryResult<SandboxRuntimeCatalog> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: keys.sandboxRuntimes,
+    queryFn: ({ signal }) => listSandboxRuntimes(token ?? "", signal),
   });
 }
 

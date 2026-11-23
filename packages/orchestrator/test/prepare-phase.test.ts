@@ -329,6 +329,7 @@ const sessionRow = (overrides: Partial<SessionRow> = {}): SessionRow => ({
   sandboxSize: null,
   networkMode: "proxied",
   sandboxFlavour: "default",
+  sandboxRuntime: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
   ...overrides,

@@ -59,6 +59,13 @@ async function status() {
       `shard ${String(s.shard)} configuredRuntime=${s.configuredRuntime || "(node default)"} observedRuntime=${String(s.observedRuntime)} networkPolicy=${s.networkPolicy}`,
     );
   }
+  // One line per named sandbox runtime (ADR 0064); the shard line above is the default runtime.
+  for (const s of shards)
+    for (const [name, r] of Object.entries(s.runtimes ?? {}))
+      if (name !== "default")
+        console.log(
+          `runtime shard=${String(s.shard)} name=${name} configuredRuntime=${r.configured} observedRuntime=${String(r.observed)} insecure=${String(r.insecure)}`,
+        );
   console.log(
     `isolation-probe state=${networkPolicy.state} checkedAt=${String(networkPolicy.checkedAt)}`,
   );

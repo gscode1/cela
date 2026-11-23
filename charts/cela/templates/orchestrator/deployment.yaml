@@ -108,6 +108,10 @@ spec:
             {{- if $root.Values.security.allowInsecureRuntime }}
             - { name: PI_ALLOW_INSECURE_RUNTIME, value: "1" }
             {{- end }}
+            # The named sandbox runtimes (ADR 0064) and the ones whose insecure class is acknowledged; the orchestrator
+            # refuses to start for a chart-labelled template whose class is not gVisor and not in this list.
+            - { name: PI_SANDBOX_RUNTIMES, value: {{ include "cela.runtimesJson" $root | quote }} }
+            - { name: PI_ALLOW_INSECURE_RUNTIMES, value: {{ include "cela.ackedRuntimes" $root | quote }} }
             {{- with $root.Values.orchestrator.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -83,6 +83,32 @@ describe("Status page", () => {
     expect(screen.queryByTestId("nav-problem")).toBeNull();
   });
 
+  it("lists every runtime of a shard in the runtime details", async () => {
+    serve({
+      status: {
+        shards: [
+          shard({
+            runtimes: {
+              default: { configured: "gvisor", observed: "gvisor", insecure: false },
+              runc: { configured: "runc-sandbox", observed: "gvisor", insecure: true },
+            },
+          }),
+        ],
+        networkPolicy: null,
+        directSessions: 0,
+      },
+    });
+    await open();
+    await userEvent.click(within(row("runtime")).getByRole("button", { name: /Details/ }));
+    expect(within(row("runtime")).getByTestId("runtime-0")).toHaveTextContent("gvisor");
+    expect(within(row("runtime")).getByTestId("runtime-0-runc")).toHaveTextContent(
+      "configured runc-sandbox, observed gvisor (not gVisor)",
+    );
+    expect(row("runtime")).toHaveTextContent(
+      "The isolation probe runs under the default runtime only.",
+    );
+  });
+
   it("opens the details of one row only, and shows no per-shard network column", async () => {
     serve({
       status: {

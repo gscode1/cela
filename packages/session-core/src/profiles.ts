@@ -5,6 +5,8 @@ import { DIRECT_NOT_ALLOWED, isNetworkMode, NETWORK_MODES } from "./network-mode
 import type { NetworkMode } from "./network-mode.js";
 import { BROWSER_NOT_ENABLED, isSandboxFlavour, SANDBOX_FLAVOURS } from "./sandbox-flavour.js";
 import type { SandboxFlavour } from "./sandbox-flavour.js";
+import { sandboxRuntimeConflict, SANDBOX_RUNTIME_NAME } from "./sandbox-runtime.js";
+import type { SandboxRuntimes } from "./sandbox-runtime.js";
 import { SANDBOX_SIZE_NAME } from "./sandbox-sizes.js";
 import { parseModelKey, parseThinkingLevel, THINKING_LEVELS, modelKey } from "./models.js";
 import type { ThinkingLevel } from "./models.js";
@@ -67,6 +69,7 @@ const KEYS = [
   "egressRuleSets",
   "networkMode",
   "sandboxFlavour",
+  "sandboxRuntime",
 ] as const;
 
 /**
@@ -129,6 +132,11 @@ export interface ProfileDefinition {
    * (Chromium and browser tools; only where the chart enables it, and never with credentials). Absent: `default`.
    */
   sandboxFlavour?: SandboxFlavour;
+  /**
+   * The named sandbox runtime of this profile's sessions (the chart's `sandbox.runtimes`, issue #406). Absent: the
+   * deployment's default runtime. Fixed per session when it is created; proxied network mode only.
+   */
+  sandboxRuntime?: string;
 }
 
 export interface ProfileRef {
@@ -303,6 +311,15 @@ export function validateProfileDefinition(input: unknown): ProfileDefinition | s
     }
     definition.sandboxFlavour = body.sandboxFlavour;
   }
+  if (body.sandboxRuntime !== undefined) {
+    if (
+      typeof body.sandboxRuntime !== "string" ||
+      !SANDBOX_RUNTIME_NAME.test(body.sandboxRuntime)
+    ) {
+      return `sandboxRuntime must be a runtime name (${SANDBOX_RUNTIME_NAME.source})`;
+    }
+    definition.sandboxRuntime = body.sandboxRuntime;
+  }
   return ordered(definition);
 }
 
@@ -375,8 +392,12 @@ export function checkProfileNames(
     browserFlavourEnabled?: boolean;
     /** Why a browser profile cannot have these credentials (browserFlavourConflict), evaluated by the caller. */
     browserConflict?: (definition: ProfileDefinition) => string | undefined;
+    /** The deployment's named runtimes (PI_SANDBOX_RUNTIMES); absent: none, so any `sandboxRuntime` is refused. */
+    sandboxRuntimes?: SandboxRuntimes;
   },
 ): string | undefined {
+  const runtimeConflict = sandboxRuntimeConflict(definition, known.sandboxRuntimes ?? {});
+  if (runtimeConflict !== null) return runtimeConflict;
   if (definition.sandboxFlavour === "browser") {
     if (known.browserFlavourEnabled !== true) return BROWSER_NOT_ENABLED;
     const conflict = known.browserConflict?.(definition);

@@ -1,5 +1,7 @@
 # 0020: Install with Helm releases behind one command
 
+Amended by [0064](0064-sandbox-runtimes.md) (2026-11-23): `sandbox.runtimeClassName` with `security.allowInsecureRuntime` stays the default runtime; `sandbox.runtimes` adds named runtimes, each with its own acknowledgement.
+
 Status: accepted as the direction, 2026-11-17 (issue #104). Built slice by slice: the app chart and `hack/install.sh` exist (slice 4, `charts/pi-durable`), and `deploy/` was removed in slice 11b (issue #141), so this is the only supported install path; the rest is planned. The plan, slices and acceptance checks are in
 [install-plan.md](../install-plan.md). Builds on [0019](0019-restricted-pod-security.md) (restricted Pod Security) and
 [0013](0013-e2e-namespace-per-run.md) (a namespace per e2e run).

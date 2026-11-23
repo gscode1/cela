@@ -18,6 +18,7 @@ describe("shard status store", () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining("on conflict (shard)"), [
       2,
       "gvisor",
+      JSON.stringify({ default: { configured: "gvisor", observed: null, insecure: false } }),
     ]);
     expect(query.mock.calls[0]?.[0]).toContain(
       "observed_runtime = null, network_policy = 'unknown'",
@@ -25,12 +26,45 @@ describe("shard status store", () => {
     await observeShardRuntime(pool, 2, "");
     expect(query).toHaveBeenLastCalledWith(expect.stringContaining("where shard = $1"), [2, ""]);
   }, 1000);
+
+  it("starts with a configured entry for the default runtime and every named one, none observed", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    await startShardStatus({ query } as unknown as pg.Pool, 0, "runc", {
+      gvisorkvm: { configured: "gvisor-kvm", insecure: false },
+      runc: { configured: "runc-sandbox", insecure: true },
+    });
+    expect(query.mock.calls[0]?.[0]).toContain("runtimes = excluded.runtimes");
+    expect(JSON.parse(String((query.mock.calls[0]?.[1] as unknown[])[2]))).toEqual({
+      default: { configured: "runc", observed: null, insecure: true },
+      gvisorkvm: { configured: "gvisor-kvm", observed: null, insecure: false },
+      runc: { configured: "runc-sandbox", observed: null, insecure: true },
+    });
+  }, 1000);
+
+  it("a default attach writes the top-level observation and the default key, nothing else", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    await observeShardRuntime({ query } as unknown as pg.Pool, 1, "gvisor", null);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("observed_runtime = $2");
+    expect(sql).toContain("'{default,observed}'");
+    expect(query.mock.calls[0]?.[1]).toEqual([1, "gvisor"]);
+  }, 1000);
+
+  it("a named attach sets only its own key with jsonb_set and never the top-level observation", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    await observeShardRuntime({ query } as unknown as pg.Pool, 1, "gvisor-kvm", "gvisorkvm");
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("jsonb_set(runtimes, array[$3::text, 'observed']");
+    expect(sql).not.toContain("observed_runtime");
+    expect(query.mock.calls[0]?.[1]).toEqual([1, "gvisor-kvm", "gvisorkvm"]);
+  }, 1000);
   it("reads all shards ordered by shard, including null and empty runtime observations", async () => {
     const rows = [
       {
         shard: 0,
         configuredRuntime: "gvisor",
         observedRuntime: null,
+        runtimes: {},
         networkPolicy: "unknown",
         networkPolicyCheckedAt: null,
         networkPolicyDetail: null,
@@ -41,6 +75,7 @@ describe("shard status store", () => {
         shard: 1,
         configuredRuntime: "",
         observedRuntime: "",
+        runtimes: {},
         networkPolicy: "unknown",
         networkPolicyCheckedAt: null,
         networkPolicyDetail: null,
@@ -56,7 +91,12 @@ describe("shard status store", () => {
 
   it("shows shard 0's isolation verdict on every row, with the detail on shard 0 only", async () => {
     const checked = new Date(5);
-    const base = { configuredRuntime: "gvisor", observedRuntime: null, updatedAt: new Date(0) };
+    const base = {
+      configuredRuntime: "gvisor",
+      observedRuntime: null,
+      runtimes: {},
+      updatedAt: new Date(0),
+    };
     const rows = [
       {
         ...base,

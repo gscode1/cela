@@ -111,6 +111,7 @@ describe("SessionService creates the conversation with the catalog", () => {
     sandboxSize: null,
     networkMode: "proxied",
     sandboxFlavour: "default",
+    sandboxRuntime: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   });

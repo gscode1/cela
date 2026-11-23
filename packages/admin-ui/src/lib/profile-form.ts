@@ -18,6 +18,8 @@ const MCP_SERVER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const RULE_SET_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** `SANDBOX_SIZE_NAME` (packages/session-core/src/sandbox-sizes.ts). */
 const SANDBOX_SIZE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
+/** `SANDBOX_RUNTIME_NAME` (packages/session-core/src/sandbox-runtime.ts). */
+const SANDBOX_RUNTIME_NAME = /^[a-z][a-z0-9]{0,15}$/;
 const MAX_LIST = 32;
 const MAX_SKILLS = 20;
 const MAX_INSTRUCTIONS = 8_000;
@@ -50,6 +52,8 @@ export interface ProfileForm {
   sandboxSizes: string[];
   networkMode: "proxied" | "direct";
   sandboxFlavour: "default" | "browser";
+  /** Empty for the default runtime. */
+  sandboxRuntime: string;
 }
 
 export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
@@ -72,6 +76,7 @@ export function formFromDefinition(definition: ProfileDefinition): ProfileForm {
     sandboxSizes: definition.sandboxSizes ?? [],
     networkMode: definition.networkMode ?? "proxied",
     sandboxFlavour: definition.sandboxFlavour ?? "default",
+    sandboxRuntime: definition.sandboxRuntime ?? "",
   };
 }
 
@@ -109,6 +114,7 @@ export function definitionFromForm(
     definition.networkMode = form.networkMode;
   if (form.sandboxFlavour === "browser" || original.sandboxFlavour !== undefined)
     definition.sandboxFlavour = form.sandboxFlavour;
+  if (form.sandboxRuntime !== "") definition.sandboxRuntime = form.sandboxRuntime;
   return definition;
 }
 
@@ -180,6 +186,11 @@ export function definitionProblems(definition: ProfileDefinition): string[] {
   const flavour: string | undefined = definition.sandboxFlavour;
   if (flavour !== undefined && flavour !== "default" && flavour !== "browser")
     problems.push("sandboxFlavour must be one of default, browser");
+  if (
+    definition.sandboxRuntime !== undefined &&
+    !SANDBOX_RUNTIME_NAME.test(definition.sandboxRuntime)
+  )
+    problems.push("sandboxRuntime must be a runtime name");
   const sizes = definition.sandboxSizes;
   if (
     sizes !== undefined &&
@@ -313,7 +324,8 @@ export function isEmptyForm(form: ProfileForm): boolean {
     form.sandboxSize === "" &&
     form.sandboxSizes.length === 0 &&
     form.networkMode === "proxied" &&
-    form.sandboxFlavour === "default"
+    form.sandboxFlavour === "default" &&
+    form.sandboxRuntime === ""
   );
 }
 

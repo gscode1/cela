@@ -4,6 +4,8 @@ export interface ShardStatus {
   shard: number;
   configuredRuntime: string;
   observedRuntime: string | null;
+  /** Every runtime of this shard, `default` and each named one (ADR 0064); `{}` before the shard reports. */
+  runtimes: Record<string, RuntimeStatus>;
   /** The namespace-wide isolation state, the same on every shard row (see `readShardStatus`). */
   networkPolicy: NetworkPolicyState;
   /** When the probe last finished; null until it has. Only shard 0 runs it, so only its row carries this. */
@@ -15,6 +17,13 @@ export interface ShardStatus {
   updatedAt: Date;
 }
 
+/** One sandbox runtime's status: what the chart configured, the RuntimeClass the latest attached Pod had, and whether it is not gVisor. */
+export interface RuntimeStatus {
+  configured: string;
+  observed: string | null;
+  insecure: boolean;
+}
+
 /** `unknown` until the probe has run, `running` while it does; the rest is its verdict (docs/network-policy.md). */
 export type NetworkPolicyState =
   "unknown" | "running" | "enforced" | "not-enforced" | "inconclusive";
@@ -22,29 +31,56 @@ export type NetworkPolicyState =
 /** The shard whose orchestrator runs the probe: the policies are namespace-wide, one probe covers every shard. */
 export const PROBE_SHARD = 0;
 
-/** A new process must not report its predecessor's observations as its own. */
+/**
+ * A new process must not report its predecessor's observations as its own. `configured` is the default runtime's
+ * RuntimeClass; `named` the other runtimes' (name to class and whether it is not gVisor, ADR 0064).
+ */
 export async function startShardStatus(
   pool: pg.Pool,
   shard: number,
   runtime: string,
+  named: Readonly<Record<string, { configured: string; insecure: boolean }>> = {},
 ): Promise<void> {
+  const runtimes: Record<string, RuntimeStatus> = {
+    default: { configured: runtime, observed: null, insecure: runtime !== "gvisor" },
+  };
+  for (const [name, entry] of Object.entries(named)) {
+    runtimes[name] = { configured: entry.configured, observed: null, insecure: entry.insecure };
+  }
   await pool.query(
-    `insert into inbox.shard_status (shard, configured_runtime) values ($1, $2)
-    on conflict (shard) do update set configured_runtime = excluded.configured_runtime,
+    `insert into inbox.shard_status (shard, configured_runtime, runtimes) values ($1, $2, $3::jsonb)
+    on conflict (shard) do update set configured_runtime = excluded.configured_runtime, runtimes = excluded.runtimes,
     observed_runtime = null, network_policy = 'unknown', network_policy_checked_at = null,
     network_policy_detail = null, probe_requested_at = null, mcp_discovery = '{}'::jsonb, updated_at = clock_timestamp()`,
-    [shard, runtime],
+    [shard, runtime, JSON.stringify(runtimes)],
   );
 }
 
+/**
+ * Records the RuntimeClass of the Pod a session attached. `sandboxRuntime` is the session's runtime: null is the default
+ * runtime, which also owns the top-level `observed_runtime`. A named runtime only touches its own key of `runtimes`
+ * (atomically, so two attaches never overwrite each other); a runtime that is no longer configured has no key, and
+ * `jsonb_set` leaves the column alone then.
+ */
 export async function observeShardRuntime(
   pool: pg.Pool,
   shard: number,
   runtime: string,
+  sandboxRuntime: string | null = null,
 ): Promise<void> {
+  if (sandboxRuntime === null) {
+    await pool.query(
+      `update inbox.shard_status set observed_runtime = $2,
+      runtimes = jsonb_set(runtimes, '{default,observed}', to_jsonb($2::text)), updated_at = clock_timestamp()
+      where shard = $1`,
+      [shard, runtime],
+    );
+    return;
+  }
   await pool.query(
-    `update inbox.shard_status set observed_runtime = $2, updated_at = clock_timestamp() where shard = $1`,
-    [shard, runtime],
+    `update inbox.shard_status set runtimes = jsonb_set(runtimes, array[$3::text, 'observed'], to_jsonb($2::text)),
+    updated_at = clock_timestamp() where shard = $1`,
+    [shard, runtime, sandboxRuntime],
   );
 }
 
@@ -98,7 +134,7 @@ export async function claimNetworkProbeRequest(pool: pg.Pool, shard: number): Pr
 export async function readShardStatus(pool: pg.Pool): Promise<ShardStatus[]> {
   const { rows } =
     await pool.query<ShardStatus>(`select shard, configured_runtime as "configuredRuntime",
-    observed_runtime as "observedRuntime", network_policy as "networkPolicy",
+    observed_runtime as "observedRuntime", runtimes, network_policy as "networkPolicy",
     network_policy_checked_at as "networkPolicyCheckedAt", network_policy_detail as "networkPolicyDetail",
     probe_requested_at as "probeRequestedAt", updated_at as "updatedAt" from inbox.shard_status order by shard`);
   const probed = rows.find((row) => row.shard === PROBE_SHARD);

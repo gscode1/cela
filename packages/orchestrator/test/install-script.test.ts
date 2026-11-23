@@ -357,6 +357,22 @@ describe("hack/install.sh", () => {
     expect(log()).toContain("runtimeClassName=runc");
   });
 
+  it("prints a line per named runtime, and warns about an insecure or mismatched one without failing", () => {
+    const r = run(base(), {
+      status:
+        gvisorStatus.replace("unknown", "enforced") +
+        "runtime shard=0 name=gvisorkvm configuredRuntime=gvisor-kvm observedRuntime=gvisor-kvm insecure=false\n" +
+        "runtime shard=0 name=runc configuredRuntime=runc-sandbox observedRuntime=gvisor insecure=true\n",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("runtime shard=0 name=gvisorkvm configuredRuntime=gvisor-kvm");
+    expect(r.stderr).toContain(
+      "sandbox runtime runc on shard 0 runs with runc-sandbox, not gVisor",
+    );
+    expect(r.stderr).toContain("was observed with gvisor, configured runc-sandbox");
+    expect(r.stderr).not.toContain("runtime gvisorkvm");
+  });
+
   it("prints the probe line, and does not warn when the probe says enforced", () => {
     const r = run(base(), {
       status:

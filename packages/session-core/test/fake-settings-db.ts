@@ -753,6 +753,7 @@ export class FakeSettingsDb {
       const sandboxSize = (params[12] ?? null) as string | null;
       const networkMode = (params[13] ?? null) as string | null;
       const sandboxFlavour = (params[14] ?? null) as string | null;
+      const sandboxRuntime = (params[15] ?? null) as string | null;
       if (pName !== null) {
         // Only while the profile is still at the snapshot's version and open to new sessions (store.ts).
         const current = this.profiles.get(String(pName));
@@ -786,6 +787,7 @@ export class FakeSettingsDb {
         sandbox_size: sandboxSize,
         network_mode: networkMode,
         sandbox_flavour: sandboxFlavour,
+        sandbox_runtime: sandboxRuntime,
         created_at: new Date(),
         last_activity_at: new Date(),
       });

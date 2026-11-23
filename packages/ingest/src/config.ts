@@ -1,12 +1,13 @@
 import {
   loadDatabaseTls,
   parseAdmins,
+  parseSandboxRuntimes,
   parseSandboxSizes,
   settingsFromEnv,
 } from "@cela/session-core";
 import { parseConsoleCatalogs } from "./console.js";
 import type { ConsoleCatalogs } from "./console.js";
-import type { DatabaseTls, SandboxSizes, Settings } from "@cela/session-core";
+import type { DatabaseTls, SandboxRuntimes, SandboxSizes, Settings } from "@cela/session-core";
 
 /** Environment contract of ingest. The database URL and the API tokens are secrets: env-only, never logged. */
 export interface IngestConfig {
@@ -44,6 +45,8 @@ export interface IngestConfig {
   allowDirectSandboxEgress: boolean;
   /** `PI_SANDBOX_FLAVOURS` names `browser` (the chart's `sandbox.flavours.browser.enabled`, ADR 0041). */
   browserFlavourEnabled: boolean;
+  /** `PI_SANDBOX_RUNTIMES` (the chart's `sandbox.runtimes`, issue #406); `{}` when the deployment has none. */
+  sandboxRuntimes: SandboxRuntimes;
 }
 
 /** The stream proxy makes plain http(s) requests; anything else would 500 on every stream while /readyz stays green. */
@@ -100,5 +103,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): I
       .split(",")
       .map((name) => name.trim())
       .includes("browser"),
+    sandboxRuntimes: parseSandboxRuntimes(env),
   };
 }

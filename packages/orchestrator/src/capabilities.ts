@@ -35,6 +35,7 @@ export async function publishAndCheckProfiles(
       // not know them, so a check that included them would report every browser, direct or sized profile as unresolved.
       const definition: ProfileDefinition = { ...profile.definition, mcpServers: [] };
       delete definition.sandboxFlavour;
+      delete definition.sandboxRuntime;
       delete definition.networkMode;
       delete definition.sandboxSize;
       delete definition.sandboxSizes;

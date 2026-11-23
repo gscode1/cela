@@ -24,8 +24,12 @@ rules:
     resources: [sandboxclaims]
     verbs: [get, list, watch, create, delete]
   - apiGroups: [extensions.agents.x-k8s.io]
-    resources: [sandboxwarmpools, sandboxtemplates]
+    resources: [sandboxwarmpools]
     verbs: [get]
+  # list: the start guard reads every chart-labelled template once to check each runtime's class (ADR 0064).
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxtemplates]
+    verbs: [get, list]
   - apiGroups: [agents.x-k8s.io]
     resources: [sandboxes]
     verbs: [get, list, watch, patch]

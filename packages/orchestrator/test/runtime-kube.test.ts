@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
-  custom: { getNamespacedCustomObject: vi.fn() },
+  custom: { getNamespacedCustomObject: vi.fn(), listNamespacedCustomObject: vi.fn() },
   core: { readNamespacedPod: vi.fn() },
 }));
 vi.mock("@kubernetes/client-node", () => ({
@@ -17,7 +17,7 @@ vi.mock("@kubernetes/client-node", () => ({
     }
   },
 }));
-import { configuredRuntime, observedRuntime } from "../src/kube.ts";
+import { configuredRuntime, listTemplateRuntimes, observedRuntime } from "../src/kube.ts";
 beforeEach(() => vi.resetAllMocks());
 describe("runtime Kubernetes observations", () => {
   it("reads the template referenced by the configured pool, including a missing RuntimeClass", async () => {
@@ -58,5 +58,31 @@ describe("runtime Kubernetes observations", () => {
     expect(await observedRuntime("ns", "claim")).toBe("");
     api.custom.getNamespacedCustomObject.mockResolvedValueOnce({});
     await expect(observedRuntime("ns", "claim")).rejects.toThrow("no resolved Sandbox");
+  }, 1000);
+  it("lists the chart's templates once with their runtime label and class; an old template has no label", async () => {
+    api.custom.listNamespacedCustomObject.mockResolvedValueOnce({
+      items: [
+        {
+          metadata: {
+            name: "pi-env-rt-runc-template",
+            labels: { "pi-durable.dev/sandbox-runtime": "runc" },
+          },
+          spec: { podTemplate: { spec: { runtimeClassName: "runc-sandbox" } } },
+        },
+        { metadata: { name: "pi-env-template" }, spec: { podTemplate: { spec: {} } } },
+      ],
+    });
+    expect(await listTemplateRuntimes("ns")).toEqual([
+      { name: "pi-env-rt-runc-template", runtime: "runc", runtimeClassName: "runc-sandbox" },
+      { name: "pi-env-template", runtime: undefined, runtimeClassName: "" },
+    ]);
+    expect(api.custom.listNamespacedCustomObject).toHaveBeenCalledTimes(1);
+    expect(api.custom.listNamespacedCustomObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: "ns",
+        plural: "sandboxtemplates",
+        labelSelector: "app.kubernetes.io/part-of=cela",
+      }),
+    );
   }, 1000);
 });

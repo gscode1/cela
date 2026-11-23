@@ -32,6 +32,24 @@ export interface ProfileDefinition {
   networkMode?: NetworkMode;
   /** `default` or `browser` (Chromium and browser tools; ADR 0041). */
   sandboxFlavour?: SandboxFlavour;
+  /** A named runtime of the deployment's `sandbox.runtimes`; absent: the default runtime. */
+  sandboxRuntime?: string;
+}
+
+export interface SandboxRuntimeCatalog {
+  runtimes: { name: string; flavours: string[]; insecure: boolean }[];
+  defaultRuntime: string;
+}
+
+export function listSandboxRuntimes(
+  token: string,
+  signal?: AbortSignal,
+): Promise<SandboxRuntimeCatalog> {
+  return adminFetch<SandboxRuntimeCatalog>(
+    token,
+    "/admin/sandbox-runtimes",
+    signal ? { signal } : {},
+  );
 }
 
 export type SandboxFlavour = "default" | "browser";

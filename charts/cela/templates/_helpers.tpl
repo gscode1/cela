@@ -96,6 +96,32 @@ packages/orchestrator/src/custom-providers.ts, which refuses them at start too.
 {{- end -}}
 {{- end -}}
 
+{{/* "true" when a RuntimeClass name counts as gVisor: `gvisor` or `gvisor-<anything>` (a naming convention, ADR 0064). */}}
+{{- define "cela.isGvisor" -}}
+{{- if or (eq . "gvisor") (hasPrefix "gvisor-" .) }}true{{ end -}}
+{{- end -}}
+
+{{/*
+The named runtimes as JSON for ingest and the orchestrator (PI_SANDBOX_RUNTIMES, ADR 0064): name to the class, whether
+that class is not gVisor and the flavours rendered. `{}` without any.
+*/}}
+{{- define "cela.runtimesJson" -}}
+{{- $out := dict -}}
+{{- range $name, $rt := .Values.sandbox.runtimes -}}
+{{- $_ := set $out $name (dict "runtimeClassName" $rt.runtimeClassName "insecure" (not (include "cela.isGvisor" $rt.runtimeClassName)) "flavours" ($rt.flavours | default (list "default"))) -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{/* Names of the named runtimes that carry their own acknowledgement, comma separated. */}}
+{{- define "cela.ackedRuntimes" -}}
+{{- $names := list -}}
+{{- range $name := keys .Values.sandbox.runtimes | sortAlpha -}}
+{{- if (index $.Values.sandbox.runtimes $name).allowInsecureRuntime -}}{{- $names = append $names $name -}}{{- end -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
+
 {{/*
 Everything that must be true for the chart to render. Schema checks come first (values.schema.json); these are the
 rules a schema cannot say well, and they also hold under --skip-schema-validation.
@@ -107,6 +133,29 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{- $runtime := .Values.sandbox.runtimeClassName -}}
 {{- if and (ne $runtime "gvisor") (not .Values.security.allowInsecureRuntime) -}}
 {{- fail (printf "sandbox.runtimeClassName is %q, not gvisor. Sandboxes would run agent code without gVisor isolation. Set security.allowInsecureRuntime=true to accept that, or install the gvisor RuntimeClass." $runtime) -}}
+{{- end -}}
+{{- $reserved := list "default" "browser" "direct" "pool" "template" "rt" -}}
+{{- range $name, $rt := .Values.sandbox.runtimes -}}
+{{- if not (regexMatch "^[a-z][a-z0-9]{0,15}$" $name) -}}
+{{- fail (printf "sandbox.runtimes: %q is not a runtime name (1 to 16 of [a-z0-9], starting with a letter, no hyphen)" $name) -}}
+{{- end -}}
+{{- if has $name $reserved -}}
+{{- fail (printf "sandbox.runtimes: %q is reserved (%s)" $name (join ", " $reserved)) -}}
+{{- end -}}
+{{- if not $rt.runtimeClassName -}}
+{{- fail (printf "sandbox.runtimes.%s.runtimeClassName must not be empty: a named runtime names its RuntimeClass" $name) -}}
+{{- end -}}
+{{- if and (not (include "cela.isGvisor" $rt.runtimeClassName)) (not $rt.allowInsecureRuntime) -}}
+{{- fail (printf "sandbox.runtimes.%s.runtimeClassName is %q, not gvisor or gvisor-*. Sandboxes of that runtime would run agent code without gVisor isolation. Set sandbox.runtimes.%s.allowInsecureRuntime=true to accept that (security.allowInsecureRuntime covers only the default runtime), or use a gVisor RuntimeClass." $name $rt.runtimeClassName $name) -}}
+{{- end -}}
+{{- range $flavour := ($rt.flavours | default (list "default")) -}}
+{{- if not (has $flavour (list "default" "browser")) -}}
+{{- fail (printf "sandbox.runtimes.%s.flavours: %q is not a flavour (default or browser)" $name $flavour) -}}
+{{- end -}}
+{{- if and (eq $flavour "browser") (not $.Values.sandbox.flavours.browser.enabled) -}}
+{{- fail (printf "sandbox.runtimes.%s.flavours lists browser, but sandbox.flavours.browser.enabled is false" $name) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- if ne .Values.agentSandbox.mode "external" -}}
 {{- fail "agentSandbox.mode must be external: install or check the controller with hack/agent-sandbox.sh (bundled mode comes in a later slice)" -}}

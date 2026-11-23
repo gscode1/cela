@@ -3,12 +3,21 @@ import { adminJson, adminRequest } from "@/lib/api/raw";
 export type NetworkPolicyState =
   "unknown" | "running" | "enforced" | "not-enforced" | "inconclusive";
 
+/** One sandbox runtime of a shard (ADR 0064): `observed` is `null` until a session of that runtime attached. */
+export interface RuntimeStatus {
+  configured: string;
+  observed: string | null;
+  insecure: boolean;
+}
+
 /** One row of `GET /admin/status` (docs/session-api.md, "Isolation status"). */
 export interface ShardStatus {
   shard: number;
   configuredRuntime: string;
   /** `null`: no sandbox Pod observed yet. `""`: observed, and the node default runtime applies. */
   observedRuntime: string | null;
+  /** Every runtime of the shard, `default` and the named ones; absent from an older ingest. */
+  runtimes?: Record<string, RuntimeStatus>;
   networkPolicy: NetworkPolicyState;
   networkPolicyCheckedAt: string | null;
   networkPolicyDetail: { state: string; reason: string } | null;
@@ -78,3 +87,14 @@ export function runtimeText(shard: Pick<ShardStatus, "configuredRuntime" | "obse
     };
   return { text: plain(observedRuntime), mismatch: false };
 }
+
+/** The named runtimes of a shard (not `default`, whose values are the top-level fields), by name. */
+export function namedRuntimes(shard: Pick<ShardStatus, "runtimes">): [string, RuntimeStatus][] {
+  return Object.entries(shard.runtimes ?? {}).filter(([name]) => name !== "default");
+}
+
+/** `runtimeText` for one entry of `ShardStatus.runtimes`. */
+export const runtimeStatusText = (
+  status: Pick<RuntimeStatus, "configured" | "observed">,
+): ReturnType<typeof runtimeText> =>
+  runtimeText({ configuredRuntime: status.configured, observedRuntime: status.observed });
