@@ -42,14 +42,18 @@ export function directModeConflict(
 /**
  * What in a profile would need a credential injected by the platform (a credentialed MCP server, a `route=onecli`
  * allow rule of an applying rule set), described for an error message, or undefined. Shared by the direct network mode
- * and the browser flavour (ADR 0041): neither can carry one.
+ * and the browser flavour (ADR 0041): neither can carry one. `exceptServer` is the browser flavour's one exception, the
+ * session mail server (ADR 0066); the direct mode never passes it. A `route=onecli` rule is never excepted.
  */
 export function credentialSource(
   definition: ProfileDefinition,
   state: { mcpServers: readonly StoredMcpServer[]; egress: EgressData },
+  exceptServer?: string,
 ): string | undefined {
-  const credentialed = (definition.mcpServers ?? []).find((name) =>
-    state.mcpServers.some((s) => s.server.name === name && s.server.onecliSecret !== null),
+  const credentialed = (definition.mcpServers ?? []).find(
+    (name) =>
+      name !== exceptServer &&
+      state.mcpServers.some((s) => s.server.name === name && s.server.onecliSecret !== null),
   );
   if (credentialed !== undefined) return `the credentialed MCP server "${credentialed}"`;
   const applying = new Set([

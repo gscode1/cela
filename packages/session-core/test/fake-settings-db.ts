@@ -546,12 +546,8 @@ export class FakeSettingsDb {
           .map((p) => ({ name: p.name, version: p.current_version })),
       );
     }
-    if (
-      text.startsWith(
-        "select p.name, case when v.definition->>'sandboxFlavour' in ('browser', 'desktop')",
-      )
-    ) {
-      const [name] = params as [string];
+    if (text.startsWith("select p.name, case when v.definition->>'sandboxFlavour' = 'desktop'")) {
+      const [name, mailServer] = params as [string, string | null];
       return done(
         [...this.profiles.values()]
           .sort((a, b) => (a.name < b.name ? -1 : 1))
@@ -563,8 +559,10 @@ export class FakeSettingsDb {
               sandboxFlavour?: string;
               networkMode?: string;
             };
+            // A browser profile may name the session mail server (ADR 0066); the SQL leaves it out the same way.
             const flavour =
-              definition.sandboxFlavour === "browser" || definition.sandboxFlavour === "desktop"
+              definition.sandboxFlavour === "desktop" ||
+              (definition.sandboxFlavour === "browser" && name !== mailServer)
                 ? definition.sandboxFlavour
                 : null;
             const direct = definition.networkMode === "direct";

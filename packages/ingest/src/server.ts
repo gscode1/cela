@@ -126,6 +126,8 @@ export interface IngestDeps {
   sandboxSizes?: SandboxSizes | undefined;
   /** `networkMode: direct` is allowed (`PI_ALLOW_DIRECT_SANDBOX_EGRESS`, ADR 0038); default: refused with a 400. */
   allowDirectSandboxEgress?: boolean | undefined;
+  /** The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0066); absent: the feature is off. */
+  sessionMailServer?: string | undefined;
   /** Browser sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `browser`, ADR 0041); default: refused with a 400. */
   browserFlavourEnabled?: boolean | undefined;
   /** Desktop sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `desktop`, ADR 0065); default: refused with a 400. */
@@ -982,7 +984,11 @@ async function handleAdminProfiles(
         directConflict: directConflictOf(catalog.servers, await readEgress(deps.pool)),
         browserFlavourEnabled: deps.browserFlavourEnabled === true,
         desktopFlavourEnabled: deps.desktopFlavourEnabled === true,
-        untrustedConflict: untrustedConflictOf(catalog.servers, await readEgress(deps.pool)),
+        untrustedConflict: untrustedConflictOf(
+          catalog.servers,
+          await readEgress(deps.pool),
+          deps.sessionMailServer,
+        ),
         sandboxRuntimes: deps.sandboxRuntimes ?? {},
       },
     );
@@ -1120,7 +1126,10 @@ async function handleAdminMcpServers(
       principal.owner,
       taken.expectedRevision,
       // The egress rules derived from the catalog change in the same transaction (ADR 0040).
-      { within: (client) => syncMcpRulesFromCatalog(client, principal.owner) },
+      {
+        within: (client) => syncMcpRulesFromCatalog(client, principal.owner),
+        mailServer: deps.sessionMailServer,
+      },
     );
     if (typeof result === "string") {
       sendJson(res, 400, { error: result });
@@ -1363,14 +1372,15 @@ function directConflictOf(
 function untrustedConflictOf(
   mcpServers: Parameters<typeof untrustedFlavourConflict>[1]["mcpServers"],
   egress: Parameters<typeof untrustedFlavourConflict>[1]["egress"],
+  mailServer: string | undefined,
 ): (definition: ProfileDefinition) => string | undefined {
-  return (definition) => untrustedFlavourConflict(definition, { mcpServers, egress });
+  return (definition) => untrustedFlavourConflict(definition, { mcpServers, egress }, mailServer);
 }
 
 /**
  * Why a new session of a `browser` or `desktop` profile is refused, or undefined (ADR 0041, 0065): the deployment does
- * not render that flavour's sandboxes, the request names a repo, or the profile now has a credentialed MCP server or a `onecli` rule that
- * applies to it (the catalog and the rules may have changed since the profile was written).
+ * not render that flavour's sandboxes, the request names a repo, or the profile now has a credentialed MCP server (but the
+ * session mail server, for a browser) or a `onecli` rule that applies to it (the catalog and the rules may have changed since the profile was written).
  */
 async function untrustedFlavourRefusal(
   deps: IngestDeps,
@@ -1382,7 +1392,11 @@ async function untrustedFlavourRefusal(
   if (enabled !== true) return flavourNotEnabled(flavour);
   if (hasRepo) return flavourWithRepo(flavour);
   const [catalog, egress] = await Promise.all([readMcpServers(deps.pool), readEgress(deps.pool)]);
-  return untrustedFlavourConflict(definition, { mcpServers: catalog.servers, egress });
+  return untrustedFlavourConflict(
+    definition,
+    { mcpServers: catalog.servers, egress },
+    deps.sessionMailServer,
+  );
 }
 
 /**

@@ -31,6 +31,7 @@ async function start(
   browserFlavourEnabled: boolean,
   shared?: FakeSettingsDb,
   desktopFlavourEnabled = false,
+  sessionMailServer?: string,
 ) {
   const db = shared ?? new FakeSettingsDb();
   await seedSettings(db.asPool(), seed);
@@ -50,6 +51,7 @@ async function start(
     schemaReady: () => true,
     browserFlavourEnabled,
     desktopFlavourEnabled,
+    sessionMailServer,
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
   return { base: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, db };
@@ -127,6 +129,59 @@ describe("sandbox flavours", () => {
     expect((await json(refused)).error).toMatch(
       /sandboxFlavour browser cannot be combined with the credentialed MCP server "crm"/,
     );
+  });
+
+  it("lets a browser profile name the configured session mail server, and no other credentialed one (ADR 0066)", async () => {
+    const { base, db } = await start(true, undefined, true, "mail");
+    for (const name of ["mail", "crm"]) {
+      const put = await call(base, "alice", "PUT", `/admin/mcp-servers/${name}`, {
+        url: `https://${name}.example.com/mcp`,
+        readOnly: true,
+        onecliSecret: `${name}-token`,
+      });
+      expect(put.status).toBe(201);
+    }
+    const profile = (servers: string[], flavour = "browser") => ({
+      definition: { sandboxFlavour: flavour, mcpServers: servers },
+    });
+    expect(
+      (await call(base, "alice", "PUT", "/admin/profiles/web", profile(["mail"]))).status,
+    ).toBe(201);
+    const created = await call(base, "bob", "POST", "/sessions", { profile: "web" });
+    expect(created.status).toBe(201);
+    expect(db.sessions.size).toBe(1);
+    const other = await call(base, "alice", "PUT", "/admin/profiles/crm", profile(["mail", "crm"]));
+    expect(other.status).toBe(400);
+    expect((await json(other)).error).toMatch(/credentialed MCP server "crm"/);
+    const desktop = await call(
+      base,
+      "alice",
+      "PUT",
+      "/admin/profiles/desk",
+      profile(["mail"], "desktop"),
+    );
+    expect(desktop.status).toBe(400);
+    expect((await json(desktop)).error).toMatch(/sandboxFlavour desktop cannot be combined/);
+  });
+
+  it("refuses the credential on the mail server for a browser profile when no mail server is configured", async () => {
+    const { base } = await start(true);
+    await call(base, "alice", "PUT", "/admin/mcp-servers/mail", {
+      url: "https://mail.example.com/mcp",
+      readOnly: true,
+    });
+    expect(
+      (
+        await call(base, "alice", "PUT", "/admin/profiles/web", {
+          definition: { sandboxFlavour: "browser", mcpServers: ["mail"] },
+        })
+      ).status,
+    ).toBe(201);
+    const secret = await call(base, "alice", "PUT", "/admin/mcp-servers/mail", {
+      onecliSecret: "mail-token",
+    });
+    expect(secret.status).toBe(400);
+    expect((await json(secret)).error).toMatch(/web \(sandboxFlavour browser\)/);
   });
 
   it("refuses a browser profile while a onecli rule applies to it (github.com gets no injection)", async () => {

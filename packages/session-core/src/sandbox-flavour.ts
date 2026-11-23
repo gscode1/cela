@@ -22,7 +22,8 @@ export const sandboxFlavourOf = (definition: ProfileDefinition): SandboxFlavour 
 
 /**
  * Flavours that open untrusted content (web pages, documents): nothing they hold may be worth stealing, so they get no
- * repo, no credentialed MCP server and no `onecli` route (ADR 0041, 0065).
+ * repo, no credentialed MCP server (but the session mail server for the browser flavour, ADR 0066) and no `onecli`
+ * route (ADR 0041, 0065).
  */
 export const UNTRUSTED_CONTENT_FLAVOURS = ["browser", "desktop"] as const;
 export type UntrustedContentFlavour = (typeof UNTRUSTED_CONTENT_FLAVOURS)[number];
@@ -39,14 +40,21 @@ export const DESKTOP_NOT_ENABLED = flavourNotEnabled("desktop");
 /**
  * Why an untrusted-content session cannot have this profile, or undefined: no credentialed MCP server and no `onecli`
  * route (a repo is checked by the caller, it is not part of the profile). Profiles of other flavours have no conflict.
+ * `mailServer` (the deployment's session mail server, ADR 0066) is the one credentialed server a browser profile may
+ * name; a desktop profile may not.
  */
 export function untrustedFlavourConflict(
   definition: ProfileDefinition,
   state: { mcpServers: readonly StoredMcpServer[]; egress: EgressData },
+  mailServer?: string,
 ): string | undefined {
   const flavour = definition.sandboxFlavour;
   if (!isUntrustedContentFlavour(flavour)) return undefined;
-  const source = credentialSource(definition, state);
+  const source = credentialSource(
+    definition,
+    state,
+    flavour === "browser" ? mailServer : undefined,
+  );
   return source === undefined
     ? undefined
     : `sandboxFlavour ${flavour} cannot be combined with ${source}`;
