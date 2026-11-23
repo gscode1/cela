@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,23 @@ const (
 	ocB    = "aoc_onecli_token_for_session_b"
 	ioWait = 5 * time.Second
 )
+
+func TestMain(m *testing.M) {
+	// CONNECT routing must not depend on the machine running the tests.
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
+		if value, ok := os.LookupEnv(key); ok {
+			if err := os.Unsetenv(key); err != nil {
+				panic(err)
+			}
+			defer func() {
+				if err := os.Setenv(key, value); err != nil {
+					panic(err)
+				}
+			}()
+		}
+	}
+	m.Run()
+}
 
 // fakeUpstream stands in for OneCLI: it records the Proxy-Authorization of
 // every CONNECT, then tunnels to the fake origin whatever the target is.

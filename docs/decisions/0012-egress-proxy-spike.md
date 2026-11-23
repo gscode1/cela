@@ -59,6 +59,11 @@ Smokescreen's `BuildProxy` gives the CONNECT handling, ACL hook, resolve-classif
   session's OneCLI token>` on the CONNECT to the upstream. The token is not in the upstream URL, so it is never in the
   `X-Upstream-Https-Proxy` header, a log line or a metric. Because the token is looked up from the tunnel's own
   context, there is no shared slot that two sessions could swap.
+- **No ambient HTTPS proxy fallback** (#377): `Build` sets goproxy's default HTTPS proxy address to `%`, an invalid URL
+  that the pinned `httpproxy` parser ignores, instead of leaving it empty (which reads `HTTPS_PROXY` / `https_proxy`).
+  Direct routes therefore dial only the checked destination; the per-request OneCLI URL still overrides this default.
+  Regression tests pin both behaviours. The binary still rejects proxy environment variables at startup, including
+  `NO_PROXY`, which can suppress an explicit OneCLI route (the dial guard then refuses it, never falls back to direct).
 - **Client headers**: the handler in front of Smokescreen answers anything but `CONNECT` with 405 (plain HTTP proxying
   would forward client headers to the origin), and deletes every `X-Upstream-Https-Proxy` before Smokescreen reads it.
   This matters: Smokescreen falls back to the client's value when the selector returns `""`, so on the direct route a

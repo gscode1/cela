@@ -133,6 +133,8 @@ func Build(o Options) (*Proxy, error) {
 	cfg.ShuttingDown.Store(false)
 
 	gp := smokescreen.BuildProxy(cfg)
+	// Empty falls back to HTTPS_PROXY; the pinned httpproxy ignores an invalid URL. Explicit OneCLI routes override it.
+	gp.HttpsProxyAddr = "%"
 	p.baseDial = gp.Tr.DialContext
 	gp.ConnectDialContext = p.dial
 	p.inner = gp
