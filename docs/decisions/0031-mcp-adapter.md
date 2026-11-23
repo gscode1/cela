@@ -109,6 +109,20 @@ Support on 2026-11-17, checked against docs, changelogs and source:
     authorised by ingest's owner check.
   - **No `input_required` yet.** A session cannot ask its caller a question today.
 
+## Amendment: request cancellation and uncertain creates (issue #382)
+
+- Every session tool forwards MCP request cancellation to its HTTP calls. `wait` also wakes its polling loop and closes
+  its SSE connection promptly. `run_task` combines cancellation with its shared deadline; cancelling the MCP request
+  does not cancel or delete the durable session (use the `cancel` or `delete_session` tool for that).
+- A create rejected with an HTTP error frees its reserved slot. A timeout, cancellation, network failure or unreadable
+  success response leaves the outcome unknown: ingest may already have committed the row. Both `start_session` and
+  `run_task` keep that reservation rather than undercount a possibly live session. With no returned id or create
+  idempotency key, the adapter cannot reconcile it; the reservation remains until this adapter process exits. This is
+  deliberately fail-closed, and may exhaust the process-local cap after repeated failed creates. A future idempotent
+  create API would allow reconciliation without restarting the adapter.
+- An uncertain delete keeps its known session id eligible for the existing deletion settlement reads, so cancellation
+  cannot strand its slot after cleanup completes.
+
 ## Consequences
 
 - Every MCP client can use sessions today, through the polling tools. With tasks mode, a client that supports it, the Claude

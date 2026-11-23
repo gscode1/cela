@@ -79,6 +79,14 @@ A failed session tool returns `{ error, status?, retryAfter? }` and `isError`, l
 HTTP status of the session API (absent when no answer came), `retryAfter` is in seconds and only on a 503. `run_task`
 adds the `sessionId` when the session was already created.
 
+Cancelling an MCP request stops its HTTP calls, polling and SSE stream promptly, but does not cancel or delete the
+remote session. Use `cancel` to stop the agent's turn or `delete_session` to remove the session.
+
+If creation times out, is cancelled or loses its response, ingest may already have created the session without returning
+its id. The adapter keeps the reserved `PI_MCP_MAX_SESSIONS` slot until the process exits, rather than undercounting a
+possibly live session. An explicit HTTP rejection frees the reservation. Restarting the adapter resets its local cap;
+it does not clean up remote sessions with unknown ids.
+
 `steer`, model overrides and a transcript reader are not in this slice.
 
 ### Using `wait`

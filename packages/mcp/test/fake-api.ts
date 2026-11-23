@@ -24,6 +24,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 
 export type SessionStatus = "active" | "failed" | "deleting" | "deleted";
 
@@ -90,6 +91,10 @@ export class FakeApi {
   /** The status a DELETE answers with; ingest says "deleting" while cleanup is still running. */
   deleteStatus: "deleting" | "deleted" = "deleted";
   failNextCreate: { status: number; error: string } | undefined;
+  /** Delay the create response after committing the session. */
+  createResponseDelayMs = 0;
+  /** Delay the delete response after committing deletion. */
+  deleteResponseDelayMs = 0;
   readonly #sessions = new Map<string, Internal>();
   readonly #sourceEvents = new Map<string, { sessionId: string; eventId: string }>();
   readonly #server: Server;
@@ -257,7 +262,7 @@ export class FakeApi {
       return;
     }
     if (parts.length === 1 && method === "POST") {
-      this.#create(res);
+      await this.#create(res);
       return;
     }
     const session = parts[1] === undefined ? undefined : this.#sessions.get(parts[1]);
@@ -273,6 +278,7 @@ export class FakeApi {
     }
     if (parts.length === 2 && method === "DELETE") {
       if (session.status !== "deleted") this.pushDeleted(session.id);
+      if (this.deleteResponseDelayMs > 0) await delay(this.deleteResponseDelayMs);
       json(res, 202, { sessionId: session.id, status: this.deleteStatus });
       return;
     }
@@ -287,7 +293,7 @@ export class FakeApi {
     json(res, 404, { error: "not found" });
   }
 
-  #create(res: ServerResponse): void {
+  async #create(res: ServerResponse): Promise<void> {
     if (this.failNextCreate !== undefined) {
       const { status, error } = this.failNextCreate;
       this.failNextCreate = undefined;
@@ -295,6 +301,7 @@ export class FakeApi {
       return;
     }
     const s = this.addSession();
+    if (this.createResponseDelayMs > 0) await delay(this.createResponseDelayMs);
     json(res, 201, {
       sessionId: s.id,
       profile: { name: "coding", version: 1 },
