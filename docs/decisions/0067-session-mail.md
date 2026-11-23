@@ -1,8 +1,10 @@
 # 0067: Session mail: a credentialed MCP server that scopes inboxes by an owner header
 
-Status: proposed, 2026-11-23 (issue #420). The gateway half of the gate is met: the egress smoke of issue #419 showed, live,
-that the OneCLI gateway forwards a custom request header unchanged and once, and holds a 10 s response ([0040](0040-mcp-egress-flow.md),
-Live verification). Still open: a response held 120 s through the gateway, which no public origin can show. Builds on
+Status: proposed, 2026-11-23 (issue #420). The gateway gate is met: the egress smoke of issue #419 showed, live, that the
+OneCLI gateway forwards a custom request header unchanged and once ([0040](0040-mcp-egress-flow.md), Live verification),
+and a one-off run on the same kind setup held 130 s and 150 s responses through the gateway (status 200, the header intact)
+from a test Worker that holds a response on request. Still open before acceptance: an e2e of the contract against a real
+mail backend. Builds on
 [0040](0040-mcp-egress-flow.md) (per-session MCP identity), [0041](0041-browser-sandbox.md) (the browser flavour holds no
 credential; amended here) and [0038](0038-network-modes.md) (direct mode). Research:
 [docs/research/agent-session-emails.md](../research/agent-session-emails.md), variant 8d with the review of 8d. The wire
@@ -60,5 +62,7 @@ credential (ADR 0040, section 4). The browser flavour, where this matters most, 
   a browser one none; the header is present only on the mail server's session requests, overwritten and never appended, and
   absent on discovery and on other servers; a browser profile naming the server is accepted only when it is configured; a
   direct or desktop profile naming it is refused.
-- Done: issue #419's gateway smoke, live (header unchanged and once; a 10 s response held).
-- Before this ADR is accepted: a 120 s response held through the gateway, and an e2e of the contract against a real backend.
+- Done: issue #419's gateway smoke, live (header unchanged and once; a 10 s response held), and a one-off live run through
+  the gateway as the orchestrator's agent against a test Worker on Cloudflare: 130 s and 150 s holds returned 200 in 130.1 s
+  and 150.2 s with the owner header intact.
+- Before this ADR is accepted: an e2e of the contract against a real mail backend.
