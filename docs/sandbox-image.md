@@ -21,12 +21,13 @@ not ship the tools below. Decision: [ADR 0048](decisions/0048-sandbox-image-tool
 | `git-lfs` | bookworm's | bookworm apt, enabled system-wide (`git lfs install --system`); its downloads need the LFS storage host in the session's egress rules |
 | `uv`, `uvx` | 0.13.7 | release tarball from `github.com/astral-sh/uv`, by architecture and SHA-256; cache under `XDG_CACHE_HOME` |
 | `yq` | v4.54.1 (mikefarah) | release binary from `github.com/mikefarah/yq`, by architecture and SHA-256 (bookworm's `yq` is a different tool) |
+| `helm` | v4.3.2 (v4 is the current stable line) | release tarball from `get.helm.sh`, by architecture and SHA-256; cache, config and data under `/workspace/.cache/helm` (`HELM_*_HOME`) |
 | `gh` | 2.103.3 | release `.deb` from `github.com/cli/cli`, by architecture and SHA-256 |
 | `tini` | 0.19.0 | bookworm apt; PID 1, runs `sandboxd` and reaps orphaned processes (issue #327) |
 | `ca-certificates` | | bookworm apt |
 
 Versions are the ones the pinned sources gave on 2026-11-20. The apt packages follow bookworm at build time; Node, `pi-env`,
-`gh`, `uv` and `yq` change only when their pin in the Dockerfile does. Bump the pins on purpose and on a schedule, not on every patch
+`gh`, `uv`, `yq` and `helm` change only when their pin in the Dockerfile does. Bump the pins on purpose and on a schedule, not on every patch
 release, to keep image churn and CVE noise down. Go and Rust toolchains are not in the image: add them when a repository
 needs them.
 
