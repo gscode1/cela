@@ -105,12 +105,18 @@ describe.skipIf(url === undefined)("configured egress reader grants (issue #378)
     await assertLeastPrivilege();
   }, 60_000);
 
-  it("fails for an unprovisioned role and succeeds after the operator creates it", async () => {
-    await applyMigrations(pool);
+  it("migrates without an unprovisioned role and grants it on the next start after creation", async () => {
     await admin.query(`drop role ${quotedReader}`);
-    await expect(applyMigrations(pool, migrations, reader)).rejects.toMatchObject({
-      code: "42704",
+    await expect(applyMigrations(pool, migrations, reader)).resolves.toEqual({
+      missingEgressReaderRole: reader,
     });
+    expect((await pool.query("select * from inbox.schema_migrations")).rowCount).toBeGreaterThan(0);
+    await expect(applyMigrations(pool, migrations, reader)).resolves.toEqual({
+      missingEgressReaderRole: reader,
+    });
+    expect((await pool.query("select 1 from pg_roles where rolname = $1", [reader])).rowCount).toBe(
+      0,
+    );
     await admin.query(`create role ${quotedReader} nosuperuser nocreaterole`);
     await applyMigrations(pool, migrations, reader);
     expect(await canReadBindings()).toBe(true);

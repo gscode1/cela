@@ -84,8 +84,10 @@ on an already-current schema. The chart sets this from `egressProxy.database.rol
 is enabled. Match it to the URI username and to `auth.egressReader.role` with bundled Postgres; for external Postgres,
 create the role and grant CONNECT as an administrator before starting the app. The bundled Postgres creates the role with
 `auth.egressReader.enabled`; its init sidecar grants only if the function already exists, so it is not the repair loop.
-No Postgres restart or CREATEROLE for the app is needed. Missing roles fail startup migration/readiness and are retried;
-healthy grants need only SELECTs, without advisory locks or DDL. Reconciliation is additive, not a revocation of extra
+No Postgres restart or CREATEROLE for the app is needed. A missing reader role skips grants and logs a warning without
+blocking migrations or app readiness; create the role and restart the app to recheck. Role existence is checked before
+privileges both on the fast path and under the migration lock. The proxy still fails closed until its role can read.
+Healthy grants need only SELECTs, without advisory locks or DDL. Reconciliation is additive, not a revocation of extra
 operator-granted privileges; leaving the environment variable unset preserves manual grant management.
 
 The chart takes the role's URI from

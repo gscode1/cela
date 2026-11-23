@@ -1312,9 +1312,16 @@ describe("egressProxy (ADR 0035)", () => {
           d.kind === "Deployment" &&
           (d.metadata.name === "pi-ingest" || d.metadata.name.startsWith("pi-orchestrator")),
       );
-      expect(migrators.length).toBeGreaterThan(1);
+      expect(migrators.some((d) => d.metadata.name === "pi-ingest")).toBe(true);
+      expect(migrators.some((d) => d.metadata.name.startsWith("pi-orchestrator"))).toBe(true);
       for (const deployment of migrators) {
-        expect(envOf(deployment).PI_EGRESS_READER_ROLE?.value).toBe(role);
+        const env = envOf(deployment);
+        if (role === undefined) {
+          expect(env).not.toHaveProperty("PI_EGRESS_READER_ROLE");
+          expect(env).not.toHaveProperty("PI_EGRESS_PROXY_URL");
+        } else {
+          expect(env.PI_EGRESS_READER_ROLE?.value).toBe(role);
+        }
       }
     }
     expect(() => docs([...on, "--set", "egressProxy.database.role="])).toThrow();

@@ -19,12 +19,13 @@ const UNDEFINED_TABLE = "42P01";
  *
  * A database that predates the table has all files applied but nothing recorded; it takes the slow path once, the
  * idempotent files re-run (they change nothing) and are recorded, which is the backfill.
+ * Returns a missing reader role for the caller to warn about; grants are rechecked on the next start.
  */
 export async function applyMigrations(
   pool: pg.Pool,
   dir: URL = MIGRATIONS,
   egressReaderRole?: string,
-): Promise<void> {
+): Promise<{ missingEgressReaderRole: string | undefined }> {
   if (
     egressReaderRole !== undefined &&
     (egressReaderRole.length === 0 ||
@@ -36,7 +37,12 @@ export async function applyMigrations(
   const files = (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort();
   const applied = await recordedVersions(pool);
   const current = applied !== undefined && files.every((name) => applied.has(name));
-  if (current && (await readerGrantsComplete(pool, egressReaderRole))) return;
+  if (current) {
+    const reader = await readerGrantsState(pool, egressReaderRole);
+    if (reader !== "incomplete") {
+      return { missingEgressReaderRole: reader === "missing" ? egressReaderRole : undefined };
+    }
+  }
 
   const scripts = new Map(
     await Promise.all(
@@ -64,10 +70,12 @@ export async function applyMigrations(
         await client.query("insert into inbox.schema_migrations (version) values ($1)", [name]);
       }
     }
-    if (!(await readerGrantsComplete(client, egressReaderRole))) {
+    const reader = await readerGrantsState(client, egressReaderRole);
+    if (reader === "incomplete") {
       await client.query("select egress.grant_proxy_reader($1::name)", [egressReaderRole]);
     }
     await client.query("commit");
+    return { missingEgressReaderRole: reader === "missing" ? egressReaderRole : undefined };
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
     throw error;
@@ -77,11 +85,16 @@ export async function applyMigrations(
 }
 
 /** Mirrors grant_proxy_reader (027), including column-only access to principals: never grant token_salt. */
-async function readerGrantsComplete(
+async function readerGrantsState(
   db: pg.Pool | pg.PoolClient,
   role: string | undefined,
-): Promise<boolean> {
-  if (role === undefined) return true;
+): Promise<"complete" | "incomplete" | "missing"> {
+  if (role === undefined) return "complete";
+  const found = await db.query<{ exists: boolean }>(
+    "select exists(select 1 from pg_roles where rolname = $1) as exists",
+    [role],
+  );
+  if (found.rows[0]?.exists !== true) return "missing";
   const { rows } = await db.query<{ complete: boolean }>(
     `select has_schema_privilege($1::name, 'egress', 'USAGE')
        and (select bool_and(has_table_privilege($1::name, t, 'SELECT'))
@@ -93,7 +106,7 @@ async function readerGrantsComplete(
               from unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE']) as p) as complete`,
     [role],
   );
-  return rows[0]?.complete === true;
+  return rows[0]?.complete === true ? "complete" : "incomplete";
 }
 
 /** The recorded versions, or undefined while the table does not exist yet. */
