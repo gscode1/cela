@@ -75,14 +75,25 @@ function takeSnapshot(o) {
   }
 }
 
+// Roles an unscoped find is split into when it fails: what an agent acts on or navigates by. Every find walks the whole
+// tree (about 7 s on a large page, and agent-desktop serialises parallel ones), so the list stays short; plain text
+// (statictext, paragraph) is desktop-text's job, which reads the page in seconds.
+const FALLBACK_ROLES = ["heading", "link", "button", "textfield", "combobox", "checkbox"];
+
 // A heavy web page in Firefox can overflow agent-desktop's 1 MB ref map even at a small --max-depth, and --root refs inside
 // web content are rejected as ambiguous. `agent-desktop find` still answers, so with a filter we fall back to one find per
 // role (or one unscoped find) and apply the same regex here. The result has the same line format.
+// One element without a stable identity or bounds (offscreen, lazily rendered) makes a whole find fail with STALE_REF, so a
+// failing role is skipped and named, not fatal, and a failing unscoped find is retried role by role: partial results beat
+// none, which sent agents into screenshot loops.
 function findFallback(o) {
   const literal = o.pattern !== undefined && !/[\\^$.*+?()[\]{}|]/.test(o.pattern) ? o.pattern : undefined;
   const matches = [];
+  const skipped = [];
   let truncated = false;
-  for (const role of o.roles.length > 0 ? o.roles : [undefined]) {
+  let answered = 0;
+  let splitRoles = false;
+  const runFind = (role) => {
     const args = ["find"];
     if (o.app) args.push("--app", o.app);
     if (role) args.push("--role", role);
@@ -94,26 +105,48 @@ function findFallback(o) {
       text = execFileSync("agent-desktop-run", args, { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
     } catch (e) {
       text = typeof e.stdout === "string" ? e.stdout : "";
-      if (text.trim() === "") return fail(`find failed: ${String(e.stderr || e.message).trim().slice(0, 300)}`);
+      if (text.trim() === "") return { error: String(e.stderr || e.message).trim().split("\n")[0].slice(0, 80) || "failed" };
     }
-    const env = parseEnvelope(text);
-    matches.push(...env.data.matches);
-    truncated ||= env.data.truncated === true;
+    const env = parseEnvelope(text, { tolerate: true });
+    return env.failed ? { error: env.failed } : { env };
+  };
+  const collect = (role) => {
+    const r = runFind(role);
+    if (r.error) {
+      skipped.push(`${role ?? "all roles"} (${r.error})`);
+      return false;
+    }
+    answered++;
+    matches.push(...r.env.data.matches);
+    truncated ||= r.env.data.truncated === true;
+    return true;
+  };
+  if (o.roles.length > 0) for (const role of o.roles) collect(role);
+  else if (!collect(undefined)) {
+    skipped.length = 0;
+    splitRoles = true;
+    for (const role of FALLBACK_ROLES) collect(role);
   }
-  return { ok: true, data: { app: o.app, tree: { children: matches }, viaFind: true, truncated } };
+  if (answered === 0) {
+    fail(`agent-desktop find failed for every role: ${skipped.join(", ")}. For a web page's text use desktop-text 'regex'`);
+  }
+  return { ok: true, data: { app: o.app, tree: { children: matches }, viaFind: true, truncated, skipped, splitRoles } };
 }
 
-function parseEnvelope(text, allowOverflow = false) {
+// allowOverflow: a RefMap overflow returns { overflow: true }. tolerate: any error envelope returns { failed: CODE }.
+function parseEnvelope(text, { allowOverflow = false, tolerate = false } = {}) {
   const start = text.indexOf("{");
   let env;
   try {
     env = JSON.parse(start < 0 ? text : text.slice(start));
   } catch {
+    if (tolerate) return { failed: "not JSON" };
     return fail(`not a snapshot (not JSON): ${text.slice(0, 120).replace(/\s+/g, " ")}`);
   }
   if (env.ok === false) {
     const err = env.error ?? {};
     if (allowOverflow && /RefMap exceeds/.test(err.message ?? "")) return { overflow: true };
+    if (tolerate) return { failed: err.code ?? "ERROR" };
     return fail(`${err.code ?? "ERROR"}: ${err.message ?? "snapshot failed"}${err.suggestion ? ` (${err.suggestion})` : ""}`);
   }
   if (!env.data?.tree && !Array.isArray(env.data?.matches)) return fail("no tree in the snapshot");
@@ -176,10 +209,12 @@ function main() {
     }
   }
   let raw = o.from ? fs.readFileSync(o.from, "utf8") : takeSnapshot(o);
-  let env = parseEnvelope(raw, !o.from);
+  let env = parseEnvelope(raw, { allowOverflow: !o.from });
   if (env.overflow) {
     if (re === undefined && o.roles.length === 0) {
-      fail("the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find");
+      fail(
+        "the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find, or use desktop-text 'regex' for a web page's text",
+      );
     }
     env = findFallback(o);
     raw = JSON.stringify(env);
@@ -206,10 +241,16 @@ function main() {
     for (const n of hits.slice(0, o.limit)) out.push(line(n));
     if (hits.length > o.limit) out.push(`${hits.length - o.limit} more, narrow the filter (regex, --role, --limit)`);
     if (hits.length === 0) {
-      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}`);
+      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}; in a web page, desktop-text 'regex' searches all of its text`);
     }
     if (env.data.complete === false) out.push("snapshot incomplete: raise --timeout-ms");
     if (env.data.viaFind) out.push(`(tree too large to snapshot; used agent-desktop find${env.data.truncated ? ", which hit its 500-match limit: add --role or a literal word" : ""})`);
+    if (env.data.splitRoles) {
+      out.push(`searched only ${FALLBACK_ROLES.join(", ")} because the search without a role failed; page text: desktop-text 'regex'`);
+    }
+    if (env.data.skipped?.length > 0) {
+      out.push(`skipped, find failed: ${env.data.skipped.join(", ")}. Text there may be missing: desktop-text 'regex' reads the whole page`);
+    }
   }
   process.stdout.write(`${out.join("\n")}\n`);
 }
