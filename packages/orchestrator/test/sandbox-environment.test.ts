@@ -109,8 +109,11 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
     expect(browser).toContain("/usr/local/share/pi-browser/BROWSER.md");
 
     const desktop = dockerfile("sandbox-desktop");
-    expect(desktop).not.toMatch(/apt-get install[^&]*\b(curl|python3)\b/);
-    expect(FLAVOUR_FACTS.desktop.tools).not.toMatch(/\b(curl|gh|python3)\b/);
+    // python3 ships (websockify needs it; desktop-shot uses python3-pil) and the facts say so; curl and gh do not.
+    expect(desktop).not.toMatch(/apt-get install[^&]*\bcurl\b/);
+    expect(desktop).toMatch(/apt-get install[^&]*\bpython3-pil\b/);
+    expect(FLAVOUR_FACTS.desktop.tools).not.toMatch(/\b(curl|gh)\b/);
+    expect(FLAVOUR_FACTS.desktop.tools).toContain("python3");
     for (const tool of [
       "xvfb",
       "openbox",
@@ -123,6 +126,9 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "/usr/local/bin/node",
       "agent-desktop-run",
       "desktop-launch",
+      "desktop-find",
+      "desktop-shot",
+      "desktop-url",
     ]) {
       expect(desktop).toContain(tool);
     }

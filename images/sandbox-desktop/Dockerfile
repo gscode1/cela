@@ -44,13 +44,13 @@ ENV HOME=/home/pi \
     XDG_CACHE_HOME=/workspace/.cache
 COPY --from=forwarder /usr/local/bin/node /usr/local/bin/node
 # Desktop: X server, window manager, session bus, the accessibility bus with its GTK bridge, input and capture tools.
-# xclip and jq serve desktop-url and the agent's own filters; `python` is a link to python3 (websockify's dependency).
+# xclip and jq serve desktop-url and the agent's own filters, python3-pil desktop-shot; `python` is a link to python3 (websockify's dependency).
 # Apps: Mousepad (GTK), LibreOffice Writer with the GTK3 plugin that exposes its tree, Firefox ESR.
 # Lab live view (ADR 0065): x11vnc (view-only) and noVNC behind websockify, both started by agent-desktop-run on loopback.
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates tini procps \
-    xvfb openbox dbus dbus-x11 x11-utils at-spi2-core libatk-bridge2.0-0 xdotool xclip scrot jq \
+    xvfb openbox dbus dbus-x11 x11-utils at-spi2-core libatk-bridge2.0-0 xdotool xclip scrot jq python3-pil \
     mousepad libreoffice-writer libreoffice-gtk3 firefox-esr fonts-dejavu-core \
     x11vnc novnc websockify \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
@@ -68,6 +68,7 @@ COPY --chmod=0755 images/sandbox-desktop/files/agent-desktop-run /usr/local/bin/
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-launch /usr/local/bin/desktop-launch
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-find /usr/local/bin/desktop-find
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-url /usr/local/bin/desktop-url
+COPY --chmod=0755 images/sandbox-desktop/files/desktop-shot /usr/local/bin/desktop-shot
 COPY images/sandbox-desktop/files/novnc-index.html /usr/share/novnc/index.html
 COPY images/sandbox-desktop/files/DESKTOP.md /usr/local/share/pi-desktop/DESKTOP.md
 # PID 1 must reap orphans; sandboxd does not (images/sandbox/Dockerfile, issue #327).

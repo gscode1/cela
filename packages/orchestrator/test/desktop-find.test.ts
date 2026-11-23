@@ -131,12 +131,12 @@ describe("desktop image helpers", () => {
     { timeout: 10_000 },
     () => {
       const dockerfile = readFileSync(join(root, "images/sandbox-desktop/Dockerfile"), "utf8");
-      for (const name of ["desktop-find", "desktop-url"]) {
+      for (const name of ["desktop-find", "desktop-url", "desktop-shot"]) {
         expect(dockerfile).toContain(
           `COPY --chmod=0755 images/sandbox-desktop/files/${name} /usr/local/bin/${name}`,
         );
       }
-      expect(dockerfile).toMatch(/apt-get install[^&]*\bxclip\b[^&]*\bjq\b/);
+      expect(dockerfile).toMatch(/apt-get install[^&]*\bxclip\b[^&]*\bjq\b[^&]*\bpython3-pil\b/);
       expect(dockerfile).toContain("ln -s python3 /usr/bin/python");
       expect(
         readFileSync(join(root, "images/sandbox-desktop/files/agent-desktop-run"), "utf8"),

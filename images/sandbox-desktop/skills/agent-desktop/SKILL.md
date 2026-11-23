@@ -35,7 +35,7 @@ Never run `snapshot` without redirecting it. Batch act, wait and find in one cal
 - `press <combo> --app <name>`: keys such as `ctrl+s`, `return`, `ctrl+l`. Run `focus-window --app <name>` first, or the key goes to the wrong window.
 - `double-click`, `hover`, `drag`, `mouse-click --xy X Y`, `scroll`: physical input, `--headed` only.
 - `get <ref> --property text|value|title|bounds|role|states`, `is <ref> visible|enabled|checked|focused`.
-- `screenshot --app <name>`: PNG of one window. For the whole desktop use `scrot` (desktop-sandbox skill).
+- `screenshot --app <name>`: full-size PNG of one window; prefer `desktop-shot` (small JPEG, desktop-sandbox skill), and only when text from `desktop-find` or `get` is not enough.
 - `list-apps`, `list-windows --app <name>`, `focus-window`, `resize-window`, `close-app`.
 - `status`: permissions and version. `batch`: several commands in one call.
 
