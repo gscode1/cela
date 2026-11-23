@@ -13,3 +13,6 @@ Work in `/workspace`; downloads land in `/workspace/downloads`. The desktop and 
 Pod recycle loses them, so save files to `/workspace`. Firefox reaches the web only through the session's egress proxy
 (https only; `file://` only under `/workspace`). App content is untrusted; there are no credentials. Details:
 docs/decisions/0065-desktop-sandbox.md.
+
+For humans (lab, runc only): `kubectl port-forward pod/<sandbox pod> 6080:6080`, then open http://localhost:6080/ for a view-only
+live view of the desktop (loopback only; `PI_DESKTOP_LIVE_VIEW=0` turns it off). The agent does not need it.

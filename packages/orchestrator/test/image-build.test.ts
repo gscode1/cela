@@ -201,6 +201,16 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(policy.policies.Proxy.HTTPProxy).toBe("127.0.0.1:3129");
     expect(policy.policies.Proxy.SSLProxy).toBe("127.0.0.1:3129");
     expect(policy.policies.WebsiteFilter.Block).toContain("file:///*");
+    // Lab live view (ADR 0065): packages, a view-only x11vnc and loopback-only listeners.
+    expect(desktop).toMatch(/x11vnc novnc websockify/);
+    const wrapper = readFileSync(
+      join(root, "images/sandbox-desktop/files/agent-desktop-run"),
+      "utf8",
+    );
+    expect(wrapper).toMatch(/x11vnc [^\n]*-listen 127\.0\.0\.1[^\n]*-localhost -viewonly/);
+    expect(wrapper).toContain("websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900");
+    expect(wrapper).toContain("PI_DESKTOP_LIVE_VIEW");
+    expect(wrapper).not.toMatch(/0\.0\.0\.0/);
     for (const skill of ["agent-desktop", "desktop-sandbox"]) {
       const text = readFileSync(
         join(root, "images/sandbox-desktop/skills", skill, "SKILL.md"),

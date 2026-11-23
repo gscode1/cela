@@ -108,10 +108,21 @@ resume that starts a new Pod) the desktop is gone: open windows, unsaved documen
 the volume and survives; the agent is told to save there. The wrapper restarts the desktop on the next call, so a lost
 desktop is an empty one, not an error.
 
+### Lab live view
+
+The image carries x11vnc and noVNC behind websockify (a few tens of MB of packages, mostly python3-numpy that websockify depends on; issue #413). `agent-desktop-run` starts them with the
+desktop and restarts them on the next call, like openbox. x11vnc runs with `-viewonly`, so a viewer cannot send input
+whatever its client does. Both listeners are bound to 127.0.0.1 (x11vnc on 5900, websockify and the noVNC files on 6080), so
+nothing in the cluster can reach them and no NetworkPolicy, chart or API change is needed. A person with `pods/portforward`
+RBAC runs `kubectl port-forward pod/<sandbox pod> 6080:6080` and opens `http://localhost:6080/`, which redirects to
+`vnc.html?autoconnect=1&view_only=1&resize=scale`. There is no password: loopback plus that RBAC is the gate. Logs are in
+`/tmp/pi-desktop/`. `PI_DESKTOP_LIVE_VIEW=0` in the sandbox environment turns it off. It works under runc; port-forward does
+not work under gVisor (plan.md), so there is no live view there. The console view stays deferred.
+
 ## Limits and deferred
 
-- **No human live view or takeover.** Nobody watches or drives the desktop; the agent's screenshots are the only view.
-  Streaming it to the console (VNC or WebRTC through the session API) and handing control to a person are separate designs.
+- **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
+  the session API) and handing control to a person are separate designs.
 - No audio, clipboard sync with the outside, GPU or file upload through the desktop; files go through `/workspace`.
 - Three apps only. Adding one means changing the image and its skill.
 - The image is large (about 1.9 GB uncompressed); that is why the flavour is off by default.
