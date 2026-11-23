@@ -112,7 +112,7 @@ The first matching rule wins, so an `allow` created after `block *` never takes 
   server gets no agent, no grant and no way to ask for one: `forConversation` checks the snapshot, not the catalog alone.
 - **Names.** OneCLI refuses an agent identifier longer than 50 characters (seen live: `400` at 51). `pi-session-<uuid>` is 47, so
   the suffix is two characters (`-m`), the discovery agent is `<prefix>d-<server>`, and an agent whose name would exceed 50 is
-  refused with a message naming `PI_ONECLI_NAME_PREFIX` (at most 12 characters for MCP agents; the repo agent allows 14).
+  refused with a message naming `PI_ONECLI_NAME_PREFIX` (at most 12 characters, checked at orchestrator startup so a longer prefix never reaches a session: `ONECLI_NAME_PREFIX_MAX` is `50 - 36 - 2`, the `-m` agent being the longest name; the repo agent alone would allow 14).
 - **A separate agent from the repo agent.** `pi-session-<id>` holds the GitHub secrets and its token is sealed for the proxy
   (0037). Folding the MCP secrets into it would let the sandbox's proxy chain act with them wherever an admin allowed the host.
   A second agent costs one more OneCLI object and keeps the sandbox's route from ever carrying an MCP credential. (#42 suggests

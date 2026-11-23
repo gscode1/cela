@@ -354,11 +354,11 @@ describe("teardown", () => {
 
 describe("name prefix", () => {
   it("names the agent and secrets with the prefix, and teardown touches only that prefix's objects", async () => {
-    const e2e = "pi-e2e-ab12cd-";
+    const e2e = "pi-e2e-ab12-";
     await access().shellEnv(session(), 7);
     await access({ namePrefix: e2e }).shellEnv(session(), 7);
     const prefixed = agentIdentifier(SESSION, e2e);
-    expect(prefixed).toBe(`pi-e2e-ab12cd-${SESSION}`);
+    expect(prefixed).toBe(`pi-e2e-ab12-${SESSION}`);
     expect([...onecli.agents.values()].map((a) => a.identifier).sort()).toEqual([prefixed, NAME]);
     expect(onecli.secretNamed(`${prefixed}-git`)).toBeDefined();
     await access({ namePrefix: e2e }).teardown(session());

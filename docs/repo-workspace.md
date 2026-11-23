@@ -39,7 +39,7 @@ With `egressProxy.enabled` the sandbox holds only its egress token. The agent to
 rules that send `github.com` and `api.github.com` through OneCLI, removed with the session. Without the proxy the sandbox keeps
 the gateway URL and the agent token as before. See [ADR 0037](decisions/0037-egress-onecli-route.md).
 
-- `<prefix>` is `PI_ONECLI_NAME_PREFIX` (default `pi-session-`; lowercase `[a-z0-9-]`, ending in `-`). Stacks that share a OneCLI
+- `<prefix>` is `PI_ONECLI_NAME_PREFIX` (default `pi-session-`; lowercase `[a-z0-9-]`, ending in `-`, at most 12 characters so that `<prefix><uuid>-m` stays within OneCLI's 50; the orchestrator refuses to start otherwise). Stacks that share a OneCLI
   workspace need different ones: the orphan sweep judges only names with its own prefix (`docs/e2e.md`).
 - The GitHub App id and installation id are in the Secret. The private key is Secret `pi-github-app` (`private-key.pem`, `app-id`,
   `installation-id`), delivered by ExternalSecret to the orchestrator only and mounted at `/etc/pi-github-app`.

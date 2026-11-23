@@ -20,7 +20,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const values = (shards: number, env: Record<string, string> = {}): string => {
   const out = execFileSync(
     "python3",
-    [join(root, "tests/e2e/chart-values.py"), "pi-e2e-ab12cd-", String(shards)],
+    [join(root, "tests/e2e/chart-values.py"), "pi-e2e-ab12-", String(shards)],
     {
       encoding: "utf8",
       timeout: 20_000,
@@ -49,7 +49,7 @@ describe("tests/e2e/chart-values.py", () => {
       const text = render(values(shards));
       expect(text.match(/kind: Deployment/g)).toHaveLength(shards + 1);
       expect(text).toContain('value: "http://onecli.onecli:10255"');
-      expect(text).toContain("pi-e2e-ab12cd-");
+      expect(text).toContain("pi-e2e-ab12-");
     }
   });
 

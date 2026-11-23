@@ -200,7 +200,7 @@
         },
         "namePrefix": {
           "type": "string",
-          "pattern": "^[a-z0-9-]{1,39}-$"
+          "pattern": "^[a-z0-9-]{1,11}-$"
         },
         "hostRules": {
           "type": "object",
