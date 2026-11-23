@@ -320,6 +320,26 @@ console:
   # Use readOnly when a catalog repository is the one writer (docs/admin-ui-plan.md).
   catalogs: manage
 
+# Public view-only live view of desktop sessions (issue #418, docs/decisions/0066-desktop-public-live-view.md). Off by
+# default. On: a session of a desktop profile can be created with `liveView: true`, and PUT /sessions/{id}/live-view turns
+# it on later; each gives a URL, `<publicUrl>/live/<token>`, that ANYONE who has it can open to watch that desktop, with no
+# login and no input. Treat the URL like a password: it is the only credential, it is returned only to the session's owner,
+# and PUT rotates it (DELETE turns it off). Needs sandbox.flavours.desktop.enabled.
+liveView:
+  enabled: false
+  # The origin viewers reach `/live/*` at (scheme and host, no path): what the URLs start with. Required when enabled.
+  # Your Gateway or Ingress must route it to ingest (httpRoute below).
+  publicUrl: ""
+  maxViewersPerSession: 4 # the 5th gets a 429; the orchestrator also caps 32 per shard
+  # A separate HTTPRoute `pi-live-view` for the `/live/` prefix only, so the anonymous surface can have its own hostname
+  # (recommended) and its own policy. Needs networkPolicy.ingest.clients, like ingest.httpRoute. The WebSocket must outlive
+  # the gateway's default request timeout: the rule sets `request: "0s"`.
+  httpRoute:
+    enabled: false
+    parentRefs: []
+    hostnames: []
+    annotations: {}
+
 api:
   # Owners who may call /admin/*. Each needs a token in the Secret.
   admins: [admin]

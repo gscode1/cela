@@ -208,9 +208,15 @@ describe("image delivery replaces mutable code uploads", () => {
       "utf8",
     );
     expect(wrapper).toMatch(/x11vnc [^\n]*-listen 127\.0\.0\.1[^\n]*-localhost -viewonly/);
-    expect(wrapper).toContain("websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900");
+    expect(wrapper).toContain(
+      'websockify --web /usr/share/novnc "$live_listen:6080" 127.0.0.1:5900',
+    );
     expect(wrapper).toContain("PI_DESKTOP_LIVE_VIEW");
-    expect(wrapper).not.toMatch(/0\.0\.0\.0/);
+    // Only the one value the chart sets widens the bind (ADR 0066); x11vnc stays on loopback whatever the variable says.
+    expect(wrapper).toContain(
+      'case "$live_listen" in 0.0.0.0) ;; *) live_listen=127.0.0.1 ;; esac',
+    );
+    expect(wrapper.match(/0\.0\.0\.0/g)).toHaveLength(2);
     for (const skill of ["agent-desktop", "desktop-sandbox"]) {
       const text = readFileSync(
         join(root, "images/sandbox-desktop/skills", skill, "SKILL.md"),

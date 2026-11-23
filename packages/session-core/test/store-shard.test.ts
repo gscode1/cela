@@ -44,7 +44,7 @@ describe("sharded store functions", () => {
     expect(insert?.params[11]).toBe(3);
     expect(insert?.params[12]).toBe("m");
     expect(insert?.sql).toMatch(
-      /shard, sandbox_size, network_mode, sandbox_flavour,\s+sandbox_runtime\)/,
+      /shard, sandbox_size, network_mode, sandbox_flavour,\s+sandbox_runtime, live_view_token\)/,
     );
     expect(insert?.sql).toMatch(/generate_series\(0, \$12::int - 1\)/);
     expect(insert?.sql).toMatch(/status = 'active'/);

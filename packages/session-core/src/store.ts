@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
 import { lockCatalog } from "./deletion.js";
 import { THINKING_LEVELS } from "./models.js";
@@ -73,6 +73,11 @@ export interface SessionRow {
   sandboxFlavour: SandboxFlavour;
   /** The named sandbox runtime it was created with (issue #406); null: the default runtime. Never coerced. */
   sandboxRuntime: string | null;
+  /**
+   * The secret path segment of the public view-only live view (issue #418, ADR 0066); null: the live view is off.
+   * Whoever holds it can watch the desktop, so it is never logged and only its owner's API calls return it.
+   */
+  liveViewToken: string | null;
   createdAt: Date;
   lastActivityAt: Date;
 }
@@ -123,6 +128,8 @@ interface SessionDbRow {
   sandbox_flavour?: string | null;
   /** Absent in rows read before migration 038 was applied, and in test fakes. */
   sandbox_runtime?: string | null;
+  /** Absent in rows read before migration 040 was applied, and in test fakes. */
+  live_view_token?: string | null;
   created_at: Date;
   last_activity_at: Date;
 }
@@ -183,6 +190,7 @@ const toSession = (row: SessionDbRow): SessionRow => ({
   networkMode: row.network_mode === "direct" ? "direct" : "proxied",
   sandboxFlavour: isSandboxFlavour(row.sandbox_flavour) ? row.sandbox_flavour : "default",
   sandboxRuntime: row.sandbox_runtime ?? null,
+  liveViewToken: row.live_view_token ?? null,
   createdAt: row.created_at,
   lastActivityAt: row.last_activity_at,
 });
@@ -276,6 +284,7 @@ export async function createSession(
   networkMode: NetworkMode = "proxied",
   sandboxFlavour: SandboxFlavour = "default",
   sandboxRuntime: string | null = null,
+  liveViewToken: string | null = null,
 ): Promise<string> {
   const id = randomUUID();
   const client = await pool.connect();
@@ -285,13 +294,13 @@ export async function createSession(
     const { rows } = await client.query(
       `insert into inbox.sessions (id, owner, owner_subject, model_provider, model_id, model_reasoning, repo, repo_branch,
          profile_name, profile_version, profile_snapshot, shard, sandbox_size, network_mode, sandbox_flavour,
-         sandbox_runtime)
+         sandbox_runtime, live_view_token)
        select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
          coalesce((select c.shard from generate_series(0, $12::int - 1) as c(shard)
                     left join (select shard, count(*) as n from inbox.sessions where status = 'active' group by shard) a
                       on a.shard = c.shard
                     order by coalesce(a.n, 0), c.shard limit 1), 0),
-         $13, $14, $15, $16
+         $13, $14, $15, $16, $17
         where $9::text is null
            or exists (select 1 from inbox.profiles p
                        where p.name = $9 and p.current_version = $10 and p.enabled_for_new)
@@ -313,6 +322,7 @@ export async function createSession(
         networkMode,
         sandboxFlavour,
         sandboxRuntime,
+        liveViewToken,
       ],
     );
     if (rows.length === 0) {
@@ -381,6 +391,38 @@ export async function getSession(
   id: string,
 ): Promise<SessionRow | undefined> {
   const { rows } = await db.query<SessionDbRow>("select * from inbox.sessions where id = $1", [id]);
+  const row = rows[0];
+  return row === undefined ? undefined : toSession(row);
+}
+
+/** A new live view token: 256 random bits, base64url, so it fits a URL path segment and cannot be guessed. */
+export const newLiveViewToken = (): string => randomBytes(32).toString("base64url");
+
+/**
+ * Turns the live view of an active session on or off (`null`), or replaces its token (rotation). False when the
+ * session is not active: a deleting or deleted session never gets a token, and a failed one has no desktop to show.
+ */
+export async function setLiveViewToken(
+  db: Pick<pg.Pool, "query">,
+  sessionId: string,
+  token: string | null,
+): Promise<boolean> {
+  const result = await db.query(
+    "update inbox.sessions set live_view_token = $2 where id = $1 and (status = 'active' or $2::text is null)",
+    [sessionId, token],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** The session a live view token opens, or undefined. The lookup the unauthenticated viewer route makes. */
+export async function sessionByLiveViewToken(
+  db: Pick<pg.Pool, "query">,
+  token: string,
+): Promise<SessionRow | undefined> {
+  const { rows } = await db.query<SessionDbRow>(
+    "select * from inbox.sessions where live_view_token = $1",
+    [token],
+  );
   const row = rows[0];
   return row === undefined ? undefined : toSession(row);
 }
@@ -480,7 +522,7 @@ export async function requestDelete(
   sessionId: string,
 ): Promise<void> {
   await pool.query(
-    "update inbox.sessions set status = 'deleting', last_activity_at = clock_timestamp() where id = $1 and status in ('active', 'failed')",
+    "update inbox.sessions set status = 'deleting', live_view_token = null, last_activity_at = clock_timestamp() where id = $1 and status in ('active', 'failed')",
     [sessionId],
   );
 }

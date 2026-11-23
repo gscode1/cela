@@ -1,0 +1,33 @@
+{{- /*
+Optional Gateway API HTTPRoute `pi-live-view` for the public live view (ADR 0066): the `/live/` prefix only, to the
+pi-ingest Service. Separate from ingest.httpRoute so the anonymous, view-only surface can have its own hostname and
+policy, and so exposing it never exposes the session API. The viewer's WebSocket lives as long as someone watches: no total
+request limit (like the session stream); the gateway's idle timeout drops dead connections.
+*/ -}}
+{{- with .Values.liveView.httpRoute }}
+{{- if and .enabled $.Values.liveView.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pi-live-view
+  labels:
+    {{- include "cela.labels" $ | nindent 4 }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .parentRefs | nindent 4 }}
+  {{- with .hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /live/ }
+      timeouts: { request: "0s" }
+      backendRefs:
+        - { kind: Service, name: pi-ingest, port: 8080 }
+{{- end }}
+{{- end }}

@@ -35,6 +35,7 @@ const session = (over: Partial<SessionRow> = {}): SessionRow => ({
   networkMode: "proxied",
   sandboxFlavour: "default",
   sandboxRuntime: null,
+  liveViewToken: null,
   createdAt: new Date(),
   lastActivityAt: new Date(),
   ...over,

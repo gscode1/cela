@@ -52,6 +52,11 @@ export interface OrchestratorConfig {
   apiTokens: string;
   /** Mount the test-only /control surface (Phase 3 scripted sessions). */
   control: boolean;
+  /**
+   * The public live view of desktop sessions (`PI_LIVE_VIEW=1`, the chart's `liveView.enabled`, ADR 0066): the
+   * orchestrator relays viewers to the sandbox's websockify. `maxViewers` (`PI_LIVE_VIEW_MAX_VIEWERS`) is per session.
+   */
+  liveView: { enabled: boolean; maxViewers: number };
   /** Honour `payload.testFault` on inbox rows (test 4 kills the process between submit and mark). */
   testFaults: boolean;
   /** Default model and allowlist (`PI_MODEL_PROVIDER`, `PI_MODEL_ID`, `PI_MODEL_ALLOWLIST`, one ConfigMap). */
@@ -268,6 +273,10 @@ export function loadConfig(
     instance: env.POD_NAME ?? `orchestrator-${String(process.pid)}`,
     apiTokens,
     control: env.PI_ORCH_CONTROL === "1",
+    liveView: {
+      enabled: env.PI_LIVE_VIEW === "1",
+      maxViewers: count(env, "PI_LIVE_VIEW_MAX_VIEWERS", 4, 64),
+    },
     testFaults: env.PI_ORCH_TEST_FAULTS === "1",
     models,
     customProviders,

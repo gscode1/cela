@@ -22,7 +22,7 @@ export function parseConsoleCatalogs(value: string | undefined): ConsoleCatalogs
 
 const CONFIG_PATH = `${CONSOLE_PREFIX}/config.json`;
 
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
+export const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -64,7 +64,7 @@ function plain(
 }
 
 /** The file below `root` that `relative` names, or undefined: a `..` segment, a NUL or a backslash is never served. */
-async function fileFor(root: string, relative: string): Promise<string | undefined> {
+export async function fileFor(root: string, relative: string): Promise<string | undefined> {
   let decoded: string;
   try {
     decoded = decodeURIComponent(relative);

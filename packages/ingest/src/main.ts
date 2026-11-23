@@ -36,6 +36,8 @@ async function main(): Promise<void> {
     browserFlavourEnabled: config.browserFlavourEnabled,
     desktopFlavourEnabled: config.desktopFlavourEnabled,
     sandboxRuntimes: config.sandboxRuntimes,
+    liveViewPublicUrl: config.liveViewPublicUrl,
+    liveViewDir: config.liveViewDir,
     schemaReady: () => schemaReady,
   });
   // Long-lived SSE responses must not be cut by Node's default request timeouts.

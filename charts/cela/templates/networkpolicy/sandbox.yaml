@@ -41,6 +41,31 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 9090 }
+{{- if .Values.liveView.enabled }}
+---
+# Ingress: websockify (6080) of a desktop sandbox, from the orchestrator only (liveView.enabled, ADR 0066). Selects the
+# desktop flavour's Pods: no other sandbox opens the port, and ingest never reaches a sandbox (it relays through the
+# orchestrator). The port carries a view-only VNC stream; the orchestrator drops the viewer's input before it gets there.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-orchestrator-liveview-ingress
+  labels:
+    {{- include "cela.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pi-sandbox
+      cela.dev/sandbox-flavour: desktop
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pi-orchestrator
+      ports:
+        - { protocol: TCP, port: 6080 }
+{{- end }}
 {{- if not (include "cela.networkCutover" .) }}
 {{- if ne .Values.onecli.mode "disabled" }}
 ---

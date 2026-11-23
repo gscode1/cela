@@ -62,6 +62,11 @@ spec:
             - { name: PI_ORCH_PORT, value: "8081" }
             - { name: PI_DURABLE_SCHEMA, value: durable }
             - { name: PI_ORCH_SHARD, value: {{ $shard | quote }} }
+            {{- if $root.Values.liveView.enabled }}
+            # Relays the public live view's WebSocket to the desktop's websockify (ADR 0066).
+            - { name: PI_LIVE_VIEW, value: "1" }
+            - { name: PI_LIVE_VIEW_MAX_VIEWERS, value: {{ $root.Values.liveView.maxViewersPerSession | quote }} }
+            {{- end }}
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: PI_DURABLE_DATABASE_URL

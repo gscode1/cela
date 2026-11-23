@@ -169,6 +169,9 @@ export {
   recordSessionUsage,
   touchSessionActivity,
   beginDelete,
+  newLiveViewToken,
+  sessionByLiveViewToken,
+  setLiveViewToken,
   requestDelete,
   requeueFailedDelete,
   sessionByConversation,
@@ -360,3 +363,15 @@ export {
   readFeed,
 } from "./feed.js";
 export type { FeedEvent, FeedPage, FeedType } from "./feed.js";
+export {
+  isWebSocketKey,
+  joinSockets,
+  LIVE_VIEW_ORCH_PREFIX,
+  LIVE_VIEW_PORT,
+  LIVE_VIEW_TOKEN_HEADER,
+  refuseUpgrade,
+  safeSubprotocol,
+  sameSecret,
+  switchingProtocols,
+  websocketAccept,
+} from "./live-view.js";

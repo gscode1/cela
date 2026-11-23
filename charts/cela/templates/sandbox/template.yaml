@@ -113,6 +113,13 @@ spec:
           {{- end }}
           args:
             - --auth-token-sha256=$(SANDBOXD_AUTH_TOKEN_SHA256)
+          {{- if and (eq $t.flavour "desktop") $root.Values.liveView.enabled }}
+          env:
+            # websockify listens on the Pod address instead of loopback, so the orchestrator can relay the public live
+            # view (ADR 0066). Set here, not on the claim: the claim's env is fixed when it is created. The policy
+            # sandbox-allow-orchestrator-liveview-ingress is what limits who may connect.
+            - { name: PI_DESKTOP_LIVE_VIEW_LISTEN, value: "0.0.0.0" }
+          {{- end }}
           ports:
             - containerPort: 8080
             - containerPort: 9090

@@ -1,6 +1,6 @@
 # 0065: Desktop sandbox: a virtual X desktop with a few apps, driven through accessibility
 
-Status: accepted, 2026-11-23 (issues #405 spike, #408). Builds on [0041](0041-browser-sandbox.md) (flavours; this is the
+Status: accepted, 2026-11-23 (issues #405 spike, #408). The lab live view and the "no console live view" limit are superseded by [0066](0066-desktop-public-live-view.md). Builds on [0041](0041-browser-sandbox.md) (flavours; this is the
 second one), [0064](0064-sandbox-runtimes.md) (named runtimes), [0038](0038-network-modes.md) (the egress proxy),
 [0030](0030-sandbox-sizes.md) and [0019](0019-restricted-pod-security.md).
 

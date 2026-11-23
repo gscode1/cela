@@ -137,6 +137,7 @@ describe("SessionService after a run answered", () => {
     networkMode: "proxied",
     sandboxFlavour: "default",
     sandboxRuntime: null,
+    liveViewToken: null,
     createdAt: new Date(),
     lastActivityAt: new Date(),
   };
@@ -320,6 +321,7 @@ describe("usage on the session row (#185)", () => {
       networkMode: "proxied",
       sandboxFlavour: "default",
       sandboxRuntime: null,
+      liveViewToken: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),
     };
@@ -415,6 +417,7 @@ describe("the outcome of each input (ADR 0058)", () => {
       networkMode: "proxied",
       sandboxFlavour: "default",
       sandboxRuntime: null,
+      liveViewToken: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),
     };
