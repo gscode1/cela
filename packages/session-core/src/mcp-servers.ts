@@ -309,7 +309,7 @@ async function writeHistoryAndNotify(
  */
 export interface CatalogWriteOptions {
   within?: (client: pg.PoolClient) => Promise<void>;
-  /** The deployment's session mail server (ADR 0066): browser profiles may name it although it is credentialed. */
+  /** The deployment's session mail server (ADR 0067): browser profiles may name it although it is credentialed. */
   mailServer?: string | undefined;
 }
 
@@ -431,7 +431,7 @@ export async function putMcpServer(
  * Why `name` cannot be credentialed now, or undefined: the current version of a profile that names it is a browser or desktop
  * flavour or direct network mode one (the same pairs `untrustedFlavourConflict` and `directModeConflict` refuse when the
  * profile is written). The message for a 400. A browser profile does not count when `name` is the session mail server
- * (`mailServer`, ADR 0066); a desktop or direct one does.
+ * (`mailServer`, ADR 0067); a desktop or direct one does.
  */
 async function credentialedRefusal(
   client: Pick<pg.PoolClient, "query">,

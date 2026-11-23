@@ -1,7 +1,7 @@
 import { MCP_SERVER_NAME } from "./mcp-servers.js";
 
 /**
- * The header the orchestrator sets on every request to the session mail server (docs/session-mail.md, ADR 0066). Its
+ * The header the orchestrator sets on every request to the session mail server (docs/session-mail.md, ADR 0067). Its
  * value is the session's MCP agent identifier; the server scopes every mail lookup by it.
  */
 export const MAIL_OWNER_HEADER = "X-Cela-Mail-Owner";

@@ -15,7 +15,7 @@ const stored = (name: string, onecliSecret: string | null) =>
   ({ server: { name, onecliSecret } }) as unknown as StoredMcpServer;
 const state = { mcpServers: [stored("mail", "mail-key"), stored("docs", "docs-key")], egress };
 
-describe("the session mail server and the browser exception (ADR 0066)", () => {
+describe("the session mail server and the browser exception (ADR 0067)", () => {
   it("is off unless a valid catalog name is set", () => {
     expect(parseSessionMailServer(undefined)).toBeUndefined();
     expect(parseSessionMailServer("  ")).toBeUndefined();

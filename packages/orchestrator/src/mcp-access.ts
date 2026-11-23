@@ -63,7 +63,7 @@ export interface McpAccessDeps {
   noProxy: readonly string[];
   namePrefix?: string | undefined;
   /**
-   * The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0066), or undefined: the feature
+   * The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0067), or undefined: the feature
    * is off, no server is special and no browser session is credentialed.
    */
   mailServer?: string | undefined;
@@ -108,7 +108,7 @@ export class McpAccess {
 
   /**
    * The enabled, credentialed servers of the catalog that the session's profile names. A desktop or direct session gets
-   * none, and a browser session at most the session mail server (ADR 0066), whatever the catalog says now (ADR 0041,
+   * none, and a browser session at most the session mail server (ADR 0067), whatever the catalog says now (ADR 0041,
    * 0065, 0038): the catalog may have changed since the session started.
    */
   credentialedFor(session: SessionRow): McpServerConfig[] {

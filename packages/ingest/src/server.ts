@@ -126,7 +126,7 @@ export interface IngestDeps {
   sandboxSizes?: SandboxSizes | undefined;
   /** `networkMode: direct` is allowed (`PI_ALLOW_DIRECT_SANDBOX_EGRESS`, ADR 0038); default: refused with a 400. */
   allowDirectSandboxEgress?: boolean | undefined;
-  /** The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0066); absent: the feature is off. */
+  /** The reserved catalog name of the session mail server (`PI_SESSION_MAIL_SERVER`, ADR 0067); absent: the feature is off. */
   sessionMailServer?: string | undefined;
   /** Browser sandboxes are rendered (`PI_SANDBOX_FLAVOURS` names `browser`, ADR 0041); default: refused with a 400. */
   browserFlavourEnabled?: boolean | undefined;

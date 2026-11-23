@@ -43,7 +43,7 @@ export function directModeConflict(
  * What in a profile would need a credential injected by the platform (a credentialed MCP server, a `route=onecli`
  * allow rule of an applying rule set), described for an error message, or undefined. Shared by the direct network mode
  * and the browser flavour (ADR 0041): neither can carry one. `exceptServer` is the browser flavour's one exception, the
- * session mail server (ADR 0066); the direct mode never passes it. A `route=onecli` rule is never excepted.
+ * session mail server (ADR 0067); the direct mode never passes it. A `route=onecli` rule is never excepted.
  */
 export function credentialSource(
   definition: ProfileDefinition,

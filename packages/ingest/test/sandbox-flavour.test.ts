@@ -131,7 +131,7 @@ describe("sandbox flavours", () => {
     );
   });
 
-  it("lets a browser profile name the configured session mail server, and no other credentialed one (ADR 0066)", async () => {
+  it("lets a browser profile name the configured session mail server, and no other credentialed one (ADR 0067)", async () => {
     const { base, db } = await start(true, undefined, true, "mail");
     for (const name of ["mail", "crm"]) {
       const put = await call(base, "alice", "PUT", `/admin/mcp-servers/${name}`, {
