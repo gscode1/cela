@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { McpFetch } from "@earendil-works/pi-mcp";
 import { validateProfileDefinition } from "@cela/session-core";
-import type { McpServerConfig, SessionRow } from "@cela/session-core";
+import type { McpServerConfig, ProfileDefinition, SessionRow } from "@cela/session-core";
 import { log } from "./log.js";
 import type { OneCliAdmin } from "./onecli-admin.js";
 import { narrowAgent } from "./onecli-grants.js";
@@ -72,14 +72,23 @@ export class McpAccess {
 
   /** The MCP servers a session's profile names, from its snapshot; none for a session without a valid one. */
   #named(session: SessionRow): string[] {
-    const stored = session.profile;
-    if (stored === null) return [];
-    const definition = validateProfileDefinition(stored.snapshot);
-    return typeof definition === "string" ? [] : (definition.mcpServers ?? []);
+    return this.#definitionOf(session)?.mcpServers ?? [];
   }
 
-  /** The enabled, credentialed servers of the catalog that the session's profile names. */
+  #definitionOf(session: SessionRow): ProfileDefinition | undefined {
+    const stored = session.profile;
+    if (stored === null) return undefined;
+    const definition = validateProfileDefinition(stored.snapshot);
+    return typeof definition === "string" ? undefined : definition;
+  }
+
+  /**
+   * The enabled, credentialed servers of the catalog that the session's profile names. A browser or direct session gets
+   * none, whatever the catalog says now (ADR 0041, 0038): the catalog may have changed since the session started.
+   */
   credentialedFor(session: SessionRow): McpServerConfig[] {
+    const definition = this.#definitionOf(session);
+    if (definition?.sandboxFlavour === "browser" || definition?.networkMode === "direct") return [];
     const named = new Set(this.#named(session));
     return this.#deps
       .catalog()

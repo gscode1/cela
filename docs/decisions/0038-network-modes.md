@@ -84,7 +84,7 @@ ones, and `NOTES.txt` says so. Combining `security.allowDirectSandboxEgress=true
 Ingest refuses (400) a direct session that carries a repo (`repo` in `POST /sessions`), a profile whose `mcpServers` names
 a server with an `onecliSecret`, and a profile for which a rule set that applies to it (appliesToAll or named) has an
 allow rule with `route=onecli`. The profile write checks the same (against the catalog and the rules as they are), and
-the session create checks again, because both can change afterwards. A direct session gets no proxy environment, no
+the session create checks again, because both can change afterwards. The catalog write checks from its side: `PUT /admin/mcp-servers/{name}` is `400` for a non-null `onecliSecret` while a direct (or browser, ADR 0041) profile names the server, and the orchestrator grants a direct session no credentialed MCP server whatever the catalog says. A direct session gets no proxy environment, no
 principal, no token and no binding (the orchestrator skips `EgressPrincipals` for it).
 
 ### Lifecycle, observability

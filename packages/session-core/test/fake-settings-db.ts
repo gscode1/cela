@@ -546,6 +546,27 @@ export class FakeSettingsDb {
           .map((p) => ({ name: p.name, version: p.current_version })),
       );
     }
+    if (text.startsWith("select p.name, v.definition->>'sandboxFlavour' = 'browser' as browser")) {
+      const [name] = params as [string];
+      return done(
+        [...this.profiles.values()]
+          .sort((a, b) => (a.name < b.name ? -1 : 1))
+          .flatMap((p) => {
+            const definition = (this.versions.find(
+              (row) => row.name === p.name && row.version === p.current_version,
+            )?.definition ?? {}) as {
+              mcpServers?: string[];
+              sandboxFlavour?: string;
+              networkMode?: string;
+            };
+            const browser = definition.sandboxFlavour === "browser";
+            const direct = definition.networkMode === "direct";
+            return (definition.mcpServers ?? []).includes(name) && (browser || direct)
+              ? [{ name: p.name, browser, direct }]
+              : [];
+          }),
+      );
+    }
     if (text.startsWith("select id, count(*) over () as total from inbox.sessions")) {
       const [name] = params as [string];
       const pinning = [...this.sessions.values()]
