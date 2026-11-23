@@ -74,6 +74,13 @@ describe("image delivery replaces mutable code uploads", () => {
         /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/github\.com\/mikefarah\/yq\/releases\/download\/v4\.54\.1\//g,
       ),
     ).toHaveLength(2);
+    // helm: one release, a checksum per architecture, caches in the workspace.
+    expect(
+      base.match(
+        /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/get\.helm\.sh\/helm-v4\.3\.2-linux-/g,
+      ),
+    ).toHaveLength(2);
+    expect(base).toContain("HELM_CACHE_HOME=/workspace/.cache/helm");
     expect(base).toContain("ln -s /usr/bin/fdfind /usr/local/bin/fd");
     // gh: one release, a checksum per architecture.
     expect(
