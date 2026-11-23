@@ -117,6 +117,8 @@ sandbox:
   # Named sandbox sizes (docs/decisions/0030-sandbox-sizes.md). Each renders a SandboxTemplate pi-env-template-<name> and
   # a SandboxWarmPool pi-env-pool-<name>; profiles and POST /sessions pick among them, never free numbers. A changed
   # size applies to new sessions only. Names: 1 to 16 of [a-z0-9-], starting with a letter.
+  # warmPoolReplicas must stay 0 (the schema refuses more): every claim carries spec.env, so agent-sandbox never adopts a
+  # warm Pod for it, and Pods built without the env crash-loop (ADR 0001, ADR 0030). The pool is only a template alias.
   defaultSize: s
   sizes:
     s: # the size every sandbox had before sizes existed
@@ -164,7 +166,7 @@ sandbox:
         limits: { cpu: "1", memory: 1536Mi }
       ephemeralStorage: 2Gi # the browser's profile and cache live outside /workspace and are wiped at each start
       shmSize: 256Mi # memory-backed /dev/shm; counts against the memory limit
-      warmPoolReplicas: 0 # warm Pods of each sized proxied browser pool; browser Pods are heavy, keep it 0 unless needed
+      warmPoolReplicas: 0 # must be 0 (the schema refuses more); see sandbox.sizes
 
 security:
   # Acknowledges that the sandbox runtime is not gVisor. The orchestrator refuses to start without it too

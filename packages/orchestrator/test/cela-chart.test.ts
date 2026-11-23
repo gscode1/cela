@@ -358,14 +358,21 @@ describe("sandbox sizes (docs/decisions/0030-sandbox-sizes.md)", () => {
     }
   });
 
-  it("gives ingest the sizes and the default, and each size its own warm pool replicas", () => {
-    const list = docs([
-      ...external,
-      "--set",
-      "sandbox.defaultSize=m",
-      "--set",
-      "sandbox.sizes.m.warmPoolReplicas=2",
-    ]);
+  // Claims carry env, so agent-sandbox never adopts a warm Pod and the env-less Pods crash-loop (ADR 0001, issue #376).
+  it("refuses warm pool replicas above 0, for a size and for the browser flavour", () => {
+    for (const key of [
+      "sandbox.sizes.m.warmPoolReplicas",
+      "sandbox.flavours.browser.warmPoolReplicas",
+    ]) {
+      expect(() => helmTemplate(chart, [...external, "--set", `${key}=1`])).toThrow(
+        /warmPoolReplicas|maximum/,
+      );
+      expect(() => helmTemplate(chart, [...external, "--set", `${key}=0`])).not.toThrow();
+    }
+  });
+
+  it("gives ingest the sizes and the default, and each size a pool with no warm Pods", () => {
+    const list = docs([...external, "--set", "sandbox.defaultSize=m"]);
     const env = envOf(named(list, "Deployment", "pi-ingest"));
     expect(env.PI_SANDBOX_DEFAULT_SIZE?.value).toBe("m");
     expect(Object.keys(JSON.parse(env.PI_SANDBOX_SIZES?.value) as object).sort()).toEqual([
@@ -374,7 +381,7 @@ describe("sandbox sizes (docs/decisions/0030-sandbox-sizes.md)", () => {
       "s",
       "xl",
     ]);
-    expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(2);
+    expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(0);
     expect(named(list, "SandboxWarmPool", "pi-env-pool").spec.sandboxTemplateRef.name).toBe(
       "pi-env-template",
     );
@@ -1765,16 +1772,9 @@ describe("browser flavour (ADR 0041)", () => {
     expect(named(list, "SandboxWarmPool", "pi-env-browser-direct-pool-m").spec.replicas).toBe(0);
   });
 
-  it("keeps warm Pods only where the operator asks, in the sized proxied browser pools", () => {
-    const list = docs([
-      ...external,
-      ...browser,
-      "--set",
-      "sandbox.flavours.browser.warmPoolReplicas=1",
-    ]);
-    expect(named(list, "SandboxWarmPool", "pi-env-browser-pool-m").spec.replicas).toBe(1);
-    expect(named(list, "SandboxWarmPool", "pi-env-browser-pool").spec.replicas).toBe(0);
-    expect(named(list, "SandboxWarmPool", "pi-env-pool-m").spec.replicas).toBe(0);
+  it("keeps no warm Pods in any pool", () => {
+    const list = docs([...external, ...browser]);
+    for (const pool of ofKind(list, "SandboxWarmPool")) expect(pool.spec.replicas).toBe(0);
   });
 
   it("needs the browser image by default, like the sandbox image", () => {
