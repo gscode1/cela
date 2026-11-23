@@ -1,6 +1,6 @@
 ---
 name: agent-desktop
-description: Drive the sandbox's desktop apps (Mousepad, LibreOffice Writer, Firefox) with agent-desktop 1.3.1 through accessibility refs: snapshot, click, type, press, get, screenshot. Command reference and workflow.
+description: "Drive the sandbox's desktop apps (Mousepad, LibreOffice Writer, Firefox) with agent-desktop 1.3.1 through accessibility refs: snapshot, click, type, press, get, screenshot. Command reference and workflow."
 ---
 
 # agent-desktop 1.3.1

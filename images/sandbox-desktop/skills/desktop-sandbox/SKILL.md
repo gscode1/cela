@@ -1,6 +1,6 @@
 ---
 name: desktop-sandbox
-description: How this sandbox's desktop works: agent-desktop-run, desktop-launch, xdotool and screenshot fallbacks, files in /workspace, the egress proxy, untrusted content and what a Pod recycle loses. Read before any desktop task.
+description: "How this sandbox's desktop works: agent-desktop-run, desktop-launch, xdotool and screenshot fallbacks, files in /workspace, the egress proxy, untrusted content and what a Pod recycle loses. Read before any desktop task."
 ---
 
 # Desktop sandbox
