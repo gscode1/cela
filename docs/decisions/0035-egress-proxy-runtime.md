@@ -101,6 +101,9 @@ a `cidr` or `namespaceSelector` (with an optional `podSelector`) and explicit `p
 destination only inside that list. Plain NetworkPolicy suffices on both providers, so there is no Cilium variant; Cilium does
 not match cluster addresses with a cidr, so use selectors there.
 
+Amended for #384: render the PDB only when `egressProxy.replicas > 1`. At one replica, omit it so a voluntary node drain
+can proceed (with proxy downtime); at two or more, keep `minAvailable: 1` to preserve a serving replica.
+
 ## Addendum (slice 4, [0036](0036-egress-principals.md))
 
 `Principals` is now `SnapshotPrincipals`: the live rows of `egress.principals` in the same snapshot as the rules. A token

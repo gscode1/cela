@@ -18,6 +18,10 @@ use `registry.example.com/team/pi-orchestrator@sha256:…` in your values file (
 platform is loaded into Docker; other builds write `pi-<name>-<tag>.oci.tar` in the current directory. No images
 are published automatically. Omitting the image target builds `all`. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
 
+Base images (Node, Go, distroless and sandboxd) are pinned as `tag@sha256:…` using multi-arch index digests so the same
+commit cannot silently pick up a changed base tag. When updating a base, resolve its index with
+`docker buildx imagetools inspect <image>:<tag>` and retain both linux/amd64 and linux/arm64 support.
+
 All Dockerfiles take the repository root as context. The egress proxy is a static Go binary (`packages/egress-proxy`, Go pinned in its `go.mod`) on distroless. App builds use the frozen pnpm lockfile and deploy workspace
 dependencies, including the vendored adapter/SDK and session-core SQL migrations. The driver includes CLI tools,
 suite scripts, Node clients and the sandbox-env Phase 1 test bundle. Containers run as uid/gid 1000; charts

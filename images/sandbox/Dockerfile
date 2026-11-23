@@ -27,7 +27,7 @@ ADD --checksum=sha256:d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07da
 ADD --checksum=sha256:df31cb61680ef728f82c770e5280dd565617bee6b039d37e85c677288be4bbb0 https://get.helm.sh/helm-v4.3.2-linux-arm64.tar.gz /helm-arm64.tar.gz
 
 # sandboxd executes tools in its own rootfs, so pi-env and the coding tools belong here.
-FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
+FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11@sha256:c4719d5dd70a29b6c0ce9f90a2bf56c52938b0467684510b0fd78e4a3a775fe9
 ARG TARGETARCH
 USER root
 # Commands run as uid 1000, user `pi` (added below): tools that look the user up (Node `os.userInfo()`, Python `pwd`,

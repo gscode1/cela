@@ -42,6 +42,21 @@ const run = (args: string[], repo = "") =>
 const log = () => readFileSync(join(dir, "log"), "utf8");
 
 describe("image delivery replaces mutable code uploads", () => {
+  it.each([
+    [
+      "egress-proxy",
+      /FROM --platform=\$BUILDPLATFORM golang:1\.27\.3@sha256:[a-f0-9]{64} AS build/,
+    ],
+    ["egress-proxy", /FROM gcr\.io\/distroless\/static:nonroot@sha256:[a-f0-9]{64}/],
+    ["sandbox", /FROM registry\.k8s\.io\/agent-sandbox\/sandboxd:v1\.0\.11@sha256:[a-f0-9]{64}/],
+    [
+      "sandbox-browser",
+      /FROM registry\.k8s\.io\/agent-sandbox\/sandboxd:v1\.0\.11@sha256:[a-f0-9]{64}/,
+    ],
+  ])("pins the %s base image by digest (%s)", (name, reference) => {
+    expect(readFileSync(join(root, `images/${name}/Dockerfile`), "utf8")).toMatch(reference);
+  });
+
   it("builds all images for both architectures without publishing by default", () => {
     const result = run(["all"]);
     expect(result.status, result.stderr).toBe(0);
