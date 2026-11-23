@@ -243,6 +243,8 @@ export function SandboxPicker({
         <p className="text-sm text-muted-foreground" data-testid={`${flavour}-note`}>
           Pair it with the proxied network mode and an egress rule set that allows the sites. Not
           combinable with repositories, credentialed MCP servers or rule sets with a OneCLI route.
+          {flavour === "browser" &&
+            " The one exception is the session mail server, when the deployment sets sessionMail.server."}
         </p>
       )}
       {sizes.length > 1 && (
