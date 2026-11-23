@@ -217,7 +217,9 @@ rules a schema cannot say well, and they also hold under --skip-schema-validatio
 {{/*
 Names the egress proxy resolves and blocks as "the platform" (ADR 0035): the namespace's own Services (ingest, every
 orchestrator shard, the OneCLI API and gateway when in the cluster) and the kubernetes Service. The database host and
-the Kubernetes API's ClusterIP are added by the proxy from its own URI and environment. Comma separated.
+the Kubernetes API's ClusterIP are added by the proxy from its own URI and environment. With database.bundled.release the
+bundled Postgres's headless Service is added too: it resolves to the Pod address, which the proxy's NetworkPolicy opens
+directly (the name is re-resolved every 30 s, so a restarted Pod is followed). Comma separated.
 */}}
 {{- define "cela.egressPlatformHosts" -}}
 {{- $ns := .Release.Namespace -}}
@@ -230,6 +232,10 @@ the Kubernetes API's ClusterIP are added by the proxy from its own URI and envir
 {{- range (list $o.apiUrl $o.gatewayUrl) -}}
 {{- $hosts = append $hosts (first (splitList ":" (urlParse .).host)) -}}
 {{- end -}}
+{{- end -}}
+{{- with .Values.database.bundled.release -}}
+{{- $pg := ternary . (printf "%s-pi-postgres" .) (contains "pi-postgres" .) | trunc 52 | trimSuffix "-" -}}
+{{- $hosts = append $hosts (printf "%s-headless.%s.svc" $pg $ns) -}}
 {{- end -}}
 {{- concat $hosts .Values.egressProxy.platform.hosts | uniq | join "," -}}
 {{- end -}}

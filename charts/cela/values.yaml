@@ -51,6 +51,11 @@ database:
       podSelector: {}
       cidrs: []
       port: 5432
+  # The release name of the bundled charts/pi-postgres, when that is the database ("" for any other Postgres). The egress
+  # proxy then also blocks its headless Service (the Pod's own address, which a NetworkPolicy opens directly), not only
+  # the ClusterIP that the database host of its URI resolves to. hack/kind-up.sh sets it.
+  bundled:
+    release: ""
   # TLS towards the database, for both pools (orchestrator and ingest). The orchestrator and ingest verify the server;
   # there is no mode that encrypts without verifying.
   #   disable      no TLS (a plain install; the URI's own sslmode, if any, still applies)
@@ -360,10 +365,14 @@ egressProxy:
     pollInterval: 5s # a read without a notification; a rule change usually arrives at once (LISTEN)
     # After this long without a successful read the proxy denies every connection (it never allows on old rules).
     staleAfter: 2m
-  # What no rule can open, on top of the built-in loopback, link-local, multicast and reserved ranges: the namespace's
-  # own Services (ingest, each orchestrator shard, the OneCLI API and gateway), the kubernetes Service and the database
-  # host of the proxy's URI. The proxy resolves those names itself every 30 s. Add what DNS cannot say: the namespace's
-  # pod range, an external database, anything else that must stay out of reach even from a wide private rule.
+  # What the proxy refuses whatever the rules say, on top of the built-in loopback, link-local, multicast and reserved
+  # ranges: the addresses of the namespace's own Services (ingest, each orchestrator shard, the OneCLI API and gateway),
+  # the kubernetes Service, the database host of the proxy's URI and, with database.bundled.release, the bundled
+  # Postgres's headless Service. The proxy resolves those names itself every 30 s. These are Service addresses, mostly
+  # ClusterIPs: the proxy's NetworkPolicies open the Postgres and OneCLI gateway Pods directly, so a rule that approves
+  # the pod network (a cidr or an address range) reaches them unless the pod range is listed in `cidrs` below (ADR 0035).
+  # That is the operator's to close: list the namespace's pod range, an external database, anything else that must stay
+  # out of reach even from a wide private rule.
   # networkPolicy.kubeApiCidrs and database.external.egress.cidrs are added automatically.
   platform:
     hosts: []

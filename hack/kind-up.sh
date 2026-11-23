@@ -415,6 +415,7 @@ if [[ $egress_proxy -eq 1 ]]; then
   EGRESS_DATABASE_URL="postgres://pi_egress:$egress_password@pi-postgres.$namespace.svc:5432/pi"
   export EGRESS_DATABASE_URL
   unset egress_password
+  extra_args+=(--set database.bundled.release=pi-postgres)
   extra_args+=(--set 'egressProxy.clients[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=pi-egress-test')
   [[ $onecli -eq 0 ]] || extra_args+=(--set onecli.hostRules.reconcile=true)
 fi
