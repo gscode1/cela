@@ -11,6 +11,41 @@ import (
 	"time"
 )
 
+func TestProxyRoutesIgnoreAmbientHTTPSProxy(t *testing.T) {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy"} {
+		t.Run(key, func(t *testing.T) {
+			ambient := newFakeUpstream(t, "")
+			t.Setenv(key, "http://"+ambient.ln.Addr().String())
+			direct := newRulesEnv(t, rulesEnvOpts{
+				snap: baseSnapshot(allowRule("1", "all", "ok.example.com")),
+				dns:  map[string][]string{"ok.example.com": {"93.184.216.34"}},
+			})
+			c, br, status, _ := connect(t, direct.proxyAddr, "ok.example.com:443", "")
+			if status != http.StatusOK {
+				t.Fatalf("direct status %d, want 200", status)
+			}
+			if got := get(t, c, br, "/"); got != http.StatusOK {
+				t.Fatalf("direct origin status %d, want 200", got)
+			}
+			if d := direct.dialed(); len(d) != 1 || d[0] != "93.184.216.34:443" {
+				t.Fatalf("direct dialled %v, want the checked destination", d)
+			}
+
+			onecli := newEnv(t, envOpts{})
+			c, br, status, _ = connect(t, onecli.proxyAddr, "git.example:443", basic(tokA))
+			if status != http.StatusOK || get(t, c, br, "/") != http.StatusOK {
+				t.Fatalf("onecli tunnel failed, CONNECT status %d", status)
+			}
+			if auth, conns := onecli.up.seen(); conns != 1 || auth["git.example:443"] != basic(ocA) {
+				t.Fatal("onecli route did not use the configured upstream and session token")
+			}
+			if _, conns := ambient.seen(); conns != 0 {
+				t.Fatalf("ambient proxy received %d connections", conns)
+			}
+		})
+	}
+}
+
 func TestConcurrentSessionsNeverSwapUpstreamTokens(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, envOpts{})
