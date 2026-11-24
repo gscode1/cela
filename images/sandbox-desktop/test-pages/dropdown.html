@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dropdown</title>
+<style>
+  body { font: 16px sans-serif; }
+  nav ul { display: flex; gap: 16px; list-style: none; padding: 0; }
+  .srt { display: inline-block; border: 1px solid #888; padding: 4px 10px; width: 180px; cursor: pointer; }
+  .lst { display: none; border: 1px solid #888; width: 200px; }
+  .lst div { padding: 4px 10px; cursor: pointer; }
+  .ctl { border: 1px solid #888; width: 220px; height: 26px; }
+  .ctl input { border: 0; width: 200px; outline: none; }
+</style>
+<body>
+<header>
+  <nav><ul role="menu" aria-label="Categories">
+    <li role="menuitem">Laptops</li><li role="menuitem">Phones</li><li role="menuitem">Price: lowest first deals</li>
+  </ul></nav>
+  <span>Category</span> <div class="srt gx7q2" role="combobox" tabindex="0" aria-expanded="false" id="cat"><span>All</span></div>
+</header>
+<main>
+<h1>Monitors</h1>
+<div style="margin:12px 0"><span>Sort by</span> <div class="srt gx7q2" role="combobox" tabindex="0" aria-expanded="false" id="sort"><span id="sort-v">Most relevant</span></div>
+<div class="lst" id="sort-list"><div data-v="price_asc">Price: lowest first</div><div data-v="price_desc">Price: highest first</div><div data-v="new">Newest</div></div></div>
+<!-- a floating label on the box's top border; the list is a listbox of role-less rows -->
+<div style="position:relative;margin:24px 0 12px"><span style="position:absolute;left:12px;top:-9px;background:#fff;font-size:13px">Order</span>
+<div class="srt" role="combobox" tabindex="0" aria-expanded="false" id="ord"><span id="ord-v">Default</span></div>
+<div role="listbox" class="lst" id="ord-list"><div>Oldest first</div><div>Newest first</div></div></div>
+<div>Subjects</div>
+<div class="ctl"><input class="subjects-auto-complete__input" role="combobox" aria-expanded="false" aria-autocomplete="list" id="subj"></div>
+<div role="listbox" id="subj-list" style="display:none;width:220px;border:1px solid #888"><div role="option">Maths</div><div role="option">Physics</div></div>
+</main>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const sort = document.getElementById("sort");
+  const list = document.getElementById("sort-list");
+  const show = (on) => {
+    list.style.display = on ? "block" : "none";
+    sort.setAttribute("aria-expanded", String(on));
+  };
+  sort.onclick = () => show(list.style.display === "none" || list.style.display === "");
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && list.style.display === "block") {
+      show(false);
+      add("sort list closed");
+    }
+  });
+  for (const d of list.children)
+    d.onclick = () => {
+      document.getElementById("sort-v").textContent = d.textContent;
+      show(false);
+      history.replaceState(null, "", `?sort=${d.dataset.v}`);
+      add(`sort: ${d.dataset.v}`);
+    };
+  const ord = document.getElementById("ord");
+  const ordList = document.getElementById("ord-list");
+  ord.onclick = () => {
+    const on = ordList.style.display !== "block";
+    ordList.style.display = on ? "block" : "none";
+    ord.setAttribute("aria-expanded", String(on));
+  };
+  for (const d of ordList.children)
+    d.onclick = () => {
+      document.getElementById("ord-v").textContent = d.textContent;
+      ordList.style.display = "none";
+      ord.setAttribute("aria-expanded", "false");
+      add(`order: ${d.textContent}`);
+    };
+  const subj = document.getElementById("subj");
+  subj.onfocus = () => (document.getElementById("subj-list").style.display = "block");
+</script>

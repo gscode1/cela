@@ -521,7 +521,85 @@ case_infobar() {
   check "no command-line flag infobar" "$(grep -qi 'unsupported command-line flag' <<<"$tree"; [[ $? == 1 ]]; echo $?)"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices shot custom state names form stale slider upload drag)
+# A control's own decoration (a sibling's or a label's ::before over the input) takes its click; a dialog in front does not.
+case_decor() {
+  open custom
+  web click 'DisplayPort'
+  check "a sibling's ::before over the input is the control's own" "$(ok 'checkbox "DisplayPort": checked false -> true')"
+  has_text 'checked: dp true'
+  check "the page saw it" $?
+  web click 'USB-C'
+  check "a for= label's ::before over the input is the control's own" "$(ok 'checked false -> true')"
+  has_text 'checked: usbc true'
+  check "the page saw the label's click" $?
+  web click '^Open notice$'
+  web click 'DisplayPort'
+  check "a click under a modal is still refused" "$(ok 'covers' 1)"
+  check "the refusal names the dialog" "$(ok 'the dialog "Notice" is in front' 1)"
+  check "and says to run the rest of the chain again" "$(ok 'run the rest of the chain again' 1)"
+  has_text 'checked: dp false'
+  check "the covered checkbox was not touched" "$([[ $? != 0 ]]; echo $?)"
+  web click '^Close notice$'
+  check "the dialog's button closes it" "$(ok 'closed dialog "Notice"')"
+}
+
+# An unnamed combobox is named by the text beside it; select takes only its own options, never a menu elsewhere.
+case_dropdown() {
+  open dropdown
+  web snap 'combobox'
+  check "an unnamed combobox shows the label beside it" "$(ok 'combobox "" label "Category"')"
+  check "a label above a field names it" "$(ok 'combobox "".*Subjects')"
+  check "class words are a last resort" "$(no 'gx7q2|subjects-auto-complete')"
+  web select 'Sort by' 'lowest'
+  check "select scopes to the options that appeared (no roles), not the menu" "$(ok 'clicked option "Price: lowest first"')"
+  has_text 'sort: price_asc'
+  check "the page saw the pick" $?
+  web select 'Sort by' 'No such order'
+  check "an option that is not there is refused" "$(ok 'no option matches' 2)"
+  check "and lists only this dropdown's options" "$(grep -q 'Newest' "$OUT" && ! grep -q 'Laptops' "$OUT"; echo $?)"
+  has_text 'sort list closed'
+  check "the popup was closed with Escape" $?
+  web select 'Order' 'newest'
+  check "a floating label names a combobox, and a role-less list in a listbox is its options" "$(ok 'clicked option "Newest first"')"
+  has_text 'order: Newest first'
+  check "the page saw that pick" $?
+  web click 'Subjects'
+  check "a click that opens options lists them with refs" "$(ok '^  \[e[0-9]+\] option "Maths"')"
+  web shot 'Sort by' --pad 20
+  check "shot aims at any visible text" "$(ok 'shot of .*Sort by')"
+}
+
+# What acting on a form says: nothing happened (twice: stop), a date-like field's Enter, two matching fields, a form without
+# a button, clearing a field, and an address that changes only its query.
+case_acting() {
+  open acting
+  web click '^Continue$'
+  check "a dead button says nothing happened" "$(ok 'nothing happened \(no text, state, dialog or address change\)')"
+  check "not that the result may come later" "$(no 'result may come later')"
+  check "it lists the required empty field" "$(ok 'required and empty: .*Email')"
+  check "and how to look at it" "$(ok 'desktop-web shot e[0-9]+')"
+  web click '^Continue$'
+  check "the same no-op twice says to stop" "$(ok 'this control does nothing here; stop clicking it')"
+  web type 'Date of birth' '03/15/2027' --enter
+  check "type --enter sets a date-like field" "$(ok 'value now: "03/15/2027"')"
+  check "and counts its own value change" "$(no 'nothing happened|result may come later')"
+  web type 'Search' 'London'
+  check "of two matching fields the one outside the header is typed into" "$(ok 'used the one outside the page.s header and navigation')"
+  has_text 'filter: London'
+  check "the page saw it" $?
+  web type 'Note' ''
+  check 'type "" clears a field' "$(ok 'value now: ""')"
+  web type 'From' 'Lisbon'
+  check "a form without a button says to use --enter" "$(ok 'no submit button in its form: use --enter')"
+  web type 'To' 'Porto' --enter
+  check "a query change that keeps the page prints what changed" "$(ok '^route: Lisbon -> Porto$')"
+  check "not an outline" "$(no 'outline')"
+  web click '^Sort by price$'
+  check "a link that changes the query prints the diff" "$(ok '^sorted by price$')"
+  check "not an outline either" "$(no 'outline')"
+}
+
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices shot custom state names form stale slider upload drag decor dropdown acting)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
