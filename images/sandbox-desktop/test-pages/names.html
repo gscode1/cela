@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>names</title>
+<style>
+  body { font: 16px sans-serif; }
+  .tool { width: 34px; height: 30px; margin: 2px; }
+  .field { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+  .field .lbl { width: 80px; }
+  .ctl { position: relative; border: 1px solid #888; width: 200px; height: 28px; }
+  .ctl .ph { position: absolute; left: 6px; top: 4px; color: #888; }
+  .ctl input { position: absolute; left: 4px; top: 4px; border: 0; width: 180px; background: transparent; outline: none; }
+</style>
+<body>
+<h1>Unnamed controls</h1>
+<div id="modes">
+  <button id="by-car" class="tool mode-car"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'/%3E" width="16" height="16"></button>
+  <button id="by-bike" class="tool"><span class="icon icon-bike" style="display:inline-block;width:16px;height:16px;background:#333"></span></button>
+  <button id="by-foot" class="tool"><img src="walk-icon.png" width="16" height="16" style="background:#333"></button>
+</div>
+<p><label for="dest">Enter destination</label> <input id="dest" placeholder="Where are you going?" style="width:220px"></p>
+<div class="field"><div class="lbl">Subjects</div><div class="ctl"><div class="ph">Pick subjects</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="subjects"></div></div>
+<div class="field"><div class="lbl">State</div><div class="ctl"><div class="ph">Select state</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="state"></div></div>
+<div class="field"><div class="lbl">City</div><div class="ctl"><div class="ph">Select city</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="city"></div></div>
+<p><button id="next" disabled>Next step</button></p>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  const log = document.getElementById("log");
+  for (const id of ["subjects", "state", "city"]) document.getElementById(id).addEventListener("focus", () => (log.textContent += `${log.textContent ? "\n" : ""}focused: ${id}`));
+  document.getElementById("dest").addEventListener("input", (e) => (document.getElementById("next").disabled = !e.target.value));
+</script>

@@ -167,7 +167,9 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 // Accessibility tree -> the elements an agent acts on, plus named headings, each with a ref (e + backend DOM node id,
 // which stays valid until the element leaves the page; "@TAG" after it names an out-of-process iframe). Headings that repeat a link's name (product cards) are dropped.
 // Named pictures are listed too (hover and shot aim at them, a ref can click one), unless a link or button holds them or
-// they repeat a link's name: then the link is the target already.
+// they repeat a link's name: then the link is the target already. Controls without a name are kept here (annotate and
+// nameUnnamed give them words from their markup or row, or drop them); disabled ones are kept and marked, so a person sees
+// the button that is not ready yet, and a click refuses it.
 function axEntries(nodes, { extraRoles } = {}) {
   const live = nodes.filter((n) => !n.ignored);
   const linkNames = new Set(live.filter((n) => value(n.role) === "link").map((n) => squash(value(n.name))));
@@ -182,14 +184,14 @@ function axEntries(nodes, { extraRoles } = {}) {
     const role = value(n.role);
     const name = squash(value(n.name));
     const props = Object.fromEntries((n.properties ?? []).map((p) => [p.name, value(p.value)]));
-    if (props.disabled === true) continue;
     if (role === "heading") {
       if (!name || linkNames.has(name)) continue;
     } else if (IMAGES.has(role)) {
       if (!name || linkNames.has(name) || inControl(n)) continue;
     } else if (extraRoles?.has(role)) {
       if (!name) continue;
-    } else if (!CLICKABLE.has(role) || (!name && !FIELDS.has(role) && role !== "checkbox")) continue;
+    } else if (!CLICKABLE.has(role)) continue;
+    const description = squash(value(n.description));
     out.push({
       ref: `e${n.backendDOMNodeId}${n.frameTag ? `@${n.frameTag}` : ""}`,
       frameTag: n.frameTag,
@@ -201,20 +203,162 @@ function axEntries(nodes, { extraRoles } = {}) {
       checked: props.checked,
       expanded: props.expanded,
       focused: props.focused === true,
+      disabled: props.disabled === true || undefined,
+      required: props.required === true || undefined,
+      // aria-invalid="false" comes as the token "false"; any other token (true, grammar, spelling) is a complaint
+      invalid: props.invalid !== undefined && props.invalid !== false && props.invalid !== "false" ? true : undefined,
+      readonly: props.readonly === true || undefined,
+      description: description && description !== name ? description : undefined,
       url: typeof props.url === "string" ? props.url : undefined,
     });
   }
   return out;
 }
 
+const LETTER = /\p{L}/u;
+const TOGGLES = new Set(["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"]);
+
+// Facts about elements of one layout snapshot by backend node id: where a node is, its attributes, its <label>, and the
+// words of its markup.
+function snapIndex(snap) {
+  const at = new Map();
+  for (const doc of snap.documents ?? []) doc.nodes.backendNodeId?.forEach((id, i) => at.set(id, { doc, i }));
+  // Elements with a layout box: one inside a display:none part (a template) has none, and is in no hidden set either.
+  const boxed = new Set();
+  for (const doc of snap.documents ?? []) for (const i of doc.layout?.nodeIndex ?? []) boxed.add(doc.nodes.backendNodeId[i]);
+  const shown = (id, hidden) => boxed.has(id) && !hidden.has(id);
+  const str = (i) => (i >= 0 ? snap.strings[i] : "");
+  const tag = (doc, i) => str(doc.nodes.nodeName[i]).toUpperCase();
+  const labelsFor = new Map();
+  // The visible <label> of a form control: an ancestor label, else a label whose `for` names the control's id (pages repeat ids
+  // in templates, so the first one a person can see).
+  const labelOf = ({ doc, i }, hidden) => {
+    for (let p = doc.nodes.parentIndex[i]; p >= 0; p = doc.nodes.parentIndex[p])
+      if (tag(doc, p) === "LABEL" && shown(doc.nodes.backendNodeId[p], hidden)) return doc.nodes.backendNodeId[p];
+    const id = nodeAttrs(snap, doc, i).id;
+    if (!id) return undefined;
+    if (!labelsFor.has(doc)) {
+      const m = new Map();
+      doc.nodes.nodeName.forEach((_, k) => {
+        if (doc.nodes.nodeType[k] !== 1 || tag(doc, k) !== "LABEL") return;
+        const f = nodeAttrs(snap, doc, k).for;
+        if (f) m.set(f, [...(m.get(f) ?? []), doc.nodes.backendNodeId[k]]);
+      });
+      labelsFor.set(doc, m);
+    }
+    return (labelsFor.get(doc).get(id) ?? []).find((b) => shown(b, hidden));
+  };
+  // The element's own markup words and those of its first descendant that has any (an icon inside a button), a title first.
+  const tokens = ({ doc, i }) => {
+    const out = markTokens(snap, doc, i);
+    const pi = doc.nodes.parentIndex;
+    for (let k = i + 1; k < pi.length && k <= i + 30; k++) {
+      let p = pi[k];
+      while (p > i) p = pi[p];
+      if (p !== i) break;
+      if (doc.nodes.nodeType[k] !== 1) continue;
+      const t = markTokens(snap, doc, k);
+      if (t.length > 0) {
+        for (const w of t) if (!out.includes(w)) out.push(w);
+        break;
+      }
+    }
+    return [...out.filter((w) => w.startsWith("title:")), ...out.filter((w) => !w.startsWith("title:"))].slice(0, 4);
+  };
+  return { find: (id) => at.get(id), attrs: ({ doc, i }) => nodeAttrs(snap, doc, i), labelOf, tokens };
+}
+
+// Entries of one part (its layout snapshot and the backend ids hidden in it) as a person meets them. A hidden element is left
+// out, except a checkbox, radio or switch whose own <label> a person can see: custom controls keep the real input at opacity 0
+// or 1 px and draw the box in the label, so that one is kept and clicked through its label (`via`); a hidden input without a
+// visible label (a honeypot) stays out. A field gets its placeholder, and a control without a name in letters (an icon
+// button, an icon font glyph) gets the words of its markup (`mark`).
+function annotate(entries, snap, hidden) {
+  const ix = snapIndex(snap);
+  const out = [];
+  for (let e of entries) {
+    const at = ix.find(e.backendNodeId);
+    if (hidden.has(e.backendNodeId)) {
+      if (!TOGGLES.has(e.role) || !at) continue;
+      const label = ix.labelOf(at, hidden);
+      if (label === undefined) continue;
+      e = { ...e, via: label };
+    }
+    if (at && CLICKABLE.has(e.role)) {
+      const a = ix.attrs(at);
+      const ph = squash(a.placeholder);
+      if (ph && ph !== e.name) e = { ...e, placeholder: clip(ph, 80) };
+      if (a.type === "password") e = { ...e, secret: true };
+      if (!LETTER.test(e.name)) {
+        // a control clicked through its label is drawn by it: the label's words (its title) come first
+        const t = e.via !== undefined ? [...ix.tokens(ix.find(e.via)), ...ix.tokens(at)].slice(0, 4) : ix.tokens(at);
+        // the choice an unnamed radio or checkbox stands for (value="car"); "on" is the browser's default, not a choice
+        if (/^(radio|checkbox)$/.test(a.type ?? "") && a.value && a.value !== "on" && a.value.length <= 24) t.unshift(`value=${a.value}`);
+        if (t.length > 0) e = { ...e, mark: clip(t.join(" "), 40) };
+      }
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+// A control without a name in letters and without a placeholder is told apart by the text of its row (`near`, as --near
+// would match it). One that has neither markup words nor row text says nothing a person could use: it is dropped, as before,
+// unless it is a field or a checkbox (those are typed into or ticked by ref).
+function nameUnnamed(nodes, entries) {
+  const unnamed = (e) => CLICKABLE.has(e.role) && !LETTER.test(e.name) && !e.placeholder;
+  const want = new Set(entries.filter(unnamed));
+  if (want.size === 0) return entries;
+  const rows = rowTexts(nodes, entries, { max: 50, only: want });
+  return entries
+    .map((e, i) => (want.has(e) && /[\p{L}\p{N}]/u.test(rows[i] ?? "") ? { ...e, near: rows[i] } : e))
+    .filter((e) => !unnamed(e) || e.name || e.mark || e.near || FIELDS.has(e.role) || e.role === "checkbox");
+}
+
+// What a name regex is tested against: the name and placeholder, and for a control without a name its markup words and row.
+const matchTexts = (e) => [e.name, e.placeholder, e.mark, e.near].filter(Boolean);
+
 function entryLine(e, { nameMax = 120 } = {}) {
-  let line = `[${e.ref}] ${e.role} "${clip(e.name, nameMax)}"`;
+  let line = `[${e.ref}] ${e.role}${e.name || !e.mark ? ` "${clip(e.name, nameMax)}"` : ""}`;
+  if (e.mark) line += ` ‹${e.mark}›`;
+  if (e.placeholder) line += ` placeholder="${clip(e.placeholder, 60)}"`;
+  if (e.near) line += ` near "${e.near}"`;
   if (e.value) line += ` value="${clip(e.value, 60)}"`;
   if (e.checked !== undefined) line += ` checked=${e.checked}`;
   if (e.expanded !== undefined) line += ` expanded=${e.expanded}`;
   if (e.focused) line += " focused";
+  if (e.required) line += " required";
+  if (e.invalid) line += " invalid";
+  if (e.readonly) line += " readonly";
+  if (e.disabled) line += " disabled";
+  if (e.description && e.description !== e.placeholder) line += ` desc="${clip(e.description, 80)}"`;
   if (e.options) line += ` options: ${optionsText(e.options)}`;
   return line;
+}
+
+// An element in a short line: its name, or the words of its markup when it has none.
+const shortName = (e, n = 60) => (e.name || !e.mark ? `"${clip(e.name, n)}"` : `‹${e.mark}›`);
+
+// How an element's state differs between two reads: `checked false -> true`, `value "a" -> "b"`.
+const STATE = ["checked", "expanded", "value", "name"];
+function stateDiff(a, b) {
+  if (!a || !b) return [];
+  // checked and expanded are tokens (true, false, mixed); value and name are text
+  const show = (k, v) => (k === "value" || k === "name" ? JSON.stringify(clip(String(v ?? ""), 40)) : String(v ?? "none"));
+  return STATE.filter((k) => String(a[k] ?? "") !== String(b[k] ?? "")).map((k) => `${k} ${show(k, a[k])} -> ${show(k, b[k])}`);
+}
+
+// Controls on both reads whose state changed (another radio of the group, a panel's toggle), skipping `skip` (the one acted
+// on, reported on its own): `[e5] checkbox "Name": checked false -> true`.
+function controlDiffs(before, after, { skip } = {}) {
+  const was = new Map(before.map((e) => [e.ref, e]));
+  const out = [];
+  for (const e of after) {
+    if (e.ref === skip || e.role === "heading" || IMAGES.has(e.role)) continue;
+    const d = stateDiff(was.get(e.ref), e);
+    if (d.length > 0) out.push(`[${e.ref}] ${e.role} ${shortName(was.get(e.ref))}: ${d.join(", ")}`);
+  }
+  return out;
 }
 
 // A select's options on one line: "A | B | C (disabled)", cut to a few and said so. Truncated by
@@ -234,7 +378,7 @@ function optionsText(options, { maxItems = 12, maxChars = 220 } = {}) {
 
 // The text of the row each candidate sits in: its highest ancestor that holds no other candidate (a product card, a table
 // row, a flight). Used to tell same-named links apart (--near) and to show them.
-function rowTexts(nodes, candidates, { max = 200 } = {}) {
+function rowTexts(nodes, candidates, { max = 200, only } = {}) {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]));
   const chain = (id) => {
     const out = [];
@@ -264,6 +408,7 @@ function rowTexts(nodes, candidates, { max = 200 } = {}) {
     return clip(parts.join(" "), max);
   };
   return candidates.map((c, i) => {
+    if (only && !only.has(c)) return "";
     let row = c.nodeId;
     for (const a of chains[i]) {
       if ((count.get(a) ?? 0) > 1) break;
@@ -278,9 +423,10 @@ function rowTexts(nodes, candidates, { max = 200 } = {}) {
 // An element named exactly like the pattern wins ("Accept" over "Do not accept"); a button whose name contains a matching
 // link's name loses to that link; --role narrows to one role.
 function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } = {}) {
-  let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && re.test(e.name) && (!role || e.role === role));
+  let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && matchTexts(e).some((t) => re.test(t)) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
-  const exact = matches.filter((e) => new RegExp(`^(?:${re.source})$`, re.flags).test(e.name));
+  const whole = new RegExp(`^(?:${re.source})$`, re.flags);
+  const exact = matches.filter((e) => whole.test(e.name) || (e.placeholder !== undefined && whole.test(e.placeholder)));
   if (exact.length > 0) matches = exact;
   else if (!role) {
     // A button whose name repeats a matching link's ("Add <product> to cart" next to the "<product>" link) is the
@@ -404,7 +550,7 @@ function busy(nodes) {
 // touch. Text a person cannot see is left out: no box or a box under 2 px², entirely left of or above the page, visibility
 // hidden, under an ancestor with opacity 0, or cut away by an ancestor's overflow hidden/clip or its own clip rect
 // (screen-reader-only text, honeypot links, prompt injection).
-const STYLES = ["display", "visibility", "opacity", "position", "overflow-x", "overflow-y", "clip"];
+const STYLES = ["display", "visibility", "opacity", "position", "overflow-x", "overflow-y", "clip", "cursor"];
 const BLOCK = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root|inline-block|inline-flex|inline-grid)$/;
 const VOID = new Set(["BR", "IMG", "INPUT", "SELECT", "TEXTAREA", "HR", "SVG", "VIDEO", "CANVAS", "IFRAME", "OBJECT", "EMBED"]);
 
@@ -493,8 +639,9 @@ function markTokens(snap, doc, i) {
     out.push(`${k.slice(5)}=${v}`);
     data++;
   }
-  const src = (a.src ?? "").split(/[?#]/)[0]?.split("/").pop();
-  if (src && !src.startsWith("data:")) out.push(`src:${clip(src, 24)}`);
+  // an inline data: image has no file name (its payload would read as one)
+  const src = /^data:/i.test(a.src ?? "") ? undefined : (a.src ?? "").split(/[?#]/)[0]?.split("/").pop();
+  if (src) out.push(`src:${clip(src, 24)}`);
   return out;
 }
 
@@ -502,6 +649,12 @@ function markTokens(snap, doc, i) {
 // name of its own (an icon, a rating drawn from a class, an image without alt) is written into the line where it sits as
 // `‹class words title data src›`, taken from its markup: meaning that is only a picture, as a last resort before a screenshot.
 function snapshotLines(snap, { marks = false } = {}) {
+  return snapshotGroups(snap, { marks }).map((g) => g.text);
+}
+
+// The lines of snapshotLines with where they come from: { text, doc, v (docView), block (node index), texts (text node
+// indexes) }.
+function snapshotGroups(snap, { marks = false } = {}) {
   const lines = [];
   let marked = 0;
   for (const doc of snap.documents ?? []) {
@@ -524,7 +677,7 @@ function snapshotLines(snap, { marks = false } = {}) {
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [] });
       return groups.get(g);
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
@@ -579,13 +732,54 @@ function snapshotLines(snap, { marks = false } = {}) {
       g.text += raw;
       g.box = b;
       g.brk = false;
+      g.texts.push(i);
     }
     for (const g of groups.values()) {
       const t = squash(g.text);
-      if (t) lines.push(t);
+      if (t) lines.push({ text: t, doc, v, block: g.block, texts: g.texts });
     }
   }
   return lines;
+}
+
+// Visible lines a click can act on although no element is named so (role-less options, filter rows, custom list items): text
+// whose own element shows a pointer cursor (inherited from the clickable element around it), or that sits, within its line's
+// block, in an element the snapshot marks clickable (it has a click listener). Each is { backendNodeId, name } of the text's
+// own element, the box a click aims at. `skip` holds backend ids already listed: text inside one (a link's own text) is that
+// element, and text whose element holds one (a label around its field) belongs to it; neither is another target.
+function textTargets(snap, re, { skip = new Set() } = {}) {
+  const out = [];
+  const perDoc = new Map();
+  for (const g of snapshotGroups(snap)) {
+    if (!re.test(g.text)) continue;
+    const { doc, v } = g;
+    if (!perDoc.has(doc)) {
+      const holds = new Set();
+      doc.nodes.backendNodeId.forEach((id, i) => {
+        if (skip.has(id)) for (let a = i; a >= 0 && !holds.has(a); a = v.parent[a]) holds.add(a);
+      });
+      perDoc.set(doc, { clickable: new Set(doc.nodes.isClickable?.index ?? []), holds });
+    }
+    const { clickable, holds } = perDoc.get(doc);
+    let hit;
+    for (const t of g.texts) {
+      const p = v.parent[t];
+      let ok = v.style(p)?.[7] === "pointer";
+      for (let a = p; !ok && a >= 0; a = v.parent[a]) {
+        if (clickable.has(a)) ok = true;
+        if (a === g.block) break;
+      }
+      if (ok) {
+        hit = p;
+        break;
+      }
+    }
+    if (hit === undefined || holds.has(hit)) continue;
+    let listed = false;
+    for (let a = hit; a >= 0 && !listed; a = v.parent[a]) listed = skip.has(doc.nodes.backendNodeId[a]);
+    if (!listed) out.push({ backendNodeId: doc.nodes.backendNodeId[hit], name: clip(g.text, 120) });
+  }
+  return out;
 }
 
 // Two consecutive text boxes of one block read as separate words: on different lines, or a visible gap between them.
@@ -686,6 +880,43 @@ function dialogLines(ds) {
   return out;
 }
 
+// Dialogs of `before` that `after` no longer has, as `dialog "Name"`: a consent banner that a click closed.
+function closedDialogs(before, after) {
+  const key = (d) => `${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""}`;
+  const left = after.map(key);
+  const out = [];
+  for (const d of before) {
+    const i = left.indexOf(key(d));
+    if (i >= 0) left.splice(i, 1);
+    else out.push(key(d));
+  }
+  return out;
+}
+
+// Text of alert and status regions (form errors, "3 results", "saved"), which an action's answer names as such.
+function liveTexts(nodes) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const out = [];
+  for (const n of nodes) {
+    const role = value(n.role);
+    if (n.ignored || (role !== "alert" && role !== "status")) continue;
+    let text = squash(value(n.name));
+    if (!text) {
+      const parts = [];
+      const walk = (id) => {
+        const m = byId.get(id);
+        if (!m || parts.length > 40) return;
+        if (!m.ignored && /^(StaticText|staticText)$/.test(value(m.role) ?? "")) parts.push(squash(value(m.name)));
+        for (const c of m.childIds ?? []) walk(c);
+      };
+      for (const c of n.childIds ?? []) walk(c);
+      text = squash(parts.join(" "));
+    }
+    if (text) out.push(`${role} "${clip(text, 150)}"`);
+  }
+  return out;
+}
+
 // The page's headings with the text line each starts at, an outline to aim a regex at.
 function outline(nodes, lines, { max = 20 } = {}) {
   const out = [];
@@ -748,6 +979,8 @@ function subtreeIds(node, out = new Set()) {
   out.add(node.backendNodeId);
   for (const c of node.children ?? []) subtreeIds(c, out);
   for (const c of node.shadowRoots ?? []) subtreeIds(c, out);
+  // ::before and ::after boxes are the element's own (a label's drawn check mark), and hit testing can return them
+  for (const c of node.pseudoElements ?? []) subtreeIds(c, out);
   if (node.contentDocument) subtreeIds(node.contentDocument, out);
   return out;
 }
@@ -755,6 +988,15 @@ function subtreeIds(node, out = new Set()) {
 module.exports = {
   ALLOWED,
   STYLES,
+  annotate,
+  closedDialogs,
+  controlDiffs,
+  liveTexts,
+  matchTexts,
+  nameUnnamed,
+  shortName,
+  stateDiff,
+  textTargets,
   dialogLines,
   dialogs,
   hiddenElements,

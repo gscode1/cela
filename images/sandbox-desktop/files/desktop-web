@@ -7,10 +7,13 @@
 //   desktop-web open <url> ["regex"]          type the URL, wait, print url, title, open dialogs, matching lines or an outline
 //   desktop-web text ["regex"]                the page's text lines matching the regex (full text saved to a file)
 //   desktop-web text --lines 120-170          a range of lines of the page (or of --from FILE)
-//   desktop-web snap ["regex"]                open dialogs, then clickable elements and headings with refs: [e123] link "Name"
-//   desktop-web click <ref|"regex">           click it with the mouse and print what changed; --near "row text", --nth N,
-//                                             --role R, --show "regex"
-//   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value; --enter, --append
+//   desktop-web snap ["regex"]                open dialogs, then clickable elements and headings with refs: [e123] link "Name";
+//                                             with a regex also text that takes clicks: [e124] clickable "4K"
+//   desktop-web click <ref|"regex">           click it with the mouse and print its new state and what changed; --near "row
+//                                             text", --nth N, --role R, --show "regex". No element by that name: a line of
+//                                             clickable text. Exit 1 when refused (disabled, covered), 2 when ambiguous.
+//   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value and what appeared; --enter,
+//                                             --append. Exit 1 when the field kept its value (read-only)
 //   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes;
 //                                             --text "answer" types text first (a prompt dialog), --show "regex"
 //   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page) and print what it holds
@@ -368,14 +371,17 @@ const pageFile = (o) => o.out ?? path.join(lib.sessionDir(), "web-page.txt");
 // Roles a hover or a screenshot can aim at besides what a click can: pictures and groups of things, found by their name.
 const SHOWABLE = new Set(["image", "img", "figure", "article", "group", "listitem", "row", "cell", "region", "list"]);
 
-// The page's elements to act on. `options` adds a native select's options (read from the layout snapshot, where a closed
-// select's options are nodes all the same) to its entry as `options` and `select`; `showable` also lists named pictures
-// and groups, for hover and shot.
+// The page's elements to act on, with the page's text lines from the same read. `options` adds a native select's options
+// (read from the layout snapshot, where a closed select's options are nodes all the same) to its entry as `options` and
+// `select`; `showable` also lists named pictures and groups, for hover and shot. Hidden elements are left out (but a hidden
+// checkbox or radio behind a visible label is kept, `via` the label), fields get their placeholder and nameless controls
+// words from their markup or row (cdp.annotate, cdp.nameUnnamed).
 async function axTree(c, { options = false, showable = false } = {}) {
   const read = await readParts(c, { ax: true });
   const nodes = read.flatMap((r) => r.nodes);
-  const hidden = new Map(read.map((r) => [r.part.tag, r.hidden]));
-  const entries = cdp.axEntries(nodes, showable ? { extraRoles: SHOWABLE } : {}).filter((e) => !hidden.get(e.frameTag ?? "")?.has(e.backendNodeId));
+  const all = cdp.axEntries(nodes, showable ? { extraRoles: SHOWABLE } : {});
+  let entries = read.flatMap((r) => cdp.annotate(all.filter((e) => (e.frameTag ?? "") === r.part.tag), r.snap, r.hidden));
+  entries = cdp.nameUnnamed(nodes, entries);
   if (options) {
     const selects = new Map(read.map((r) => [r.part.tag, cdp.selectInfos(r.snap)]));
     for (const e of entries) {
@@ -383,7 +389,24 @@ async function axTree(c, { options = false, showable = false } = {}) {
       if (info) Object.assign(e, { options: info.options, select: info });
     }
   }
-  return { nodes, entries: cdp.mainFirst(nodes, entries) };
+  const lines = read.flatMap((r) => cdp.wrapLines(cdp.snapshotLines(r.snap), WIDTH));
+  return { nodes, entries: cdp.mainFirst(nodes, entries), read, lines };
+}
+
+// Lines of text a click can act on that no element's name matches (cdp.textTargets), as entries of role "clickable". Text
+// inside a listed element, or inside the label a listed checkbox is clicked through, is that element's.
+function textEntries(tree, re) {
+  const out = [];
+  for (const r of tree.read) {
+    const own = tree.entries.filter((e) => (e.frameTag ?? "") === r.part.tag);
+    const skip = new Set([...own.map((e) => e.backendNodeId), ...own.map((e) => e.via).filter((v) => v !== undefined)]);
+    for (const t of cdp.textTargets(r.snap, re, { skip })) {
+      if (r.hidden.has(t.backendNodeId)) continue;
+      const tag = r.part.tag || undefined;
+      out.push({ ref: `e${t.backendNodeId}${tag ? `@${tag}` : ""}`, frameTag: tag, backendNodeId: t.backendNodeId, role: "clickable", name: t.name });
+    }
+  }
+  return out;
 }
 
 // Accessibility nodes of the page and its iframes, for dialogs and outlines.
@@ -391,14 +414,24 @@ async function axNodes(c) {
   return (await Promise.all((await frameParts(c)).map(axOf))).flat();
 }
 
+// Elements whose name, placeholder or row matches when no text line does (a field's label and placeholder are not page text).
+// `tree` reads axTree when called.
+async function namedLike(re, tree) {
+  const t = await tree().catch(() => undefined);
+  const els = (t?.entries ?? []).filter((e) => cdp.matchTexts(e).some((x) => re.test(x))).slice(0, 5);
+  if (els.length === 0) return [];
+  rememberRefs(els, { merge: true });
+  return ["elements that match (no text line does):", ...els.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`)];
+}
+
 // What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings.
-function describe(lines, nodes, pattern, o) {
+async function describe(lines, nodes, pattern, o, tree) {
   const file = lib.savePage(lines, pageFile(o));
   const out = cdp.dialogLines(cdp.dialogs(nodes));
   if (pattern) {
     const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
     out.push(...hits);
-    if (hits.length === 1 && hits[0].startsWith("no match")) out.push("outline:", ...cdp.outline(nodes, lines));
+    if (hits.length === 1 && hits[0].startsWith("no match")) out.push(...(await namedLike(regex(pattern), tree)), "outline:", ...cdp.outline(nodes, lines));
   } else {
     const ol = cdp.outline(nodes, lines);
     out.push(...(ol.length > 0 ? ["outline (line: heading):", ...ol] : lines.slice(0, 15).map((l, i) => `${i + 1}: ${l}`)));
@@ -407,35 +440,68 @@ function describe(lines, nodes, pattern, o) {
   return out;
 }
 
-function rememberRefs(entries) {
-  const refs = Object.fromEntries(entries.map((e) => [e.ref, { role: e.role, name: e.name }]));
+// Refs a listing showed, with the role and name each stood for: a later command checks a ref against them, and finds the
+// element again by them when the page has replaced it. A full snap replaces the list; a partial listing adds to it.
+function rememberRefs(entries, { merge = false } = {}) {
+  let refs = {};
+  if (merge) refs = readRefs();
+  for (const e of entries) refs[e.ref] = { role: e.role, name: e.name };
   fs.mkdirSync(path.dirname(REFS()), { recursive: true });
   fs.writeFileSync(REFS(), JSON.stringify(refs));
 }
+function readRefs() {
+  try {
+    return JSON.parse(fs.readFileSync(REFS(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+const escapeRe = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+const isRef = (spec) => /^e\d+(@\w+)?$/.test(spec);
 
 // Resolves a ref (e123) or a name regex to one element. A ref is checked against what snap listed under it, so a ref left
-// over from another page cannot click a different element. Lists the candidates and exits 2 when a name is ambiguous.
-async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = false, ...read } = {}) {
-  const { nodes, entries } = await axTree(c, read);
-  if (/^e\d+(@\w+)?$/.test(spec)) {
-    const now = entries.find((e) => e.ref === spec);
-    let was;
-    try {
-      was = JSON.parse(fs.readFileSync(REFS(), "utf8"))[spec];
-    } catch {
-      was = undefined;
+// over from another page cannot click a different element; a ref whose element the page replaced (a re-render) is found
+// again by its role and name when exactly one element has them, and `note` says so. A name regex that matches no element
+// falls back, with `text`, to a line of clickable text (textEntries). Lists the candidates and exits 2 when a name is
+// ambiguous. `tree` is a read of axTree to reuse.
+async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = false, text = false, tree, ...read } = {}) {
+  tree ??= await axTree(c, read);
+  const { nodes, entries } = tree;
+  if (isRef(spec)) {
+    const was = readRefs()[spec];
+    let now = entries.find((e) => e.ref === spec);
+    if (!now && was?.role === "clickable") now = textEntries(tree, new RegExp(`^${escapeRe(was.name.replace(/…$/, ""))}`)).find((e) => e.ref === spec);
+    let note;
+    if (!now && was) {
+      const pool = was.role === "clickable" ? textEntries(tree, new RegExp(`^${escapeRe(was.name.replace(/…$/, ""))}`)) : entries;
+      const same = pool.filter((e) => e.role === was.role && e.name === was.name);
+      if (same.length === 1) {
+        now = same[0];
+        note = `${spec} is gone (the page replaced it); using ${now.ref}, the one ${was.role} "${lib.clip(was.name, 60)}" on the page now`;
+        rememberRefs([now], { merge: true });
+      }
     }
     if (!now) fail(`${spec} is not on the page now (it changed or the element is hidden): run desktop-web snap again`);
-    if (was && (was.role !== now.role || was.name !== now.name))
+    if (!note && was && (was.role !== now.role || was.name !== now.name))
       fail(`${spec} is now ${cdp.entryLine(now)}, not the ${was.role} "${lib.clip(was.name, 60)}" snap listed: run desktop-web snap again`);
-    return { entry: now, nodes };
+    return { entry: now, nodes, note };
   }
   const pool = fieldsOnly
     ? entries.filter((e) => ["textbox", "searchbox", "combobox", "spinbutton"].includes(e.role))
     : selectsOnly
       ? entries.filter((e) => e.select || ["combobox", "listbox"].includes(e.role))
       : entries;
-  const r = cdp.chooseTarget(nodes, pool, regex(spec), { near: o.near ? regex(o.near) : undefined, nth: o.nth, role: o.role, showable: read.showable });
+  const re = regex(spec);
+  let r = cdp.chooseTarget(nodes, pool, re, { near: o.near ? regex(o.near) : undefined, nth: o.nth, role: o.role, showable: read.showable });
+  if (r.none && text && !r.near && !o.role) {
+    // No element is named so: a line of text that takes clicks (a role-less option), if exactly one, or the exact one.
+    const hits = textEntries(tree, re);
+    const whole = new RegExp(`^(?:${re.source})$`, re.flags);
+    const exact = hits.filter((e) => whole.test(e.name));
+    const pick = o.nth !== undefined ? hits[o.nth - 1] : hits.length === 1 ? hits[0] : exact.length === 1 ? exact[0] : undefined;
+    if (pick) return { entry: pick, nodes, note: "no element has that name; clicked the text" };
+    if (hits.length > 1) r = { several: hits };
+  }
   if (r.pick) return { entry: r.pick, nodes };
   if (r.none) {
     const d = cdp.dialogLines(cdp.dialogs(nodes));
@@ -448,12 +514,12 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
       ].join("\n"),
     );
   }
-  const rows = cdp.rowTexts(nodes, r.several);
-  rememberRefs(r.several);
+  const rows = cdp.rowTexts(nodes, r.several.map((e) => ({ ...e, nodeId: e.nodeId ?? "" })));
+  rememberRefs(r.several, { merge: true });
   const lines = r.several.slice(0, 15).map((e, i) => {
     // The row text starts with the element's own name more often than not: show only what tells the rows apart.
     const row = rows[i].startsWith(e.name) ? rows[i].slice(e.name.length).trim() : rows[i];
-    return `${cdp.entryLine(e, { nameMax: 70 })}  | ${lib.clip(row, 120)}${e.url ? ` -> ${lib.clip(e.url, 90)}` : ""}`;
+    return `${cdp.entryLine(e, { nameMax: 70 })}${row ? `  | ${lib.clip(row, 120)}` : ""}${e.url ? ` -> ${lib.clip(e.url, 90)}` : ""}`;
   });
   process.stdout.write(
     `${r.several.length} elements match ${JSON.stringify(spec)}; nothing clicked. Click one by ref (desktop-web click e123), or add --near "text from its row":\n${lines.join("\n")}\n`,
@@ -489,7 +555,8 @@ async function coveredBy(send, backendNodeId, quad, point, nodes) {
 // returns where it is on the screen: { box: {x, y, w, h}, win }. An element of an out-of-process iframe is read through that
 // frame's connection and placed in the page by its iframe element's content box.
 async function placeNode(c, nodes, entry, { cover = true } = {}) {
-  const { backendNodeId } = entry;
+  // A checkbox drawn by its label is clicked on the label, which a person sees and which toggles it.
+  const backendNodeId = entry.via ?? entry.backendNodeId;
   const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
   if (!part) fail("the iframe of that element is gone: run desktop-web snap again");
   try {
@@ -567,27 +634,77 @@ async function hoverNode(c, nodes, entry) {
   return at;
 }
 
-// What an action did: the new page, or the lines and dialogs that appeared, within the budget.
-async function changes(beforeLines, before, after, o) {
+// The state an action is measured against: the page's text lines, its elements and its accessibility nodes (dialogs, alerts).
+const stateOf = (tree) => ({ lines: tree.lines, entries: tree.entries, nodes: tree.nodes });
+const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemcheckbox", "treeitem"]);
+
+// What an action did: the new page, or what changed on this one (dialogs that closed, alerts that appeared, lines that
+// appeared or went, other controls whose state changed), within the budget. `now` is a read after the action (read here when
+// not given); `self` is the element acted on, whose own change the caller reports (`selfChanged`). The "result may come
+// later" hint comes only when nothing changed at all, or the page shows it is busy.
+async function changes(pre, before, after, o, { now, self, selfChanged = false } = {}) {
+  now ??= await withPage((c) => axTree(c)).catch(() => undefined);
+  const nodes = now?.nodes ?? [];
   const out = header(after.target);
   const navigated = after.target.url !== before.url;
-  const nodes = await withPage(axNodes).catch(() => []);
-  out.push(...cdp.dialogLines(cdp.dialogs(nodes)));
-  let added = [];
+  const shown = cdp.dialogs(nodes);
+  out.push(...cdp.dialogLines(shown));
+  let nothing = false;
   if (o.show) {
     lib.savePage(after.lines, pageFile(o));
     out.push(...lib.grepLines(after.lines, regex(o.show), { limit: o.limit ?? 25, context: o.context, width: WIDTH }));
   } else if (navigated) {
-    out.push(...describe(after.lines, nodes, undefined, o).slice(cdp.dialogLines(cdp.dialogs(nodes)).length));
+    out.push(...(await describe(after.lines, nodes, undefined, o, async () => now)).slice(cdp.dialogLines(shown).length));
   } else {
-    added = cdp.newLines(beforeLines, after.lines);
+    const added = cdp.newLines(pre.lines, after.lines);
+    const gone = after.lines.length > 0 ? cdp.newLines(after.lines, pre.lines) : [];
+    const was = cdp.dialogs(pre.nodes);
+    const closed = cdp.closedDialogs(was, shown);
+    const opened = cdp.closedDialogs(shown, was);
+    const had = new Set(cdp.liveTexts(pre.nodes));
+    const alerts = cdp.liveTexts(nodes).filter((t) => !had.has(t));
+    const diffs = now ? cdp.controlDiffs(pre.entries, now.entries, { skip: self?.ref }) : [];
     lib.savePage(after.lines, pageFile(o));
-    out.push(added.length === 0 ? "page text unchanged" : `changed (${added.length} new lines):`, ...added.slice(0, 20));
+    out.push(...closed.map((d) => `closed ${d}`), ...alerts.slice(0, 3));
+    if (added.length > 0) out.push(`changed (${added.length} new lines):`, ...added.slice(0, 20));
     if (added.length > 20) out.push(`... ${added.length - 20} more: desktop-web text "regex"`);
+    if (gone.length > 0) out.push(`gone (${gone.length} lines): ${gone.slice(0, 3).map((l) => lib.clip(l, 60)).join(" | ")}${gone.length > 3 ? " | ..." : ""}`);
+    out.push(...diffs.slice(0, 5));
+    if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
+    if (added.length === 0 && gone.length === 0) out.push("page text unchanged");
+    nothing = !added.length && !gone.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    if (nothing) {
+      const bad = (now?.entries ?? []).filter((e) => e.invalid);
+      if (bad.length > 0) out.push(`invalid fields: ${bad.slice(0, 5).map((e) => cdp.entryLine(e, { nameMax: 40 })).join(" | ")}`);
+    }
+    if (self?.role === "link" && !o.noHint) out.push("note: the address did not change");
   }
-  // An action's result often arrives later (a request, a countdown): say so when little changed or the page shows it is busy.
-  if (!o.show && !o.noHint && !navigated && (added.length <= 1 || cdp.busy(nodes))) out.push('result may come later: desktop-web wait "regex"');
+  if (!o.show && !o.noHint && !navigated && (nothing || cdp.busy(nodes))) out.push('result may come later: desktop-web wait "regex"');
   return budget(out, PAGE_HINT);
+}
+
+// What typing did without Enter, kept short: the options that appeared (an autocomplete), else at most 5 new lines (a
+// filter's results) and new alert text.
+async function afterTyping(pre, after, typed, o) {
+  const now = await withPage((c) => axTree(c)).catch(() => undefined);
+  lib.savePage(after.lines, pageFile(o));
+  const known = new Set(pre.entries.map((e) => e.ref));
+  const opts = (now?.entries ?? []).filter((e) => OPTION_ROLES.has(e.role) && !known.has(e.ref));
+  const had = new Set(cdp.liveTexts(pre.nodes));
+  const out = cdp.liveTexts(now?.nodes ?? []).filter((t) => !had.has(t)).slice(0, 2);
+  if (opts.length > 0) {
+    rememberRefs(opts, { merge: true });
+    out.push(`options (${opts.length}):`, ...opts.slice(0, 5).map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`));
+    if (opts.length > 5) out.push(`  ... ${opts.length - 5} more: desktop-web snap "regex"`);
+    return out;
+  }
+  const added = cdp.newLines(pre.lines, after.lines).filter((l) => l !== squash(typed));
+  const gone = after.lines.length > 0 ? cdp.newLines(after.lines, pre.lines).length : 0;
+  if (added.length > 0) out.push(`changed (${added.length} new lines):`, ...added.slice(0, 5));
+  if (added.length > 5) out.push(`... ${added.length - 5} more: desktop-web text "regex"`);
+  if (gone > 0) out.push(`(${gone} lines gone)`);
+  return out;
 }
 
 async function main() {
@@ -617,7 +734,7 @@ async function main() {
         return;
       }
       const nodes = await withPage(axNodes);
-      const out = [...header(after.target), ...describe(after.lines, nodes, o.pos[1], o)];
+      const out = [...header(after.target), ...(await describe(after.lines, nodes, o.pos[1], o, () => withPage((c) => axTree(c))))];
       if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;
@@ -648,6 +765,7 @@ async function main() {
       const pattern = o.pos[0];
       if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
       const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
+      if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) hits.push(...(await namedLike(regex(pattern), () => withPage((c) => axTree(c)))));
       const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;
@@ -655,10 +773,18 @@ async function main() {
     case "snap": {
       await guard();
       const out = await withPage(async (c, t) => {
-        const { nodes, entries } = await axTree(c, { options: true });
+        const tree = await axTree(c, { options: true });
+        const { nodes, entries } = tree;
         rememberRefs(entries);
         const re = o.pos[0] ? regex(o.pos[0]) : undefined;
         const lines = entries.map((e) => cdp.entryLine(e)).filter((l) => !re || re.test(l));
+        if (re) {
+          // Text that takes clicks but is no element's name (role-less options): only when asked for by a regex.
+          const named = new Set(entries.map((e) => e.name));
+          const extra = textEntries(tree, re).filter((e) => !named.has(e.name));
+          rememberRefs(extra, { merge: true });
+          lines.push(...extra.map((e) => cdp.entryLine(e)));
+        }
         const limit = o.limit ?? 40;
         const shown = lines.slice(0, limit);
         if (lines.length > limit) shown.push(`${lines.length - limit} more: narrow the regex`);
@@ -679,13 +805,16 @@ async function main() {
       await guard();
       const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
-      const { label, beforeLines, backendNodeId, frameTag } = await withPage(async (c) => {
-        const beforeLines = await pageLines(c);
-        const { entry, nodes } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+(@\w+)?$/.test(spec) });
+      const { entry, note, pre } = await withPage(async (c) => {
+        const tree = await axTree(c);
+        const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", tree });
+        if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled, the page does not take it yet (something it needs is missing); nothing clicked`);
         await clickNode(c, nodes, entry);
-        return { label: cdp.entryLine(entry), beforeLines, backendNodeId: entry.backendNodeId, frameTag: entry.frameTag ?? "" };
+        return { entry, note, pre: stateOf(tree) };
       });
-      const first = `${cmd === "click" ? "clicked" : "typed into"} ${label}`;
+      const head = note ? [note] : [];
+      const { backendNodeId } = entry;
+      const frameTag = entry.frameTag ?? "";
       if (cmd === "type") {
         lib.pause(150);
         if (!o.append) lib.key("ctrl+a");
@@ -704,17 +833,36 @@ async function main() {
             return (field ?? nodes.find((m) => m.backendDOMNodeId === backendNodeId && (m.frameTag ?? "") === frameTag))?.value?.value;
           });
         }
+        const value = squash(now);
+        const lines = [...head, `typed into ${cdp.entryLine(entry)}`, `value now: ${JSON.stringify(now ?? "")}`];
+        const meant = squash(o.append ? `${entry.value}${o.pos[1]}` : o.pos[1]);
+        if (value === entry.value && meant !== entry.value && !entry.secret) {
+          console.log(
+            [...lines, `the field kept its value: it ${entry.readonly ? "is read-only" : "did not take the typed text"}; set it with the control that drives it`].join("\n"),
+          );
+          process.exit(1);
+        }
         if (!o.enter) {
-          console.log([first, `value now: ${JSON.stringify(now ?? "")}`].join("\n"));
+          const after = await settle(before, { quietMs: 700, capMs: 6000 });
+          console.log([...lines, ...(after.blocked ? blockedLines() : await afterTyping(pre, after, o.pos[1], o))].join("\n"));
           return;
         }
         lib.key("Return");
         const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
-        console.log([first, `value was: ${JSON.stringify(now ?? "")}`, ...(after.blocked ? blockedLines() : await changes(beforeLines, before, after, o))].join("\n"));
+        console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, o, { self: entry }))].join("\n"));
         return;
       }
       const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
-      console.log([first, ...(after.blocked ? blockedLines() : await changes(beforeLines, before, after, o))].join("\n"));
+      if (after.blocked) {
+        console.log([...head, `clicked ${cdp.entryLine(entry)}`, ...blockedLines()].join("\n"));
+        return;
+      }
+      // Read the element again: its state after the click (checked, expanded, value) is the answer, not the one before.
+      const now = await withPage((c) => axTree(c)).catch(() => undefined);
+      const self = now?.entries.find((e) => e.ref === entry.ref);
+      const diff = cdp.stateDiff(entry, self);
+      const first = diff.length > 0 ? `clicked [${entry.ref}] ${entry.role} ${cdp.shortName(entry, 80)}: ${diff.join(", ")}` : `clicked ${cdp.entryLine(self ?? entry)}`;
+      console.log([...head, first, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 }))].join("\n"));
       return;
     }
     case "key": {
@@ -725,14 +873,16 @@ async function main() {
       const before = state.target;
       const wasBlocked = state.state === "blocked";
       // A blocked page cannot be read, and the keys are what unblocks it: the text of the last read stands in as "before".
-      let beforeLines = [];
+      let pre;
       if (wasBlocked) {
+        let lines = [];
         try {
-          beforeLines = fs.readFileSync(pageFile(o), "utf8").replace(/\n$/, "").split("\n");
+          lines = fs.readFileSync(pageFile(o), "utf8").replace(/\n$/, "").split("\n");
         } catch {
-          beforeLines = [];
+          lines = [];
         }
-      } else beforeLines = await withPage((c) => pageLines(c));
+        pre = { lines, entries: [], nodes: [] };
+      } else pre = stateOf(await withPage((c) => axTree(c)));
       activate(win);
       if (o.text !== undefined) {
         // A prompt's field may hold a default: replace it. (Not on a live page, where ctrl+a would select the page.)
@@ -747,7 +897,7 @@ async function main() {
         console.log(blockedLines({ still: wasBlocked }).join("\n"));
         return;
       }
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...(await changes(beforeLines, before, after, o))].join("\n"));
+      console.log([...(wasBlocked ? ["dialog closed"] : []), ...(await changes(pre, before, after, o))].join("\n"));
       return;
     }
     case "select": {
@@ -756,9 +906,11 @@ async function main() {
       await guard();
       const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
-      const { beforeLines, entry, how, shown } = await withPage(async (c) => {
-        const beforeLines = await pageLines(c);
-        const { entry, nodes } = await resolveTarget(c, spec, o, { selectsOnly: !/^e\d+(@\w+)?$/.test(spec), options: true });
+      const { pre, entry, how, shown } = await withPage(async (c) => {
+        const tree = await axTree(c, { options: true });
+        const pre = stateOf(tree);
+        const { entry, nodes } = await resolveTarget(c, spec, o, { selectsOnly: !isRef(spec), tree });
+        if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled, the page does not take it yet; nothing selected`);
         const info = entry.select;
         // A dropdown's popup is its own window and takes the keyboard: one click opens it, arrows move over the enabled options
         // (a change fires only at Return), Return picks. Never arrows on a closed select: each step would fire a change.
@@ -769,22 +921,21 @@ async function main() {
           const opt = info.options[m.index];
           if (opt.disabled) fail(`option ${JSON.stringify(opt.text)} is disabled. Options: ${cdp.optionsText(info.options)}`, 2);
           const steps = cdp.arrowSteps(info.options, m.index);
-          if (steps === 0) return { beforeLines, entry, how: "already", shown: opt.text };
+          if (steps === 0) return { pre, entry, how: "already", shown: opt.text };
           await clickNode(c, nodes, entry);
           lib.pause(350);
           lib.key(...Array(Math.abs(steps)).fill(steps < 0 ? "Up" : "Down"));
           lib.pause(150);
           lib.key("Return");
-          return { beforeLines, entry, how: "native", shown: opt.text };
+          return { pre, entry, how: "native", shown: opt.text };
         }
         // A list that is already on the page (multiple, size above 1) or a combobox of in-page elements: open it if needed, then
         // click the option whose text matches.
-        const optionRoles = new Set(["option", "menuitem", "menuitemradio", "menuitemcheckbox", "treeitem"]);
-        const known = new Set((await axTree(c)).entries.filter((e) => optionRoles.has(e.role)).map((e) => e.ref));
+        const known = new Set(tree.entries.filter((e) => OPTION_ROLES.has(e.role)).map((e) => e.ref));
         if (!info) await clickNode(c, nodes, entry);
         lib.pause(500);
         const now = await axTree(c);
-        let options = now.entries.filter((e) => optionRoles.has(e.role));
+        let options = now.entries.filter((e) => OPTION_ROLES.has(e.role));
         if (info) {
           // the options of this select: its accessibility subtree
           const own = new Set();
@@ -805,7 +956,7 @@ async function main() {
           fail(`no option matches ${JSON.stringify(want)}. Options: ${options.map((e) => e.name).slice(0, 15).join(" | ")}`, 2);
         }
         await clickNode(c, now.nodes, options[m.index]);
-        return { beforeLines, entry, how: "click", shown: options[m.index].name };
+        return { pre, entry, how: "click", shown: options[m.index].name };
       });
       if (how === "already") {
         console.log(`${JSON.stringify(shown)} is already selected in ${cdp.entryLine(entry, { nameMax: 60 })}`);
@@ -828,7 +979,7 @@ async function main() {
           process.exit(1);
         }
       }
-      console.log([`${how === "native" ? "selected" : "clicked option"} ${JSON.stringify(shown)} in ${cdp.entryLine(now ?? entry, { nameMax: 60 })}`, state, ...(await changes(beforeLines, before, after, o))].filter(Boolean).join("\n"));
+      console.log([`${how === "native" ? "selected" : "clicked option"} ${JSON.stringify(shown)} in ${cdp.entryLine(now ?? entry, { nameMax: 60 })}`, state, ...(await changes(pre, before, after, o, { self: entry }))].filter(Boolean).join("\n"));
       return;
     }
     case "hover":
@@ -839,18 +990,18 @@ async function main() {
       const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
       const r = await withPage(async (c) => {
-        const beforeLines = await pageLines(c);
-        const { entry, nodes } = await resolveTarget(c, spec, o, { showable: true });
+        const tree = await axTree(c, { showable: true });
+        const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, tree });
         if (cmd === "hover") {
           await hoverNode(c, nodes, entry);
-          return { beforeLines, entry };
+          return { pre: stateOf(tree), entry, note };
         }
         const { box } = await placeNode(c, nodes, entry, { cover: false });
-        return { beforeLines, entry, box };
+        return { entry, box, note };
       });
       if (cmd === "hover") {
         const after = await settle(before, { quietMs: 700 });
-        console.log([`hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines() : await changes(r.beforeLines, before, after, { ...o, noHint: true }))].join("\n"));
+        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry }))].join("\n"));
         return;
       }
       // A little room around the element, and never a sliver: small icons are easier to read with their surroundings.
@@ -866,7 +1017,7 @@ async function main() {
       } catch (e) {
         fail(`screenshot failed: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
       }
-      console.log([`shot of ${cdp.entryLine(r.entry)}`, `${shot} (read this image with the read tool)`].join("\n"));
+      console.log([...(r.note ? [r.note] : []), `shot of ${cdp.entryLine(r.entry)}`, `${shot} (read this image with the read tool)`].join("\n"));
       return;
     }
     case "wait": {

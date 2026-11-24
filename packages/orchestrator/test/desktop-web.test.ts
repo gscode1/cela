@@ -15,6 +15,13 @@ interface Entry {
   role: string;
   name: string;
   url?: string;
+  value?: string;
+  checked?: unknown;
+  placeholder?: string;
+  mark?: string;
+  near?: string;
+  via?: number;
+  frameTag?: string;
 }
 interface CdpLib {
   ALLOWED: Set<string>;
@@ -70,6 +77,20 @@ interface CdpLib {
   arrowSteps(options: Opt[], target: number): number;
   optionsText(options: Opt[]): string;
   busy(nodes: AxNode[]): boolean;
+  annotate(entries: Entry[], snap: unknown, hidden: Set<number>): Entry[];
+  nameUnnamed(nodes: AxNode[], entries: Entry[]): Entry[];
+  textTargets(
+    snap: unknown,
+    re: RegExp,
+    o?: { skip?: Set<number> },
+  ): { backendNodeId: number; name: string }[];
+  stateDiff(a: Partial<Entry>, b: Partial<Entry>): string[];
+  controlDiffs(before: Entry[], after: Entry[], o?: { skip?: string }): string[];
+  closedDialogs(
+    before: { role: string; name: string }[],
+    after: { role: string; name: string }[],
+  ): string[];
+  liveTexts(nodes: AxNode[]): string[];
 }
 interface Opt {
   text: string;
@@ -95,6 +116,7 @@ interface AxNode {
   ignored?: boolean;
   role: { value: string };
   name?: { value: string };
+  description?: { value: string };
   properties?: { name: string; value: { value: unknown } }[];
 }
 
@@ -164,13 +186,39 @@ describe("desktop-web's CDP reader", () => {
     expect(code).not.toMatch(/new WebSocket|Runtime\./);
   });
 
-  it("lists clickable elements and named headings with refs, without duplicates of link names or disabled ones", () => {
+  it("lists clickable elements and named headings with refs, without duplicates of link names, disabled ones marked", () => {
     const lines = cdp.axEntries(tree()).map((e) => cdp.entryLine(e));
     expect(lines).toEqual([
       '[e104] link "Honey 250 g"',
       '[e105] link "Honey 250 g"',
       '[e108] link "Honey 250 g"',
+      '[e130] button "Buy" disabled',
       '[e131] textbox ""',
+    ]);
+  });
+
+  it("shows a field's required and invalid state and its error description", () => {
+    const prop = (name: string, v: unknown) => ({ name, value: { value: v } });
+    const nodes: AxNode[] = [
+      {
+        nodeId: "1",
+        role: { value: "textbox" },
+        name: { value: "Phone" },
+        description: { value: "Enter a valid phone number" },
+        backendDOMNodeId: 7,
+        properties: [prop("required", true), prop("invalid", "true")],
+      },
+      {
+        nodeId: "2",
+        role: { value: "textbox" },
+        name: { value: "Zip" },
+        backendDOMNodeId: 8,
+        properties: [prop("invalid", "false"), prop("readonly", true)],
+      },
+    ];
+    expect(cdp.axEntries(nodes).map((e) => cdp.entryLine(e))).toEqual([
+      '[e7] textbox "Phone" required invalid desc="Enter a valid phone number"',
+      '[e8] textbox "Zip" readonly',
     ]);
   });
 
@@ -730,6 +778,223 @@ describe("desktop-web's CDP reader", () => {
       "‹star-rating Three›",
       "status ‹dot state=up› fine ‹src:brand-mark.png›",
     ]);
+  });
+
+  // Elements for annotate and textTargets: [display, visibility, opacity, position, overflow-x, overflow-y, clip, cursor].
+  const sty = (display: string, opacity = "1", cursor = "auto") =>
+    [display, "visible", opacity, "static", "visible", "visible", "auto", cursor] as unknown as [
+      string,
+      string,
+      string,
+    ];
+  const el = (
+    parent: number,
+    tag: string,
+    style: [string, string, string],
+    box: [number, number, number, number],
+    attrs?: Record<string, string>,
+  ): N => ({ parent, type: 1, tag, style, box, ...(attrs ? { attrs } : {}) });
+
+  it("keeps a hidden checkbox whose label a person sees, clicked through the label, and drops a honeypot", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 400, 200]), // 1
+      el(1, "LABEL", sty("block", "1", "pointer"), [0, 0, 200, 20]), // 2 label around its input
+      el(2, "INPUT", sty("inline-block", "0"), [0, 0, 14, 14], { type: "checkbox" }), // 3
+      t("Very good: 8+", [20, 0, 90, 16], 2), // 4
+      el(1, "INPUT", sty("inline-block", "0"), [0, 30, 14, 14], { type: "checkbox", id: "s" }), // 5
+      el(1, "LABEL", sty("block"), [0, 30, 200, 20], { for: "s" }), // 6 label tied by for=
+      t("Superb", [20, 30, 60, 16], 6), // 7
+      el(1, "INPUT", sty("inline-block", "0"), [0, 60, 14, 14], { type: "checkbox" }), // 8 honeypot
+      el(1, "INPUT", sty("inline-block"), [0, 90, 200, 20], {
+        placeholder: "Where are you going?",
+        type: "password",
+      }), // 9
+    ]);
+    const hidden = cdp.hiddenElements(snap);
+    expect(hidden.has(1003) && hidden.has(1005) && hidden.has(1008)).toBe(true);
+    const e = (id: number, role: string, name: string): Entry => ({
+      ref: `e${String(id)}`,
+      backendNodeId: id,
+      nodeId: String(id),
+      role,
+      name,
+    });
+    const out = cdp.annotate(
+      [
+        e(1003, "checkbox", "Very good: 8+"),
+        e(1005, "checkbox", "Superb"),
+        e(1008, "checkbox", "Trap"),
+        e(1009, "textbox", "Destination"),
+      ],
+      snap,
+      hidden,
+    );
+    expect(out.map((x) => [x.ref, x.via])).toEqual([
+      ["e1003", 1002],
+      ["e1005", 1006],
+      ["e1009", undefined],
+    ]);
+    expect(cdp.entryLine(out[2] as Entry)).toBe(
+      '[e1009] textbox "Destination" placeholder="Where are you going?"',
+    );
+  });
+
+  it("names a nameless control from its markup, else from its row, and drops one with neither", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "BUTTON", sty("inline-block"), [0, 0, 30, 30], { class: "tool mode-car" }), // 1
+      el(0, "BUTTON", sty("inline-block"), [40, 0, 30, 30]), // 2
+      el(2, "SPAN", sty("inline-block"), [45, 5, 16, 16], { class: "icon icon-bike" }), // 3
+      el(0, "INPUT", sty("inline-block"), [0, 40, 100, 20]), // 4
+      el(0, "BUTTON", sty("inline-block"), [0, 80, 30, 30], { class: "x1a2b3c4d5" }), // 5
+      el(0, "INPUT", sty("inline-block"), [0, 120, 14, 14], {
+        type: "radio",
+        value: "car",
+        class: "btn-check",
+      }), // 6
+    ]);
+    const e = (id: number, role: string, name: string, nodeId: string): Entry => ({
+      ref: `e${String(id)}`,
+      backendNodeId: id,
+      nodeId,
+      role,
+      name,
+    });
+    const entries = cdp.annotate(
+      [
+        e(1001, "button", "", "b1"),
+        e(1002, "button", "", "b2"),
+        e(1004, "combobox", "", "c"),
+        e(1005, "button", "", "b3"),
+        e(1006, "radio", "", "r"),
+      ],
+      snap,
+      new Set(),
+    );
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      parentId?: string,
+      kids?: string[],
+    ) => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+    });
+    const nodes: AxNode[] = [
+      ax("root", "RootWebArea", "", undefined, ["tools", "row", "b3", "r"]),
+      ax("tools", "generic", "", "root", ["b1", "b2"]),
+      ax("b1", "button", "", "tools"),
+      ax("b2", "button", "", "tools"),
+      ax("row", "generic", "", "root", ["lbl", "c"]),
+      ax("lbl", "StaticText", "State", "row"),
+      ax("c", "combobox", "", "row"),
+      ax("b3", "button", "", "root"),
+      ax("r", "radio", "", "root"),
+    ];
+    const named = cdp.nameUnnamed(nodes, entries);
+    expect(named.map((x) => cdp.entryLine(x))).toEqual([
+      "[e1001] button ‹tool mode-car›",
+      '[e1002] button "" ‹icon icon-bike›',
+      '[e1004] combobox "" near "State"',
+      "[e1006] radio ‹value=car btn-check›",
+    ]);
+    expect(cdp.chooseTarget(nodes, named, /bike/i).pick?.ref).toBe("e1002");
+    expect(cdp.chooseTarget(nodes, named, /state/i).pick?.ref).toBe("e1004");
+  });
+
+  it("finds clickable text no element is named by, but not a link's own text or text a person cannot see", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 400, 300]), // 1
+      el(1, "DIV", sty("block", "1", "pointer"), [0, 0, 300, 20]), // 2 a role-less option
+      t("Ultra HD 3840 x 2160", [0, 0, 150, 16], 2), // 3
+      el(1, "DIV", sty("block"), [0, 30, 300, 20]), // 4 plain text
+      t("Ultra HD explained", [0, 30, 150, 16], 4), // 5
+      el(1, "A", sty("block", "1", "pointer"), [0, 60, 300, 20]), // 6 a listed link
+      t("Ultra HD offers", [0, 60, 150, 16], 6), // 7
+      el(1, "DIV", sty("block", "0", "pointer"), [0, 90, 300, 20]), // 8 transparent
+      t("Ultra HD trap", [0, 90, 150, 16], 8), // 9
+    ]);
+    expect(cdp.textTargets(snap, /ultra hd/i, { skip: new Set([1006]) })).toEqual([
+      { backendNodeId: 1002, name: "Ultra HD 3840 x 2160" },
+    ]);
+    // a click listener (isClickable) counts like the cursor
+    const plain = snapOf([
+      doc,
+      el(0, "DIV", sty("block"), [0, 0, 300, 20]),
+      t("4K", [0, 0, 20, 16], 1),
+    ]);
+    expect(cdp.textTargets(plain, /4K/)).toEqual([]);
+    const doc0 = (plain as { documents: { nodes: Record<string, unknown> }[] }).documents[0];
+    if (doc0) doc0.nodes.isClickable = { index: [1] };
+    expect(cdp.textTargets(plain, /4K/)).toEqual([{ backendNodeId: 1001, name: "4K" }]);
+  });
+
+  it("reports state changes, closed dialogs and new alert text", () => {
+    const e = (ref: string, role: string, name: string, extra: Partial<Entry> = {}): Entry => ({
+      ref,
+      backendNodeId: 1,
+      nodeId: ref,
+      role,
+      name,
+      ...extra,
+    });
+    expect(cdp.stateDiff({ checked: "false" }, { checked: "true" })).toEqual([
+      "checked false -> true",
+    ]);
+    expect(cdp.stateDiff({ value: "a", name: "Show" }, { value: "b", name: "Show" })).toEqual([
+      'value "a" -> "b"',
+    ]);
+    expect(
+      cdp.controlDiffs(
+        [
+          e("e1", "radio", "Male", { checked: "true" }),
+          e("e2", "radio", "Female", { checked: "false" }),
+        ],
+        [
+          e("e1", "radio", "Male", { checked: "false" }),
+          e("e2", "radio", "Female", { checked: "true" }),
+        ],
+        { skip: "e2" },
+      ),
+    ).toEqual(['[e1] radio "Male": checked true -> false']);
+    expect(
+      cdp.closedDialogs(
+        [
+          { role: "dialog", name: "Cookies" },
+          { role: "dialog", name: "Sign in" },
+        ],
+        [{ role: "dialog", name: "Sign in" }],
+      ),
+    ).toEqual(['dialog "Cookies"']);
+    const nodes: AxNode[] = [
+      { nodeId: "1", role: { value: "alert" }, name: { value: "" }, childIds: ["2"] },
+      {
+        nodeId: "2",
+        parentId: "1",
+        role: { value: "StaticText" },
+        name: { value: "Email is required" },
+      },
+      { nodeId: "3", role: { value: "status" }, name: { value: "3 results" } },
+    ];
+    expect(cdp.liveTexts(nodes)).toEqual(['alert "Email is required"', 'status "3 results"']);
+  });
+
+  it("matches a field by its placeholder", () => {
+    const f: Entry = {
+      ref: "e1",
+      backendNodeId: 1,
+      nodeId: "1",
+      role: "textbox",
+      name: "Enter destination",
+      placeholder: "Where are you going?",
+    };
+    expect(cdp.chooseTarget([], [f], /where/i).pick?.ref).toBe("e1");
   });
 
   it("drops a button that repeats a matching link's name, but lists a different button", () => {

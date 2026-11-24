@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>validation</title>
+<body style="font:16px sans-serif">
+<h1>Form with validation</h1>
+<form id="f" novalidate>
+  <p><label>Email <input id="email" type="email" required></label> <span id="email-err" role="alert"></span></p>
+  <p><label>Phone <input id="phone" value="12" aria-invalid="true" aria-describedby="phone-err"></label> <span id="phone-err">Enter a valid phone number</span></p>
+  <p><label>Zip code <input id="zip" value="abc"></label></p>
+  <p><button id="submit" type="submit">Send form</button> <button id="check" type="button">Check zip</button></p>
+</form>
+<script>
+  document.getElementById("f").onsubmit = (e) => {
+    e.preventDefault();
+    const email = document.getElementById("email");
+    if (!email.value) {
+      email.setAttribute("aria-invalid", "true");
+      document.getElementById("email-err").textContent = "Email is required";
+    }
+  };
+  // marks the field invalid and changes nothing a person reads
+  document.getElementById("check").onclick = () => document.getElementById("zip").setAttribute("aria-invalid", "true");
+</script>

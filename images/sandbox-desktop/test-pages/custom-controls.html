@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>custom controls</title>
+<style>
+  body { font: 16px sans-serif; }
+  .opt { display: block; position: relative; padding: 6px 6px 6px 30px; cursor: pointer; width: 260px; }
+  .box { position: absolute; left: 6px; top: 8px; width: 14px; height: 14px; border: 1px solid #555; }
+  .sr { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  .row { padding: 6px; width: 260px; cursor: pointer; border-bottom: 1px solid #ddd; }
+</style>
+<body>
+<h1>Filters</h1>
+<fieldset><legend>Review score</legend>
+  <!-- the real input sits at opacity 0 inside its label; the label draws the box -->
+  <label class="opt"><input type="checkbox" class="sr" id="good"><span class="box"></span>Very good: 8+</label>
+  <!-- a label tied by for= -->
+  <input type="checkbox" class="sr" id="superb"><label class="opt" for="superb"><span class="box"></span>Superb: 9+</label>
+</fieldset>
+<fieldset><legend>Resolution</legend>
+  <!-- role-less options: divs with a click handler and a pointer cursor -->
+  <div class="row" data-v="4K">Ultra HD 3840 x 2160</div>
+  <div class="row" data-v="QHD"><span>Quad HD 2560 x 1440</span> <span class="count">(12)</span></div>
+</fieldset>
+<!-- a honeypot: a transparent checkbox with no label a person can see -->
+<input type="checkbox" class="sr" id="trap" aria-label="Honeypot box" style="left:20px;top:20px">
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  for (const id of ["good", "superb", "trap"]) document.getElementById(id).addEventListener("change", (e) => add(`checked: ${id} ${e.target.checked}`));
+  for (const r of document.querySelectorAll(".row")) r.addEventListener("click", () => add(`picked: ${r.dataset.v}`));
+</script>
