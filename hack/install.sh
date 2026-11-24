@@ -374,7 +374,9 @@ fi
 if [[ -n $seed_note ]]; then
   echo "skipped: $seed_note. Seed later: hack/seed-browser-profile.mjs --create-only (PI_API_URL, PI_API_TOKEN)"
 else
-  # Port 0: kubectl picks a free local port and says which.
+  # Port 0: kubectl picks a free local port and says which. The background job opens its log only once it runs, so the
+  # log is created first: otherwise sed below can find no file, and errexit ends the install there (gscode1/cela#432).
+  : >"$tmp/pf.log"
   k port-forward svc/pi-ingest :8080 >"$tmp/pf.log" 2>&1 &
   pf=$!
   seed_port=""
