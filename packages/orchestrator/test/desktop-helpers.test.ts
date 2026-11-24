@@ -344,9 +344,12 @@ describe("desktop image settings", () => {
       const ext = policies.policies.ExtensionSettings;
       expect(ext["*"]?.installation_mode).toBe("blocked");
       expect(ext["idcac-pub@guus.ninja"]?.installation_mode).toBe("force_installed");
-      expect(ext["idcac-pub@guus.ninja"]?.install_url).toMatch(
-        /^file:\/\/\/usr\/lib\/firefox-esr\//,
-      );
+      // The policy loads the file the image puts there, from a directory that existed before the ADD (an ADD-created
+      // directory is root-only and Firefox runs as pi).
+      const target = (ext["idcac-pub@guus.ninja"]?.install_url ?? "").replace(/^file:\/\//, "");
+      expect(target).toBe("/usr/lib/firefox-esr/distribution/idcac-pub@guus.ninja.xpi");
+      expect(dockerfile).toContain(`istilldontcareaboutcookies-1.1.9.xpi \\\n  ${target}\n`);
+      expect(dockerfile).toContain("/usr/lib/firefox-esr/distribution/policies.json");
       expect(policies.policies.Preferences).toMatchObject({
         "browser.translations.enable": false,
         "browser.translations.automaticallyPopup": false,

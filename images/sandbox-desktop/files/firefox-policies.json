@@ -53,7 +53,7 @@
       "*": { "installation_mode": "blocked" },
       "idcac-pub@guus.ninja": {
         "installation_mode": "force_installed",
-        "install_url": "file:///usr/lib/firefox-esr/distribution/extensions-pinned/idcac-pub@guus.ninja.xpi"
+        "install_url": "file:///usr/lib/firefox-esr/distribution/idcac-pub@guus.ninja.xpi"
       }
     },
     "DownloadDirectory": "/workspace/downloads",
