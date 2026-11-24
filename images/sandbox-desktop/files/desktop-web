@@ -17,6 +17,13 @@
 //   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes;
 //                                             --text "answer" types text first (a prompt dialog), --show "regex"
 //   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page) and print what it holds
+//   desktop-web type <slider> 75              set a slider: a press at its proportional point, then arrow keys to the value;
+//                                             prints value 25 -> 75. Exit 1 when it did not move or ended elsewhere
+//   desktop-web upload <ref|"regex"> /workspace/file
+//                                             click a file input (or the button that opens one), pick the file in the
+//                                             browser's file chooser (its location field), print what the page shows
+//   desktop-web drag <src> <dst>              press on src, move there at a person's pace, release over dst; --by dx,dy (px)
+//                                             instead of dst. src and dst: refs, element names or any visible text
 //   desktop-web hover <ref|"regex">           move the pointer over it (menus, captions) and print what appeared
 //   desktop-web shot <ref|"regex">            screenshot of that element's area (icons, colours, images): prints the file;
 //                                             --pad N takes N more px around it
@@ -25,7 +32,8 @@
 //   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
-// the dialog's message and buttons and how to answer it with desktop-web key.
+// the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
+// is reported the same way: reads go on, actions are refused until it is cancelled (desktop-web key Escape).
 //
 // Every answer stays within a budget (BUDGET_LINES lines, BUDGET_CHARS characters): a longer one is cut with a note on
 // how to page on. Flags: --limit N (matches, at most 40), --context N (at most 3), --lines A-B, --from FILE, --out FILE.
@@ -81,7 +89,12 @@ function parseArgs(argv) {
     else if (a === "--lines") (o.lines = val(i, a)), i++;
     else if (a === "--timeout") (o.timeout = Number(val(i, a))), i++;
     else if (a === "--text") (o.text = val(i, a)), i++;
-    else if (a === "--pad") (o.pad = Math.min(Math.max(Number(val(i, a)), 0), 300)), i++;
+    else if (a === "--by") {
+      const m = /^(-?\d+),(-?\d+)$/.exec(val(i, a));
+      if (!m) fail("--by takes dx,dy in px, e.g. --by 120,0", 64);
+      o.by = { dx: Number(m[1]), dy: Number(m[2]) };
+      i++;
+    } else if (a === "--pad") (o.pad = Math.min(Math.max(Number(val(i, a)), 0), 300)), i++;
     else if (a === "--gone") o.gone = true;
     else if (a === "--marks") o.marks = true;
     else if (a === "--enter") o.enter = true;
@@ -113,18 +126,63 @@ function budget(lines, hint) {
   }
   return out;
 }
+const rand = (a, b) => a + Math.random() * (b - a);
 const PAGE_HINT = 'narrow the regex, or read a range with desktop-web text --lines A-B';
 
-// The browser window: the last visible Chrome top-level window.
-function chromeWindow() {
+// Chrome's visible top-level windows with what the window manager knows of them: whether one is transient for another and
+// its type (a file chooser is a dialog window transient for the browser window).
+function chromeWindows() {
   let ids;
   try {
     ids = lib.exec("xdotool", "search", "--onlyvisible", "--class", "[Gg]oogle-chrome").trim().split("\n").filter(Boolean);
   } catch {
     ids = [];
   }
-  if (ids.length === 0) return undefined;
-  const id = ids[ids.length - 1];
+  return ids.map((id) => {
+    let p = "";
+    try {
+      p = lib.exec("xprop", "-id", id, "WM_TRANSIENT_FOR", "_NET_WM_WINDOW_TYPE", "WM_NAME");
+    } catch {
+      // gone since the search
+    }
+    return {
+      id,
+      transientFor: /WM_TRANSIENT_FOR\(WINDOW\): window id/.test(p),
+      type: /_NET_WM_WINDOW_TYPE\(ATOM\) = (.*)/.exec(p)?.[1],
+      name: /WM_NAME\([^)]*\) = "(.*)"/.exec(p)?.[1] ?? "",
+    };
+  });
+}
+
+// A dialog window of the browser (the file chooser, a save-as dialog), or undefined.
+const chooserWindow = () => lib.dialogWindows(chromeWindows())[0];
+
+// What an open file chooser means and how to get out of it, as blockedLines does for a JS dialog.
+function chooserLines(d) {
+  return [
+    `A file chooser is open ("${lib.clip(d.name || "dialog", 60)}"): the browser takes no other input until it closes.`,
+    "Cancel it: desktop-web key Escape. To give a file: cancel it, then desktop-web upload <ref> /workspace/file.",
+  ];
+}
+
+// Escape until the chooser is gone: the first may only close its location field's completion popup. Never an Escape more,
+// which would reach the page.
+function cancelChooser() {
+  for (let i = 0; i < 3; i++) {
+    const d = chooserWindow();
+    if (!d) return;
+    activate(d);
+    lib.key("Escape");
+    lib.pause(300);
+  }
+}
+
+// The browser window: the last visible Chrome top-level window that is not one of its dialogs.
+function chromeWindow() {
+  const wins = chromeWindows();
+  const dialogs = new Set(lib.dialogWindows(wins).map((w) => w.id));
+  const id = wins.filter((w) => !dialogs.has(w.id)).at(-1)?.id;
+  if (id === undefined) return undefined;
   const g = Object.fromEntries(
     lib
       .exec("xdotool", "getwindowgeometry", "--shell", id)
@@ -319,8 +377,14 @@ function blockedLines({ still = false } = {}) {
   return out;
 }
 
-// Stops a command that needs the page when the page is blocked, saying why.
-async function guard() {
+// Stops a command that needs the page when the page is blocked, saying why. An open file chooser stops actions too (it takes
+// the browser's input); a read (`read`) goes on with the notice first.
+async function guard({ read = false } = {}) {
+  const d = chooserWindow();
+  if (d) {
+    console.log(chooserLines(d).join("\n"));
+    if (!read) process.exit(3);
+  }
   if ((await probe()).state !== "blocked") return;
   console.log(blockedLines().join("\n"));
   process.exit(3);
@@ -393,17 +457,18 @@ async function axTree(c, { options = false, showable = false } = {}) {
   return { nodes, entries: cdp.mainFirst(nodes, entries), read, lines };
 }
 
-// Lines of text a click can act on that no element's name matches (cdp.textTargets), as entries of role "clickable". Text
-// inside a listed element, or inside the label a listed checkbox is clicked through, is that element's.
-function textEntries(tree, re) {
+// Lines of text a click can act on that no element's name matches (cdp.textTargets), as entries of role "clickable"; with
+// `any` every visible line (a drop zone), role "text" when it shows no sign of taking clicks. Text inside a listed element,
+// or inside the label a listed checkbox is clicked through, is that element's.
+function textEntries(tree, re, { any = false } = {}) {
   const out = [];
   for (const r of tree.read) {
     const own = tree.entries.filter((e) => (e.frameTag ?? "") === r.part.tag);
     const skip = new Set([...own.map((e) => e.backendNodeId), ...own.map((e) => e.via).filter((v) => v !== undefined)]);
-    for (const t of cdp.textTargets(r.snap, re, { skip })) {
+    for (const t of cdp.textTargets(r.snap, re, { skip, any })) {
       if (r.hidden.has(t.backendNodeId)) continue;
       const tag = r.part.tag || undefined;
-      out.push({ ref: `e${t.backendNodeId}${tag ? `@${tag}` : ""}`, frameTag: tag, backendNodeId: t.backendNodeId, role: "clickable", name: t.name });
+      out.push({ ref: `e${t.backendNodeId}${tag ? `@${tag}` : ""}`, frameTag: tag, backendNodeId: t.backendNodeId, role: t.clickable ? "clickable" : "text", name: t.name });
     }
   }
   return out;
@@ -464,7 +529,7 @@ const isRef = (spec) => /^e\d+(@\w+)?$/.test(spec);
 // again by its role and name when exactly one element has them, and `note` says so. A name regex that matches no element
 // falls back, with `text`, to a line of clickable text (textEntries). Lists the candidates and exits 2 when a name is
 // ambiguous. `tree` is a read of axTree to reuse.
-async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = false, text = false, tree, ...read } = {}) {
+async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = false, text = false, anyText = false, tree, ...read } = {}) {
   tree ??= await axTree(c, read);
   const { nodes, entries } = tree;
   if (isRef(spec)) {
@@ -487,7 +552,7 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     return { entry: now, nodes, note };
   }
   const pool = fieldsOnly
-    ? entries.filter((e) => ["textbox", "searchbox", "combobox", "spinbutton"].includes(e.role))
+    ? entries.filter((e) => ["textbox", "searchbox", "combobox", "spinbutton", "slider"].includes(e.role) || e.file)
     : selectsOnly
       ? entries.filter((e) => e.select || ["combobox", "listbox"].includes(e.role))
       : entries;
@@ -495,11 +560,11 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
   let r = cdp.chooseTarget(nodes, pool, re, { near: o.near ? regex(o.near) : undefined, nth: o.nth, role: o.role, showable: read.showable });
   if (r.none && text && !r.near && !o.role) {
     // No element is named so: a line of text that takes clicks (a role-less option), if exactly one, or the exact one.
-    const hits = textEntries(tree, re);
+    const hits = textEntries(tree, re, { any: anyText });
     const whole = new RegExp(`^(?:${re.source})$`, re.flags);
     const exact = hits.filter((e) => whole.test(e.name));
     const pick = o.nth !== undefined ? hits[o.nth - 1] : hits.length === 1 ? hits[0] : exact.length === 1 ? exact[0] : undefined;
-    if (pick) return { entry: pick, nodes, note: "no element has that name; clicked the text" };
+    if (pick) return { entry: pick, nodes, note: `no element has that name; ${anyText ? "used" : "clicked"} the text` };
     if (hits.length > 1) r = { several: hits };
   }
   if (r.pick) return { entry: r.pick, nodes };
@@ -554,13 +619,13 @@ async function coveredBy(send, backendNodeId, quad, point, nodes) {
 // Scrolls the element into view, checks nothing covers it (unless `cover` is false: a screenshot shows what covers it), and
 // returns where it is on the screen: { box: {x, y, w, h}, win }. An element of an out-of-process iframe is read through that
 // frame's connection and placed in the page by its iframe element's content box.
-async function placeNode(c, nodes, entry, { cover = true } = {}) {
+async function placeNode(c, nodes, entry, { cover = true, scroll = true } = {}) {
   // A checkbox drawn by its label is clicked on the label, which a person sees and which toggles it.
   const backendNodeId = entry.via ?? entry.backendNodeId;
   const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
   if (!part) fail("the iframe of that element is gone: run desktop-web snap again");
   try {
-    await part.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
+    if (scroll) await part.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
   } catch {
     // not scrollable (fixed position); the box check below still applies
   }
@@ -588,7 +653,11 @@ async function placeNode(c, nodes, entry, { cover = true } = {}) {
   const pageQuad = cdp.shiftQuad(quad, origin.x, origin.y);
   const center = cdp.quadCenter(pageQuad);
   if (center.x < reach.x || center.y < reach.y || center.x > reach.x + reach.w || center.y > reach.y + reach.h)
-    fail("the element is outside the visible page and could not be scrolled into view");
+    fail(
+      scroll
+        ? "the element is outside the visible page and could not be scrolled into view"
+        : "the target is out of view while the source shows: scroll so both show (desktop-web key Page_Down), zoom out (desktop-web key ctrl+minus), or use --by dx,dy",
+    );
   // Something in front (a dialog, an overlay) would get the click instead: say what, rather than click it. For an iframe
   // that is checked at each frame on the way: the iframe element in its holder, then the element in its own frame.
   const checks = [];
@@ -634,6 +703,66 @@ async function hoverNode(c, nodes, entry) {
   return at;
 }
 
+// A slider's value and focus as the accessibility tree has it now.
+async function sliderState(entry) {
+  return withPage(async (c) => {
+    const n = (await axNodes(c)).find((m) => m.backendDOMNodeId === entry.backendNodeId && (m.frameTag ?? "") === (entry.frameTag ?? ""));
+    const focused = (n?.properties ?? []).some((p) => p.name === "focused" && p.value?.value === true);
+    return { value: Number(n?.value?.value), focused };
+  });
+}
+
+// Sets a slider the way a person does, first by pointer: a slider that is its own track (a native range, a wide element) is
+// pressed at the value's proportional point; a thumb drawn alone is dragged there along its track. Returns { want, from }.
+async function pressSlider(c, tree, entry, text) {
+  const want = Number(text);
+  if (text === "" || !Number.isFinite(want)) fail(`a slider takes a number: desktop-web type ${entry.ref} 75`, 64);
+  if ((entry.min !== undefined && want < entry.min) || (entry.max !== undefined && want > entry.max))
+    fail(`${cdp.entryLine(entry)} takes ${entry.min} to ${entry.max}, not ${want}`, 64);
+  const from = Number(entry.value);
+  if (from === want) return { want, from };
+  const range = { min: entry.min ?? 0, max: entry.max ?? 100, vertical: entry.vertical };
+  const r = tree.read.find((x) => x.part.tag === (entry.frameTag ?? ""));
+  const track = r ? cdp.sliderTrack(r.snap, entry.backendNodeId, { vertical: entry.vertical }) : undefined;
+  const { box, win } = await placeNode(c, tree.nodes, entry);
+  activate(win);
+  if (track === undefined) {
+    const p = cdp.sliderPoint(box, range, want);
+    lib.humanClick({ x: p.x - 1, y: p.y - 1, w: 2, h: 2 });
+  } else {
+    const t = await placeNode(c, tree.nodes, { backendNodeId: track, frameTag: entry.frameTag }, { cover: false, scroll: false });
+    lib.humanDrag(box, cdp.sliderPoint(t.box, range, want, { inset: 0 }));
+  }
+  return { want, from };
+}
+
+// Reads the slider back and closes in on the value with the arrow keys (the keyboard moves a slider by its own step), then
+// prints value before -> after and what else changed. Exit 1 when it did not move, or stopped short of the value.
+async function finishSlider(entry, { want, from }, { pre, before, head, o }) {
+  const [up, down] = entry.vertical ? ["Up", "Down"] : ["Right", "Left"];
+  lib.pause(250);
+  let now = await sliderState(entry);
+  let step;
+  for (let round = 0; round < 6 && now.focused && Number.isFinite(now.value); round++) {
+    const n = cdp.sliderPresses(now.value, want, step);
+    if (n === 0) break;
+    lib.keyRepeat(n > 0 ? up : down, Math.abs(n));
+    lib.pause(200);
+    const next = await sliderState(entry);
+    if (next.value === now.value) break; // the keys do not move it
+    if (!step && Math.abs(n) === 1) step = Math.abs(next.value - now.value);
+    now = next;
+  }
+  const after = await settle(before, { quietMs: 700, capMs: 6000 });
+  const got = Number.isFinite(now.value) ? now.value : from;
+  const lines = [...head, `set [${entry.ref}] slider ${cdp.shortName(entry, 60)}: value ${from} -> ${got}`];
+  const off = got !== want;
+  if (off && step && Math.abs(got - want) < step) lines.push(`(${want} is between its steps of ${step}: ${got} is the nearest it takes)`);
+  else if (off) lines.push(got === from ? "the slider did not move: desktop-web shot it, or try desktop-web key Right/Left after a click on it" : `it stopped at ${got}, not ${want}`);
+  console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: true }, { self: entry, selfChanged: got !== from }))].join("\n"));
+  if (off && !(step && Math.abs(got - want) < step)) process.exit(1);
+}
+
 // The state an action is measured against: the page's text lines, its elements and its accessibility nodes (dialogs, alerts).
 const stateOf = (tree) => ({ lines: tree.lines, entries: tree.entries, nodes: tree.nodes });
 const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
@@ -647,6 +776,8 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
   const out = header(after.target);
+  const chooser = chooserWindow();
+  if (chooser) out.push(...chooserLines(chooser));
   const navigated = after.target.url !== before.url;
   const shown = cdp.dialogs(nodes);
   out.push(...cdp.dialogLines(shown));
@@ -680,7 +811,7 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
     }
     if (self?.role === "link" && !o.noHint) out.push("note: the address did not change");
   }
-  if (!o.show && !o.noHint && !navigated && (nothing || cdp.busy(nodes))) out.push('result may come later: desktop-web wait "regex"');
+  if (!o.show && !o.noHint && !navigated && !chooser && (nothing || cdp.busy(nodes))) out.push('result may come later: desktop-web wait "regex"');
   return budget(out, PAGE_HINT);
 }
 
@@ -744,7 +875,7 @@ async function main() {
       let head = [];
       if (o.from) lines = fs.readFileSync(o.from, "utf8").replace(/\n$/, "").split("\n");
       else {
-        await guard();
+        await guard({ read: true });
         const r = await withPage(async (c, t) => ({ lines: await pageLines(c, { marks: o.marks }), t }));
         lines = r.lines;
         head = header(r.t);
@@ -771,7 +902,7 @@ async function main() {
       return;
     }
     case "snap": {
-      await guard();
+      await guard({ read: true });
       const out = await withPage(async (c, t) => {
         const tree = await axTree(c, { options: true });
         const { nodes, entries } = tree;
@@ -805,14 +936,21 @@ async function main() {
       await guard();
       const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
-      const { entry, note, pre } = await withPage(async (c) => {
+      const { entry, note, pre, slider } = await withPage(async (c) => {
         const tree = await axTree(c);
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", tree });
         if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled, the page does not take it yet (something it needs is missing); nothing clicked`);
+        if (cmd === "type" && entry.file)
+          fail(`${cdp.entryLine(entry)} takes a file, not text: desktop-web upload ${entry.ref} /workspace/file; nothing clicked`, 64);
+        if (cmd === "type" && entry.role === "slider") return { entry, note, pre: stateOf(tree), slider: await pressSlider(c, tree, entry, o.pos[1]) };
         await clickNode(c, nodes, entry);
         return { entry, note, pre: stateOf(tree) };
       });
       const head = note ? [note] : [];
+      if (slider) {
+        await finishSlider(entry, slider, { pre, before, head, o });
+        return;
+      }
       const { backendNodeId } = entry;
       const frameTag = entry.frameTag ?? "";
       if (cmd === "type") {
@@ -883,7 +1021,9 @@ async function main() {
         }
         pre = { lines, entries: [], nodes: [] };
       } else pre = stateOf(await withPage((c) => axTree(c)));
-      activate(win);
+      // An open file chooser takes the keys (Escape cancels it), not the browser window behind it.
+      const chooser = chooserWindow();
+      activate(chooser ?? win);
       if (o.text !== undefined) {
         // A prompt's field may hold a default: replace it. (Not on a live page, where ctrl+a would select the page.)
         if (wasBlocked) lib.key("ctrl+a");
@@ -897,7 +1037,8 @@ async function main() {
         console.log(blockedLines({ still: wasBlocked }).join("\n"));
         return;
       }
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...(await changes(pre, before, after, o))].join("\n"));
+      const closed = chooser && !chooserWindow() ? ["file chooser closed"] : [];
+      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o))].join("\n"));
       return;
     }
     case "select": {
@@ -1025,7 +1166,7 @@ async function main() {
       if (!pattern) fail('usage: desktop-web wait "regex" [--gone] [--timeout N]', 64);
       const re = regex(pattern);
       const secs = Math.min(Math.max(Number.isFinite(o.timeout) ? o.timeout : 20, 1), 60);
-      await guard();
+      await guard({ read: true });
       const start = Date.now();
       let lines = [];
       for (;;) {
@@ -1053,14 +1194,104 @@ async function main() {
         lib.pause(600);
       }
     }
+    case "upload": {
+      const [spec, file] = o.pos;
+      if (!spec || !file) fail('usage: desktop-web upload <ref|"regex"> /workspace/file', 64);
+      if (!path.isAbsolute(file)) fail(`give the file's full path, e.g. /workspace/${path.basename(file)}`, 64);
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        fail(`no file ${file}`, 64);
+      }
+      if (!st.isFile()) fail(`${file} is not a file`, 64);
+      await guard();
+      const before = await target();
+      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      const { entry, note, pre, inputs } = await withPage(async (c) => {
+        const tree = await axTree(c);
+        const { entry, nodes, note } = await resolveTarget(c, spec, o, { text: true, tree });
+        if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled; nothing clicked`);
+        await clickNode(c, nodes, entry);
+        return { entry, note, pre: stateOf(tree), inputs: cdp.fileInputs(tree.read.flatMap((r) => [r.snap])) };
+      });
+      // The click opens the browser's file chooser (a GTK dialog window); its location field (ctrl+l) takes a typed path.
+      let chooser;
+      for (let i = 0; i < 24 && !chooser; i++) {
+        lib.pause(250);
+        chooser = chooserWindow();
+      }
+      if (!chooser)
+        fail(`clicked ${cdp.entryLine(entry)} but no file chooser opened: click the file input itself or the button that opens it (desktop-web snap "upload|file|browse|choose")`);
+      try {
+        activate(chooser);
+        lib.pause(rand(300, 500));
+        lib.key("ctrl+l");
+        lib.pause(rand(200, 350));
+        if (lib.typable(file)) lib.humanType(file);
+        else lib.pasteText(file);
+        lib.pause(rand(200, 350));
+        lib.key("Return");
+      } catch (e) {
+        cancelChooser(); // never left open half-filled: it would take every later click and key
+        throw e;
+      }
+      let open = true;
+      for (let i = 0; i < 16 && open; i++) {
+        lib.pause(250);
+        open = chooserWindow() !== undefined;
+      }
+      if (open) {
+        cancelChooser();
+        fail(`the file chooser did not take ${file} (its type may not be accepted): cancelled it; nothing uploaded`);
+      }
+      const after = await settle(before, { quietMs: 900, capMs: 8000 });
+      const now = await withPage((c) => axTree(c)).catch(() => undefined);
+      const held = now ? cdp.fileInputs(now.read.map((r) => r.snap)).filter((f) => f.value && !inputs.some((x) => x.backendNodeId === f.backendNodeId && x.value === f.value)) : [];
+      const out = [...(note ? [note] : []), `picked ${file} in the file chooser of ${cdp.entryLine(entry, { nameMax: 60 })}`];
+      if (held.length > 0) out.push(`file input now holds: ${held.map((f) => JSON.stringify(path.basename(f.value.replace(/\\/g, "/")))).join(", ")}`);
+      console.log([...out, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: held.length > 0 }, { now, self: entry, selfChanged: held.length > 0 }))].join("\n"));
+      return;
+    }
+    case "drag": {
+      const [spec, to] = o.pos;
+      if (!spec || (to === undefined) === (o.by === undefined)) fail('usage: desktop-web drag <ref|"regex"> <ref|"regex">, or drag <ref|"regex"> --by dx,dy', 64);
+      await guard();
+      const before = await target();
+      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      const r = await withPage(async (c) => {
+        const tree = await axTree(c, { showable: true });
+        const src = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
+        if (src.entry.disabled) fail(`${cdp.entryLine(src.entry)}: it is disabled; nothing dragged`);
+        const dst = to === undefined ? undefined : await resolveTarget(c, to, {}, { showable: true, text: true, anyText: true, tree });
+        const from = await placeNode(c, tree.nodes, src.entry);
+        let point;
+        if (dst) {
+          const d = await placeNode(c, tree.nodes, dst.entry, { cover: false, scroll: false });
+          point = { x: Math.round(d.box.x + d.box.w / 2), y: Math.round(d.box.y + d.box.h / 2) };
+        }
+        const w = from.win;
+        const end = point ?? { x: from.box.x + from.box.w / 2 + o.by.dx, y: from.box.y + from.box.h / 2 + o.by.dy };
+        if (end.x < w.x || end.y < w.y || end.x > w.x + w.width || end.y > w.y + w.height) fail("that would release outside the browser window: a smaller --by");
+        activate(w);
+        lib.humanDrag(from.box, point ?? { by: o.by });
+        return { src, dst, pre: stateOf(tree) };
+      });
+      const after = await settle(before, { quietMs: 900 });
+      const notes = [r.src.note, r.dst?.note].filter(Boolean).map((n) => n.replace("used the text", "used the text it shows"));
+      const what = r.dst ? `to ${cdp.entryLine(r.dst.entry, { nameMax: 60 })}` : `by ${o.by.dx},${o.by.dy} px`;
+      console.log([...new Set(notes), `dragged ${cdp.entryLine(r.src.entry, { nameMax: 60 })} ${what}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, o, { self: r.src.entry }))].join("\n"));
+      return;
+    }
     case "url": {
       const t = await target();
       if (!t) fail("Chrome is not running");
-      console.log(header(t).join("\n"));
+      const d = chooserWindow();
+      console.log([...header(t), ...(d ? chooserLines(d) : [])].join("\n"));
       return;
     }
     default:
-      fail("usage: desktop-web open|text|snap|click|type|key|select|hover|shot|wait|url (see the header of this file)", 64);
+      fail("usage: desktop-web open|text|snap|click|type|upload|drag|key|select|hover|shot|wait|url (see the header of this file)", 64);
   }
 }
 

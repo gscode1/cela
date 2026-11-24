@@ -102,6 +102,56 @@ function humanClick(box) {
   return at;
 }
 
+// A drag as a person makes one: the pointer travels to the source, presses, holds a moment, leaves the press point by a few
+// px (browsers start a drag only past a small threshold), travels in eased steps with a slight wobble, then dwells over the
+// target with a small jiggle (drop targets react to movement over them: dragover fires on motion) and releases there.
+// from: a box on screen; to: a point on screen. Returns where it pressed and released.
+// `to` may be { by: { dx, dy } }: that far from where the press lands.
+function humanDrag(from, to) {
+  const start = humanMove(from);
+  if (to.by) to = { x: start.x + to.by.dx, y: start.y + to.by.dy };
+  pause(rand(80, 160));
+  exec("xdotool", "mousedown", "1");
+  pause(rand(120, 220));
+  const dx = to.x - start.x;
+  const dy = to.y - start.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const nudge = (k) => ({ x: Math.round(start.x + (dx / dist) * k), y: Math.round(start.y + (dy / dist) * k) });
+  for (const k of [3, 7]) {
+    const p = nudge(k);
+    exec("xdotool", "mousemove", String(p.x), String(p.y));
+    pause(rand(30, 60));
+  }
+  const steps = Math.min(Math.max(Math.round(dist / 25), 12), 40);
+  for (let k = 1; k <= steps; k++) {
+    const f = k / steps;
+    const ease = f * f * (3 - 2 * f);
+    const w = k < steps ? 2 : 0;
+    exec("xdotool", "mousemove", String(Math.round(start.x + dx * ease + rand(-w, w))), String(Math.round(start.y + dy * ease + rand(-w, w))));
+    pause(rand(14, 30));
+  }
+  for (let j = 0; j < 3; j++) {
+    pause(rand(60, 120));
+    exec("xdotool", "mousemove", String(Math.round(to.x + rand(-3, 3))), String(Math.round(to.y + rand(-3, 3))));
+  }
+  exec("xdotool", "mousemove", String(to.x), String(to.y));
+  pause(rand(150, 260));
+  exec("xdotool", "mouseup", "1");
+  return { from: start, to };
+}
+
+// One key pressed `n` times at a person's pace (a held arrow key repeats about this fast).
+function keyRepeat(name, n) {
+  if (n <= 0) return;
+  exec("xdotool", "key", "--clearmodifiers", "--delay", String(Math.round(rand(55, 85))), ...Array(Math.min(n, 200)).fill(name));
+}
+
+// Which of the browser's top-level windows are its dialogs (a file chooser, a save-as dialog): a dialog window transient
+// for another, unlike the browser window itself and unlike a dropdown's popup. wins: [{ id, name, transientFor, type }].
+function dialogWindows(wins) {
+  return wins.filter((w) => w.transientFor && /_NET_WM_WINDOW_TYPE_DIALOG/.test(w.type ?? ""));
+}
+
 // Text xdotool cannot type reliably (anything outside printable ASCII) goes in through the clipboard and ctrl+v; the
 // agent's clipboard is put back afterwards.
 function pasteText(text) {
@@ -295,16 +345,19 @@ module.exports = {
   cleanLines,
   copyFocused,
   desktop,
+  dialogWindows,
   envelope,
   exec,
   failer,
   findAcross,
   grepLines,
   humanClick,
+  humanDrag,
   humanMove,
   humanPress,
   humanType,
   key,
+  keyRepeat,
   literalOf,
   pasteText,
   pause,

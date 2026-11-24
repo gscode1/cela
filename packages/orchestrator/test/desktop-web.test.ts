@@ -82,8 +82,17 @@ interface CdpLib {
   textTargets(
     snap: unknown,
     re: RegExp,
-    o?: { skip?: Set<number> },
-  ): { backendNodeId: number; name: string }[];
+    o?: { skip?: Set<number>; any?: boolean },
+  ): { backendNodeId: number; name: string; clickable: boolean }[];
+  sliderPoint(
+    box: { x: number; y: number; w: number; h: number },
+    range: { min: number; max: number; vertical?: boolean },
+    want: number,
+    o?: { inset?: number },
+  ): { x: number; y: number };
+  sliderPresses(now: number, want: number, step?: number): number;
+  sliderTrack(snap: unknown, backendNodeId: number, o?: { vertical?: boolean }): number | undefined;
+  fileInputs(snaps: unknown[]): { backendNodeId: number; value: string }[];
   stateDiff(a: Partial<Entry>, b: Partial<Entry>): string[];
   controlDiffs(before: Entry[], after: Entry[], o?: { skip?: string }): string[];
   closedDialogs(
@@ -117,6 +126,7 @@ interface AxNode {
   role: { value: string };
   name?: { value: string };
   description?: { value: string };
+  value?: { value: unknown };
   properties?: { name: string; value: { value: unknown } }[];
 }
 
@@ -921,7 +931,12 @@ describe("desktop-web's CDP reader", () => {
       t("Ultra HD trap", [0, 90, 150, 16], 8), // 9
     ]);
     expect(cdp.textTargets(snap, /ultra hd/i, { skip: new Set([1006]) })).toEqual([
-      { backendNodeId: 1002, name: "Ultra HD 3840 x 2160" },
+      { backendNodeId: 1002, name: "Ultra HD 3840 x 2160", clickable: true },
+    ]);
+    // what a drag picks up or drops on needs no click listener: with `any` plain visible text counts, marked so
+    expect(cdp.textTargets(snap, /ultra hd/i, { skip: new Set([1006]), any: true })).toEqual([
+      { backendNodeId: 1002, name: "Ultra HD 3840 x 2160", clickable: true },
+      { backendNodeId: 1004, name: "Ultra HD explained", clickable: false },
     ]);
     // a click listener (isClickable) counts like the cursor
     const plain = snapOf([
@@ -932,7 +947,9 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.textTargets(plain, /4K/)).toEqual([]);
     const doc0 = (plain as { documents: { nodes: Record<string, unknown> }[] }).documents[0];
     if (doc0) doc0.nodes.isClickable = { index: [1] };
-    expect(cdp.textTargets(plain, /4K/)).toEqual([{ backendNodeId: 1001, name: "4K" }]);
+    expect(cdp.textTargets(plain, /4K/)).toEqual([
+      { backendNodeId: 1001, name: "4K", clickable: true },
+    ]);
   });
 
   it("reports state changes, closed dialogs and new alert text", () => {
@@ -997,6 +1014,108 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.chooseTarget([], [f], /where/i).pick?.ref).toBe("e1");
   });
 
+  it("lists a slider with its value and range, and a file input with how to fill it", () => {
+    const prop = (name: string, v: unknown) => ({ name, value: { value: v } });
+    const nodes: AxNode[] = [
+      {
+        nodeId: "1",
+        role: { value: "slider" },
+        name: { value: "Volume" },
+        backendDOMNodeId: 11,
+        value: { value: 25 },
+        properties: [prop("valuemin", 0), prop("valuemax", 100), prop("valuetext", "25")],
+      },
+      {
+        nodeId: "2",
+        role: { value: "slider" },
+        name: { value: "Rating" },
+        backendDOMNodeId: 12,
+        value: { value: 2 },
+        properties: [
+          prop("valuemin", 0),
+          prop("valuemax", 5),
+          prop("valuetext", "2 stars"),
+          prop("orientation", "vertical"),
+        ],
+      },
+    ];
+    expect(cdp.axEntries(nodes).map((e) => cdp.entryLine(e))).toEqual([
+      '[e11] slider "Volume" value=25 min=0 max=100',
+      '[e12] slider "Rating" value=2 "2 stars" min=0 max=5 vertical',
+    ]);
+    const snap = snapOf([
+      doc,
+      el(0, "INPUT", sty("inline-block"), [0, 0, 200, 20], { type: "file" }),
+    ]);
+    const [file] = cdp.annotate(
+      [{ ref: "e1001", backendNodeId: 1001, nodeId: "1", role: "button", name: "Resume" }],
+      snap,
+      new Set(),
+    );
+    expect(cdp.entryLine(file as Entry)).toBe(
+      '[e1001] button "Resume" (file input: desktop-web upload)',
+    );
+  });
+
+  it("aims a slider press at the value's proportional point and counts the arrow presses left", () => {
+    const box = { x: 100, y: 50, w: 220, h: 20 };
+    // a native range: the thumb travels inside half a thumb from each end
+    expect(cdp.sliderPoint(box, { min: 0, max: 100 }, 0)).toEqual({ x: 110, y: 60 });
+    expect(cdp.sliderPoint(box, { min: 0, max: 100 }, 75)).toEqual({ x: 260, y: 60 });
+    expect(cdp.sliderPoint(box, { min: 0, max: 100 }, 500)).toEqual({ x: 310, y: 60 });
+    expect(cdp.sliderPoint(box, { min: 0, max: 10 }, 5, { inset: 0 })).toEqual({ x: 210, y: 60 });
+    // vertical: the bottom is the minimum
+    const tall = { x: 0, y: 0, w: 20, h: 220 };
+    expect(cdp.sliderPoint(tall, { min: 0, max: 100, vertical: true }, 0)).toEqual({
+      x: 10,
+      y: 210,
+    });
+    expect(cdp.sliderPoint(tall, { min: 0, max: 100, vertical: true }, 100)).toEqual({
+      x: 10,
+      y: 10,
+    });
+    // the first press learns the step; then as many as the distance needs; none when a step would overshoot more
+    expect(cdp.sliderPresses(70, 75, undefined)).toBe(1);
+    expect(cdp.sliderPresses(80, 75, undefined)).toBe(-1);
+    expect(cdp.sliderPresses(71, 75, 1)).toBe(4);
+    expect(cdp.sliderPresses(75, 73, 5)).toBe(0);
+    expect(cdp.sliderPresses(70, 73, 5)).toBe(1);
+    expect(cdp.sliderPresses(75, 75, 1)).toBe(0);
+    expect(cdp.sliderPresses(0, 10000, 1)).toBe(200);
+  });
+
+  it("finds the track of a slider drawn as a thumb alone, not of one that is its own track", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 600, 200]), // 1
+      el(1, "DIV", sty("block"), [20, 100, 300, 8]), // 2 the track
+      el(2, "DIV", sty("block"), [110, 94, 20, 20]), // 3 the thumb (role slider)
+      el(1, "INPUT", sty("inline-block"), [20, 150, 300, 20], { type: "range" }), // 4 a native range
+    ]);
+    expect(cdp.sliderTrack(snap, 1003)).toBe(1002);
+    expect(cdp.sliderTrack(snap, 1004)).toBeUndefined();
+  });
+
+  it("reads which file inputs hold a file, shown or not", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "INPUT", sty("inline-block"), [0, 0, 200, 20], { type: "file" }), // 1
+      { parent: 0, type: 1, tag: "INPUT", attrs: { type: "FILE" } }, // 2 display:none, behind a button
+      el(0, "INPUT", sty("inline-block"), [0, 30, 200, 20], { type: "text" }), // 3
+    ]);
+    const d = snap as { strings: string[]; documents: { nodes: Record<string, unknown> }[] };
+    const nodes = d.documents[0]?.nodes;
+    if (nodes)
+      nodes.inputValue = {
+        index: [2, 3],
+        value: [d.strings.push("C:\\fakepath\\x.txt") - 1, d.strings.push("hi") - 1],
+      };
+    expect(cdp.fileInputs([snap])).toEqual([
+      { backendNodeId: 1001, value: "" },
+      { backendNodeId: 1002, value: "C:\\fakepath\\x.txt" },
+    ]);
+  });
+
   it("drops a button that repeats a matching link's name, but lists a different button", () => {
     const e = (ref: string, role: string, name: string): Entry => ({
       ref,
@@ -1021,6 +1140,9 @@ describe("desktop-web's CDP reader", () => {
 
 describe("desktop-lib's reading of Chrome's own dialog", () => {
   const lib = createRequire(import.meta.url)(join(files, "desktop-lib.cjs")) as {
+    dialogWindows(
+      wins: { id: string; name: string; transientFor: boolean; type?: string }[],
+    ): { id: string }[];
     atspiDialog(tree: unknown):
       | {
           title: string;
@@ -1068,5 +1190,20 @@ describe("desktop-lib's reading of Chrome's own dialog", () => {
     });
     expect(lib.atspiDialog({ role: "window", children: [{ role: "group" }] })).toBeUndefined();
     expect(lib.atspiDialog(undefined)).toBeUndefined();
+  });
+
+  it("tells the browser's file chooser window from the browser window and a dropdown's popup", () => {
+    const wins = [
+      {
+        id: "1",
+        name: "Page - Google Chrome",
+        transientFor: false,
+        type: "_NET_WM_WINDOW_TYPE_NORMAL",
+      },
+      { id: "2", name: "", transientFor: true, type: "_NET_WM_WINDOW_TYPE_COMBO" },
+      { id: "3", name: "Open File", transientFor: true, type: "_NET_WM_WINDOW_TYPE_DIALOG" },
+      { id: "4", name: "Other", transientFor: false, type: "_NET_WM_WINDOW_TYPE_DIALOG" },
+    ];
+    expect(lib.dialogWindows(wins).map((w) => w.id)).toEqual(["3"]);
   });
 });
