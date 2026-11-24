@@ -80,8 +80,9 @@ widens nothing, except that a page's script could in principle reach `127.0.0.1:
 gets a 405, and it cannot issue a CONNECT.
 
 Both tools reach it because both drive the one Chromium. A refused host shows in the browser as
-`net::ERR_INVALID_AUTH_CREDENTIALS` (the proxy answers `407 Request rejected by proxy` for every denial, including a policy
-denial), `ERR_TUNNEL_CONNECTION_FAILED` or `ERR_NAME_NOT_RESOLVED`; the skills tell the agent it is a refusal and not to retry.
+`ERR_TUNNEL_CONNECTION_FAILED` (the proxy answers `407 Request rejected by proxy` for every denial, including a policy
+denial, and the forwarder passes it on as 403, issue #460) or `ERR_NAME_NOT_RESOLVED`; the skills tell the agent it is a
+refusal and not to retry.
 
 ### The flavour: a profile field and a pool per flavour, size and mode
 
