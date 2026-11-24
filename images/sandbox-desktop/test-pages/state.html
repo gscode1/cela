@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>state after actions</title>
+<body style="font:16px sans-serif">
+<h1>State after actions</h1>
+<div role="dialog" aria-label="Cookies" id="cookies" style="position:fixed;right:10px;top:10px;width:260px;background:#fff;border:1px solid #444;padding:10px">
+  <p>We use cookies for the cookie notice test.</p>
+  <button id="accept">Accept all</button> <button id="decline">Decline</button>
+</div>
+<p>Gender:
+  <label><input type="radio" name="g" value="f"> Female</label>
+  <label><input type="radio" name="g" value="m"> Male</label>
+</p>
+<p><label>Slider value <input id="ro" readonly value="25" style="width:60px"></label></p>
+<p><label>Filter fruit <input id="filter" style="width:160px"></label></p>
+<p id="count">Showing 8 of 8</p>
+<ul id="fruits"></ul>
+<script>
+  for (const b of document.querySelectorAll("#cookies button")) b.onclick = () => document.getElementById("cookies").remove();
+  const all = ["Apple", "Banana", "Cherry", "Mango", "Orange", "Pear", "Plum", "Grape"];
+  const draw = (q) => {
+    const hits = all.filter((f) => f.toLowerCase().includes(q.toLowerCase()));
+    document.getElementById("fruits").innerHTML = hits.map((f) => `<li>${f}</li>`).join("");
+    document.getElementById("count").textContent = `Showing ${hits.length} of ${all.length}`;
+  };
+  draw("");
+  let t;
+  // debounced: the list follows the field 700 ms after the last key
+  document.getElementById("filter").addEventListener("input", (e) => {
+    clearTimeout(t);
+    t = setTimeout(() => draw(e.target.value), 700);
+  });
+</script>

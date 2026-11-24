@@ -304,7 +304,103 @@ case_shot() {
   check "shot saves an image of the element's area" "$([[ -n $f && -s $f ]]; echo $?)"
 }
 
-ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot)
+# Exit status of the last web call and whether its output matches: ok <regex> [rc].
+ok() { [[ $RC == "${2:-0}" ]] && grep -Eq -- "$1" "$OUT"; echo $?; }
+no() { grep -Eq -- "$1" "$OUT"; [[ $? == 1 ]]; echo $?; }
+
+case_custom() {
+  open custom-controls
+  web snap 'good|superb|honeypot'
+  check "snap lists a checkbox drawn by its label" "$(ok 'checkbox "Very good: 8\+" checked=false')"
+  check "snap lists a checkbox tied to its label by for=" "$(ok 'checkbox "Superb: 9\+"')"
+  check "a transparent checkbox without a visible label stays out" "$(no 'Honeypot')"
+  web click 'Very good'
+  check "a click through the label prints the new state" "$(ok 'checkbox "Very good: 8\+": checked false -> true')"
+  has_text 'checked: good true'
+  check "the page saw the label-backed checkbox change" $?
+  web click 'Superb'
+  has_text 'checked: superb true'
+  check "a for= label checkbox is clicked" $?
+  web snap 'Ultra HD|Quad HD'
+  check "snap with a regex lists clickable text" "$(ok 'clickable "Ultra HD 3840 x 2160"')"
+  web click 'Ultra HD'
+  check "click falls back to a line of clickable text" "$(ok 'clicked the text')"
+  has_text 'picked: 4K'
+  check "the role-less option took the click" $?
+  web click 'Quad HD'
+  has_text 'picked: QHD'
+  check "clickable text inside a clickable row" $?
+  web click 'Honeypot'
+  check "the honeypot cannot be clicked" "$([[ $RC != 0 ]]; echo $?)"
+  has_text 'checked: trap'
+  check "the honeypot was never touched" "$([[ $? != 0 ]]; echo $?)"
+}
+
+case_state() {
+  open state
+  check "open lists the cookie dialog" "$(ok 'open dialog "Cookies"')"
+  web click '^Male$'
+  check "a click prints the radio's state after it" "$(ok 'radio "Male": checked false -> true')"
+  check "no later hint when the state changed" "$(no 'result may come later')"
+  web click '^Female$'
+  check "the other radio of the group is reported" "$(ok '\] radio "Male": checked true -> false')"
+  web click '^Decline$'
+  check "a closed dialog is reported" "$(ok 'closed dialog "Cookies"')"
+  check "and no later hint" "$(no 'result may come later|page text unchanged')"
+  web type 'Slider value' 75
+  check "a read-only field that kept its value exits 1" "$(ok 'kept its value' 1)"
+  web type 'Filter fruit' an
+  check "type says value now" "$(ok 'value now: "an"')"
+  check "type shows a debounced filter's result" "$(ok 'Showing 3 of 8')"
+}
+
+case_names() {
+  open names
+  web snap 'button|combobox|textbox'
+  check "an icon button is named by its class" "$(ok 'button ‹tool mode-car›')"
+  check "an icon inside a button names it" "$(ok 'button ‹tool icon icon-bike›')"
+  check "an image file names a button" "$(ok 'button ‹tool src:walk-icon.png›')"
+  check "a placeholder is printed" "$(ok 'textbox "Enter destination" placeholder="Where are you going\?"')"
+  check "unnamed comboboxes are told apart by their row" "$(grep -q 'combobox "" near "Subjects Pick subjects"' "$OUT" && grep -q 'near "State Select state"' "$OUT" && grep -q 'near "City Select city"' "$OUT"; echo $?)"
+  check "a disabled button is listed as such" "$(ok 'button "Next step" disabled')"
+  web click 'Next step'
+  check "click refuses a disabled button" "$(ok 'disabled' 1)"
+  clicks 'icon-bike' by-bike
+  web click 'City'
+  has_text 'focused: city'
+  check "an unnamed combobox is clicked by its row text" $?
+  web type 'where are you' 'Lisbon'
+  check "type finds a field by its placeholder" "$(ok 'value now: "Lisbon"')"
+  web text 'going'
+  check "text with no matching line lists matching elements" "$(grep -q 'elements that match' "$OUT" && grep -q 'placeholder="Where are you going' "$OUT"; echo $?)"
+}
+
+case_form() {
+  open form
+  web snap 'Email|Phone|Zip'
+  check "a required field is marked" "$(ok 'textbox "Email".* required')"
+  check "an invalid field shows its error text" "$(ok 'textbox "Phone".* invalid.* desc="Enter a valid phone number"')"
+  web click 'Send form'
+  check "a new alert's text is named" "$(ok 'alert "Email is required"')"
+  web click 'Check zip'
+  check "when nothing else changed the invalid fields are listed" "$(ok 'invalid fields:.*Zip code')"
+}
+
+case_stale() {
+  open stale
+  web snap 'Item B'
+  local ref
+  ref=$(grep -o '\[e[0-9]*\] button "Item B"' "$OUT" | grep -o 'e[0-9]*' | head -1)
+  web click '^Rebuild list$'
+  has_text 'round 2'
+  check "the list was drawn again" $?
+  web click "$ref"
+  check "a replaced element is found again by its role and name" "$(ok 'is gone .*using e[0-9]*')"
+  has_text 'clicked: item-b at'
+  check "and clicked" $?
+}
+
+ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>stale refs</title>
+<body style="font:16px sans-serif">
+<h1>A list the page draws again</h1>
+<div id="list"></div>
+<p><button id="rebuild">Rebuild list</button></p>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  let round = 0;
+  const draw = () => {
+    round++;
+    document.getElementById("list").innerHTML = ["A", "B", "C"].map((x) => `<button id="item-${x.toLowerCase()}">Item ${x}</button>`).join(" ") + `<p>round ${round}</p>`;
+  };
+  draw();
+  document.getElementById("rebuild").addEventListener("click", draw);
+</script>
