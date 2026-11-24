@@ -44,7 +44,7 @@ loopback forwarder `packages/browser-proxy`. The npm part is pinned by `images/s
 about 1.6 GB (arm64, uncompressed) and needed by the chart's `sandbox.flavours.browser.enabled` (the default; `false` skips it); `hack/kind-up.sh --build` builds it unless `--no-browser`.
 
 `pi-sandbox-desktop` (`images/sandbox-desktop`, ADR 0065) is the sandbox base plus a headless desktop (Xvfb, openbox, the
-AT-SPI accessibility bus), Mousepad, LibreOffice Writer, Google Chrome (Google's signed apt repository, key pinned by fingerprint), xdotool and scrot, agent-desktop 1.3.1 (release
+AT-SPI accessibility bus), Mousepad, LibreOffice Writer, Google Chrome (Google's signed apt repository, key pinned by fingerprint, version pinned by the `CHROME_VERSION` build arg whose default `.github/workflows/chrome-bump.yml` keeps current, ADR 0065), xdotool and scrot, agent-desktop 1.3.1 (release
 archives by sha256 for amd64 and arm64) with the `agent-desktop-run` and `desktop-launch` wrappers, the two skills in
 `images/sandbox-desktop/skills`, and the loopback forwarder `packages/browser-proxy` for Chrome's egress proxy. Debian
 packages come from the pinned base's bookworm repositories, unpinned. It is about 1.9 GB (arm64, uncompressed) and needed

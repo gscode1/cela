@@ -254,7 +254,17 @@ Debian's Chromium fails rebrowser's `useragent` check: its `navigator.userAgentD
 Chrome always reports. The image now installs `google-chrome-stable` from Google's signed apt repository
 (`https://dl.google.com/linux/chrome/deb/ stable main`, amd64 and arm64), with the signing key checked against its pinned fingerprint
 `EB4C 1BFD 4F04 2F6D DDCC EC91 7721 F63B D38B 4796` during the build; the repository's source file is removed afterwards, so later
-`apt-get update` runs in the image do not use it and a new Chrome means a rebuilt image. `desktop-launch chrome` (`chromium` is an
+`apt-get update` runs in the image do not use it and a new Chrome means a rebuilt image.
+
+Chrome is pinned (issue #454). `ARG CHROME_VERSION` in `images/sandbox-desktop/Dockerfile` (default `158.0.8127.88-1`, so builds need
+no extra argument) is installed as `google-chrome-stable=$CHROME_VERSION` through that same signed repository, so two builds of one
+commit carry the same browser. Google's Packages index lists only the current build, so a pin expires within weeks; a build with an
+expired pin fails early with a message that names the version and says to run the bump instead of apt's bare "Version was not
+found". `.github/workflows/chrome-bump.yml` runs weekly (and on demand): `hack/chrome-bump.mjs` reads the amd64 and arm64 indexes,
+and only when both list the same `google-chrome-stable`, newer than the pin, it rewrites the default and the workflow opens a pull
+request (a lagging architecture waits for the next run). The PR is the review point: the desktop image must build and `desktop-web`
+must still pass a detector page before it merges. Run `node hack/chrome-bump.mjs` locally to move the pin by hand; to rebuild at
+another version, pass `--build-arg CHROME_VERSION=...` to `docker build`. `desktop-launch chrome` (`chromium` is an
 alias) runs it with the flags above, and the managed policy moved to `/etc/opt/chrome/policies/managed/pi-desktop.json`. Firefox ESR is
 removed, with its policy file, the cookie extension, `desktop-open`, `desktop-click`, `desktop-url` and the `desktop-text` link: web
 pages go through `desktop-web` only, and two browsers meant two behaviours for the agent to choose between. The desktop keeps
