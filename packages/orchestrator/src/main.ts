@@ -346,6 +346,11 @@ async function main(): Promise<void> {
       }
     },
     envStale: (conversationId) => repos.envStale(conversationId),
+    // An idle sandbox holds no OneCLI agent; the next env open provisions a new one (ADR 0069).
+    suspended: async (conversationId) => {
+      const session = await sessionByConversation(pool, config.shard, conversationId);
+      if (session !== undefined) await repos.park(session);
+    },
     execInFlight: (conversationId, inFlight) =>
       setExecInFlight(pool, config.shard, conversationId, inFlight),
     // Postgres is the source of truth for a session's skills; the workspace holds a copy, written at every attach.

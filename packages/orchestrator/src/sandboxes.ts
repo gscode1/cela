@@ -41,6 +41,11 @@ export interface SandboxHooks {
   /** True when the open env was built with credentials that were replaced since; the env is then closed and reopened. */
   envStale?: (conversationId: number) => boolean;
   /**
+   * After the sandbox was suspended for idleness (its Pod is gone): release what the session holds only while it runs,
+   * its OneCLI agent (docs/decisions/0069-park-onecli-agent.md). A failure is logged; the sandbox stays suspended.
+   */
+  suspended?: (conversationId: number) => Promise<void>;
+  /**
    * Durable record of "a command may be running in this conversation's sandbox". Set before a burst of commands
    * starts and cleared once the sandbox is known clean. A process that dies mid-command never clears it, so the
    * next one recycles that sandbox's Pod (see `Sandboxes.recycleAtStart`).
@@ -483,6 +488,12 @@ export class Sandboxes {
             this.#config.namespace,
             claimNameFor(this.#config.shard, conversationId),
           );
+          await this.#hooks.suspended?.(conversationId).catch((error: unknown) => {
+            log("sandbox-suspended-hook-failed", {
+              conversation: conversationId,
+              message: errorMessage(error),
+            });
+          });
         });
       }
     } catch (error) {
