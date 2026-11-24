@@ -185,6 +185,18 @@ agent-desktop skill led with the find-a-ref loop. The skills, DESKTOP.md and the
 commands; `desktop-launch` and refs are for Mousepad and Writer; a list that loads on scroll is read with End or Page_Down and
 `desktop-page`, not the wheel and a screenshot (a test keeps the order).
 
+With the web loop in use, Allegro took 28 to 32 calls. What remained: the agent printed the saved page text with `cat` and
+`sed` (hundreds of lines, four or five calls a run), and `desktop-click`, searching only links and buttons, could not reach a
+control the page exposes as a switch, so the agent scrolled and clicked by coordinates from screenshots. `desktop-click`
+without `--role` now makes one find across all roles for the pattern's literal text (one tree walk instead of one per role)
+and keeps what a person can click (link, button, switch, checkbox, radio button, tab, menu item, option and the like), which
+also wins over same-named plain text; when that find fails on a large page it searches those roles one by one. The skill
+sends rereads of the saved text to `desktop-page --from FILE "regex"`. And reading a page no longer leaves it selected:
+ctrl+a highlights the whole page until the next click, in screenshots and the live view. Escape, arrow keys, Tab and opening
+and closing the find bar do not clear it; a find-bar search that finds nothing does, and moves nothing, when the search text
+is pasted in one piece (typed letter by letter, find-as-you-type jumps to partial matches). `desktop-page`, `desktop-open` and
+`desktop-click --show` do that after copying, then restore the clipboard.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
