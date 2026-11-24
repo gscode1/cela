@@ -1,6 +1,11 @@
 # Builds the seven images (orchestrator, ingest, sandbox, sandbox-browser, sandbox-desktop, egress-proxy, e2e-driver) for
 # linux/amd64 and linux/arm64 with images/build.sh and pushes them to ghcr.io/<owner>, tagged <version>-<short sha>. Pull
 # requests from forks only build: their token cannot write packages.
+#
+# Speed (issue #436): every image and architecture is its own job on a native runner (ubuntu-24.04, ubuntu-24.04-arm), so
+# nothing runs under QEMU emulation, which made the arm64 apt-get layers 4 to 8 times slower than amd64. Each job pushes its
+# image by digest; the merge job joins the two digests under the tag. Layers are cached in the registry
+# (ghcr.io/<owner>/pi-<image>:cache-<arch>): pushes to main write the cache, pull requests and kind.yml only read it.
 name: images
 
 on:
@@ -26,10 +31,30 @@ concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Forks build only; their token cannot write packages, so they neither push images nor write the cache.
+  PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+  IMAGE_REPO: ghcr.io/${{ github.repository_owner }}
+  BUILD_CACHE_REPO: ghcr.io/${{ github.repository_owner }}
+
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          [
+            orchestrator,
+            ingest,
+            sandbox,
+            sandbox-browser,
+            sandbox-desktop,
+            egress-proxy,
+            e2e-driver,
+          ]
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,21 +63,63 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: env.PUSH == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      - name: Build and push by digest
+        if: env.PUSH == 'true'
         env:
-          IMAGE_REPO: ghcr.io/${{ github.repository_owner }}
           IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
-        run: images/build.sh all --push | tee -a "$GITHUB_STEP_SUMMARY"
+          # Only main writes the cache, so a pull request never replaces it with layers of an unmerged change.
+          BUILD_CACHE_WRITE: ${{ github.event_name != 'pull_request' && '1' || '' }}
+        run: |
+          images/build.sh "${{ matrix.image }}" --platform "linux/${{ matrix.arch }}" --push-by-digest | tee build.out
+          mkdir -p digests
+          sed -n 's/^digest: .*@//p' build.out > "digests/${{ matrix.image }}-${{ matrix.arch }}"
       - name: Build only (fork pull request)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
-        run: images/build.sh all
+        if: env.PUSH != 'true'
+        run: images/build.sh "${{ matrix.image }}" --platform "linux/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUSH == 'true'
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-arch images
+        # The same tag images/build.sh gives: <root package version>-<short sha of HEAD>.
+        run: |
+          tag="$(jq -r .version package.json)-$(git rev-parse --short HEAD)"
+          for image in orchestrator ingest sandbox sandbox-browser sandbox-desktop egress-proxy e2e-driver; do
+            name="$IMAGE_REPO/pi-$image"
+            docker buildx imagetools create -t "$name:$tag" \
+              "$name@$(cat "digests/$image-amd64")" "$name@$(cat "digests/$image-arm64")"
+            digest=$(docker buildx imagetools inspect "$name:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            printf 'image: %s\ndigest: %s@%s\n' "$name:$tag" "$name" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
