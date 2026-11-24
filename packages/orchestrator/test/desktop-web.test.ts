@@ -51,7 +51,21 @@ interface CdpLib {
   newLines(before: string[], after: string[]): string[];
   dialogs(nodes: AxNode[]): { role: string; name: string; entries: Entry[] }[];
   dialogLines(ds: { role: string; name: string; entries: Entry[] }[]): string[];
-  outline(nodes: AxNode[], lines: string[]): string[];
+  outline(
+    nodes: AxNode[],
+    lines: string[],
+    o?: { lineOf?: (n: AxNode) => number | undefined },
+  ): string[];
+  snapshotText(
+    snap: unknown,
+    o?: { width?: number },
+  ): { lines: string[]; xs: number[]; at: Map<number, number> };
+  indentLevels(xs: number[]): number[];
+  decodeEntities(s: string): string;
+  pageNotices(
+    parts: { snap: unknown; hidden?: Set<number>; url?: string }[],
+    o: { lines: string[]; title: string },
+  ): string[];
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
   childFrameIds(tree: FrameTree): string[];
   iframeTargets(
@@ -456,6 +470,216 @@ describe("desktop-web's CDP reader", () => {
       t("visible", [0, 200, 80, 16]),
     ]);
     expect(cdp.snapshotLines(snap)).toEqual(["scrollable", "escapes", "visible"]);
+  });
+
+  it("joins an inline-block that sits on its line of text, and keeps cards and wrapped columns apart", () => {
+    const ib: [string, string, string] = ["inline-block", "visible", "1"];
+    const nodes: N[] = [
+      doc, // 0
+      { ...div, box: [0, 0, 600, 200] }, // 1
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 0, 600, 20] }, // 2
+      t("Distance: ", [0, 0, 70, 16], 2), // 3
+      { parent: 2, type: 1, tag: "OUTPUT", style: ib, box: [70, 0, 40, 18] }, // 4
+      t("13km", [70, 1, 40, 16], 4), // 5
+      t(". Time:", [110, 0, 50, 16], 2), // 6
+      // two cards side by side: each holds blocks of its own, so each stays apart
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 40, 600, 40] }, // 7
+      { parent: 7, type: 1, tag: "DIV", style: ib, box: [0, 40, 160, 40] }, // 8
+      { parent: 8, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 40, 160, 20] }, // 9
+      t("Card A", [0, 40, 50, 16], 9), // 10
+      { parent: 8, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 60, 160, 20] }, // 11
+      t("10 zł", [0, 60, 40, 16], 11), // 12
+      { parent: 7, type: 1, tag: "DIV", style: ib, box: [170, 40, 160, 40] }, // 13
+      { parent: 13, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [170, 40, 160, 20] }, // 14
+      t("Card B", [170, 40, 50, 16], 14), // 15
+      // a column whose text wraps (two fragments) next to a short one
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 100, 600, 32] }, // 16
+      { parent: 16, type: 1, tag: "SPAN", style: ib, box: [0, 100, 100, 32] }, // 17
+      t("Left words", [0, 100, 100, 32], 17), // 18
+      { parent: 16, type: 1, tag: "SPAN", style: ib, box: [110, 100, 100, 16] }, // 19
+      t("Right", [110, 100, 40, 16], 19), // 20
+    ];
+    const snap = snapOf(nodes) as unknown as {
+      documents: [{ layout: { nodeIndex: number[] }; textBoxes?: unknown }];
+    };
+    const li = snap.documents[0].layout.nodeIndex.indexOf(18);
+    snap.documents[0].textBoxes = {
+      layoutIndex: [li, li],
+      bounds: [
+        [0, 100, 100, 16],
+        [0, 116, 60, 16],
+      ],
+    };
+    expect(cdp.snapshotLines(snap)).toEqual([
+      "Distance: 13km. Time:",
+      "Card A",
+      "10 zł",
+      "Card B",
+      "Left words",
+      "Right",
+    ]);
+  });
+
+  it("marks struck-through text and labels a line without letters by the element around it", () => {
+    const s9 = (display: string, deco = "none") =>
+      [
+        display,
+        "visible",
+        "1",
+        "static",
+        "visible",
+        "visible",
+        "auto",
+        "auto",
+        deco,
+      ] as unknown as [string, string, string];
+    const snap = snapOf([
+      doc, // 0
+      { parent: 0, type: 1, tag: "DIV", style: s9("block"), box: [0, 0, 400, 100] }, // 1
+      { parent: 1, type: 1, tag: "P", style: s9("block"), box: [0, 0, 400, 20] }, // 2
+      t("Price", [0, 0, 40, 16], 2), // 3
+      { parent: 2, type: 1, tag: "DEL", style: s9("inline", "line-through"), box: [45, 0, 50, 16] }, // 4
+      { parent: 4, type: 1, tag: "B", style: s9("inline"), box: [45, 0, 25, 16] }, // 5
+      t("637", [45, 0, 25, 16], 5), // 6
+      t(" zł", [70, 0, 25, 16], 4), // 7
+      t("384 zł", [100, 0, 50, 16], 2), // 8
+      {
+        parent: 1,
+        type: 1,
+        tag: "BUTTON",
+        style: s9("block"),
+        box: [0, 30, 40, 20],
+        attrs: { "aria-label": "Upvote" },
+      }, // 9
+      t("94", [0, 30, 20, 16], 9), // 10
+      // a title without letters says nothing
+      {
+        parent: 1,
+        type: 1,
+        tag: "P",
+        style: s9("block"),
+        box: [0, 60, 40, 20],
+        attrs: { title: "12" },
+      }, // 11
+      t("7", [0, 60, 10, 16], 11), // 12
+      // a toolbar named as a whole: far wider than the count, so it names nothing in it
+      {
+        parent: 1,
+        type: 1,
+        tag: "DIV",
+        style: s9("block"),
+        box: [0, 80, 400, 20],
+        attrs: { "aria-label": "Actions for this post" },
+      }, // 13
+      t("48", [0, 80, 16, 16], 13), // 14
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["Price ~637 zł~ 384 zł", "94 ‹Upvote›", "7", "48"]);
+  });
+
+  it("maps headings to their lines by node, in line order, and leaves out one without a line", () => {
+    const snap = snapOf([
+      doc, // 0
+      div, // 1
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 0, 400, 16] }, // 2
+      t("Offers come first", [0, 0, 120, 16], 2), // 3
+      { parent: 1, type: 1, tag: "H2", style: BLOCKSTYLE, box: [20, 20, 380, 16] }, // 4
+      t("Offers", [20, 20, 50, 16], 4), // 5
+    ]);
+    const text = cdp.snapshotText(snap);
+    expect(text.lines).toEqual(["Offers come first", "Offers"]);
+    expect(text.xs).toEqual([0, 20]);
+    expect(text.at.get(1004)).toBe(1);
+    const h = (id: string, name: string, level: number, backend: number): AxNode => ({
+      nodeId: id,
+      role: { value: "heading" },
+      name: { value: name },
+      backendDOMNodeId: backend,
+      properties: [{ name: "level", value: { value: level } }],
+    });
+    const nodes = [h("1", "Offers", 2, 1004), h("2", "Intro", 1, 900), h("3", "Unseen", 2, 901)];
+    const at = new Map([...text.at, [900, 0]]);
+    expect(
+      cdp.outline(nodes, text.lines, { lineOf: (n) => at.get(n.backendDOMNodeId ?? -1) }),
+    ).toEqual(["1: # Intro", "2: ## Offers"]);
+  });
+
+  it("counts indent levels from left edges several lines share", () => {
+    expect(cdp.indentLevels([0, 0, 0, 40, 41, 40, 80, 80, 0, 300])).toEqual([
+      0, 0, 0, 1, 1, 1, 2, 2, 0, 3,
+    ]);
+  });
+
+  it("decodes the HTML entities of a title", () => {
+    expect(cdp.decodeEntities("Stripe&#39;s &amp; 27&quot; &#x41;&nbsp;&bogus;")).toBe(
+      "Stripe's & 27\" A &bogus;",
+    );
+  });
+
+  it("says when a page is Chrome's error page, may be an error page, looks like a bot check or has a frame loading", () => {
+    interface Snap {
+      strings: string[];
+      documents: [{ documentURL?: number }];
+    }
+    const page = (url: string, extra: N[] = []) => {
+      const s = snapOf([doc, div, t("x", [0, 0, 10, 16]), ...extra]) as unknown as Snap;
+      s.documents[0].documentURL = s.strings.push(url) - 1;
+      return s;
+    };
+    const frame = (src: string): N => ({
+      parent: 1,
+      type: 1,
+      tag: "IFRAME",
+      style: BLOCKSTYLE,
+      box: [0, 20, 300, 65],
+      attrs: { src },
+    });
+    const short = { lines: ["Checking your browser"], title: "Just a moment" };
+    const long = {
+      lines: Array.from({ length: 41 }, (_, i) => `line ${String(i)}`),
+      title: "Shop",
+    };
+    expect(cdp.pageNotices([{ snap: page("chrome-error://chromewebdata/") }], short)).toEqual([
+      "Chrome error page: the page did not load (Chrome's reason is in its text)",
+    ]);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], {
+        lines: ["Oops"],
+        title: "404 Not Found",
+      }),
+    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { ...long, title: "404 - Shop" }),
+    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    const longer = Array.from({ length: 151 }, (_, i) => `line ${String(i)}`);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: longer, title: "Error 404" }),
+    ).toEqual([]);
+    // a number inside a title is a product's, not a status
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: ["x"], title: "SSD 500 GB" }),
+    ).toEqual([]);
+    const challenge = page("https://a.test/", [
+      frame("https://challenges.cloudflare.com/turnstile"),
+    ]);
+    expect(cdp.pageNotices([{ snap: challenge }], short)).toEqual([
+      "looks like a bot check (Cloudflare challenge): report it, do not retry",
+    ]);
+    expect(cdp.pageNotices([{ snap: challenge }], long)).toEqual([]);
+    expect(cdp.pageNotices([{ snap: challenge, hidden: new Set([1003]) }], short)).toEqual([]);
+    const badge = page("https://a.test/", [
+      frame("https://www.google.com/recaptcha/api2/anchor?k=1&size=invisible"),
+    ]);
+    expect(cdp.pageNotices([{ snap: badge }], short)).toEqual([]);
+    // out-of-process frames come as parts with their target URL: one drew a challenge, one has drawn nothing yet
+    const hc = {
+      snap: page("https://newassets.hcaptcha.com/c"),
+      url: "https://newassets.hcaptcha.com/c",
+    };
+    const blank = { snap: snapOf([doc]), url: "https://pay.test/frame" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/") }, hc, blank], short)).toEqual([
+      "looks like a bot check (hCaptcha): report it, do not retry",
+      "a frame is still loading (pay.test): read again in a moment",
+    ]);
   });
 
   it("finds the frames of a page: same-process ones from the frame tree, others from the target list", () => {

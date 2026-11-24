@@ -29,8 +29,14 @@ trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$WORK"' EXIT
 [[ -f $PAGES/zoom.html ]] || { echo "no pages in $PAGES (set SUITE_PAGES)" >&2; exit 64; }
 cp -r "$PAGES"/. "$WORK/"
 sed -i "s#__CROSS__#http://$CROSS_HOST:$CPORT#" "$WORK/frames.html"
+SPORT=$((PORT + 2))
+sed -i "s#__SLOW__#http://127.0.0.1:$SPORT#" "$WORK/loading.html"
 (cd "$WORK" && python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
 (cd "$WORK" && python3 -m http.server "$CPORT" --bind "$CROSS_HOST" >/dev/null 2>&1) &
+# a server that takes connections and never answers: a frame from it stays loading
+python3 -c 'import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(16); held = []
+while True: held.append(s.accept())' "$SPORT" >/dev/null 2>&1 &
 BASE=http://127.0.0.1:$PORT
 
 # web <desktop-web args>: runs one command, keeps its output in $OUT and status in $RC, and echoes it for the log.
@@ -182,7 +188,10 @@ case_spacing() {
   has_text 'zeta'
   timeout "$WAIT" desktop-web text '.' --context 0 --limit 40 >"$OUT" 2>&1
   sed 's/^/    | /' "$OUT"
-  for line in '145,95 zł' 'alphabeta' 'gamma delta' 'epsilon zeta' 'boldfaceitalic' 'eta' 'theta'; do
+  # inline-blocks on one line join it (eta theta, the values of Distance and Time, an inline-flex number); cards and columns
+  # built of inline-blocks span several lines and stay apart
+  for line in '145,95 zł' 'alphabeta' 'gamma delta' 'epsilon zeta' 'boldfaceitalic' 'eta theta' 'Distance: 13km\. Time: 0:22\.' \
+    'Rating 4\.5 of 5' 'Card lambda' '10 zł' 'Card mu' '20 zł' 'Left column words that wrap' 'Right nu'; do
     check "line \"$line\"" "$(grep -qE "^[0-9]+: $line\$" "$OUT"; echo $?)"
   done
   check "block elements stay separate lines" "$([[ $(grep -cE '^[0-9]+: (iota|kappa)$' "$OUT") == 2 ]]; echo $?)"
@@ -293,7 +302,40 @@ case_marks() {
   check "an image without alt is marked by its file" "$(grep -q 'Logo ‹src:brand-mark.png› end' "$OUT"; echo $?)"
   check "a picture with an accessible name is not marked" "$(grep -q 'Icon with name end' "$OUT"; echo $?)"
   timeout "$WAIT" desktop-web text . --context 0 --limit 40 >"$OUT" 2>&1
-  check "marks are opt-in" "$(grep -q '‹' "$OUT"; [[ $? == 1 ]]; echo $?)"
+  sed 's/^/    | /' "$OUT"
+  check "marks are opt-in" "$(grep -Eq '‹(star-rating|dot|src:)' "$OUT"; [[ $? == 1 ]]; echo $?)"
+  check "struck-through text is marked" "$(grep -Eq '^[0-9]+: Price ~637 zł~ 384 zł$' "$OUT"; echo $?)"
+  check "struck through by an ancestor" "$(grep -Eq '^[0-9]+: Was ~99,00~ now 79,00$' "$OUT"; echo $?)"
+  check "a bare number gets its element's label" "$(grep -Eq '^[0-9]+: 94 ‹Upvote›$' "$OUT"; echo $?)"
+  check "or its title" "$(grep -Eq '^[0-9]+: 20 ‹Comments›$' "$OUT"; echo $?)"
+  local at
+  at=$(grep -E '^[0-9]+: Offers$' "$OUT" | cut -d: -f1)
+  open marks
+  check "outline maps a heading to its own line, not one that starts with its words" "$(ok "^$at: ## Offers$")"
+  check "outline leaves out a heading no one sees" "$(no 'Unseen heading|^-:')"
+  check "outline is in line order" "$(grep -E '^[0-9]+: #' "$OUT" | cut -d: -f1 | sort -n -c; echo $?)"
+}
+
+# The head of an answer: the url only when it changed, the title with entities decoded, and notices about the page.
+case_notices() {
+  open notices
+  check "a new page prints its url" "$(ok '^url: http')"
+  check "the title's entities are decoded" "$(ok '^title: Fish & Chips "27"$')"
+  check "an ordinary short page has no notice" "$(no 'error page|bot check|still loading|redirected')"
+  web text Notices
+  check "an unchanged url is left out" "$(no '^url:')"
+  web url
+  check "desktop-web url prints it all the same" "$(ok '^url: http')"
+  web open "$BASE/redirect.html"
+  check "a redirect is said" "$(ok '^redirected from http.*/redirect\.html$')"
+  open missing
+  check "a short page with a status in its heading may be an error page" "$(ok '^may be an error page')"
+  web open "http://127.0.0.1:1/"
+  check "Chrome's error page is said" "$(ok '^Chrome error page')"
+  open challenge
+  check "a challenge provider's frame on a short page looks like a bot check" "$(ok '^looks like a bot check \(Cloudflare challenge\)')"
+  open loading
+  check "a frame that has drawn nothing is still loading" "$(ok 'frame is still loading \(127\.0\.0\.1:')"
 }
 
 case_shot() {
@@ -469,7 +511,17 @@ case_drag() {
   check "a source that is not there is refused" "$([[ $RC != 0 ]]; echo $?)"
 }
 
-ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale slider upload drag)
+# The managed policy hides the "unsupported command-line flag" infobar that --no-sandbox brings: Chrome's own window, read
+# through its accessibility tree, must not hold it.
+case_infobar() {
+  open spacing
+  local tree
+  tree=$(timeout "$WAIT" agent-desktop-run snapshot --app chrome --timeout-ms 5000 2>/dev/null)
+  check "the browser's accessibility tree was read" "$(grep -q '"ok":true' <<<"$tree"; echo $?)"
+  check "no command-line flag infobar" "$(grep -qi 'unsupported command-line flag' <<<"$tree"; [[ $? == 1 ]]; echo $?)"
+}
+
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices shot custom state names form stale slider upload drag)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

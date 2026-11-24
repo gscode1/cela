@@ -564,9 +564,13 @@ function busy(nodes) {
 // apart by more than a sliver, or have a replaced or void element (br, img, input...) between them; no space where they
 // touch. Text a person cannot see is left out: no box or a box under 2 px², entirely left of or above the page, visibility
 // hidden, under an ancestor with opacity 0, or cut away by an ancestor's overflow hidden/clip or its own clip rect
-// (screen-reader-only text, honeypot links, prompt injection).
-const STYLES = ["display", "visibility", "opacity", "position", "overflow-x", "overflow-y", "clip", "cursor"];
+// (screen-reader-only text, honeypot links, prompt injection). Struck-through text (an old price) reads ~637 zł~, and a line
+// without letters (a bare count) gets the aria-label or title of the element around it: `94 ‹Upvote›`.
+const STYLES = ["display", "visibility", "opacity", "position", "overflow-x", "overflow-y", "clip", "cursor", "text-decoration-line"];
 const BLOCK = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root|inline-block|inline-flex|inline-grid)$/;
+// Boxes that sit in a line of text like a word. One stays a line of its own (a card, a column) unless joinInline says it reads
+// as part of the line around it.
+const INLINE_BOX = /^inline-(block|flex|grid)$/;
 const VOID = new Set(["BR", "IMG", "INPUT", "SELECT", "TEXTAREA", "HR", "SVG", "VIDEO", "CANVAS", "IFRAME", "OBJECT", "EMBED"]);
 
 // Per-document helpers over a DOMSnapshot document: style, bounds, effective visibility.
@@ -630,7 +634,73 @@ function docView(snap, doc) {
     }
     return box;
   };
-  return { str, style, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
+  const display = (i) => style(i)?.[0] ?? "inline";
+  return { str, style, display, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
+}
+
+// The inline boxes (inline-block, inline-flex and the items of an inline flex or grid) of a document whose text reads as part
+// of the line around them: "Distance: <output>13km</output>." is one line. Decided from layout alone: all of the box's text
+// sits on one visual line (no fragment of it wraps, and it holds no block of its own), and that line overlaps text of the
+// same block outside the box. A card or a column built of inline-blocks spans several lines and stays apart.
+function joinInline(doc, v) {
+  const n = doc.nodes.parentIndex.length;
+  const cand = new Uint8Array(n);
+  let any = false;
+  for (let i = 0; i < n; i++) {
+    if (doc.nodes.nodeType[i] !== 1 || !v.layoutOf.has(i)) continue;
+    const p = v.parent[i];
+    if (INLINE_BOX.test(v.display(i)) || (p >= 0 && cand[p] && /^inline-(flex|grid)$/.test(v.display(p)))) {
+      cand[i] = 1;
+      any = true;
+    }
+  }
+  const out = new Set();
+  if (!any) return out;
+  // Text nodes whose fragments (one per line it takes) start at different heights: text that wraps.
+  const wrapped = new Set();
+  const tb = doc.textBoxes;
+  if (tb?.layoutIndex) {
+    const first = new Map();
+    tb.layoutIndex.forEach((li, k) => {
+      const [, y, , h] = tb.bounds[k];
+      if (!first.has(li)) first.set(li, y);
+      else if (Math.abs(first.get(li) - y) > 0.5 * h) wrapped.add(li);
+    });
+  }
+  const bands = new Map(); // candidate -> { top, bottom, h, bad }
+  const flows = new Map(); // nearest block that is no candidate -> its pieces of text
+  const flowOf = new Map(); // candidate -> that block
+  for (let t = 0; t < n; t++) {
+    if (doc.nodes.nodeType[t] !== 3 || v.str(doc.nodes.nodeValue[t]).trim() === "") continue;
+    const b = v.bounds(t);
+    if (!b || v.tiny(b)) continue;
+    let flow;
+    const inside = [];
+    for (let p = v.parent[t]; p > 0; p = v.parent[p]) {
+      if (cand[p]) {
+        const s = bands.get(p) ?? { top: Infinity, bottom: -Infinity, h: 0, bad: false };
+        s.top = Math.min(s.top, b.y);
+        s.bottom = Math.max(s.bottom, b.y + b.h);
+        s.h = Math.max(s.h, b.h);
+        if (flow !== undefined || wrapped.has(v.layoutOf.get(t))) s.bad = true;
+        bands.set(p, s);
+        inside.push(p);
+      } else if (flow === undefined && BLOCK.test(v.display(p))) flow = p;
+    }
+    if (flow === undefined) continue;
+    for (const p of inside) if (!flowOf.has(p)) flowOf.set(p, flow);
+    if (!flows.has(flow)) flows.set(flow, []);
+    flows.get(flow).push({ top: b.y, bottom: b.y + b.h, inside });
+  }
+  for (const [a, s] of bands) {
+    const h = s.bottom - s.top;
+    if (s.bad || h > 1.5 * s.h) continue;
+    const meets = (flows.get(flowOf.get(a)) ?? []).some(
+      (q) => Math.min(q.bottom, s.bottom) - Math.max(q.top, s.top) >= 0.5 * Math.min(q.bottom - q.top, h) && !q.inside.includes(a),
+    );
+    if (meets) out.add(a);
+  }
+  return out;
 }
 
 // Elements that stand for themselves or carry a name of their own: never marked as a nameless picture.
@@ -685,14 +755,22 @@ function snapshotGroups(snap, { marks = false } = {}) {
       }
     }
     const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
+    const joined = joinInline(doc, v);
     const blockOf = (i) => {
       let p = v.parent[i];
-      while (p > 0 && !BLOCK.test(v.style(p)?.[0] ?? "inline")) p = v.parent[p];
+      while (p > 0 && (!BLOCK.test(v.display(p)) || joined.has(p))) p = v.parent[p];
       return p;
+    };
+    // text-decoration is drawn through the descendants of the element that sets it, though no descendant computes it
+    const struckAt = new Map();
+    const struck = (i) => {
+      if (i < 0) return false;
+      if (!struckAt.has(i)) struckAt.set(i, /line-through/.test(v.style(i)?.[8] ?? "") || struck(v.parent[i]));
+      return struckAt.get(i);
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [] });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity });
       return groups.get(g);
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
@@ -743,18 +821,69 @@ function snapshotGroups(snap, { marks = false } = {}) {
         continue;
       }
       const g = group(blockOf(i));
-      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || apart(g.box, b))) g.text += " ";
-      g.text += raw;
+      const s = struck(i);
+      if (g.struck && !s) g.text = g.text.replace(/\s*$/, (m) => `~${m}`);
+      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || apart(g.box, b) || s !== g.struck)) g.text += " ";
+      g.text += s && !g.struck ? raw.replace(/^\s*/, (m) => `${m}~`) : raw;
+      g.struck = s;
       g.box = b;
       g.brk = false;
+      g.x = Math.min(g.x, b.x);
       g.texts.push(i);
     }
     for (const g of groups.values()) {
-      const t = squash(g.text);
-      if (t) lines.push({ text: t, doc, v, block: g.block, texts: g.texts });
+      let t = squash(g.struck ? g.text.replace(/\s*$/, "~") : g.text);
+      if (t && !LETTER.test(t) && g.texts.length > 0) {
+        const label = labelAround(snap, doc, v, g.texts[0]);
+        if (label) t += ` ‹${clip(label, 40)}›`;
+      }
+      if (t) lines.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
     }
   }
   return lines;
+}
+
+// The aria-label or title (in letters) of the nearest element around text node i that holds little more than the text: what
+// a bare number stands for ("94" in a button named "Upvote"). A row or a toolbar named as a whole names no number in it.
+function labelAround(snap, doc, v, i) {
+  const t = v.bounds(i);
+  if (!t) return undefined;
+  for (let p = v.parent[i], k = 0; p > 0 && k < 6; p = v.parent[p], k++) {
+    if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) return undefined;
+    const b = v.bounds(p);
+    if (b && (b.w > t.w + 120 || b.h > Math.max(3 * t.h, t.h + 40))) return undefined;
+    const a = nodeAttrs(snap, doc, p);
+    for (const l of [squash(a["aria-label"]), squash(a.title)]) if (b && LETTER.test(l)) return l;
+  }
+  return undefined;
+}
+
+// snapshotLines wrapped to `width`, with where each line is: `xs` (its left edge, px) and `at` (backend node id -> index of
+// the first line holding the element's text), so a heading maps to its line by node, not by its words.
+function snapshotText(snap, { marks = false, width = 200 } = {}) {
+  const lines = [];
+  const xs = [];
+  const at = new Map();
+  for (const g of snapshotGroups(snap, { marks })) {
+    const first = lines.length;
+    for (const l of wrapLines([g.text], width)) {
+      lines.push(l);
+      xs.push(g.x);
+    }
+    const ids = g.doc.nodes.backendNodeId;
+    for (const t of g.texts) for (let p = g.v.parent[t]; p >= 0 && !at.has(ids[p]); p = g.v.parent[p]) at.set(ids[p], first);
+  }
+  return { lines, xs, at };
+}
+
+// Nesting levels from the lines' left edges: how many left edges that several lines share lie left of a line's. A thread's
+// replies, a nested list: a level per step in, whatever its width in px. Columns side by side read as levels too.
+function indentLevels(xs, { max = 12 } = {}) {
+  const key = (x) => Math.round(x / 4);
+  const count = new Map();
+  for (const x of xs) count.set(key(x), (count.get(key(x)) ?? 0) + 1);
+  const edges = [...count].filter(([, c]) => c >= 2).map(([k]) => k);
+  return xs.map((x) => Math.min(edges.filter((e) => e < key(x)).length, max));
 }
 
 // Visible lines a click can act on although no element is named so (role-less options, filter rows, custom list items): text
@@ -779,7 +908,9 @@ function textTargets(snap, re, { skip = new Set(), any = false } = {}) {
     const { clickable, holds } = perDoc.get(doc);
     let hit;
     let ok = false;
-    for (const t of g.texts) {
+    // the piece that matches first: one line can hold several controls' words (buttons side by side)
+    const own = (t) => re.test(squash(v.str(doc.nodes.nodeValue[t])));
+    for (const t of [...g.texts.filter(own), ...g.texts.filter((t) => !own(t))]) {
       const p = v.parent[t];
       ok = /^(pointer|grab|move)$/.test(v.style(p)?.[7] ?? "");
       for (let a = p; !ok && a >= 0; a = v.parent[a]) {
@@ -934,19 +1065,149 @@ function liveTexts(nodes) {
   return out;
 }
 
-// The page's headings with the text line each starts at, an outline to aim a regex at.
-function outline(nodes, lines, { max = 20 } = {}) {
+// The page's headings with the text line each starts at, in line order: an outline to aim a regex or --lines at. `lineOf`
+// maps a heading's node to its line (snapshotText's `at`); a heading without a line there shows no text a person can see
+// and is left out. Without `lineOf` a heading is found by its words.
+function outline(nodes, lines, { max = 20, lineOf } = {}) {
   const out = [];
   for (const n of nodes) {
     if (n.ignored || value(n.role) !== "heading") continue;
     const name = squash(value(n.name));
     if (!name) continue;
     const level = (n.properties ?? []).find((p) => p.name === "level");
-    const at = lines.findIndex((l) => l.startsWith(name.slice(0, 40)));
-    out.push(`${at >= 0 ? `${at + 1}:` : "-:"} ${"#".repeat(Number(value(level?.value) ?? 2))} ${clip(name, 100)}`);
-    if (out.length >= max) break;
+    const at = lineOf ? (lineOf(n) ?? -1) : lines.findIndex((l) => l.startsWith(name.slice(0, 40)));
+    if (at >= 0) out.push({ at, text: `${at + 1}: ${"#".repeat(Number(value(level?.value) ?? 2))} ${clip(name, 100)}` });
+  }
+  return out
+    .sort((a, b) => a.at - b.at)
+    .slice(0, max)
+    .map((h) => h.text);
+}
+
+// HTML entities as /json/list writes them into a page title: "Stripe&#39;s", "A &amp; B".
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodeEntities(s) {
+  return String(s ?? "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] !== "#") return ENTITIES[e.toLowerCase()] ?? m;
+    const c = /^#x/i.test(e) ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+    return c > 0 && c < 0x110000 ? String.fromCodePoint(c) : m;
+  });
+}
+
+// Challenge providers whose widget a bot check shows in a frame of its own, known by the frame's URL. Providers only, never a
+// site: the same check reads any site that uses one. reCAPTCHA's invisible badge (size=invisible) sits on ordinary pages.
+const CHALLENGES = [
+  ["Cloudflare challenge", (u) => u.hostname === "challenges.cloudflare.com"],
+  ["hCaptcha", (u) => /(^|\.)hcaptcha\.com$/.test(u.hostname)],
+  ["reCAPTCHA", (u) => /(^|\.)(google\.com|recaptcha\.net)$/.test(u.hostname) && u.pathname.startsWith("/recaptcha/") && !/[?&]size=invisible/.test(u.search)],
+  ["DataDome", (u) => /(^|\.)captcha-delivery\.com$/.test(u.hostname)],
+  ["HUMAN (PerimeterX)", (u) => /(^|\.)(px-cdn\.net|px-cloud\.net|perimeterx\.net|humansecurity\.com)$/.test(u.hostname)],
+  ["Arkose", (u) => /(^|\.)(arkoselabs\.com|funcaptcha\.com)$/.test(u.hostname)],
+];
+// A bot check says little: a page this short (in lines) can be one; a longer one is a page with content. A site's error page
+// keeps the site's menus and footer around its message, so it may be longer.
+const SHORT_PAGE = 40;
+const ERROR_PAGE = 150;
+// An HTTP error status at the start or the end of a title or heading: "404 - Shop", "Error 404", "Not found (404)".
+const STATUS = /^\W*(40[0-8]|410|429|451|50[0-4])(\D|$)|(^|\D)(40[0-8]|410|429|451|50[0-4])\W*$/;
+
+// What the page is, beyond its text, as notices for an answer's header. `parts` are the page and its out-of-process frames
+// as read: { snap, hidden (backend ids), url (a frame's target URL) }. Says when the page is Chrome's own error page, may be
+// a site's error page (a status number at the edge of the title or first h1 of a page that is not long), looks like a bot check (a visible frame
+// of a challenge provider on a short page), or shows a frame that has drawn nothing yet. There is no HTTP status: reading it
+// would take Network.enable, which a page can detect.
+function pageNotices(parts, { lines = [], title = "" } = {}) {
+  const out = [];
+  const short = lines.length <= SHORT_PAGE;
+  const str = (snap, i) => (i >= 0 ? snap.strings[i] : "");
+  const main = parts[0]?.snap?.documents?.[0];
+  if (main && /^chrome-error:/.test(str(parts[0].snap, main.documentURL)))
+    out.push("Chrome error page: the page did not load (Chrome's reason is in its text)");
+  else if (lines.length <= ERROR_PAGE && (STATUS.test(squash(title)) || STATUS.test(firstH1(parts[0]) ?? "")))
+    out.push("may be an error page: a status number in the title or heading");
+  const frames = [];
+  const loading = [];
+  // a document that has drawn nothing: no text and no element with a box but its root
+  const empty = (snap, doc) =>
+    !(doc?.layout?.nodeIndex ?? []).some((ni, li) => {
+      if (doc.nodes.nodeType[ni] === 3) return str(snap, doc.nodes.nodeValue[ni]).trim() !== "";
+      const b = doc.layout.bounds[li];
+      return doc.nodes.nodeType[ni] === 1 && !/^(HTML|HEAD|BODY)$/i.test(str(snap, doc.nodes.nodeName[ni])) && b[2] * b[3] >= 4;
+    });
+  for (const [k, part] of parts.entries()) {
+    const { snap } = part;
+    if (k > 0 && part.url) {
+      frames.push(part.url);
+      const doc = snap.documents?.[0];
+      const html = doc?.layout?.bounds?.[0];
+      if (empty(snap, doc) && (!html || (html[2] >= 100 && html[3] >= 50))) loading.push(part.url);
+    }
+    for (const doc of snap.documents ?? []) {
+      const v = docView(snap, doc);
+      const inner = new Map((doc.nodes.contentDocumentIndex?.index ?? []).map((i, j) => [i, doc.nodes.contentDocumentIndex.value[j]]));
+      for (const [i] of v.layoutOf) {
+        if (doc.nodes.nodeType[i] !== 1 || !/^i?frame$/i.test(v.str(doc.nodes.nodeName[i]))) continue;
+        const b = v.bounds(i);
+        if (!b || v.tiny(b) || v.offscreen(b) || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
+        const sub = inner.has(i) ? snap.documents[inner.get(i)] : undefined;
+        let url = sub ? str(snap, sub.documentURL) : "";
+        if (!/^https?:/.test(url)) {
+          try {
+            url = new URL(nodeAttrs(snap, doc, i).src ?? "", str(snap, doc.documentURL)).href;
+          } catch {
+            url = "";
+          }
+        }
+        if (url) frames.push(url);
+        if (sub && b.w >= 100 && b.h >= 50 && empty(snap, sub)) loading.push(url || "about:blank");
+      }
+    }
+  }
+  for (const f of short ? frames : []) {
+    let u;
+    try {
+      u = new URL(f);
+    } catch {
+      continue;
+    }
+    const hit = CHALLENGES.find(([, test]) => test(u));
+    if (hit) {
+      out.push(`looks like a bot check (${hit[0]}): report it, do not retry`);
+      break;
+    }
+  }
+  if (loading.length > 0) {
+    const host = (u) => {
+      try {
+        return new URL(u).host || u;
+      } catch {
+        return u;
+      }
+    };
+    const hosts = [...new Set(loading.map(host))];
+    out.push(`${loading.length === 1 ? "a frame is" : `${loading.length} frames are`} still loading (${hosts.slice(0, 3).join(", ")}): read again in a moment`);
   }
   return out;
+}
+
+// The text of the first visible h1 of a part's main document.
+function firstH1(part) {
+  const doc = part?.snap?.documents?.[0];
+  if (!doc) return undefined;
+  const { snap } = part;
+  const v = docView(snap, doc);
+  for (const [i] of v.layoutOf) {
+    if (doc.nodes.nodeType[i] !== 1 || v.str(doc.nodes.nodeName[i]).toUpperCase() !== "H1" || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
+    let text = "";
+    for (let k = i + 1; k < doc.nodes.parentIndex.length && text.length < 200; k++) {
+      let p = doc.nodes.parentIndex[k];
+      while (p > i) p = doc.nodes.parentIndex[p];
+      if (p !== i) break;
+      if (doc.nodes.nodeType[k] === 3) text += v.str(doc.nodes.nodeValue[k]);
+    }
+    return squash(text);
+  }
+  return undefined;
 }
 
 // Entries inside the main landmark first (header and navigation come before the content in document order).
@@ -1092,6 +1353,10 @@ module.exports = {
   iframeTargets,
   newLines,
   outline,
+  decodeEntities,
+  pageNotices,
+  snapshotText,
+  indentLevels,
   wrapLines,
   assertAllowed,
   axEntries,

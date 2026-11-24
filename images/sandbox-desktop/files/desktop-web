@@ -30,6 +30,11 @@
 //   desktop-web wait "regex" [--gone]         wait until the text appears (or disappears); --timeout N seconds (at most 60)
 //   desktop-web url                           url and title
 //   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›
+//   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
+//
+// Answers start with the page's url (only when it changed since the last answer, cut to 120 characters) and title, then
+// notices: redirected from the typed URL, Chrome's error page, a likely error page or bot check, a frame still loading.
+// Struck-through text reads ~637 zł~.
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
 // the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
@@ -55,6 +60,7 @@ const BUDGET_CHARS = 4000;
 const PROBE_MS = 2500;
 const WIDTH = 200;
 const REFS = () => path.join(lib.sessionDir(), "web-refs.json");
+const LAST_URL = () => path.join(lib.sessionDir(), "web-url");
 
 // desktop-launch starts Chrome on a random port and writes it to the state directory.
 function port() {
@@ -97,6 +103,7 @@ function parseArgs(argv) {
     } else if (a === "--pad") (o.pad = Math.min(Math.max(Number(val(i, a)), 0), 300)), i++;
     else if (a === "--gone") o.gone = true;
     else if (a === "--marks") o.marks = true;
+    else if (a === "--indent") o.indent = true;
     else if (a === "--enter") o.enter = true;
     else if (a === "--append") o.append = true;
     else o.pos.push(a);
@@ -247,7 +254,7 @@ async function frameParts(c) {
       try {
         const conn = await cdp.connect(s.webSocketDebuggerUrl);
         c.extra.push(conn);
-        parts.push({ tag: s.tag, send: conn.send, target: s.id, parent: parts.find((p) => p.target === s.parentId) });
+        parts.push({ tag: s.tag, send: conn.send, target: s.id, url: s.url, parent: parts.find((p) => p.target === s.parentId) });
       } catch {
         // gone since the list was read
       }
@@ -289,15 +296,23 @@ async function axOf(part) {
   return trees.flatMap((t) => cdp.prefixNodes(t.nodes, `${part.tag}${t.prefix}`, part.tag));
 }
 
+// A layout snapshot, asked for twice when the first times out: a heavy page can miss the deadline once while it builds.
+async function capture(part) {
+  const ask = () => part.send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
+  try {
+    return await ask();
+  } catch (e) {
+    if (!/timed out/.test(e.message)) throw e;
+    return ask();
+  }
+}
+
 // Reads every visible part: its layout snapshot, the elements hidden in it and, with `ax`, its accessibility nodes.
 async function readParts(c, { ax = false } = {}) {
   const parts = await frameParts(c);
   const read = await Promise.all(
     parts.map(async (part) => {
-      const [snap, nodes] = await Promise.all([
-        part.send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES }),
-        ax ? axOf(part) : undefined,
-      ]);
+      const [snap, nodes] = await Promise.all([capture(part), ax ? axOf(part) : undefined]);
       return { part, snap, nodes, hidden: cdp.hiddenElements(snap) };
     }),
   );
@@ -320,9 +335,27 @@ async function readParts(c, { ax = false } = {}) {
   return out;
 }
 
-async function pageLines(c, { marks = false } = {}) {
-  return (await readParts(c)).flatMap((r) => cdp.wrapLines(cdp.snapshotLines(r.snap, { marks }), WIDTH));
+// The text of a read (readParts), the page's first: { lines, xs (left edges), lineOf (accessibility node -> line index, by
+// its element), notes (cdp.pageNotices) }. `t` is the page's target, for its title.
+function readText(read, t, { marks = false } = {}) {
+  const lines = [];
+  const xs = [];
+  const at = new Map();
+  for (const r of read) {
+    const s = cdp.snapshotText(r.snap, { marks, width: WIDTH });
+    for (const [id, k] of s.at) at.set(`${r.part.tag}:${id}`, lines.length + k);
+    lines.push(...s.lines);
+    xs.push(...s.xs);
+  }
+  const notes = cdp.pageNotices(
+    read.map((r) => ({ snap: r.snap, hidden: r.hidden, url: r.part.url })),
+    { lines, title: cdp.decodeEntities(t?.title) },
+  );
+  return { lines, xs, lineOf: (n) => at.get(`${n.frameTag ?? ""}:${n.backendDOMNodeId}`), notes };
 }
+
+const pageText = async (c, o) => readText(await readParts(c), c.target, o);
+const pageLines = async (c, o) => (await pageText(c, o)).lines;
 
 // A page whose renderer is blocked (a JS alert, confirm, prompt or leave-page dialog is open, or it is stuck in a loop) still
 // lists its target, but Page.getLayoutMetrics, answered by the renderer, never comes back. Every read would then wait out its
@@ -394,7 +427,8 @@ const fingerprint = (lines) => `${lines.length}:${lines.join("\n").length}:${lin
 
 // Waits for the page to answer an action: the URL or title changes, or nothing changes within quietMs (an in-page
 // update); then the page's text must hold still for two reads in a row, and, with `want`, contain a match for it.
-// All within capMs. Returns { target, lines }.
+// All within capMs. A page of one or two lines (a bot check, an error) must hold still for three reads. Returns { target,
+// lines, lineOf, notes } (readText).
 async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
   const start = Date.now();
   let t = before;
@@ -409,27 +443,57 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
       if ((await probe()).state === "blocked") return { target: t, lines: [], blocked: true };
     }
   }
-  let lines = [];
+  let text = { lines: [], notes: [] };
   let last;
   let same = 0;
   while (Date.now() - start < capMs) {
     lib.pause(400);
     try {
-      lines = await withPage((c) => pageLines(c));
+      text = await withPage((c) => pageText(c));
     } catch {
       same = 0; // between documents
-      if ((await probe()).state === "blocked") return { target: (await target()) ?? t, lines: [], blocked: true };
+      if ((await probe()).state === "blocked") return { target: (await target()) ?? t, lines: [], notes: [], blocked: true };
       continue;
     }
-    const f = fingerprint(lines);
-    same = lines.length >= 3 && f === last ? same + 1 : 0;
+    const f = fingerprint(text.lines);
+    same = text.lines.length > 0 && f === last ? same + 1 : 0;
     last = f;
-    if (same >= 1 && (!want || lines.some((l) => want.test(l)))) break;
+    if (same >= (text.lines.length >= 3 ? 1 : 2) && (!want || text.lines.some((l) => want.test(l)))) break;
   }
-  return { target: (await target()) ?? t, lines };
+  // Every read failed or found a document between pages: one more, so an answer never says "0 lines" of a page with text.
+  if (text.lines.length === 0) text = await withPage((c) => pageText(c)).catch(() => text);
+  return { ...text, target: (await target()) ?? t };
 }
 
-const header = (t) => [`url: ${t.url}`, `title: ${t.title}`];
+// The head of an answer: the url when it changed since the last answer (`full`: always, uncut), the title, and notices.
+function header(t, notes = [], { full = false } = {}) {
+  let last;
+  try {
+    last = fs.readFileSync(LAST_URL(), "utf8");
+  } catch {
+    last = undefined;
+  }
+  const out = full || last !== t.url ? [`url: ${full ? t.url : lib.clip(t.url, 120)}`] : [];
+  try {
+    fs.mkdirSync(path.dirname(LAST_URL()), { recursive: true });
+    fs.writeFileSync(LAST_URL(), t.url);
+  } catch {
+    // the next answer prints the url again
+  }
+  return [...out, `title: ${cdp.decodeEntities(t.title)}`, ...notes];
+}
+
+// Whether `typed` led elsewhere: another origin or path (a query or fragment a page rewrites in place does not count).
+function redirected(typed, final) {
+  try {
+    const a = new URL(typed);
+    const b = new URL(final);
+    const trim = (u) => u.pathname.replace(/\/+$/, "");
+    return a.origin !== b.origin || trim(a) !== trim(b);
+  } catch {
+    return false;
+  }
+}
 const pageFile = (o) => o.out ?? path.join(lib.sessionDir(), "web-page.txt");
 
 // Roles a hover or a screenshot can aim at besides what a click can: pictures and groups of things, found by their name.
@@ -453,8 +517,8 @@ async function axTree(c, { options = false, showable = false } = {}) {
       if (info) Object.assign(e, { options: info.options, select: info });
     }
   }
-  const lines = read.flatMap((r) => cdp.wrapLines(cdp.snapshotLines(r.snap), WIDTH));
-  return { nodes, entries: cdp.mainFirst(nodes, entries), read, lines };
+  const { lines, lineOf, notes } = readText(read, c.target);
+  return { nodes, entries: cdp.mainFirst(nodes, entries), read, lines, lineOf, notes };
 }
 
 // Lines of text a click can act on that no element's name matches (cdp.textTargets), as entries of role "clickable"; with
@@ -489,19 +553,25 @@ async function namedLike(re, tree) {
   return ["elements that match (no text line does):", ...els.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`)];
 }
 
-// What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings.
-async function describe(lines, nodes, pattern, o, tree) {
+// What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings. `lineOf`
+// maps a heading to its line (readText).
+async function describe(lines, nodes, pattern, o, tree, lineOf) {
   const file = lib.savePage(lines, pageFile(o));
   const out = cdp.dialogLines(cdp.dialogs(nodes));
   if (pattern) {
     const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
     out.push(...hits);
-    if (hits.length === 1 && hits[0].startsWith("no match")) out.push(...(await namedLike(regex(pattern), tree)), "outline:", ...cdp.outline(nodes, lines));
+    if (hits.length === 1 && hits[0].startsWith("no match"))
+      out.push(...(await namedLike(regex(pattern), tree)), "outline:", ...cdp.outline(nodes, lines, { lineOf }));
   } else {
-    const ol = cdp.outline(nodes, lines);
+    const ol = cdp.outline(nodes, lines, { lineOf });
     out.push(...(ol.length > 0 ? ["outline (line: heading):", ...ol] : lines.slice(0, 15).map((l, i) => `${i + 1}: ${l}`)));
   }
-  out.push(`(${lines.length} lines in ${file}; read with desktop-web text "regex" or --lines A-B)`);
+  out.push(
+    lines.length > 0
+      ? `(${lines.length} lines in ${file}; read with desktop-web text "regex" or --lines A-B)`
+      : "(no text on the page yet: read it again with desktop-web text \"regex\", or desktop-web shot it)",
+  );
   return out;
 }
 
@@ -775,7 +845,7 @@ const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemch
 async function changes(pre, before, after, o, { now, self, selfChanged = false } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
-  const out = header(after.target);
+  const out = header(after.target, after.notes);
   const chooser = chooserWindow();
   if (chooser) out.push(...chooserLines(chooser));
   const navigated = after.target.url !== before.url;
@@ -786,7 +856,7 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
     lib.savePage(after.lines, pageFile(o));
     out.push(...lib.grepLines(after.lines, regex(o.show), { limit: o.limit ?? 25, context: o.context, width: WIDTH }));
   } else if (navigated) {
-    out.push(...(await describe(after.lines, nodes, undefined, o, async () => now)).slice(cdp.dialogLines(shown).length));
+    out.push(...(await describe(after.lines, nodes, undefined, o, async () => now, after.lineOf)).slice(cdp.dialogLines(shown).length));
   } else {
     const added = cdp.newLines(pre.lines, after.lines);
     const gone = after.lines.length > 0 ? cdp.newLines(after.lines, pre.lines) : [];
@@ -860,12 +930,16 @@ async function main() {
       lib.pause(120);
       lib.key("Return");
       const after = await settle(before, { quietMs: 8000, capMs: 25000, want: o.pos[1] ? regex(o.pos[1]) : undefined });
+      const moved = redirected(url, after.target.url) ? [`redirected from ${lib.clip(url, 120)}`] : [];
       if (after.blocked) {
-        console.log([...header(after.target), ...blockedLines()].join("\n"));
+        console.log([...header(after.target, moved), ...blockedLines()].join("\n"));
         return;
       }
       const nodes = await withPage(axNodes);
-      const out = [...header(after.target), ...(await describe(after.lines, nodes, o.pos[1], o, () => withPage((c) => axTree(c))))];
+      const out = [
+        ...header(after.target, [...moved, ...after.notes]),
+        ...(await describe(after.lines, nodes, o.pos[1], o, () => withPage((c) => axTree(c)), after.lineOf)),
+      ];
       if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;
@@ -876,12 +950,17 @@ async function main() {
       if (o.from) lines = fs.readFileSync(o.from, "utf8").replace(/\n$/, "").split("\n");
       else {
         await guard({ read: true });
-        const r = await withPage(async (c, t) => ({ lines: await pageLines(c, { marks: o.marks }), t }));
+        const r = await withPage(async (c, t) => ({ ...(await pageText(c, { marks: o.marks })), t }));
         lines = r.lines;
-        head = header(r.t);
+        head = header(r.t, r.notes);
         // The saved text stays the plain page: its line numbers are what outlines and --lines refer to.
         if (!o.marks) lib.savePage(lines, pageFile(o));
         else head.push("(marks ‹…› come from the page's markup, and line numbers differ from the saved text)");
+        if (o.indent) {
+          // a regex is matched against the page's own words, without the marks (below)
+          const levels = cdp.indentLevels(r.xs);
+          lines = lines.map((l, i) => (levels[i] > 0 ? `${">".repeat(levels[i])} ${l}` : l));
+        }
       }
       if (o.lines) {
         const m = /^(\d+)-(\d+)$/.exec(o.lines);
@@ -895,7 +974,8 @@ async function main() {
       }
       const pattern = o.pos[0];
       if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
-      const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
+      const re = regex(pattern);
+      const hits = lib.grepLines(lines, o.indent ? { test: (l) => re.test(l.replace(/^>+ /, "")) } : re, { limit: o.limit ?? 25, context: o.context, width: WIDTH });
       if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) hits.push(...(await namedLike(regex(pattern), () => withPage((c) => axTree(c)))));
       const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
@@ -923,7 +1003,7 @@ async function main() {
         const sel = entries.find((e) => e.select && !e.select.multiple && e.select.size <= 1 && lines.includes(cdp.entryLine(e)));
         const alt = sel?.options.find((x) => !x.selected && !x.disabled);
         if (sel && alt) shown.push(`(pick an option: desktop-web select ${sel.ref} "${alt.text}")`);
-        return [...header(t), ...cdp.dialogLines(cdp.dialogs(nodes)), ...shown];
+        return [...header(t, tree.notes), ...cdp.dialogLines(cdp.dialogs(nodes)), ...shown];
       });
       console.log(budget(out, "narrow the regex").join("\n"));
       return;
@@ -1287,7 +1367,7 @@ async function main() {
       const t = await target();
       if (!t) fail("Chrome is not running");
       const d = chooserWindow();
-      console.log([...header(t), ...(d ? chooserLines(d) : [])].join("\n"));
+      console.log([...header(t, [], { full: true }), ...(d ? chooserLines(d) : [])].join("\n"));
       return;
     }
     default:

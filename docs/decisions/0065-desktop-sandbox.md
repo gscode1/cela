@@ -243,7 +243,8 @@ from the window geometry and the layout viewport. A test fails when `desktop-web
 Measured in the lab (Chromium 156, Xvfb, openbox): with this reader rebrowser's `runtimeEnableLeak` stayed green across about
 170 calls, while one `Runtime.enable` turns it red for the rest of the page's life; sannysoft and BrowserScan ("Normal") pass;
 Allegro's listing, consent dialog, offer and price worked without a captcha; clicks landed within 0 px on a test page.
-`--no-sandbox` shows Chromium's "unsupported command-line flag" bar (the reader's geometry accounts for it). No
+`--no-sandbox` shows Chromium's "unsupported command-line flag" bar (the reader's geometry accounts for it; since #469 the
+managed policy hides it). No
 `--enable-unsafe-swiftshader`: rebrowser reads software WebGL as Playwright's default, so pages get no WebGL instead. The cookie extension is Firefox-only: in Chromium a consent dialog is one
 `desktop-web click`. A click whose centre another element covers (a dialog) is refused with that element's name instead of
 landing on it. Firefox and `desktop-open`/`desktop-page`/`desktop-click` stay for sites that misbehave in Chromium (superseded below).
@@ -328,6 +329,8 @@ because gVisor is several times slower than runc. Every fix below is general, no
   Scrollable boxes do not cut: their content is one scroll away.
 
 Two inline-blocks on one line read as two lines of text; that is deliberate (a row of cards or tabs), the suite pins it.
+(Superseded by #469: an inline-block whose text sits on one visual line with other text of its block joins that line; cards
+and columns still stand apart.)
 
 ### No proxy sign-in dialog, no background calls (issue #460)
 
@@ -449,6 +452,49 @@ stays real X events at a person's pace. `DOM.setFileInputFiles`, `Input.dispatch
 - `xdotool type` read a burst of text that starts with `-` as an option; text now follows `--`.
 
 The suite gained `slider`, `upload` and `drag` cases (pages `slider.html`, `upload.html`, `drag.html`).
+
+### desktop-web: page notices, text layout, the flag infobar (issue #469)
+
+The hard runs read pages whose answers wasted tokens or hid what the page was: the full URL in every answer, titles with
+`&amp;`, a redirect or a 404 reported as an ordinary page, a bot check found only by reading its text, inline values on lines
+of their own and an outline out of order. The reader stays passive: `ALLOWED` is unchanged and nothing below takes a new
+method. In particular there is no HTTP status: reading it would take `Network.enable`, which a page can detect.
+
+- **Header.** An answer prints `url:` only when the address changed since the last answer (kept in the session directory as
+  `web-url`), cut to 120 characters; `desktop-web url` prints it whole. Titles have their HTML entities decoded (`/json/list`
+  escapes them). Notices follow the title, from data each command already reads:
+  - `redirected from X` when `open` ends on another origin or path than the URL typed (a query a page rewrites in place does
+    not count);
+  - `Chrome error page` when the main document is `chrome-error://`;
+  - `may be an error page` when an HTTP error status stands at the start or end of the title or the first visible h1 of a page
+    of at most 150 lines (a site's 404 keeps its menus and footer);
+  - `looks like a bot check (<provider>): report it, do not retry` when a page of at most 40 lines shows a visible frame of a
+    challenge provider, known by the frame's URL host: Cloudflare challenges, hCaptcha, reCAPTCHA (not its invisible badge),
+    DataDome, HUMAN/PerimeterX, Arkose. The list names providers, never sites;
+  - `a frame is still loading` when a visible frame of at least 100x50 px has drawn nothing yet (no text, no element box).
+- **Settling.** `captureSnapshot` is asked a second time when the first times out. A page of one or two lines must hold still
+  for three reads, and when every read of `settle()` failed one more read is made, so `open` never reports "0 lines" of a page
+  that has text.
+- **Outline.** `snapshotText` maps each element to the first line holding its text, and the outline maps a heading by its node,
+  sorted by line. A heading with no visible line (screen-reader-only) is left out, where it used to read `-:`; matching by the
+  heading's first words had put headings at the wrong line and out of order.
+- **Inline boxes.** An inline-block, inline-flex or inline-grid box (and the items of an inline flex or grid) joins the line
+  around it when all its text sits on one visual line (no fragment of it wraps, from the snapshot's text boxes, and it holds no
+  block) and that line overlaps text of its block outside it: `Distance: 13km. Time: 0:22.` A card or a column of
+  inline-blocks spans several lines and stays apart. Buttons side by side now read as one line; a click by text aims at the
+  piece of the line that matches.
+- **Marks in the text.** Struck-through text (`text-decoration-line`, now in `STYLES`, drawn through descendants, so the
+  ancestors are read) reads `~637 zł~`. A line without letters gets the aria-label or title of the nearest element around it
+  that is not much larger than the text: `94 ‹Upvote›`; a toolbar named as a whole names no number in it.
+- **`text --indent`** prefixes each line with `>` per level, counted from the left edges that several lines share: replies in a
+  thread. Columns side by side read as levels too, so it is opt-in.
+- **Infobar.** `--no-sandbox` stays (the sandbox runtime is the boundary). The managed policy sets
+  `CommandLineFlagSecurityWarningsEnabled: false`, which hides the "unsupported command-line flag" bar; `--test-type` would hide
+  it too, but it is a switch for Chrome's own tests and is not used.
+
+The suite gained `infobar` (Chrome's accessibility tree holds no such bar) and `notices` cases (pages `notices.html`,
+`redirect.html`, `missing.html`, `challenge.html`, `loading.html`, a local server that never answers), and `spacing` and
+`marks` cover the text changes; `spacing` now expects `eta theta` as one line.
 
 ## Limits and deferred
 

@@ -199,8 +199,14 @@ describe("image delivery replaces mutable code uploads", () => {
     expect(launch).toContain("--proxy-server=http://127.0.0.1:$proxy_port");
     const policy = JSON.parse(
       readFileSync(join(root, "images/sandbox-desktop/files/chrome-policy.json"), "utf8"),
-    ) as { URLBlocklist: string[]; URLAllowlist: string[] };
+    ) as {
+      URLBlocklist: string[];
+      URLAllowlist: string[];
+      CommandLineFlagSecurityWarningsEnabled: boolean;
+    };
     expect(policy.URLBlocklist).toContain("file://*");
+    // --no-sandbox stays (the sandbox runtime is the boundary); the policy only hides Chrome's infobar about it.
+    expect(policy.CommandLineFlagSecurityWarningsEnabled).toBe(false);
     expect(policy.URLAllowlist).toEqual(["file:///workspace/*"]);
     // Lab live view (ADR 0065): packages, a view-only x11vnc and loopback-only listeners.
     expect(desktop).toMatch(/x11vnc novnc websockify/);
