@@ -1,6 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -548,4 +556,27 @@ describe("hack/seed-browser-profile.mjs --create-only", () => {
       await kept.close();
     }
   }, 20_000);
+});
+
+// `cmd >"$log" 2>&1 &` opens the log only once the background job runs, so a poll that reads it at once (sed) can find
+// no file, and errexit ends the script there. It flaked CI for install.sh (gscode1/cela#432); scheduling is not
+// reproducible in a test, so every such job in hack/ must create its log first.
+describe("hack/*.sh background jobs", () => {
+  it("create their log file before starting the job that writes it", () => {
+    const jobs: string[] = [];
+    for (const name of readdirSync(join(root, "hack")).filter((n) => n.endsWith(".sh"))) {
+      const lines = readFileSync(join(root, "hack", name), "utf8").split("\n");
+      lines.forEach((line, index) => {
+        const at = `${name}:${String(index + 1)}`;
+        const log = /\s>("[^"]+") 2>&1 &\s*$/.exec(line)?.[1];
+        if (log === undefined) return;
+        jobs.push(at);
+        const created = lines.slice(0, index).some((l) => l.trim() === `: >${log}`);
+        expect(created, `${at} starts a job that writes ${log} without creating it first`).toBe(
+          true,
+        );
+      });
+    }
+    expect(jobs.length).toBeGreaterThan(0);
+  });
 });

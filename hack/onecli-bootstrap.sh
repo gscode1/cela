@@ -104,6 +104,8 @@ trap cleanup EXIT
 
 base=${ONECLI_API_URL:-}
 if [[ -z $base ]]; then
+  # Created first: the background job opens it only once it runs, and sed on a missing file ends the script (#432).
+  : >"$work/pf.log"
   kc port-forward "svc/$release-api" :10256 >"$work/pf.log" 2>&1 &
   pf_pid=$!
   for _ in $(seq 1 30); do
