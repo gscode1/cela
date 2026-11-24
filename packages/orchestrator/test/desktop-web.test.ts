@@ -46,6 +46,26 @@ interface CdpLib {
   dialogLines(ds: { role: string; name: string; entries: Entry[] }[]): string[];
   outline(nodes: AxNode[], lines: string[]): string[];
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
+  childFrameIds(tree: FrameTree): string[];
+  iframeTargets(
+    list: {
+      id: string;
+      type: string;
+      parentId?: string;
+      webSocketDebuggerUrl?: string;
+      url?: string;
+    }[],
+    pageId: string,
+    o?: { max?: number },
+  ): { id: string; parentId: string; tag: string }[];
+  prefixNodes(nodes: AxNode[], prefix: string, tag: string): (AxNode & { frameTag: string })[];
+  shiftQuad(q: number[], dx: number, dy: number): number[];
+  quadOrigin(q: number[]): { x: number; y: number };
+  scrollbarThickness(hits: (y: number) => Promise<boolean>, client: number): Promise<number>;
+}
+interface FrameTree {
+  frame: { id: string };
+  childFrames?: FrameTree[];
 }
 const cdp = createRequire(import.meta.url)(join(files, "cdp-lib.cjs")) as CdpLib;
 
@@ -268,6 +288,96 @@ describe("desktop-web's CDP reader", () => {
     const hidden = cdp.hiddenElements(snap);
     expect(hidden.has(1005)).toBe(true); // the opacity-0 span
     expect(hidden.has(1001)).toBe(false); // the visible block
+  });
+
+  it("leaves out text cut away by overflow hidden or a clip rect, and keeps what scrolls or escapes", () => {
+    type St = [string, string, string, string, string, string, string];
+    const st = (position: string, overflow: string, clip = "auto"): St => [
+      "block",
+      "visible",
+      "1",
+      position,
+      overflow,
+      overflow,
+      clip,
+    ];
+    const box = (x: number, y: number, w: number, h: number): [number, number, number, number] => [
+      x,
+      y,
+      w,
+      h,
+    ];
+    const el = (parent: number, style: St, b: [number, number, number, number]) => ({
+      parent,
+      type: 1,
+      tag: "DIV",
+      style: style as unknown as [string, string, string],
+      box: b,
+    });
+    const snap = snapOf([
+      doc, // 0
+      el(0, st("static", "visible"), box(0, 0, 400, 300)), // 1 page
+      el(1, st("static", "hidden"), box(0, 0, 100, 0)), // 2 collapsed: overflow hidden, no height
+      t("collapsed", [0, 0, 80, 16], 2),
+      el(1, st("absolute", "hidden", "rect(0px, 0px, 0px, 0px)"), box(0, 50, 1, 1)), // 4 sr-only
+      t("screen reader", [0, 50, 90, 16], 4),
+      el(1, st("static", "auto"), box(0, 100, 100, 20)), // 6 scrollable: its content is one scroll away
+      t("scrollable", [0, 130, 80, 16], 6),
+      el(1, st("static", "hidden"), box(0, 150, 100, 0)), // 8 hidden box that an absolute child escapes
+      { ...el(8, st("absolute", "visible"), box(0, 160, 90, 16)), tag: "DIV" }, // 9
+      t("escapes", [0, 160, 80, 16], 9),
+      t("visible", [0, 200, 80, 16]),
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["scrollable", "escapes", "visible"]);
+  });
+
+  it("finds the frames of a page: same-process ones from the frame tree, others from the target list", () => {
+    expect(
+      cdp.childFrameIds({
+        frame: { id: "root" },
+        childFrames: [
+          { frame: { id: "a" }, childFrames: [{ frame: { id: "b" } }] },
+          { frame: { id: "c" } },
+        ],
+      }),
+    ).toEqual(["a", "b", "c"]);
+    const ws = "ws://127.0.0.1:1/x";
+    const list = [
+      { id: "PAGE", type: "page", webSocketDebuggerUrl: ws },
+      { id: "N2", type: "iframe", parentId: "N1", webSocketDebuggerUrl: ws },
+      { id: "N1", type: "iframe", parentId: "PAGE", webSocketDebuggerUrl: ws },
+      { id: "OTHER", type: "iframe", parentId: "ELSEWHERE", webSocketDebuggerUrl: ws },
+      { id: "WORKER", type: "service_worker", parentId: "PAGE", webSocketDebuggerUrl: ws },
+    ];
+    const found = cdp.iframeTargets(list, "PAGE");
+    expect(found.map((f) => f.id)).toEqual(["N1", "N2"]); // nested ones follow their holder; others are not this page's
+    expect(found[0]?.tag).toBe("N1");
+    expect(cdp.iframeTargets(list, "PAGE", { max: 1 })).toHaveLength(1);
+  });
+
+  it("gives an iframe's accessibility nodes their own ids and refs", () => {
+    const nodes = cdp.prefixNodes(tree(), "AB12", "AB12");
+    expect(nodes[0]?.nodeId).toBe("AB121");
+    expect(nodes[0]?.childIds?.[0]).toBe("AB122");
+    expect(nodes[1]?.parentId).toBe("AB121");
+    const [first] = cdp.axEntries(nodes);
+    expect(first?.ref).toBe("e104@AB12");
+    expect(cdp.axEntries(tree())[0]?.ref).toBe("e104");
+  });
+
+  it("places a frame's boxes in the page", () => {
+    const q = [10, 20, 30, 20, 30, 40, 10, 40];
+    expect(cdp.quadOrigin(q)).toEqual({ x: 10, y: 20 });
+    expect(cdp.shiftQuad(q, 100, 200)).toEqual([110, 220, 130, 220, 130, 240, 110, 240]);
+  });
+
+  it("measures a horizontal scrollbar from where hit testing stops", async () => {
+    // Hit testing covers the page area including the scrollbar: clientHeight 637 of 652 means 15 px of bar.
+    const reaches = (bottom: number) => (y: number) => Promise.resolve(y < bottom);
+    expect(await cdp.scrollbarThickness(reaches(652), 637)).toBe(15);
+    expect(await cdp.scrollbarThickness(reaches(637), 637)).toBe(0);
+    expect(await cdp.scrollbarThickness(reaches(522), 520.5)).toBeCloseTo(1.5, 5);
+    expect(await cdp.scrollbarThickness(() => Promise.resolve(false), 637)).toBe(0);
   });
 
   it("wraps long blocks into lines and reports only what an action added", () => {

@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sticky</title>
+<body style="margin:0;font:16px sans-serif">
+<header style="position:sticky;top:0;height:140px;background:#ddd;z-index:5;padding:8px">
+  <strong>Sticky header</strong> <button id="sticky-head" style="padding:6px 14px">Header button</button>
+  <pre id="log" style="margin:4px 0;font-size:13px"></pre>
+</header>
+<main>
+<h1>Long list</h1>
+<script>
+  for (let i = 1; i <= 60; i++) {
+    const p = document.createElement("p");
+    p.style.cssText = "margin:0;height:60px";
+    p.innerHTML = `Row ${i} <button id="row-${i}">Row button ${i}</button>`;
+    document.querySelector("main").append(p);
+  }
+</script>
+</main>
+<footer style="position:sticky;bottom:0;height:70px;background:#ccc;padding:8px">Sticky footer</footer>
+<script src="log.js"></script>

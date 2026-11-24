@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>shadow</title>
+<body style="font:16px sans-serif">
+<h1>Shadow DOM</h1>
+<p>Light text before.</p>
+<div id="host" style="margin:40px 0 0 120px"></div>
+<div id="host2" style="margin:40px 0 0 300px"></div>
+<pre id="log" style="margin-top:80px"></pre>
+<script>
+  for (const [id, name] of [["host", "Shadow one"], ["host2", "Shadow two"]]) {
+    const root = document.getElementById(id).attachShadow({ mode: "open" });
+    root.innerHTML = `<p>text inside ${name}</p><button id="${id}-btn" style="padding:8px 16px">${name}</button>`;
+  }
+</script>
+<script src="log.js"></script>

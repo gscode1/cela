@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>modal</title>
+<body style="font:16px sans-serif">
+<h1>Content behind a dialog</h1>
+<button id="behind" style="position:absolute;left:100px;top:300px;padding:8px 16px">Behind</button>
+<pre id="log" style="position:absolute;left:100px;top:600px"></pre>
+<div role="dialog" aria-modal="true" aria-label="Notice" id="dlg" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10;display:flex;align-items:center;justify-content:center">
+  <div style="background:#fff;padding:24px;width:420px">
+    <p>A notice that needs an answer.</p>
+    <button id="dlg-ok" style="padding:8px 16px">Agree</button>
+    <button id="dlg-no" style="padding:8px 16px">Decline</button>
+  </div>
+</div>
+<script src="log.js"></script>
+<script>
+  document.addEventListener("click", (e) => {
+    if (e.target.id === "dlg-ok" || e.target.id === "dlg-no") document.getElementById("dlg").remove();
+  });
+</script>

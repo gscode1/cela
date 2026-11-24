@@ -142,19 +142,103 @@ async function withPage(fn) {
   const t = await target();
   if (!t) fail("Chrome is not running: start with desktop-web open <url>");
   const c = await cdp.connect(t.webSocketDebuggerUrl);
+  c.target = t;
+  c.extra = [];
   try {
     return await fn(c, t);
   } finally {
+    for (const e of c.extra) e.close();
     c.close();
   }
 }
 
-async function snapshot(c) {
-  return c.send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
+// The page and the iframes that run in their own process (another site), each read through its own connection. A frame of
+// the same process is part of its page: its documents come with the snapshot, its accessibility tree with its frame id.
+// An iframe whose element a person cannot see (hidden, 0 px) is left out, like any other hidden element.
+async function frameParts(c) {
+  if (c.parts) return c.parts;
+  c.parts = (async () => {
+    const root = { tag: "", send: c.send, target: c.target.id };
+    const parts = [root];
+    for (const s of cdp.iframeTargets(await cdp.targetList(port()), c.target.id)) {
+      try {
+        const conn = await cdp.connect(s.webSocketDebuggerUrl);
+        c.extra.push(conn);
+        parts.push({ tag: s.tag, send: conn.send, target: s.id, parent: parts.find((p) => p.target === s.parentId) });
+      } catch {
+        // gone since the list was read
+      }
+    }
+    for (const p of parts) {
+      try {
+        p.frameIds = cdp.childFrameIds((await p.send("Page.getFrameTree")).frameTree);
+      } catch {
+        p.frameIds = [];
+      }
+    }
+    return parts;
+  })();
+  return c.parts;
+}
+
+// Where an out-of-process iframe's viewport sits in the page's: the top left of its iframe element's content box in the part
+// that holds it, and so on up. (Boxes of a frame of the same process already come in the page's coordinates.)
+async function partOrigin(part) {
+  let o = { x: 0, y: 0 };
+  for (let p = part; p.parent; p = p.parent) {
+    const owner = await p.parent.send("DOM.getFrameOwner", { frameId: p.target });
+    const box = await p.parent.send("DOM.getBoxModel", { backendNodeId: owner.backendNodeId });
+    const q = cdp.quadOrigin(box.model.content);
+    o = { x: o.x + q.x, y: o.y + q.y };
+  }
+  return o;
+}
+
+async function axOf(part) {
+  const trees = [{ nodes: (await part.send("Accessibility.getFullAXTree")).nodes, prefix: "" }];
+  for (const [k, frameId] of part.frameIds.entries()) {
+    try {
+      trees.push({ nodes: (await part.send("Accessibility.getFullAXTree", { frameId })).nodes, prefix: `f${k}:` });
+    } catch {
+      // a frame that is gone, or not of this process
+    }
+  }
+  return trees.flatMap((t) => cdp.prefixNodes(t.nodes, `${part.tag}${t.prefix}`, part.tag));
+}
+
+// Reads every visible part: its layout snapshot, the elements hidden in it and, with `ax`, its accessibility nodes.
+async function readParts(c, { ax = false } = {}) {
+  const parts = await frameParts(c);
+  const read = await Promise.all(
+    parts.map(async (part) => {
+      const [snap, nodes] = await Promise.all([
+        part.send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES }),
+        ax ? axOf(part) : undefined,
+      ]);
+      return { part, snap, nodes, hidden: cdp.hiddenElements(snap) };
+    }),
+  );
+  const shown = new Set();
+  const out = [];
+  for (const r of read) {
+    if (r.part.parent) {
+      const up = read.find((x) => x.part === r.part.parent);
+      if (!shown.has(r.part.parent)) continue;
+      try {
+        const owner = await up.part.send("DOM.getFrameOwner", { frameId: r.part.target });
+        if (up.hidden.has(owner.backendNodeId)) continue;
+      } catch {
+        continue;
+      }
+    }
+    shown.add(r.part);
+    out.push(r);
+  }
+  return out;
 }
 
 async function pageLines(c) {
-  return cdp.wrapLines(cdp.snapshotLines(await snapshot(c)), WIDTH);
+  return (await readParts(c)).flatMap((r) => cdp.wrapLines(cdp.snapshotLines(r.snap), WIDTH));
 }
 
 const fingerprint = (lines) => `${lines.length}:${lines.join("\n").length}:${lines.slice(-3).join("|")}`;
@@ -193,10 +277,16 @@ const header = (t) => [`url: ${t.url}`, `title: ${t.title}`];
 const pageFile = (o) => o.out ?? path.join(lib.sessionDir(), "web-page.txt");
 
 async function axTree(c) {
-  const [{ nodes }, snap] = await Promise.all([c.send("Accessibility.getFullAXTree"), snapshot(c)]);
-  const hidden = cdp.hiddenElements(snap);
-  const entries = cdp.axEntries(nodes).filter((e) => !hidden.has(e.backendNodeId));
+  const read = await readParts(c, { ax: true });
+  const nodes = read.flatMap((r) => r.nodes);
+  const hidden = new Map(read.map((r) => [r.part.tag, r.hidden]));
+  const entries = cdp.axEntries(nodes).filter((e) => !hidden.get(e.frameTag ?? "")?.has(e.backendNodeId));
   return { nodes, entries: cdp.mainFirst(nodes, entries) };
+}
+
+// Accessibility nodes of the page and its iframes, for dialogs and outlines.
+async function axNodes(c) {
+  return (await Promise.all((await frameParts(c)).map(axOf))).flat();
 }
 
 // What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings.
@@ -225,7 +315,7 @@ function rememberRefs(entries) {
 // over from another page cannot click a different element. Lists the candidates and exits 2 when a name is ambiguous.
 async function resolveTarget(c, spec, o, { fieldsOnly = false } = {}) {
   const { nodes, entries } = await axTree(c);
-  if (/^e\d+$/.test(spec)) {
+  if (/^e\d+(@\w+)?$/.test(spec)) {
     const now = entries.find((e) => e.ref === spec);
     let was;
     try {
@@ -265,61 +355,93 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false } = {}) {
   process.exit(2);
 }
 
-// Scrolls the element into view, checks nothing covers it, and clicks it with the X mouse.
-async function clickNode(c, nodes, backendNodeId) {
+// Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it.
+// getNodeForLocation takes document coordinates: the viewport point plus the scroll offset.
+async function coveredBy(send, backendNodeId, quad, point, nodes) {
+  const lp = (await send("Page.getLayoutMetrics")).cssLayoutViewport;
+  const hit = await send("DOM.getNodeForLocation", {
+    x: Math.round(point.x + lp.pageX),
+    y: Math.round(point.y + lp.pageY),
+    includeUserAgentShadowDOM: true,
+  }).catch(() => undefined);
+  if (!hit || hit.backendNodeId === backendNodeId) return undefined;
+  const inside = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId, depth: -1, pierce: true })).node);
+  if (inside.has(hit.backendNodeId)) return undefined;
+  const hb = await send("DOM.getBoxModel", { backendNodeId: hit.backendNodeId }).catch(() => undefined);
+  // A wrapper around the element and only a little larger (a link around a span) takes the same click; anything else
+  // under the point (a dialog's text, a big layer) means the element is covered.
+  if (hb && cdp.wraps(hb.model.border, quad)) return undefined;
+  const d = (await send("DOM.describeNode", { backendNodeId: hit.backendNodeId })).node;
+  const cls = (d.attributes ?? []).reduce((s, v, i, a) => (a[i - 1] === "class" ? v : s), "");
+  return [
+    `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): something is in front. Close or answer it first`,
+    ...cdp.dialogLines(cdp.dialogs(nodes)),
+  ].join("\n");
+}
+
+// Scrolls the element into view, checks nothing covers it, and clicks it with the X mouse. An element of an out-of-process
+// iframe is read through that frame's connection and placed in the page by its iframe element's content box.
+async function clickNode(c, nodes, entry) {
+  const { backendNodeId } = entry;
+  const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
+  if (!part) fail("the iframe of that element is gone: run desktop-web snap again");
   try {
-    await c.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
+    await part.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
   } catch {
     // not scrollable (fixed position); the box check below still applies
   }
   let quad;
   try {
-    quad = (await c.send("DOM.getBoxModel", { backendNodeId })).model.border;
+    quad = (await part.send("DOM.getBoxModel", { backendNodeId })).model.border;
   } catch {
-    const q = await c.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({ quads: [] }));
+    const q = await part.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({ quads: [] }));
     quad = q.quads[0];
   }
   if (!quad) fail("the element has no box on the page (hidden or removed): run desktop-web snap again");
-  const center = cdp.quadCenter(quad);
   const lm = await c.send("Page.getLayoutMetrics");
   const vp = lm.cssLayoutViewport;
   const zoom = lm.cssVisualViewport.zoom ?? 1;
-  if (center.x < 0 || center.y < 0 || center.x > vp.clientWidth || center.y > vp.clientHeight)
+  // The part of the page where a click can reach: the viewport, and for an iframe its own viewport inside it.
+  let reach = { x: 0, y: 0, w: vp.clientWidth, h: vp.clientHeight };
+  let origin = { x: 0, y: 0 };
+  if (part.parent) {
+    origin = await partOrigin(part).catch(() => fail("the iframe of that element is gone: run desktop-web snap again"));
+    const own = (await part.send("Page.getLayoutMetrics")).cssLayoutViewport;
+    const x = Math.max(reach.x, origin.x);
+    const y = Math.max(reach.y, origin.y);
+    reach = { x, y, w: Math.min(reach.x + reach.w, origin.x + own.clientWidth) - x, h: Math.min(reach.y + reach.h, origin.y + own.clientHeight) - y };
+  }
+  const pageQuad = cdp.shiftQuad(quad, origin.x, origin.y);
+  const center = cdp.quadCenter(pageQuad);
+  if (center.x < reach.x || center.y < reach.y || center.x > reach.x + reach.w || center.y > reach.y + reach.h)
     fail("the element is outside the visible page and could not be scrolled into view");
-  // Something in front (a dialog, an overlay) would get the click instead: say what, rather than click it.
-  // getNodeForLocation takes document coordinates: the viewport point plus the scroll offset.
-  const hit = await c
-    .send("DOM.getNodeForLocation", {
-      x: Math.round(center.x + vp.pageX),
-      y: Math.round(center.y + vp.pageY),
-      includeUserAgentShadowDOM: true,
-    })
-    .catch(() => undefined);
-  if (hit && hit.backendNodeId !== backendNodeId) {
-    const inside = cdp.subtreeIds((await c.send("DOM.describeNode", { backendNodeId, depth: -1, pierce: true })).node);
-    if (!inside.has(hit.backendNodeId)) {
-      const hb = await c.send("DOM.getBoxModel", { backendNodeId: hit.backendNodeId }).catch(() => undefined);
-      // A wrapper around the element and only a little larger (a link around a span) takes the same click; anything else
-      // under the point (a dialog's text, a big layer) means the element is covered.
-      if (!hb || !cdp.wraps(hb.model.border, quad)) {
-        const d = (await c.send("DOM.describeNode", { backendNodeId: hit.backendNodeId })).node;
-        const cls = (d.attributes ?? []).reduce((s, v, i, a) => (a[i - 1] === "class" ? v : s), "");
-        fail(
-          [
-            `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): something is in front. Close or answer it first`,
-            ...cdp.dialogLines(cdp.dialogs(nodes)),
-          ].join("\n"),
-        );
-      }
-    }
+  // Something in front (a dialog, an overlay) would get the click instead: say what, rather than click it. For an iframe
+  // that is checked at each frame on the way: the iframe element in its holder, then the element in its own frame.
+  const checks = [];
+  for (let p = part; p.parent; p = p.parent) {
+    const owner = await p.parent.send("DOM.getFrameOwner", { frameId: p.target });
+    const box = (await p.parent.send("DOM.getBoxModel", { backendNodeId: owner.backendNodeId })).model.border;
+    const o = await partOrigin(p.parent);
+    checks.push({ send: p.parent.send, id: owner.backendNodeId, quad: box, point: { x: center.x - o.x, y: center.y - o.y } });
+  }
+  checks.push({ send: part.send, id: backendNodeId, quad, point: { x: center.x - origin.x, y: center.y - origin.y } });
+  for (const k of checks) {
+    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes);
+    if (why) fail(why);
   }
   const win = chromeWindow();
   if (!win) fail("no Chrome window on the screen");
-  const geo = { win, viewport: { height: vp.clientHeight }, zoom, frame: FRAME };
-  const xs = [quad[0], quad[2], quad[4], quad[6]];
-  const ys = [quad[1], quad[3], quad[5], quad[7]];
-  const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), 0), y: Math.max(Math.min(...ys), 0) });
-  const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), vp.clientWidth), y: Math.min(Math.max(...ys), vp.clientHeight) });
+  // clientHeight leaves out a horizontal scrollbar, which takes the bottom of the window's page area: the viewport's top is
+  // found from its full height.
+  const bar = await cdp.scrollbarThickness(
+    (y) => c.send("DOM.getNodeForLocation", { x: 1, y: Math.round(y + vp.pageY) }).then(() => true, () => false),
+    vp.clientHeight,
+  );
+  const geo = { win, viewport: { height: vp.clientHeight + bar }, zoom, frame: FRAME };
+  const xs = [pageQuad[0], pageQuad[2], pageQuad[4], pageQuad[6]];
+  const ys = [pageQuad[1], pageQuad[3], pageQuad[5], pageQuad[7]];
+  const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), reach.x), y: Math.max(Math.min(...ys), reach.y) });
+  const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), reach.x + reach.w), y: Math.min(Math.max(...ys), reach.y + reach.h) });
   activate(win);
   return lib.humanClick({ x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) });
 }
@@ -328,7 +450,7 @@ async function clickNode(c, nodes, backendNodeId) {
 async function changes(beforeLines, before, after, o) {
   const out = header(after.target);
   const navigated = after.target.url !== before.url;
-  const nodes = await withPage(async (c) => (await c.send("Accessibility.getFullAXTree")).nodes).catch(() => []);
+  const nodes = await withPage(axNodes).catch(() => []);
   out.push(...cdp.dialogLines(cdp.dialogs(nodes)));
   if (o.show) {
     lib.savePage(after.lines, pageFile(o));
@@ -365,7 +487,7 @@ async function main() {
       lib.pause(120);
       lib.key("Return");
       const after = await settle(before, { quietMs: 8000, capMs: 25000, want: o.pos[1] ? regex(o.pos[1]) : undefined });
-      const nodes = await withPage(async (c) => (await c.send("Accessibility.getFullAXTree")).nodes);
+      const nodes = await withPage(axNodes);
       const out = [...header(after.target), ...describe(after.lines, nodes, o.pos[1], o)];
       if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
       console.log(budget(out, PAGE_HINT).join("\n"));
@@ -420,11 +542,11 @@ async function main() {
         fail(`usage: desktop-web ${cmd} <ref|"regex">${cmd === "type" ? ' "text"' : ""}`, 64);
       const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
-      const { label, beforeLines, backendNodeId } = await withPage(async (c) => {
+      const { label, beforeLines, backendNodeId, frameTag } = await withPage(async (c) => {
         const beforeLines = await pageLines(c);
-        const { entry, nodes } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+$/.test(spec) });
-        await clickNode(c, nodes, entry.backendNodeId);
-        return { label: cdp.entryLine(entry), beforeLines, backendNodeId: entry.backendNodeId };
+        const { entry, nodes } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+(@\w+)?$/.test(spec) });
+        await clickNode(c, nodes, entry);
+        return { label: cdp.entryLine(entry), beforeLines, backendNodeId: entry.backendNodeId, frameTag: entry.frameTag ?? "" };
       });
       const first = `${cmd === "click" ? "clicked" : "typed into"} ${label}`;
       if (cmd === "type") {
@@ -438,11 +560,11 @@ async function main() {
         for (let i = 0; i < 4 && !now; i++) {
           lib.pause(250);
           now = await withPage(async (c) => {
-            const { nodes } = await c.send("Accessibility.getFullAXTree");
+            const nodes = await axNodes(c);
             // The field that has focus: pages often swap the clicked input for another element as it gains focus.
             const has = (m, name) => (m.properties ?? []).some((p) => p.name === name && p.value?.value === true);
             const field = nodes.find((m) => !m.ignored && has(m, "focused") && has(m, "editable"));
-            return (field ?? nodes.find((m) => m.backendDOMNodeId === backendNodeId))?.value?.value;
+            return (field ?? nodes.find((m) => m.backendDOMNodeId === backendNodeId && (m.frameTag ?? "") === frameTag))?.value?.value;
           });
         }
         if (!o.enter) {

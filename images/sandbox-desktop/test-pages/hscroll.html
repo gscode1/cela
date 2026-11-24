@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>hscroll</title>
+<body style="margin:0;font:16px sans-serif;min-width:3000px">
+<h1>Wide page</h1>
+<p>The page is wider than the window, so a horizontal scrollbar takes the bottom of the viewport.</p>
+<!-- 100vh is the layout viewport without the scrollbar: this button sits right above the scrollbar. -->
+<button id="hs-bottom" style="position:absolute;left:100px;top:calc(100vh - 20px);height:18px;padding:0 14px;line-height:16px">Bottom edge</button>
+<button id="hs-mid" style="position:absolute;left:300px;top:300px;padding:6px 14px">Middle</button>
+<button id="hs-right" style="position:absolute;left:2500px;top:300px;padding:6px 14px">Far right</button>
+<button id="hs-low" style="position:absolute;left:100px;top:1500px;height:18px;padding:0 14px;line-height:16px">Low</button>
+<div style="height:1800px"></div>
+<pre id="log" style="position:absolute;left:100px;top:400px"></pre>
+<script src="log.js"></script>
