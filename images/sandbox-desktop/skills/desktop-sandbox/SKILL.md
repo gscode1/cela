@@ -12,9 +12,9 @@ A Linux desktop (1280x800) with Google Chrome, Mousepad (text editor) and LibreO
 A web task needs only this section: the agent-desktop skill is for Mousepad and Writer. Use `desktop-web`, one call per step. It starts Chrome when needed, types into the address bar and clicks with
 the real mouse at a person's pace, and reads the page without anything a site can detect, so bot checks see a person's browser.
 
-    desktop-web open <url> ["regex"]            open a page: url, title, open dialogs, matching lines (or a heading outline)
+    desktop-web open <url> ["regex"]            open a page: url, title, notices, open dialogs, matching lines (or a heading outline)
     desktop-web text "regex"                    read the current page: matching text lines (full text saved to a file)
-    desktop-web text --lines 120-170            read a range of lines (from the outline's line numbers or a match)
+    desktop-web text --lines 120-170            read a range of lines (from the outline's line numbers or a match); --indent shows nesting
     desktop-web snap ["regex"]                  open dialogs, then clickable elements, named pictures and headings with refs: [e123] link "Name"
     desktop-web click <e123|"regex">            click it, see its new state and what changed; --near "row text", --show "regex"
     desktop-web type <e123|"regex"> "text"      replace a field's text, see its value and what appeared; --enter presses Return
@@ -33,6 +33,11 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   part you need. Give a regex of the words you need, not `.`: every answer is capped at about 60 lines and says how to read on.
   The text covers the whole page, offscreen parts included, so reading needs no scrolling and no screenshot. To look again at
   what you read, `desktop-web text "regex" --from <file>`. Never print the file with `cat`, `sed`, `head` or `tail`.
+- Answers start with `title:`, and `url:` only when the address changed. Notices under them say what the page is: `redirected
+  from X` (you landed elsewhere), `Chrome error page` (it did not load), `may be an error page` (a 404 or 500 in its title or
+  heading), `looks like a bot check (provider): report it, do not retry` (do not wait it out or reload), `a frame is still
+  loading` (read again in a moment). In text, `~637 zł~` is struck through (an old price) and `94 ‹Upvote›` names a bare
+  number by its element. `text --indent` marks each line with `>` per level it is indented (replies in a thread).
 - After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
   new page's outline, or what changed on this one (lines that appeared or went, a dialog that closed, an alert, other controls'
   state, a filter's results, an autocomplete's options). Read more only when that is not enough. `type` exits 1 when the field
