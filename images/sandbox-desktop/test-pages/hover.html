@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>hover</title>
+<style>
+  .card { position: relative; display: inline-block; width: 180px; height: 120px; margin: 20px; background: #def; }
+  .card .cap { display: none; position: absolute; left: 0; right: 0; bottom: 0; background: #234; color: #fff; padding: 6px; }
+  .card:hover .cap { display: block; }
+  .card img { width: 180px; height: 120px; display: block; }
+</style>
+<body style="font:16px sans-serif">
+<h1>Hover reveals</h1>
+<div class="card" id="card1"><img alt="Portrait one" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><div class="cap">Caption: user-one <a href="#" id="profile1">View profile</a></div></div>
+<div class="card" id="card2"><img alt="Portrait two" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><div class="cap">Caption: user-two <a href="#" id="profile2">View profile</a></div></div>
+<p><a href="#" id="menu">Menu</a></p>
+<ul id="sub" style="display:none"><li>Sub item alpha</li></ul>
+<script>
+  document.getElementById("menu").addEventListener("mouseover", () => (document.getElementById("sub").style.display = "block"));
+</script>

@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dialogs</title>
+<body style="font:16px sans-serif">
+<h1>Browser dialogs</h1>
+<button id="do-alert" style="padding:8px 16px">Show alert</button>
+<button id="do-confirm" style="padding:8px 16px">Show confirm</button>
+<button id="do-prompt" style="padding:8px 16px">Show prompt</button>
+<button id="do-later" style="padding:8px 16px">Confirm later</button>
+<pre id="result">result: none</pre>
+<script>
+  const out = (t) => (document.getElementById("result").textContent = `result: ${t}`);
+  document.getElementById("do-alert").onclick = () => {
+    alert("The alert says hello");
+    out("alert closed");
+  };
+  document.getElementById("do-confirm").onclick = () => out(`confirm ${confirm("Delete the item?")}`);
+  document.getElementById("do-prompt").onclick = () => out(`prompt ${JSON.stringify(prompt("Your name?", "default"))}`);
+  document.getElementById("do-later").onclick = () => setTimeout(() => out(`later ${confirm("Really, later?")}`), 1200);
+</script>

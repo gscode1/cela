@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>marks</title>
+<style>
+  .star-rating { display: block; margin: 4px 0; }
+  .star-rating i { display: inline-block; width: 14px; height: 14px; background: #fa0; margin-right: 2px; }
+  .star-rating.One i:nth-child(n+2), .star-rating.Three i:nth-child(n+4) { background: #ccc; }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 6px; background: green; }
+  .wrap { border: 1px solid #aaa; padding: 6px; }
+</style>
+<body style="font:16px sans-serif">
+<h1>Rated items</h1>
+<article class="pod"><h3>Alpha book</h3><p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><p>Price 10.00</p></article>
+<article class="pod"><h3>Beta book</h3><p class="star-rating One"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><p>Price 20.00</p></article>
+<p>Server status <span class="dot status-online" data-state="up"></span> nominal</p>
+<p>Logo <img width="40" height="20" src="/img/brand-mark.png?v=2"> end</p>
+<div class="wrap"><label>Name <input type="text"></label></div>
+<p>Icon with name <span class="dot" aria-label="Settings"></span> end</p>

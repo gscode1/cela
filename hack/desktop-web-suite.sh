@@ -188,7 +188,115 @@ case_spacing() {
   check "block elements stay separate lines" "$([[ $(grep -cE '^[0-9]+: (iota|kappa)$' "$OUT") == 2 ]]; echo $?)"
 }
 
-ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing)
+# Seconds since the epoch with a fraction, for the round-trip timings the dialog cases print.
+now() { date +%s.%N; }
+
+case_dialogs() {
+  open dialogs
+  local t0 t1
+  t0=$(now)
+  web click '^Show confirm$'
+  check "click that opens a confirm says the page is not answering" "$(grep -q 'not answering' "$OUT"; echo $?)"
+  check "the dialog's message and buttons are shown" "$(grep -Eq 'Delete the item\?|dialog area' "$OUT"; echo $?)"
+  check "the answer tells how to confirm and cancel" "$(grep -q 'desktop-web key Return' "$OUT" && grep -q 'desktop-web key Escape' "$OUT"; echo $?)"
+  web text 'result'
+  check "a read while blocked is refused with the notice" "$([[ $RC == 3 ]] && grep -q 'not answering' "$OUT"; echo $?)"
+  web key a # a key a dialog ignores (Tab would move its default button)
+  check "a key that does not close it says still blocked" "$(grep -q 'Still blocked' "$OUT"; echo $?)"
+  web key Return
+  t1=$(now)
+  check "Return closes it and the result is read" "$(grep -q 'dialog closed' "$OUT" && grep -q 'result: confirm true' "$OUT"; echo $?)"
+  echo "  (confirm round trip: click, notice, key Return, result: $(awk "BEGIN{printf \"%.1f\", $t1 - $t0}") s)"
+  web click '^Show confirm$'
+  web key Escape
+  check "Escape cancels a confirm" "$(grep -q 'result: confirm false' "$OUT"; echo $?)"
+  web click '^Show prompt$'
+  check "a prompt shows its message" "$(grep -q 'Your name' "$OUT"; echo $?)"
+  web key --text 'Zofia' Return
+  check "key --text answers a prompt" "$(grep -q 'result: prompt "Zofia"' "$OUT"; echo $?)"
+  web click '^Show alert$'
+  web key Return
+  check "an alert is closed" "$(grep -q 'result: alert closed' "$OUT"; echo $?)"
+  web click '^Confirm later$'
+  # the dialog opens 1.2 s after the click: the command may return before, so ask again
+  web key a
+  grep -q 'not answering' "$OUT" || { sleep 3; web key a; }
+  check "a dialog that opens after the click is found" "$(grep -q 'Really, later' "$OUT"; echo $?)"
+  web key Return
+  check "and answered" "$(grep -q 'result: later true' "$OUT"; echo $?)"
+}
+
+case_select() {
+  open selects
+  web snap
+  check "snap shows a select's options" "$(grep -q 'combobox "Dropdown".*options: Please select an option | Option 1 | Option 2 (off) (disabled) | Option 3' "$OUT"; echo $?)"
+  check "snap hints how to pick" "$(grep -q 'desktop-web select e[0-9]* ' "$OUT"; echo $?)"
+  web select Dropdown 'Option 3'
+  check "select picks an option and reads it back" "$(grep -q 'value now: "Option 3"' "$OUT"; echo $?)"
+  has_text 'changed: Option 3'
+  check "the page saw the change" $?
+  timeout "$WAIT" desktop-web text 'changed:' --context 0 >"$OUT" 2>&1
+  check "one change event, none from the arrow steps" "$([[ $(grep -o 'changed:' "$OUT" | wc -l) == 1 ]]; echo $?)"
+  web select Dropdown 'option 3'
+  check "an option already selected is not touched" "$(grep -q 'already selected' "$OUT"; echo $?)"
+  web select Dropdown 'Option 2'
+  check "a disabled option is refused" "$([[ $RC != 0 ]] && grep -q 'disabled' "$OUT"; echo $?)"
+  web select Dropdown 'Option'
+  check "an ambiguous option is listed, not chosen" "$([[ $RC == 2 ]] && grep -q 'options match' "$OUT"; echo $?)"
+  web select Dropdown 'fifth'
+  check "case-insensitive match" "$(grep -q 'value now: "Fifth Choice"' "$OUT"; echo $?)"
+  web select Dropdown '^Please'
+  check "regex match, upwards" "$(grep -q 'value now: "Please select an option"' "$OUT"; echo $?)"
+  web select Colours 'Blue'
+  check "a list select takes a click on the option" "$(grep -q 'selected now: "Blue"' "$OUT"; echo $?)"
+  web select Size 'medium'
+  check "an in-page combobox is opened and its option clicked" "$(grep -q 'clicked option "Medium"' "$OUT"; echo $?)"
+  has_text 'size: Medium'
+  check "the page saw the pick" $?
+}
+
+case_wait() {
+  open later
+  web click '^Start$'
+  check "a click that only starts something says the result may come later" "$(grep -q 'result may come later' "$OUT"; echo $?)"
+  web wait 'Done: report ready' --timeout 20
+  check "wait sees text that appears later" "$([[ $RC == 0 ]] && grep -q 'Done: report ready' "$OUT"; echo $?)"
+  web click '^Start$'
+  web wait 'Done: report ready' --gone --timeout 20
+  check "wait --gone sees text disappear" "$([[ $RC == 0 ]] && grep -q 'gone after' "$OUT"; echo $?)"
+  web wait 'never on this page' --timeout 2
+  check "wait times out with exit 3" "$([[ $RC == 3 ]] && grep -q 'not seen' "$OUT"; echo $?)"
+}
+
+case_hover() {
+  open hover
+  web hover 'Portrait two'
+  check "hover reveals a caption" "$(grep -q 'user-two' "$OUT"; echo $?)"
+  web hover '^Menu$'
+  check "hover opens a menu" "$(grep -q 'Sub item alpha' "$OUT"; echo $?)"
+}
+
+case_marks() {
+  open marks
+  timeout "$WAIT" desktop-web text . --marks --context 0 --limit 40 >"$OUT" 2>&1
+  sed 's/^/    | /' "$OUT"
+  check "a rating shown by its class is marked" "$(grep -q '‹star-rating Three›' "$OUT" && grep -q '‹star-rating One›' "$OUT"; echo $?)"
+  check "an icon is marked in its line" "$(grep -q 'Server status ‹dot status-online state=up› nominal' "$OUT"; echo $?)"
+  check "an image without alt is marked by its file" "$(grep -q 'Logo ‹src:brand-mark.png› end' "$OUT"; echo $?)"
+  check "a picture with an accessible name is not marked" "$(grep -q 'Icon with name end' "$OUT"; echo $?)"
+  timeout "$WAIT" desktop-web text . --context 0 --limit 40 >"$OUT" 2>&1
+  check "marks are opt-in" "$(grep -q '‹' "$OUT"; [[ $? == 1 ]]; echo $?)"
+}
+
+case_shot() {
+  open marks
+  web shot 'Alpha book' --pad 50
+  local f
+  f=$(grep -o '/workspace[^ ]*\.jpg' "$OUT" | head -1)
+  check "shot saves an image of the element's area" "$([[ -n $f && -s $f ]]; echo $?)"
+}
+
+ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
