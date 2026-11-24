@@ -50,7 +50,8 @@ case $app in
     # A fresh profile at every launch, so no history, cookies or sign-in survive a restart; the managed policy file does the rest. The debugging port listens on
     # loopback only and is read by desktop-web, which never sends Runtime.enable or script (cdp-lib.cjs): a page cannot
     # tell this browser from a person's. --no-sandbox: Chrome's sandbox needs user namespaces, which the Pod does not
-    # have; the sandbox runtime is the boundary. No --enable-unsafe-swiftshader: detectors read software WebGL as the
+    # have; the sandbox runtime is the boundary. The managed policy hides the infobar Chrome shows for it, which took the
+    # top of every page and every screenshot. No --enable-unsafe-swiftshader: detectors read software WebGL as the
     # Playwright default (rebrowser flags it), and Chrome without it passed the bot checks in the lab.
     profile=$state/chrome-profile
     rm -rf "$profile"

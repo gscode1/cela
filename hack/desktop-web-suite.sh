@@ -469,7 +469,17 @@ case_drag() {
   check "a source that is not there is refused" "$([[ $RC != 0 ]]; echo $?)"
 }
 
-ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale slider upload drag)
+# The managed policy hides the "unsupported command-line flag" infobar that --no-sandbox brings: Chrome's own window, read
+# through its accessibility tree, must not hold it.
+case_infobar() {
+  open spacing
+  local tree
+  tree=$(timeout "$WAIT" agent-desktop-run snapshot --app chrome --timeout-ms 5000 2>/dev/null)
+  check "the browser's accessibility tree was read" "$(grep -q '"ok":true' <<<"$tree"; echo $?)"
+  check "no command-line flag infobar" "$(grep -qi 'unsupported command-line flag' <<<"$tree"; [[ $? == 1 ]]; echo $?)"
+}
+
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale slider upload drag)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

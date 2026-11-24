@@ -20,5 +20,6 @@
   "TranslateEnabled": false,
   "SearchSuggestEnabled": false,
   "PromotionalTabsEnabled": false,
-  "PrivacySandboxPromptEnabled": false
+  "PrivacySandboxPromptEnabled": false,
+  "CommandLineFlagSecurityWarningsEnabled": false
 }
