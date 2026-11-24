@@ -158,7 +158,10 @@ Escape, Tab and Page Down to get back. `desktop-text` was never used because the
   when several match and lists them for `--nth`. agent-desktop's own scroll-into-view fails in Firefox ("The scroll viewport is
   not contained on one display"), so an offscreen target is brought into view with Firefox's find bar (its name typed, Return
   until it is on screen, Escape); if the click is still refused on screen, a mouse click at its centre. Waiting is on the window
-  title, which costs no tree walk; an in-page change is reported as `(same)` rather than waited out.
+  title, which costs no tree walk; an in-page change is reported as `(same)` rather than waited out. A click that times out while
+  agent-desktop resolves the element on a very large page gets the same fallback. Candidates that all share one role and name
+  (a product's image and title links) are one target and the first is clicked; different names stay the agent's choice. The
+  Firefox keystrokes (`desktop-page` without `--focused`, `desktop-url`) refuse to run when Firefox is not the active window.
 - `desktop-open URL ["regex"]` launches or navigates, waits on the title, copies again while the body has no text, and prints
   the same view as `desktop-page`.
 - `desktop-url` ends with F6 (focus in the page) and restores the clipboard; `desktop-find` defaults to 25 lines and 80-character
