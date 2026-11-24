@@ -39,6 +39,8 @@ interface State {
   app?: "mousepad";
   // an error code every accessibility click answers with (until the element is on screen)
   clickError?: string;
+  // the whole page is selected (ctrl+a in the page); a find-bar paste that finds nothing clears it
+  pageSelected?: boolean;
 }
 
 const fake = `#!/usr/bin/env node
@@ -57,7 +59,8 @@ if (a[0] === "--exec") {
       if (k === "ctrl+l") { s.focus = "url"; s.selection = "url"; }
       else if (k === "F6") s.focus = "page";
       else if (k === "ctrl+f") { s.focus = "find"; s.typed = ""; }
-      else if (k === "ctrl+a") s.selection = s.focus === "url" ? "url" : s.focus === "page" ? "page" : s.selection;
+      else if (k === "ctrl+a") { s.selection = s.focus === "url" ? "url" : s.focus === "page" ? "page" : s.selection; if (s.focus === "page") s.pageSelected = true; }
+      else if (k === "ctrl+v" && s.focus === "find" && !s.page.includes(s.clip)) s.pageSelected = false;
       else if (k === "ctrl+c") {
         if (s.selection === "url") s.clip = s.url;
         else if (s.selection === "page") {
@@ -179,9 +182,22 @@ describe("desktop-page", () => {
 
   it("ends with focus in the page and the agent's clipboard put back", { timeout: 40_000 }, () => {
     helper("desktop-page", "zł");
-    expect(keys()).toEqual(["ctrl+l", "ctrl+c", "Escape", "F6", "ctrl+a", "ctrl+c"]);
+    // URL, page text, then the selection cleared with a pasted find-bar search that finds nothing.
+    expect(keys()).toEqual([
+      "ctrl+l",
+      "ctrl+c",
+      "Escape",
+      "F6",
+      "ctrl+a",
+      "ctrl+c",
+      "ctrl+f",
+      "ctrl+a",
+      "ctrl+v",
+      "Escape",
+    ]);
     const s = readState();
     expect(s.focus).toBe("page");
+    expect(s.pageSelected).toBe(false);
     expect(s.clip).toBe("agent's own clipboard");
   });
 
@@ -267,6 +283,27 @@ describe("desktop-click", () => {
     },
   );
 
+  it(
+    "finds a clickable switch in one search and prefers it to same-named text",
+    { timeout: 40_000 },
+    () => {
+      state({
+        nodes: [
+          { ref_id: "@s1:e13", role: "statictext", name: "Show offers from other sellers" },
+          { ref_id: "@s1:e14", role: "switch", name: "Show offers from other sellers" },
+        ],
+      });
+      const { out, status } = helper("desktop-click", "Show offers from other sellers");
+      expect(status).toBe(0);
+      expect(out[0]).toBe(
+        'clicked switch "Show offers from other sellers" @s1:e14 (accessibility)',
+      );
+      const finds = calls().filter((l) => l.startsWith("find"));
+      expect(finds).toHaveLength(1);
+      expect(finds[0]).not.toContain("--role");
+    },
+  );
+
   it("clicks the chosen candidate with --nth", { timeout: 40_000 }, () => {
     state({ nodes });
     const { out, status } = helper("desktop-click", "offer", "--nth", "1");
@@ -278,7 +315,7 @@ describe("desktop-click", () => {
     state({ nodes });
     const { out, status } = helper("desktop-click", "Delta");
     expect(status).toBe(2);
-    expect(out[0]).toContain("no link/button matches /Delta/");
+    expect(out[0]).toContain("no clickable element matches /Delta/");
   });
 
   it("treats a click that times out like a refused one", { timeout: 40_000 }, () => {

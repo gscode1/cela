@@ -3,13 +3,14 @@
 // (docs/decisions/0065-desktop-sandbox.md, "Token budget"). It never guesses: with no match or several it clicks nothing and
 // lists the candidates (exit 2), so pick one with --nth N or a narrower pattern.
 //
-//   desktop-click "Najtańsze"                   the one link or button whose name matches (regex, any case)
+//   desktop-click "Najtańsze"                   the one clickable element whose name matches (regex, any case)
 //   desktop-click "Add to cart" --role button   other roles: --role R[,R]
 //   desktop-click "Next" --nth 1                the second of several matches (0-based, in the order listed)
 //   desktop-click @s1abc:e12                    a ref from desktop-find
 //   desktop-click "Search" --show "results|zł"  also print the new page's matching lines (desktop-page)
 //
-// Flags: --app NAME (default firefox-esr), --role R[,R] (default link,button), --nth N, --all (also offscreen candidates),
+// Flags: --app NAME (default firefox-esr), --role R[,R] (default: any clickable role: link, button, switch, tab, checkbox,
+// option, ...), --nth N, --all (also offscreen candidates),
 // --show REGEX, --timeout-ms N (per find, default 60000).
 // An element out of view is brought into view with the browser's find bar (its name typed, Escape), then clicked; if the
 // accessibility click is still refused, a mouse click at its centre ("physical"). Output: what was clicked, title, url.
@@ -20,6 +21,11 @@ const lib = process.getBuiltinModule("node:module").createRequire(fs.realpathSyn
 const fail = lib.failer("desktop-click");
 const SCREEN = { width: 1280, height: 800 };
 const MAX_CANDIDATES = 8;
+// What a person can click. Pages also make clickable switches, tabs and options; a link/button-only search missed a switch
+// that opened a sellers panel. Elements of these roles win over same-named plain text.
+const CLICKABLE = new Set(["link", "button", "switch", "checkbox", "radiobutton", "tab", "menuitem", "menubutton", "option", "combobox", "treeitem", "togglebutton"]);
+// Searched one role at a time when the page is too large for one search across all roles.
+const CLICK_FALLBACK_ROLES = ["link", "button", "switch", "tab", "checkbox", "menuitem"];
 
 function parseArgs(argv) {
   const o = { app: "firefox-esr", roles: [], all: false, timeout: "60000" };
@@ -44,7 +50,6 @@ function parseArgs(argv) {
   }
   if (o.target === undefined) fail("name a regex or an @ref to click", 64);
   if (o.nth !== undefined && (!Number.isInteger(o.nth) || o.nth < 0)) fail("--nth needs a non-negative integer", 64);
-  if (o.roles.length === 0) o.roles = ["link", "button"];
   return o;
 }
 
@@ -56,7 +61,14 @@ function resolve(o) {
   } catch (e) {
     fail(`bad regex: ${e.message}`, 64);
   }
-  const found = lib.findAcross({ app: o.app, roles: o.roles, literal: lib.literalOf(o.target), timeout: o.timeout });
+  // No --role: one search across all roles (one tree walk) for the pattern's literal text, then keep what can be clicked.
+  const found = lib.findAcross({
+    app: o.app,
+    roles: o.roles,
+    literal: lib.literalOf(o.target),
+    timeout: o.timeout,
+    fallbackRoles: CLICK_FALLBACK_ROLES,
+  });
   if (found.answered === 0) fail(`agent-desktop find failed for every role: ${found.skipped.join(", ")}`);
   const seen = new Set();
   const hits = found.matches.filter((n) => {
@@ -64,12 +76,14 @@ function resolve(o) {
     seen.add(n.ref_id);
     return [n.name, n.value, n.description].some((s) => typeof s === "string" && re.test(s));
   });
+  const clickable = o.roles.length > 0 ? hits : hits.filter((n) => CLICKABLE.has(String(n.role ?? "").toLowerCase()));
   // Visible candidates first: an offscreen duplicate of a visible control (a sticky header copy, a footer link) is rarely meant.
-  const visible = hits.filter((n) => !lib.isHidden(n));
-  const pool = o.all || visible.length === 0 ? hits : visible;
+  const visible = clickable.filter((n) => !lib.isHidden(n));
+  const pool = o.all || visible.length === 0 ? clickable : visible;
   const note = found.skipped.length > 0 ? ` (skipped, find failed: ${found.skipped.join(", ")})` : "";
   if (pool.length === 0) {
-    process.stdout.write(`no ${o.roles.join("/")} matches /${o.target}/${note}; try --role, desktop-find, or desktop-page to see the text\n`);
+    const what = o.roles.length > 0 ? o.roles.join("/") : "clickable element";
+    process.stdout.write(`no ${what} matches /${o.target}/${note}; try --role, desktop-find, or desktop-page to see the text\n`);
     process.exit(2);
   }
   if (o.nth !== undefined) {

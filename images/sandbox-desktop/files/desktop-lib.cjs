@@ -3,6 +3,7 @@
 // site: it drives agent-desktop, xdotool and xclip the same way for every page (docs/decisions/0065-desktop-sandbox.md).
 "use strict";
 const { execFileSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -122,8 +123,24 @@ function copyPage({ focused = false } = {}) {
   key("ctrl+c");
   pause(500);
   const text = readClipboard();
+  if (!focused) clearPageSelection();
   writeClipboard(saved);
   return { url, title: windowTitle(), lines: cleanLines(text) };
+}
+
+// ctrl+a leaves the whole page selected (highlighted in screenshots and the live view) until the next click. Escape, arrow
+// keys, Tab and opening and closing the find bar do not clear it; a find-bar search that finds nothing does, without moving
+// the page. The search text is pasted in one piece: typed letter by letter, find-as-you-type jumps to partial matches. The
+// caller restores the clipboard afterwards.
+function clearPageSelection() {
+  writeClipboard(`zq${crypto.randomBytes(12).toString("hex")}qz`);
+  key("ctrl+f");
+  pause(300);
+  key("ctrl+a");
+  key("ctrl+v");
+  pause(400);
+  key("Escape");
+  pause(200);
 }
 
 const clip = (s, n) => {
@@ -170,7 +187,7 @@ const FALLBACK_ROLES = ["heading", "link", "button", "textfield", "combobox", "c
 // agent-desktop find over roles. One element without a stable identity or bounds (offscreen, lazily rendered) makes a whole
 // find fail with STALE_REF, so a failing role is skipped and named, and a failing unscoped find is retried role by role.
 // Returns { matches, skipped, truncated, answered, splitRoles }.
-function findAcross({ app, roles = [], literal, root, timeout = "60000" }) {
+function findAcross({ app, roles = [], literal, root, timeout = "60000", fallbackRoles = FALLBACK_ROLES }) {
   const matches = [];
   const skipped = [];
   let truncated = false;
@@ -198,7 +215,7 @@ function findAcross({ app, roles = [], literal, root, timeout = "60000" }) {
   else if (!collect(undefined)) {
     skipped.length = 0;
     splitRoles = true;
-    for (const role of FALLBACK_ROLES) collect(role);
+    for (const role of fallbackRoles) collect(role);
   }
   return { matches, skipped, truncated, answered, splitRoles };
 }
@@ -254,6 +271,7 @@ function settle(before, { quietMs = 2000, capMs = 8000 } = {}) {
 
 module.exports = {
   FALLBACK_ROLES,
+  clearPageSelection,
   clip,
   cleanLines,
   copyPage,
