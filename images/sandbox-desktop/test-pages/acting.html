@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>acting</title>
+<body style="font:16px sans-serif">
+<header><input aria-label="Search" placeholder="Search the site"></header>
+<main>
+<h1>Acting on forms</h1>
+<p><label>Email <input id="email" required></label> <button id="dead">Continue</button></p>
+<p><label>Date of birth <input id="dob"></label></p>
+<p><label>Note <input id="note" value="abc"></label></p>
+<p><label>Search <input id="filter"></label></p>
+<form id="route">
+  <p><label>From <input name="from"></label> <label>To <input name="to"></label></p>
+</form>
+<p><a href="?sort=price" id="sort-link">Sort by price</a></p>
+<p id="route-out"></p>
+<p>Line one of the page.</p>
+<p>Line two of the page.</p>
+<p>Line three of the page.</p>
+<p>Line four of the page.</p>
+</main>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const q = new URLSearchParams(location.search);
+  if (q.get("from")) document.getElementById("route-out").textContent = `route: ${q.get("from")} -> ${q.get("to")}`;
+  if (q.get("sort")) document.getElementById("route-out").textContent = `sorted by ${q.get("sort")}`;
+  // a form without a button, sent with Return (a directions form)
+  document.getElementById("route").addEventListener("keydown", (e) => e.key === "Enter" && document.getElementById("route").submit());
+  document.getElementById("filter").addEventListener("input", (e) => add(`filter: ${e.target.value}`));
+</script>

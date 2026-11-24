@@ -22,6 +22,10 @@ interface Entry {
   near?: string;
   via?: number;
   frameTag?: string;
+  labelEl?: number;
+  boxEl?: number;
+  label?: string;
+  noSubmit?: boolean;
 }
 interface CdpLib {
   ALLOWED: Set<string>;
@@ -49,7 +53,9 @@ interface CdpLib {
   hiddenElements(snap: unknown): Set<number>;
   wrapLines(lines: string[], width?: number): string[];
   newLines(before: string[], after: string[]): string[];
-  dialogs(nodes: AxNode[]): { role: string; name: string; entries: Entry[] }[];
+  dialogs(
+    nodes: AxNode[],
+  ): { role: string; name: string; backendNodeId?: number; entries: Entry[] }[];
   dialogLines(ds: { role: string; name: string; entries: Entry[] }[]): string[];
   outline(
     nodes: AxNode[],
@@ -67,6 +73,8 @@ interface CdpLib {
     o: { lines: string[]; title: string },
   ): string[];
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
+  ownedNodes(nodes: AxNode[], entry: Entry): Set<string>;
+  inLandmark(nodes: AxNode[], entry: Entry, roles: Set<string>): boolean;
   childFrameIds(tree: FrameTree): string[];
   iframeTargets(
     list: {
@@ -141,7 +149,10 @@ interface AxNode {
   name?: { value: string };
   description?: { value: string };
   value?: { value: unknown };
-  properties?: { name: string; value: { value: unknown } }[];
+  properties?: {
+    name: string;
+    value: { value?: unknown; relatedNodes?: { backendDOMNodeId: number }[] };
+  }[];
 }
 
 // A page with two product rows whose title links share a name, an image link that repeats one of them, a heading that
@@ -1139,6 +1150,119 @@ describe("desktop-web's CDP reader", () => {
     ]);
     expect(cdp.chooseTarget(nodes, named, /bike/i).pick?.ref).toBe("e1002");
     expect(cdp.chooseTarget(nodes, named, /state/i).pick?.ref).toBe("e1004");
+  });
+
+  it("gives a control its label and its own box, the highest ancestor that holds no other control", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 400, 300]), // 1 holds both rows
+      el(1, "DIV", sty("block"), [0, 0, 300, 30]), // 2 row of the first checkbox
+      el(2, "INPUT", sty("inline-block"), [4, 8, 13, 13], { type: "checkbox" }), // 3
+      el(2, "SPAN", sty("inline-block"), [0, 0, 30, 30], { class: "deco" }), // 4 its drawn box
+      el(1, "DIV", sty("block"), [0, 40, 300, 30]), // 5 row of the second
+      el(5, "INPUT", sty("inline-block"), [4, 48, 13, 13], { type: "checkbox", id: "u" }), // 6
+      el(5, "LABEL", sty("inline-block"), [20, 40, 100, 30], { for: "u" }), // 7
+      t("USB-C", [24, 44, 50, 16], 7), // 8
+    ]);
+    const e = (id: number, name: string): Entry => ({
+      ref: `e${String(id)}`,
+      backendNodeId: id,
+      nodeId: String(id),
+      role: "checkbox",
+      name,
+    });
+    const out = cdp.annotate([e(1003, "DisplayPort"), e(1006, "USB-C")], snap, new Set());
+    expect(out.map((x) => [x.boxEl, x.labelEl])).toEqual([
+      [1002, undefined],
+      [1005, 1007],
+    ]);
+  });
+
+  it("names an unnamed field by the text beside it: left, above or on its top border, never its own text", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 600, 20]), // 1 a line of the row above
+      t("Page heading", [0, 0, 120, 16], 1), // 2
+      el(0, "DIV", sty("block"), [0, 24, 600, 30]), // 3 a row: its label, then the field with its own value
+      t("Sort by", [0, 30, 50, 16], 3), // 4
+      el(3, "DIV", sty("inline-block"), [60, 24, 180, 30], { class: "gx7q2" }), // 5 the field
+      t("Most relevant", [64, 30, 100, 16], 5), // 6
+      el(0, "DIV", sty("block"), [0, 70, 600, 20]), // 7 a label above the next field
+      t("Subjects", [0, 70, 70, 16], 7), // 8
+      el(0, "INPUT", sty("inline-block"), [0, 92, 200, 24]), // 9
+      el(0, "FORM", sty("block"), [0, 130, 600, 40]), // 10 a form with no button
+      el(10, "INPUT", sty("inline-block"), [0, 130, 200, 24], { placeholder: "From" }), // 11
+      el(0, "DIV", sty("block"), [0, 200, 600, 60]), // 12 a floating label on the field's top border, a banner far left
+      t("Promo text", [0, 230, 100, 18], 12), // 13
+      t("Sorting", [320, 212, 60, 16], 12), // 14
+      el(12, "DIV", sty("inline-block"), [300, 220, 240, 40]), // 15
+    ]);
+    const e = (id: number, role: string): Entry => ({
+      ref: `e${String(id)}`,
+      backendNodeId: id,
+      nodeId: String(id),
+      role,
+      name: "",
+    });
+    const out = cdp.annotate(
+      [e(1005, "combobox"), e(1009, "combobox"), e(1011, "textbox"), e(1015, "combobox")],
+      snap,
+      new Set(),
+    );
+    expect(out.map((x) => x.label)).toEqual(["Sort by", "Subjects", undefined, "Sorting"]);
+    expect(out.map((x) => x.noSubmit)).toEqual([undefined, undefined, true, undefined]);
+    const sort = out[0] as Entry;
+    expect(cdp.entryLine({ ...sort, near: "Most relevant" })).toBe(
+      '[e1005] combobox "" label "Sort by" near "Most relevant"',
+    );
+    // a row text that starts with the label says it already; markup words only when nothing else names it
+    expect(cdp.entryLine({ ...sort, near: "Sort by Most relevant" })).toBe(
+      '[e1005] combobox "" near "Sort by Most relevant"',
+    );
+    expect(cdp.entryLine({ ...sort, label: "" })).toBe("[e1005] combobox ‹gx7q2›");
+    expect(cdp.chooseTarget([], out, /^sort by$/i).pick?.ref).toBe("e1005");
+  });
+
+  it("finds a dropdown's own options, through aria-controls, and fields in the header and menus", () => {
+    const ax = (
+      nodeId: string,
+      role: string,
+      parentId?: string,
+      kids?: string[],
+      extra: Partial<AxNode> = {},
+    ): AxNode => ({
+      nodeId,
+      role: { value: role },
+      name: { value: "" },
+      backendDOMNodeId: Number(nodeId) + 100,
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+      ...extra,
+    });
+    const nodes: AxNode[] = [
+      ax("1", "RootWebArea", undefined, ["2", "5", "8"]),
+      ax("2", "banner", "1", ["3", "4"]),
+      ax("3", "searchbox", "2"),
+      ax("4", "menuitem", "2"),
+      ax("5", "main", "1", ["6", "7"]),
+      ax("6", "combobox", "5", [], {
+        properties: [{ name: "controls", value: { relatedNodes: [{ backendDOMNodeId: 108 }] } }],
+      }),
+      ax("7", "searchbox", "5"),
+      ax("8", "listbox", "1", ["9"]),
+      ax("9", "option", "8"),
+    ];
+    const entry = (id: string): Entry => ({
+      ref: `e${String(Number(id) + 100)}`,
+      backendNodeId: Number(id) + 100,
+      nodeId: id,
+      role: "combobox",
+      name: "",
+    });
+    expect([...cdp.ownedNodes(nodes, entry("6"))].sort()).toEqual(["6", "8", "9"]);
+    const top = new Set(["banner", "navigation"]);
+    expect(cdp.inLandmark(nodes, entry("3"), top)).toBe(true);
+    expect(cdp.inLandmark(nodes, entry("7"), top)).toBe(false);
   });
 
   it("finds clickable text no element is named by, but not a link's own text or text a person cannot see", () => {

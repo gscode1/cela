@@ -13,10 +13,12 @@
 //                                             text", --nth N, --role R, --show "regex". No element by that name: a line of
 //                                             clickable text. Exit 1 when refused (disabled, covered), 2 when ambiguous.
 //   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value and what appeared; --enter,
-//                                             --append. Exit 1 when the field kept its value (read-only)
+//                                             --append, --near "row text"; "" clears it. Of several matching fields the one
+//                                             outside the header and navigation. Exit 1 when the field kept its value
 //   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes;
 //                                             --text "answer" types text first (a prompt dialog), --show "regex"
-//   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page) and print what it holds
+//   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page: the options it owns, else
+//                                             those that appear as it opens) and print what it holds
 //   desktop-web type <slider> 75              set a slider: a press at its proportional point, then arrow keys to the value;
 //                                             prints value 25 -> 75. Exit 1 when it did not move or ended elsewhere
 //   desktop-web upload <ref|"regex"> /workspace/file
@@ -24,8 +26,9 @@
 //                                             browser's file chooser (its location field), print what the page shows
 //   desktop-web drag <src> <dst>              press on src, move there at a person's pace, release over dst; --by dx,dy (px)
 //                                             instead of dst. src and dst: refs, element names or any visible text
-//   desktop-web hover <ref|"regex">           move the pointer over it (menus, captions) and print what appeared
-//   desktop-web shot <ref|"regex">            screenshot of that element's area (icons, colours, images): prints the file;
+//   desktop-web hover <ref|"regex">           move the pointer over it (menus, captions) and print what appeared; any
+//                                             visible text is a target too
+//   desktop-web shot <ref|"regex">            screenshot of that element's or text's area (icons, colours, images): prints the file;
 //                                             --pad N takes N more px around it
 //   desktop-web wait "regex" [--gone]         wait until the text appears (or disappears); --timeout N seconds (at most 60)
 //   desktop-web url                           url and title
@@ -591,6 +594,7 @@ function readRefs() {
     return {};
   }
 }
+const CHROME_LANDMARKS = new Set(["banner", "navigation"]);
 const escapeRe = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const isRef = (spec) => /^e\d+(@\w+)?$/.test(spec);
 
@@ -638,6 +642,12 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     if (hits.length > 1) r = { several: hits };
   }
   if (r.pick) return { entry: r.pick, nodes };
+  if (fieldsOnly && r.several) {
+    // A site's search box in its header and the form's own field: the one outside the header and menus is meant.
+    const out = r.several.filter((e) => !cdp.inLandmark(nodes, e, CHROME_LANDMARKS));
+    if (out.length === 1)
+      return { entry: out[0], nodes, note: `${r.several.length} fields match ${JSON.stringify(spec)}; used the one outside the page's header and navigation (another: --near "row text" or its ref)` };
+  }
   if (r.none) {
     const d = cdp.dialogLines(cdp.dialogs(nodes));
     fail(
@@ -663,8 +673,10 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
 }
 
 // Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it.
-// getNodeForLocation takes document coordinates: the viewport point plus the scroll offset.
-async function coveredBy(send, backendNodeId, quad, point, nodes) {
+// getNodeForLocation takes document coordinates: the viewport point plus the scroll offset. `own` are elements that are part
+// of the control (its <label>, its own box: cdp.annotate): their decoration (a drawn check box, a ::before) takes the same
+// click. `tag` is the part's frame tag, to find a dialog in front among `nodes`.
+async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], tag = "" } = {}) {
   const lp = (await send("Page.getLayoutMetrics")).cssLayoutViewport;
   const hit = await send("DOM.getNodeForLocation", {
     x: Math.round(point.x + lp.pageX),
@@ -678,11 +690,23 @@ async function coveredBy(send, backendNodeId, quad, point, nodes) {
   // A wrapper around the element and only a little larger (a link around a span) takes the same click; anything else
   // under the point (a dialog's text, a big layer) means the element is covered.
   if (hb && cdp.wraps(hb.model.border, quad)) return undefined;
+  const within = async (id) => cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: id, depth: -1, pierce: true })).node).has(hit.backendNodeId);
+  for (const id of own) if (await within(id).catch(() => false)) return undefined;
   const d = (await send("DOM.describeNode", { backendNodeId: hit.backendNodeId })).node;
   const cls = (d.attributes ?? []).reduce((s, v, i, a) => (a[i - 1] === "class" ? v : s), "");
+  const shown = cdp.dialogs(nodes);
+  let front;
+  for (const x of shown) {
+    if ((x.frameTag ?? "") !== tag || x.backendNodeId === undefined) continue;
+    if (await within(x.backendNodeId).catch(() => false)) {
+      front = x;
+      break;
+    }
+  }
+  const what = front ? `the ${front.role}${front.name ? ` "${lib.clip(front.name, 60)}"` : ""} is in front` : "something is in front";
   return [
-    `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): something is in front. Close or answer it first`,
-    ...cdp.dialogLines(cdp.dialogs(nodes)),
+    `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): ${what}. Close or answer it first, then run the rest of the chain again`,
+    ...cdp.dialogLines(shown),
   ].join("\n");
 }
 
@@ -735,11 +759,12 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true } = {}) 
     const owner = await p.parent.send("DOM.getFrameOwner", { frameId: p.target });
     const box = (await p.parent.send("DOM.getBoxModel", { backendNodeId: owner.backendNodeId })).model.border;
     const o = await partOrigin(p.parent);
-    checks.push({ send: p.parent.send, id: owner.backendNodeId, quad: box, point: { x: center.x - o.x, y: center.y - o.y } });
+    checks.push({ send: p.parent.send, id: owner.backendNodeId, quad: box, point: { x: center.x - o.x, y: center.y - o.y }, tag: p.parent.tag });
   }
-  checks.push({ send: part.send, id: backendNodeId, quad, point: { x: center.x - origin.x, y: center.y - origin.y } });
+  const own = [entry.labelEl, entry.boxEl].filter((x) => x !== undefined && x !== backendNodeId);
+  checks.push({ send: part.send, id: backendNodeId, quad, point: { x: center.x - origin.x, y: center.y - origin.y }, tag: part.tag, own });
   for (const k of cover ? checks : []) {
-    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes);
+    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes, { own: k.own, tag: k.tag });
     if (why) fail(why);
   }
   const win = chromeWindow();
@@ -838,10 +863,13 @@ const stateOf = (tree) => ({ lines: tree.lines, entries: tree.entries, nodes: tr
 const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemcheckbox", "treeitem"]);
 
-// What an action did: the new page, or what changed on this one (dialogs that closed, alerts that appeared, lines that
-// appeared or went, other controls whose state changed), within the budget. `now` is a read after the action (read here when
-// not given); `self` is the element acted on, whose own change the caller reports (`selfChanged`). The "result may come
-// later" hint comes only when nothing changed at all, or the page shows it is busy.
+// What an action did: the new page, or what changed on this one (dialogs that closed, alerts that appeared, options that
+// appeared, lines that appeared or went, other controls whose state changed), within the budget. `now` is a read after the
+// action (read here when not given); `self` is the element acted on, whose own change the caller reports (`selfChanged`).
+// A new address that keeps the path or most of the page's lines (a filter or sort in the query) shows what changed, not an
+// outline.
+// When nothing changed at all: "result may come later" if the page shows it is busy, else "nothing happened" with the fields
+// that block a form and how to look; the same no-op twice in a row says to stop.
 async function changes(pre, before, after, o, { now, self, selfChanged = false } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
@@ -849,13 +877,17 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
   const chooser = chooserWindow();
   if (chooser) out.push(...chooserLines(chooser));
   const navigated = after.target.url !== before.url;
+  const had = new Set(pre.lines);
+  // only the query or fragment changed (a filter, a sort, a form sent with GET), or most lines stayed: the same page
+  const samePage = navigated && after.lines.length > 0 && (!redirected(before.url, after.target.url) || after.lines.filter((l) => had.has(l)).length > after.lines.length / 2);
   const shown = cdp.dialogs(nodes);
   out.push(...cdp.dialogLines(shown));
+  const busy = cdp.busy(nodes);
   let nothing = false;
   if (o.show) {
     lib.savePage(after.lines, pageFile(o));
     out.push(...lib.grepLines(after.lines, regex(o.show), { limit: o.limit ?? 25, context: o.context, width: WIDTH }));
-  } else if (navigated) {
+  } else if (navigated && !samePage) {
     out.push(...(await describe(after.lines, nodes, undefined, o, async () => now, after.lineOf)).slice(cdp.dialogLines(shown).length));
   } else {
     const added = cdp.newLines(pre.lines, after.lines);
@@ -863,26 +895,69 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
     const was = cdp.dialogs(pre.nodes);
     const closed = cdp.closedDialogs(was, shown);
     const opened = cdp.closedDialogs(shown, was);
-    const had = new Set(cdp.liveTexts(pre.nodes));
-    const alerts = cdp.liveTexts(nodes).filter((t) => !had.has(t));
+    const live = new Set(cdp.liveTexts(pre.nodes));
+    const alerts = cdp.liveTexts(nodes).filter((t) => !live.has(t));
     const diffs = now ? cdp.controlDiffs(pre.entries, now.entries, { skip: self?.ref }) : [];
+    const known = new Set(pre.entries.map((e) => e.ref));
+    const opts = (now?.entries ?? []).filter((e) => OPTION_ROLES.has(e.role) && !known.has(e.ref));
     lib.savePage(after.lines, pageFile(o));
     out.push(...closed.map((d) => `closed ${d}`), ...alerts.slice(0, 3));
+    if (opts.length > 0) {
+      rememberRefs(opts, { merge: true });
+      out.push(`options (${opts.length}):`, ...opts.slice(0, 5).map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`));
+      if (opts.length > 5) out.push(`  ... ${opts.length - 5} more: desktop-web snap "regex"`);
+    }
     if (added.length > 0) out.push(`changed (${added.length} new lines):`, ...added.slice(0, 20));
     if (added.length > 20) out.push(`... ${added.length - 20} more: desktop-web text "regex"`);
     if (gone.length > 0) out.push(`gone (${gone.length} lines): ${gone.slice(0, 3).map((l) => lib.clip(l, 60)).join(" | ")}${gone.length > 3 ? " | ..." : ""}`);
     out.push(...diffs.slice(0, 5));
     if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
-    if (added.length === 0 && gone.length === 0) out.push("page text unchanged");
-    nothing = !added.length && !gone.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
-    if (nothing) {
-      const bad = (now?.entries ?? []).filter((e) => e.invalid);
-      if (bad.length > 0) out.push(`invalid fields: ${bad.slice(0, 5).map((e) => cdp.entryLine(e, { nameMax: 40 })).join(" | ")}`);
-    }
-    if (self?.role === "link" && !o.noHint) out.push("note: the address did not change");
+    nothing = !navigated && !added.length && !gone.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    if (nothing && !busy && !o.noHint && !chooser) out.push(...nothingHappened(now, self, after.target.url));
+    else if (!added.length && !gone.length) out.push("page text unchanged");
+    if (self?.role === "link" && !navigated && !o.noHint) out.push("note: the address did not change");
   }
-  if (!o.show && !o.noHint && !navigated && !chooser && (nothing || cdp.busy(nodes))) out.push('result may come later: desktop-web wait "regex"');
+  if (!nothing) forgetNoop();
+  if (!o.show && !o.noHint && !(navigated && !samePage) && !chooser && busy) out.push('result may come later: desktop-web wait "regex"');
   return budget(out, PAGE_HINT);
+}
+
+// The same action on the same page that did nothing last time: what the agent must not repeat.
+const NOOP = () => path.join(lib.sessionDir(), "web-noop");
+function forgetNoop() {
+  try {
+    fs.rmSync(NOOP(), { force: true });
+  } catch {
+    // nothing to forget
+  }
+}
+
+// What to say when an action changed nothing and the page is not busy: the fields that hold a form back (required and
+// empty, or invalid), a look at the element, and, the second time the same control does nothing here, to stop.
+function nothingHappened(now, self, url) {
+  const out = ["nothing happened (no text, state, dialog or address change)"];
+  const entries = now?.entries ?? [];
+  const bad = entries.filter((e) => e.invalid);
+  if (bad.length > 0) out.push(`invalid fields: ${bad.slice(0, 5).map((e) => cdp.entryLine(e, { nameMax: 40 })).join(" | ")}`);
+  const empty = entries.filter((e) => e.required && !e.invalid && !e.value && ["textbox", "searchbox", "combobox", "spinbutton"].includes(e.role));
+  if (empty.length > 0) out.push(`required and empty: ${empty.slice(0, 5).map((e) => cdp.entryLine(e, { nameMax: 40 })).join(" | ")}`);
+  if (!self) return out;
+  const key = `${process.argv[2]} ${self.ref} ${url}`;
+  let last;
+  try {
+    last = fs.readFileSync(NOOP(), "utf8");
+  } catch {
+    last = undefined;
+  }
+  if (last === key) out.push("this control does nothing here; stop clicking it");
+  else out.push(`look at it: desktop-web shot ${self.ref}`);
+  try {
+    fs.mkdirSync(path.dirname(NOOP()), { recursive: true });
+    fs.writeFileSync(NOOP(), key);
+  } catch {
+    // the next no-op is not recognised as a repeat
+  }
+  return out;
 }
 
 // What typing did without Enter, kept short: the options that appeared (an autocomplete), else at most 5 new lines (a
@@ -1036,7 +1111,10 @@ async function main() {
       if (cmd === "type") {
         lib.pause(150);
         if (!o.append) lib.key("ctrl+a");
-        if (lib.typable(o.pos[1])) lib.humanType(o.pos[1]);
+        // an empty text clears the field: the selection is deleted
+        if (o.pos[1] === "") {
+          if (!o.append) lib.key("BackSpace");
+        } else if (lib.typable(o.pos[1])) lib.humanType(o.pos[1]);
         else lib.pasteText(o.pos[1]);
         // Read the field back: what the page holds is the result, not what was sent.
         // The accessibility tree catches up with the field a moment after the last key.
@@ -1062,12 +1140,16 @@ async function main() {
         }
         if (!o.enter) {
           const after = await settle(before, { quietMs: 700, capMs: 6000 });
-          console.log([...lines, ...(after.blocked ? blockedLines() : await afterTyping(pre, after, o.pos[1], o))].join("\n"));
+          // a form that shows no button is sent with Return (a directions or search form)
+          const hint = entry.noSubmit && o.pos[1] !== "" ? ["no submit button in its form: use --enter to send it"] : [];
+          console.log([...lines, ...(after.blocked ? blockedLines() : await afterTyping(pre, after, o.pos[1], o)), ...hint].join("\n"));
           return;
         }
         lib.key("Return");
         const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
-        console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, o, { self: entry }))].join("\n"));
+        // the field's own new value is a change: a date field or an autocomplete that takes Return shows nothing else
+        const selfChanged = value !== squash(entry.value);
+        console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, o, { self: entry, selfChanged }))].join("\n"));
         return;
       }
       const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
@@ -1151,31 +1233,35 @@ async function main() {
           return { pre, entry, how: "native", shown: opt.text };
         }
         // A list that is already on the page (multiple, size above 1) or a combobox of in-page elements: open it if needed, then
-        // click the option whose text matches.
+        // click the option whose text matches. Its options are those it owns (its subtree, the list it names in aria-controls),
+        // else those that appeared as it opened, else the lines of text that appeared (a list drawn without roles): never every
+        // option of the page (a menu elsewhere).
         const known = new Set(tree.entries.filter((e) => OPTION_ROLES.has(e.role)).map((e) => e.ref));
         if (!info) await clickNode(c, nodes, entry);
         lib.pause(500);
         const now = await axTree(c);
-        let options = now.entries.filter((e) => OPTION_ROLES.has(e.role));
-        if (info) {
-          // the options of this select: its accessibility subtree
-          const own = new Set();
-          const walk = (id) => {
-            const n = now.nodes.find((x) => x.nodeId === id);
-            if (!n || own.has(id)) return;
-            own.add(id);
-            for (const k of n.childIds ?? []) walk(k);
-          };
-          const sel = now.nodes.find((x) => x.backendDOMNodeId === entry.backendNodeId && (x.frameTag ?? "") === (entry.frameTag ?? ""));
-          if (sel) walk(sel.nodeId);
-          options = options.filter((e) => own.has(e.nodeId));
-        } else if (options.some((e) => !known.has(e.ref))) options = options.filter((e) => !known.has(e.ref));
-        if (options.length === 0) fail(`no options appeared after opening ${cdp.entryLine(entry)}: desktop-web snap`);
-        const m = cdp.matchOption(options.map((e) => e.name), want);
-        if (m.several) fail(`${m.several.length} options match ${JSON.stringify(want)}: ${m.several.map((i) => options[i].name).join(" | ")}. Give the full text of one.`, 2);
-        if (m.none) {
-          fail(`no option matches ${JSON.stringify(want)}. Options: ${options.map((e) => e.name).slice(0, 15).join(" | ")}`, 2);
+        // A popup left open would take the next click: close it, and say when the page went elsewhere all the same.
+        const giveUp = async (msg, code = 2) => {
+          if (!info) lib.key("Escape");
+          lib.pause(300);
+          const t = await target();
+          fail([msg, ...(t && t.url !== before.url ? [`the address changed all the same: ${lib.clip(t.url, 120)}`] : [])].join("\n"), code);
+        };
+        const own = cdp.ownedNodes(now.nodes, entry);
+        let options = now.entries.filter((e) => OPTION_ROLES.has(e.role) && own.has(e.nodeId));
+        if (options.length === 0 && !info) options = now.entries.filter((e) => OPTION_ROLES.has(e.role) && !known.has(e.ref));
+        if (options.length === 0 && !info) {
+          // the list's text is its options even inside the combobox or a role-less listbox, which would otherwise own it
+          const bare = { ...now, entries: now.entries.filter((e) => !["combobox", "listbox"].includes(e.role)) };
+          for (const line of cdp.newLines(tree.lines, now.lines).slice(0, 60)) {
+            const t = textEntries(bare, new RegExp(`^${escapeRe(line)}$`), { any: true })[0];
+            if (t) options.push({ ...t, name: line });
+          }
         }
+        if (options.length === 0) await giveUp(`no options appeared after opening ${cdp.entryLine(entry)}: desktop-web snap`, 1);
+        const m = cdp.matchOption(options.map((e) => e.name), want);
+        if (m.several) await giveUp(`${m.several.length} options match ${JSON.stringify(want)}: ${m.several.map((i) => options[i].name).join(" | ")}. Give the full text of one.`);
+        if (m.none) await giveUp(`no option matches ${JSON.stringify(want)}. Options: ${options.map((e) => lib.clip(e.name, 40)).slice(0, 15).join(" | ")}`);
         await clickNode(c, now.nodes, options[m.index]);
         return { pre, entry, how: "click", shown: options[m.index].name };
       });
@@ -1200,7 +1286,7 @@ async function main() {
           process.exit(1);
         }
       }
-      console.log([`${how === "native" ? "selected" : "clicked option"} ${JSON.stringify(shown)} in ${cdp.entryLine(now ?? entry, { nameMax: 60 })}`, state, ...(await changes(pre, before, after, o, { self: entry }))].filter(Boolean).join("\n"));
+      console.log([`${how === "native" ? "selected" : "clicked option"} ${JSON.stringify(shown)} in ${cdp.entryLine(now ?? entry, { nameMax: 60 })}`, state, ...(await changes(pre, before, after, o, { self: entry, selfChanged: cdp.stateDiff(entry, now).length > 0 }))].filter(Boolean).join("\n"));
       return;
     }
     case "hover":
@@ -1212,7 +1298,7 @@ async function main() {
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
       const r = await withPage(async (c) => {
         const tree = await axTree(c, { showable: true });
-        const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, tree });
+        const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
         if (cmd === "hover") {
           await hoverNode(c, nodes, entry);
           return { pre: stateOf(tree), entry, note };

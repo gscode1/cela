@@ -270,7 +270,56 @@ function snapIndex(snap) {
     }
     return [...out.filter((w) => w.startsWith("title:")), ...out.filter((w) => !w.startsWith("title:"))].slice(0, 4);
   };
-  return { find: (id) => at.get(id), attrs: ({ doc, i }) => nodeAttrs(snap, doc, i), labelOf, tokens };
+  const views = new Map();
+  const view = (doc) => {
+    if (!views.has(doc)) views.set(doc, docView(snap, doc));
+    return views.get(doc);
+  };
+  return { find: (id) => at.get(id), attrs: ({ doc, i }) => nodeAttrs(snap, doc, i), labelOf, tokens, tag, view };
+}
+
+// The text a person reads as a field's label: text ending just left of the field on its height (words of the line before it,
+// which may hold the field's own value too), or a short line just above it over its width, or one sitting on its top border (a
+// floating label). The nearest wins, and a row's own label close by beats the line of the row above. Never text drawn inside
+// the field (its value or a drawn placeholder). `lines` come from labelLines.
+function nearestLabel(lines, doc, box) {
+  let best;
+  let bestGap = Infinity;
+  const take = (text, gap) => {
+    text = squash(text);
+    if (gap < bestGap && text.length <= 60 && LETTER.test(text)) {
+      best = text;
+      bestGap = gap;
+    }
+  };
+  for (const l of lines) {
+    if (l.doc !== doc) continue;
+    const left = l.pieces.filter((p) => p.box.x + p.box.w <= box.x + 2 && Math.min(p.box.y + p.box.h, box.y + box.h) - Math.max(p.box.y, box.y) >= 0.5 * Math.min(p.box.h, box.h));
+    if (left.length > 0) {
+      const gap = box.x - Math.max(...left.map((p) => p.box.x + p.box.w));
+      if (gap <= 250) take(left.map((p) => p.text).join(" "), gap <= 60 ? gap - 1000 : gap);
+    }
+    const up = l.pieces.filter((p) => p.box.y + p.box.h / 2 <= box.y + 2 && Math.min(p.box.x + p.box.w, box.x + box.w) - Math.max(p.box.x, box.x) > 0);
+    if (up.length > 0) {
+      const gap = Math.max(box.y - Math.max(...up.map((p) => p.box.y + p.box.h)), 0);
+      if (gap <= 40) take(up.map((p) => p.text).join(" "), gap);
+    }
+  }
+  return best;
+}
+
+// The page's text lines as pieces of text with their boxes, for nearestLabel.
+function labelLines(snap) {
+  const out = [];
+  for (const g of snapshotGroups(snap)) {
+    const pieces = [];
+    for (const t of g.texts) {
+      const b = g.v.bounds(t);
+      if (b) pieces.push({ text: g.v.str(g.doc.nodes.nodeValue[t]), box: b });
+    }
+    if (pieces.length > 0) out.push({ doc: g.doc, pieces });
+  }
+  return out;
 }
 
 // Entries of one part (its layout snapshot and the backend ids hidden in it) as a person meets them. A hidden element is left
@@ -278,9 +327,13 @@ function snapIndex(snap) {
 // or 1 px and draw the box in the label, so that one is kept and clicked through its label (`via`); a hidden input without a
 // visible label (a honeypot) stays out. A field gets its placeholder, and a control without a name in letters (an icon
 // button, an icon font glyph) gets the words of its markup (`mark`).
+// A control also gets what a person sees as part of it, which takes its click like the control itself: its visible <label>
+// (`labelEl`) and its own box (`boxEl`), the highest ancestor at most three levels up that holds no other listed control (a
+// filter row whose drawn check box, a sibling's ::before, sits over the real input). A field without a name in letters gets
+// the text a person reads as its label (`label`), and a field in a form that shows no button to send it is marked (`noSubmit`).
 function annotate(entries, snap, hidden) {
   const ix = snapIndex(snap);
-  const out = [];
+  const kept = [];
   for (let e of entries) {
     const at = ix.find(e.backendNodeId);
     if (hidden.has(e.backendNodeId)) {
@@ -289,7 +342,45 @@ function annotate(entries, snap, hidden) {
       if (label === undefined) continue;
       e = { ...e, via: label };
     }
+    kept.push({ e, at });
+  }
+  // How many listed controls each element holds, by node: a box holds only its own.
+  const holds = new Map();
+  for (const { e, at } of kept) {
+    if (!at || !CLICKABLE.has(e.role)) continue;
+    const m = holds.get(at.doc) ?? new Map();
+    holds.set(at.doc, m);
+    for (let p = at.doc.nodes.parentIndex[at.i]; p >= 0; p = at.doc.nodes.parentIndex[p]) m.set(p, (m.get(p) ?? 0) + 1);
+  }
+  const formOf = ({ doc, i }) => {
+    for (let p = doc.nodes.parentIndex[i]; p >= 0; p = doc.nodes.parentIndex[p]) if (ix.tag(doc, p) === "FORM") return `${p}`;
+    return undefined;
+  };
+  // A button that sends its form: a <button> of type submit (its default) or a submit or image input; a <button type="button">
+  // (swap the fields, clear one) does not, and an element only drawn as a button may run anything.
+  const sends = ({ doc, i }) => {
+    const type = (nodeAttrs(snap, doc, i).type ?? "").toLowerCase();
+    const tag = ix.tag(doc, i);
+    return tag === "BUTTON" ? type === "" || type === "submit" : tag === "INPUT" ? type === "submit" || type === "image" : true;
+  };
+  const buttoned = new Set(kept.filter(({ e, at }) => at && e.role === "button" && sends(at)).map(({ at }) => formOf(at)));
+  let lines;
+  const out = [];
+  for (let { e, at } of kept) {
     if (at && CLICKABLE.has(e.role)) {
+      const label = e.via ?? ix.labelOf(at, hidden);
+      if (label !== undefined) e = { ...e, labelEl: label };
+      const m = holds.get(at.doc);
+      let box;
+      for (let p = at.doc.nodes.parentIndex[at.i], k = 0; p >= 0 && k < 3; p = at.doc.nodes.parentIndex[p], k++) {
+        if ((m?.get(p) ?? 0) > 1 || /^(BODY|HTML)$/.test(ix.tag(at.doc, p))) break;
+        box = p;
+      }
+      if (box !== undefined) e = { ...e, boxEl: at.doc.nodes.backendNodeId[box] };
+      if (FIELDS.has(e.role)) {
+        const f = formOf(at);
+        if (f !== undefined && !buttoned.has(f)) e = { ...e, noSubmit: true };
+      }
       const a = ix.attrs(at);
       const ph = squash(a.placeholder);
       if (ph && ph !== e.name) e = { ...e, placeholder: clip(ph, 80) };
@@ -302,6 +393,12 @@ function annotate(entries, snap, hidden) {
         // the choice an unnamed radio or checkbox stands for (value="car"); "on" is the browser's default, not a choice
         if (/^(radio|checkbox)$/.test(a.type ?? "") && a.value && a.value !== "on" && a.value.length <= 24) t.unshift(`value=${a.value}`);
         if (t.length > 0) e = { ...e, mark: clip(t.join(" "), 40) };
+        if ((FIELDS.has(e.role) || e.role === "slider") && !e.placeholder) {
+          const b = ix.view(at.doc).bounds(at.i);
+          lines ??= labelLines(snap);
+          const l = b ? nearestLabel(lines, at.doc, b) : undefined;
+          if (l) e = { ...e, label: clip(l, 60) };
+        }
       }
     }
     out.push(e);
@@ -319,16 +416,22 @@ function nameUnnamed(nodes, entries) {
   const rows = rowTexts(nodes, entries, { max: 50, only: want });
   return entries
     .map((e, i) => (want.has(e) && /[\p{L}\p{N}]/u.test(rows[i] ?? "") ? { ...e, near: rows[i] } : e))
-    .filter((e) => !unnamed(e) || e.name || e.mark || e.near || FIELDS.has(e.role) || e.role === "checkbox");
+    .filter((e) => !unnamed(e) || e.name || e.mark || e.label || e.near || FIELDS.has(e.role) || e.role === "checkbox");
 }
 
-// What a name regex is tested against: the name and placeholder, and for a control without a name its markup words and row.
-const matchTexts = (e) => [e.name, e.placeholder, e.mark, e.near].filter(Boolean);
+// What a name regex is tested against: the name and placeholder, and for a control without a name the text beside it, its
+// markup words and its row.
+const matchTexts = (e) => [e.name, e.placeholder, e.label, e.mark, e.near].filter(Boolean);
+
+// Markup words are a last resort: a control with a label or a row text a person reads is shown by those.
+const showMark = (e) => e.mark && !e.label && !e.near;
 
 function entryLine(e, { nameMax = 120 } = {}) {
-  let line = `[${e.ref}] ${e.role}${e.name || !e.mark ? ` "${clip(e.name, nameMax)}"` : ""}`;
-  if (e.mark) line += ` ‹${e.mark}›`;
+  let line = `[${e.ref}] ${e.role}${e.name || !showMark(e) ? ` "${clip(e.name, nameMax)}"` : ""}`;
+  if (showMark(e)) line += ` ‹${e.mark}›`;
   if (e.placeholder) line += ` placeholder="${clip(e.placeholder, 60)}"`;
+  // a row text that already starts with the label says it
+  if (e.label && !e.near?.startsWith(e.label)) line += ` label "${e.label}"`;
   if (e.near) line += ` near "${e.near}"`;
   if (e.role === "slider") {
     // numbers, unquoted: what `type <slider> N` takes
@@ -352,7 +455,8 @@ function entryLine(e, { nameMax = 120 } = {}) {
 }
 
 // An element in a short line: its name, or the words of its markup when it has none.
-const shortName = (e, n = 60) => (e.name ? `"${clip(e.name, n)}"` : e.mark ? `‹${e.mark}›` : e.near ? `near "${clip(e.near, n)}"` : '""');
+const shortName = (e, n = 60) =>
+  e.name ? `"${clip(e.name, n)}"` : e.label ? `label "${clip(e.label, n)}"` : e.near ? `near "${clip(e.near, n)}"` : e.mark ? `‹${e.mark}›` : '""';
 
 // How an element's state differs between two reads: `checked false -> true`, `value "a" -> "b"`.
 const STATE = ["checked", "expanded", "value", "name"];
@@ -441,7 +545,7 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } 
   let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && matchTexts(e).some((t) => re.test(t)) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
   const whole = new RegExp(`^(?:${re.source})$`, re.flags);
-  const exact = matches.filter((e) => whole.test(e.name) || (e.placeholder !== undefined && whole.test(e.placeholder)));
+  const exact = matches.filter((e) => [e.name, e.placeholder, e.label].some((t) => t !== undefined && whole.test(t)));
   if (exact.length > 0) matches = exact;
   else if (!role) {
     // A button whose name repeats a matching link's ("Add <product> to cart" next to the "<product>" link) is the
@@ -1013,7 +1117,14 @@ function dialogs(nodes, { max = 8 } = {}) {
     };
     for (const c of n.childIds ?? []) walk(c);
     const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role));
-    out.push({ role, name: squash(value(n.name)), entries: entries.slice(0, max), more: Math.max(entries.length - max, 0) });
+    out.push({
+      role,
+      name: squash(value(n.name)),
+      backendNodeId: n.backendDOMNodeId,
+      frameTag: n.frameTag,
+      entries: entries.slice(0, max),
+      more: Math.max(entries.length - max, 0),
+    });
   }
   return out;
 }
@@ -1210,6 +1321,36 @@ function firstH1(part) {
   return undefined;
 }
 
+// The accessibility node ids a combobox or list owns: its own subtree and the subtrees of the elements it names in
+// aria-controls (a popup list drawn elsewhere in the page). A dropdown's options are looked for there first.
+function ownedNodes(nodes, entry) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const own = new Set();
+  const walk = (id) => {
+    const n = byId.get(id);
+    if (!n || own.has(id)) return;
+    own.add(id);
+    for (const c of n.childIds ?? []) walk(c);
+  };
+  const tag = entry.frameTag ?? "";
+  const self = nodes.find((n) => n.backendDOMNodeId === entry.backendNodeId && (n.frameTag ?? "") === tag);
+  if (!self) return own;
+  walk(self.nodeId);
+  const controls = (self.properties ?? []).find((p) => p.name === "controls")?.value?.relatedNodes ?? [];
+  for (const r of controls) {
+    const n = nodes.find((m) => m.backendDOMNodeId === r.backendDOMNodeId && (m.frameTag ?? "") === tag);
+    if (n) walk(n.nodeId);
+  }
+  return own;
+}
+
+// Whether an entry sits inside a landmark of one of `roles` (banner, navigation): the page's header and menus.
+function inLandmark(nodes, entry, roles) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  for (let n = byId.get(entry.nodeId); n; n = byId.get(n.parentId)) if (!n.ignored && roles.has(value(n.role))) return true;
+  return false;
+}
+
 // Entries inside the main landmark first (header and navigation come before the content in document order).
 function mainFirst(nodes, entries) {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]));
@@ -1348,6 +1489,8 @@ module.exports = {
   dialogs,
   hiddenElements,
   mainFirst,
+  ownedNodes,
+  inLandmark,
   childFrameIds,
   frameTag,
   iframeTargets,
