@@ -61,6 +61,8 @@ case $app in
       # The browser reaches the network only through the forwarder and never resolves a name itself: the proxy does.
       proxy_flags=("--proxy-server=http://127.0.0.1:$proxy_port" "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1")
     fi
+    # No background networking or component updates: left on, Chrome calls Google's update, account and variation
+    # services through the session's egress proxy on its own, traffic no task asked for.
     # A random port per launch, so a page cannot aim at a known one. Picked here, not with --remote-debugging-port=0:
     # with 0 Chrome reports navigator.webdriver = true (seen on Chrome 158), with an explicit port it does not.
     cdp_port=${PI_DESKTOP_CDP_PORT:-}
@@ -79,6 +81,7 @@ case $app in
       --window-position=0,0 --window-size=1280,800
       --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp
       --no-first-run --no-default-browser-check --password-store=basic --disable-breakpad
+      --disable-background-networking --disable-component-update
       --disable-features=DnsOverHttps,Translate,MediaRouter
       ${proxy_flags[@]+"${proxy_flags[@]}"} ${shm_flags[@]+"${shm_flags[@]}"}
       "${1:-about:blank}")

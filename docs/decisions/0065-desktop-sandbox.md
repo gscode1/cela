@@ -329,6 +329,15 @@ because gVisor is several times slower than runc. Every fix below is general, no
 
 Two inline-blocks on one line read as two lines of text; that is deliberate (a row of cards or tabs), the suite pins it.
 
+### No proxy sign-in dialog, no background calls (issue #460)
+
+The egress proxy refuses a host with 407, and the browser-proxy forwarder passed it on unchanged. Headed Chrome answers any
+407, also one for a tracker a page loads, with a modal "Sign in: the proxy requires a username and password" dialog: browser
+UI that `desktop-web` cannot see and that blocks clicks. The forwarder adds the session's credentials itself, so a 407 can
+only mean refused: it now rewrites it to 403 without the `Proxy-Authenticate` challenge, keeping the body. Chrome is also
+started with `--disable-background-networking --disable-component-update`, which ends its own calls to Google's update,
+account and variation services through the session's proxy.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
