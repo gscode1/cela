@@ -8,7 +8,8 @@
 #                                              debugging port on loopback for desktop-web's passive reader (chromium: same)
 #
 # Environment: HTTPS_PROXY (the session's egress proxy; when absent Chrome runs without a proxy, which only a
-# network-mode direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_CDP_PORT (9222), PI_DESKTOP_STATE
+# network-mode direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_CDP_PORT (a random free port, written
+# to $PI_DESKTOP_STATE/cdp-port), PI_DESKTOP_STATE
 # (/tmp/pi-desktop), PI_DESKTOP_WAIT_SECONDS (60).
 set -euo pipefail
 export NODE_NO_WARNINGS=1 # the platform sets NODE_USE_ENV_PROXY, whose experimental warning would fill the forwarder log
@@ -60,11 +61,21 @@ case $app in
       # The browser reaches the network only through the forwarder and never resolves a name itself: the proxy does.
       proxy_flags=("--proxy-server=http://127.0.0.1:$proxy_port" "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1")
     fi
+    # A random port per launch, so a page cannot aim at a known one. Picked here, not with --remote-debugging-port=0:
+    # with 0 Chrome reports navigator.webdriver = true (seen on Chrome 158), with an explicit port it does not.
+    cdp_port=${PI_DESKTOP_CDP_PORT:-}
+    if [[ -z $cdp_port ]]; then
+      for _ in $(seq 1 20); do
+        cdp_port=$((20000 + RANDOM % 40000))
+        (exec 3<>"/dev/tcp/127.0.0.1/$cdp_port") 2>/dev/null || break
+      done
+    fi
+    echo "$cdp_port" >"$state/cdp-port"
     shm_flags=()
     shm_kb=$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')
     [[ ${shm_kb:-0} -ge 262144 ]] || shm_flags=(--disable-dev-shm-usage)
     cmd=(google-chrome-stable --no-sandbox --user-data-dir="$profile"
-      --remote-debugging-address=127.0.0.1 --remote-debugging-port="${PI_DESKTOP_CDP_PORT:-9222}"
+      --remote-debugging-address=127.0.0.1 --remote-debugging-port="$cdp_port"
       --window-position=0,0 --window-size=1280,800
       --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp
       --no-first-run --no-default-browser-check --password-store=basic --disable-breakpad
