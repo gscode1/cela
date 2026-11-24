@@ -1,7 +1,7 @@
 // Passive CDP reader for the desktop's Chrome (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
 // Pages detect a driver through what it turns on, above all Runtime.enable, which every Playwright-style client sends and
 // which leaves a trace the page can see even after the client leaves. This reader sends only the read-only methods in
-// ALLOWED: the accessibility tree, a layout snapshot and element boxes. It never enables a domain,
+// ALLOWED: the accessibility tree, a layout snapshot, the frame tree and element boxes. It never enables a domain,
 // never runs script in the page and never sends input: clicks and keys go through xdotool as real X events.
 // Installed next to desktop-web in /usr/local/bin and loaded by path. No dependencies.
 "use strict";
@@ -12,9 +12,13 @@ const ALLOWED = new Set([
   "DOM.describeNode",
   "DOM.getBoxModel",
   "DOM.getContentQuads",
+  // The iframe element that owns a frame, to place a frame's boxes inside the page. Reads the DOM, enables nothing.
+  "DOM.getFrameOwner",
   "DOM.getNodeForLocation",
   "DOM.scrollIntoViewIfNeeded",
   "DOMSnapshot.captureSnapshot",
+  // The ids of a page's frames, to read each frame's accessibility tree. Reads, enables nothing and runs nothing in the page.
+  "Page.getFrameTree",
   "Page.getLayoutMetrics",
 ]);
 
@@ -32,6 +36,74 @@ async function pageTarget(port) {
   }
   // Chrome's own UI (the address bar's popup, new-tab page parts) is listed as pages under chrome:// and similar schemes.
   return list.find((t) => t.type === "page" && !/^(chrome|chrome-untrusted|chrome-extension|devtools|chrome-search):/.test(t.url));
+}
+
+// Every target Chrome lists (pages, and iframes that live in another process).
+async function targetList(port) {
+  try {
+    return await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  } catch {
+    return [];
+  }
+}
+
+// Frames of another site run in their own process and are separate targets of type "iframe" whose parentId is the target
+// holding them (the page, or another such frame). Breadth first from the page, at most `max` (ad-heavy pages have dozens).
+// `tag` is a short name for refs and for telling frames apart.
+const frameTag = (id) => String(id).slice(0, 4).toUpperCase();
+function iframeTargets(list, pageId, { max = 10 } = {}) {
+  const known = new Set([pageId]);
+  const out = [];
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const t of list) {
+      if (t.type !== "iframe" || !t.webSocketDebuggerUrl || known.has(t.id) || !known.has(t.parentId) || out.length >= max) continue;
+      known.add(t.id);
+      out.push({ id: t.id, parentId: t.parentId, tag: frameTag(t.id), url: t.url, webSocketDebuggerUrl: t.webSocketDebuggerUrl });
+      grew = true;
+    }
+  }
+  return out;
+}
+
+// Ids of the frames below the root of a Page.getFrameTree answer (same-process ones; an out-of-process frame is a target).
+function childFrameIds(tree) {
+  const out = [];
+  const walk = (n) => {
+    for (const c of n.childFrames ?? []) {
+      out.push(c.frame.id);
+      walk(c);
+    }
+  };
+  walk(tree);
+  return out;
+}
+
+// Accessibility nodes of one frame, made unique among the page's: node ids get `prefix`, and `frameTag` says which process
+// (which backend node id space) the element is in.
+function prefixNodes(nodes, prefix, tag) {
+  const p = (id) => (id === undefined ? id : `${prefix}${id}`);
+  return nodes.map((n) => ({ ...n, nodeId: p(n.nodeId), parentId: p(n.parentId), childIds: n.childIds?.map(p), frameTag: tag }));
+}
+
+const shiftQuad = (q, dx, dy) => q.map((v, i) => v + (i % 2 === 0 ? dx : dy));
+const quadOrigin = (q) => ({ x: Math.min(q[0], q[2], q[4], q[6]), y: Math.min(q[1], q[3], q[5], q[7]) });
+
+// How far the layout viewport falls short of the real one: a horizontal scrollbar (any thickness, any zoom) takes the bottom
+// of the window's page area, but clientHeight leaves it out, and the viewport's top is found from its full height. Hit
+// testing covers the whole page area, scrollbar included, so the first point below clientHeight that hits nothing is the
+// bottom. `hits(y)` says whether a point at y lands on any node.
+async function scrollbarThickness(hits, client, { max = 40 } = {}) {
+  const first = Math.ceil(client);
+  if (!(await hits(first))) return 0;
+  let lo = first; // hits
+  let hi = first + max; // assumed not to
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (await hits(mid)) lo = mid;
+    else hi = mid;
+  }
+  return hi - client;
 }
 
 // One short connection per command: attach, send, close.
@@ -92,7 +164,7 @@ const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Accessibility tree -> the elements an agent acts on, plus named headings, each with a ref (e + backend DOM node id,
-// which stays valid until the element leaves the page). Headings that repeat a link's name (product cards) are dropped.
+// which stays valid until the element leaves the page; "@TAG" after it names an out-of-process iframe). Headings that repeat a link's name (product cards) are dropped.
 function axEntries(nodes) {
   const live = nodes.filter((n) => !n.ignored);
   const linkNames = new Set(live.filter((n) => value(n.role) === "link").map((n) => squash(value(n.name))));
@@ -107,7 +179,8 @@ function axEntries(nodes) {
       if (!name || linkNames.has(name)) continue;
     } else if (!CLICKABLE.has(role) || (!name && !FIELDS.has(role) && role !== "checkbox")) continue;
     out.push({
-      ref: `e${n.backendDOMNodeId}`,
+      ref: `e${n.backendDOMNodeId}${n.frameTag ? `@${n.frameTag}` : ""}`,
+      frameTag: n.frameTag,
       backendNodeId: n.backendDOMNodeId,
       nodeId: n.nodeId,
       role,
@@ -214,14 +287,16 @@ function chooseTarget(nodes, entries, re, { near, nth, role } = {}) {
 // text extractor does it, from layout alone: a space where the source has none but the boxes sit on different lines, stand
 // apart by more than a sliver, or have a replaced or void element (br, img, input...) between them; no space where they
 // touch. Text a person cannot see is left out: no box or a box under 2 px², entirely left of or above the page, visibility
-// hidden, or under an ancestor with opacity 0 (screen-reader-only text, honeypot links, prompt injection).
-const STYLES = ["display", "visibility", "opacity"];
+// hidden, under an ancestor with opacity 0, or cut away by an ancestor's overflow hidden/clip or its own clip rect
+// (screen-reader-only text, honeypot links, prompt injection).
+const STYLES = ["display", "visibility", "opacity", "position", "overflow-x", "overflow-y", "clip"];
 const BLOCK = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root|inline-block|inline-flex|inline-grid)$/;
 const VOID = new Set(["BR", "IMG", "INPUT", "SELECT", "TEXTAREA", "HR", "SVG", "VIDEO", "CANVAS", "IFRAME", "OBJECT", "EMBED"]);
 
 // Per-document helpers over a DOMSnapshot document: style, bounds, effective visibility.
 function docView(snap, doc) {
   const str = (i) => (i >= 0 ? snap.strings[i] : "");
+  const nodeName = doc.nodes.nodeName;
   const layoutOf = new Map();
   doc.layout.nodeIndex.forEach((ni, li) => layoutOf.set(ni, li));
   const style = (i) => {
@@ -244,7 +319,42 @@ function docView(snap, doc) {
   };
   const offscreen = (b) => b.x + b.w <= 0 || b.y + b.h <= 0;
   const tiny = (b) => b.w * b.h < 2;
-  return { str, style, bounds, parent, layoutOf, seeThrough, offscreen, tiny };
+  const meet = (a, b) => {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    return { x, y, w: Math.max(Math.min(a.x + a.w, b.x + b.w) - x, 0), h: Math.max(Math.min(a.y + a.h, b.y + b.h) - y, 0) };
+  };
+  // The part of node i's box a person can see: what is left after the overflow-hidden boxes it sits in (until a fixed
+  // position leaves them; an absolute one leaves those before its containing block) and its own `clip: rect(...)`.
+  // Scrollable boxes (auto, scroll) do not cut: their content is one scroll away. body and html clip nothing.
+  const visible = (i) => {
+    let box = bounds(i);
+    if (!box) return undefined;
+    let escaping = false;
+    for (let cur = i, a = parent[i]; a >= 0; cur = a, a = parent[a]) {
+      const cs = style(cur);
+      const rect = /^rect\(([^)]*)\)$/.exec(cs?.[6] ?? "");
+      const own = bounds(cur);
+      if (rect && own) {
+        const [t, r, bt, l] = rect[1].split(/[ ,]+/).map(parseFloat);
+        if ([t, r, bt, l].every(Number.isFinite)) box = meet(box, { x: own.x + l, y: own.y + t, w: r - l, h: bt - t });
+      }
+      if (cs?.[3] === "fixed") break;
+      if (cs?.[3] === "absolute") escaping = true;
+      const as = style(a);
+      const ab = bounds(a);
+      if (!as || !ab) continue;
+      if (escaping) {
+        if (as[3] === "static") continue;
+        escaping = false;
+      }
+      const tag = str(nodeName[a]).toUpperCase();
+      if (tag === "BODY" || tag === "HTML") continue;
+      if (/^(hidden|clip)$/.test(as[4]) || /^(hidden|clip)$/.test(as[5])) box = meet(box, ab);
+    }
+    return box;
+  };
+  return { str, style, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
 }
 
 function snapshotLines(snap) {
@@ -270,7 +380,8 @@ function snapshotLines(snap) {
       }
       if (doc.nodes.nodeType[i] !== 3) continue;
       const b = v.bounds(i);
-      if (!b || v.tiny(b) || v.offscreen(b) || v.style(i)?.[1] === "hidden" || v.seeThrough(i)) continue;
+      const shown = v.visible(i);
+      if (!b || v.tiny(shown) || v.offscreen(b) || v.style(i)?.[1] === "hidden" || v.seeThrough(i)) continue;
       const raw = v.str(doc.nodes.nodeValue[i]);
       if (raw.trim() === "") {
         const g0 = groups.get(blockOf(i));
@@ -309,7 +420,7 @@ function hiddenElements(snap) {
     const seen = new Set();
     for (const [i] of v.layoutOf) {
       const b = v.bounds(i);
-      if (!b || v.tiny(b) || v.offscreen(b) || v.seeThrough(i)) continue;
+      if (!b || v.tiny(v.visible(i)) || v.offscreen(b) || v.seeThrough(i)) continue;
       for (let p = i; p >= 0 && !seen.has(p); p = v.parent[p]) seen.add(p);
     }
     for (const [i] of v.layoutOf) {
@@ -462,6 +573,9 @@ module.exports = {
   dialogs,
   hiddenElements,
   mainFirst,
+  childFrameIds,
+  frameTag,
+  iframeTargets,
   newLines,
   outline,
   wrapLines,
@@ -471,7 +585,12 @@ module.exports = {
   connect,
   entryLine,
   pageTarget,
+  prefixNodes,
   quadCenter,
+  quadOrigin,
+  scrollbarThickness,
+  shiftQuad,
+  targetList,
   rowTexts,
   screenPoint,
   snapshotLines,
