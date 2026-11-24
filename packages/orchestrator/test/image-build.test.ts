@@ -193,14 +193,15 @@ describe("image delivery replaces mutable code uploads", () => {
         /ADD --checksum=sha256:[a-f0-9]{64} .*agent-desktop\/releases\/download\/v1\.3\.1\//g,
       ),
     ).toHaveLength(2);
-    // The forwarder is the browser image's, and Firefox's proxy policy points at it.
+    // The forwarder is the browser image's, and Chrome's --proxy-server points at it and nothing else.
     expect(desktop).toContain("--filter @cela/browser-proxy...");
+    const launch = readFileSync(join(root, "images/sandbox-desktop/files/desktop-launch"), "utf8");
+    expect(launch).toContain("--proxy-server=http://127.0.0.1:$proxy_port");
     const policy = JSON.parse(
-      readFileSync(join(root, "images/sandbox-desktop/files/firefox-policies.json"), "utf8"),
-    ) as { policies: { Proxy: Record<string, unknown>; WebsiteFilter: { Block: string[] } } };
-    expect(policy.policies.Proxy.HTTPProxy).toBe("127.0.0.1:3129");
-    expect(policy.policies.Proxy.SSLProxy).toBe("127.0.0.1:3129");
-    expect(policy.policies.WebsiteFilter.Block).toContain("file:///*");
+      readFileSync(join(root, "images/sandbox-desktop/files/chrome-policy.json"), "utf8"),
+    ) as { URLBlocklist: string[]; URLAllowlist: string[] };
+    expect(policy.URLBlocklist).toContain("file://*");
+    expect(policy.URLAllowlist).toEqual(["file:///workspace/*"]);
     // Lab live view (ADR 0065): packages, a view-only x11vnc and loopback-only listeners.
     expect(desktop).toMatch(/x11vnc novnc websockify/);
     const wrapper = readFileSync(

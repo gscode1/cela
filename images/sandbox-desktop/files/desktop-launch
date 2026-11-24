@@ -4,10 +4,10 @@
 #
 #   desktop-launch mousepad [file...]
 #   desktop-launch writer [file...]            LibreOffice Writer
-#   desktop-launch firefox [url]               default about:blank; web traffic only through the egress proxy
-#   desktop-launch chromium [url]              the same, with a debugging port on loopback for desktop-web's passive reader
+#   desktop-launch chrome [url]                Google Chrome, default about:blank; web traffic only through the egress proxy, with a
+#                                              debugging port on loopback for desktop-web's passive reader (chromium: same)
 #
-# Environment: HTTPS_PROXY (the session's egress proxy; when absent the browsers run without a proxy, which only a
+# Environment: HTTPS_PROXY (the session's egress proxy; when absent Chrome runs without a proxy, which only a
 # network-mode direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_CDP_PORT (9222), PI_DESKTOP_STATE
 # (/tmp/pi-desktop), PI_DESKTOP_WAIT_SECONDS (60).
 set -euo pipefail
@@ -18,7 +18,7 @@ state=${PI_DESKTOP_STATE:-/tmp/pi-desktop}
 wait_seconds=${PI_DESKTOP_WAIT_SECONDS:-60}
 run=(agent-desktop-run --exec)
 
-usage() { echo "usage: desktop-launch mousepad|writer|firefox|chromium [args]" >&2; exit 64; }
+usage() { echo "usage: desktop-launch mousepad|writer|chrome [args]" >&2; exit 64; }
 [[ $# -ge 1 ]] || usage
 app=$1
 shift
@@ -26,7 +26,7 @@ shift
 mkdir -p "$state" /workspace/downloads /workspace/.cache 2>/dev/null || true
 chmod 700 "$state"
 
-# Starts the loopback forwarder that adds the egress token to CONNECT requests; Firefox's proxy policy points at it.
+# Starts the loopback forwarder that adds the egress token to CONNECT requests; Chrome's --proxy-server points at it.
 start_forwarder() {
   (exec 3<>"/dev/tcp/127.0.0.1/$proxy_port") 2>/dev/null && return
   BROWSER_PROXY_PORT=$proxy_port setsid node /opt/browser-proxy/dist/main.js >"$state/forwarder.log" 2>&1 </dev/null &
@@ -44,37 +44,14 @@ visible_windows() { { "${run[@]}" xdotool search --onlyvisible --name '.' 2>/dev
 case $app in
   mousepad) cmd=(mousepad "$@") ;;
   writer) cmd=(soffice --writer --norestore --nologo "$@") ;;
-  firefox)
-    # A fresh profile at every launch: no history, cookies or sign-in survive a restart. The policy file does the rest.
-    profile=$state/firefox-profile
-    rm -rf "$profile"
-    mkdir -p "$profile"
-    {
-      echo 'user_pref("browser.aboutwelcome.enabled", false);'
-      echo 'user_pref("browser.startup.homepage_override.mstone", "ignore");'
-      echo 'user_pref("browser.shell.checkDefaultBrowser", false);'
-      echo 'user_pref("browser.sessionstore.resume_from_crash", false);'
-      echo 'user_pref("browser.tabs.warnOnClose", false);'
-      echo 'user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);'
-      echo 'user_pref("datareporting.policy.dataSubmissionEnabled", false);'
-    } >"$profile/user.js"
-    if [[ -n ${HTTPS_PROXY:-${https_proxy:-}} ]]; then
-      start_forwarder
-    else
-      echo 'user_pref("network.proxy.type", 0);' >>"$profile/user.js"
-    fi
-    # GNOME_ACCESSIBILITY: without it Firefox does not register on the accessibility bus. No Firefox content sandbox: it
-    # needs user namespaces, which the Pod does not have; the sandbox runtime is the boundary.
-    export MOZ_ENABLE_WAYLAND=0 MOZ_DISABLE_CONTENT_SANDBOX=1 GNOME_ACCESSIBILITY=1 MOZ_CRASHREPORTER_DISABLE=1
-    cmd=(firefox-esr --no-remote --profile "$profile" "${1:-about:blank}")
-    ;;
-  chromium)
-    # A fresh profile at every launch, like Firefox; the managed policy file does the rest. The debugging port listens on
+  chrome | chromium)
+    app=chrome
+    # A fresh profile at every launch, so no history, cookies or sign-in survive a restart; the managed policy file does the rest. The debugging port listens on
     # loopback only and is read by desktop-web, which never sends Runtime.enable or script (cdp-lib.cjs): a page cannot
-    # tell this browser from a person's. --no-sandbox: Chromium's sandbox needs user namespaces, which the Pod does not
+    # tell this browser from a person's. --no-sandbox: Chrome's sandbox needs user namespaces, which the Pod does not
     # have; the sandbox runtime is the boundary. No --enable-unsafe-swiftshader: detectors read software WebGL as the
-    # Playwright default (rebrowser flags it), and Chromium without it passed the bot checks in the lab.
-    profile=$state/chromium-profile
+    # Playwright default (rebrowser flags it), and Chrome without it passed the bot checks in the lab.
+    profile=$state/chrome-profile
     rm -rf "$profile"
     mkdir -p "$profile"
     proxy_flags=()
@@ -86,7 +63,7 @@ case $app in
     shm_flags=()
     shm_kb=$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')
     [[ ${shm_kb:-0} -ge 262144 ]] || shm_flags=(--disable-dev-shm-usage)
-    cmd=(chromium --no-sandbox --user-data-dir="$profile"
+    cmd=(google-chrome-stable --no-sandbox --user-data-dir="$profile"
       --remote-debugging-address=127.0.0.1 --remote-debugging-port="${PI_DESKTOP_CDP_PORT:-9222}"
       --window-position=0,0 --window-size=1280,800
       --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp

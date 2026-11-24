@@ -1,5 +1,5 @@
 #!/usr/bin/env -S node --no-warnings
-// Web pages in the desktop's Chromium: reads them over a passive CDP connection (cdp-lib.cjs: accessibility tree, layout
+// Web pages in the desktop's Chrome: reads them over a passive CDP connection (cdp-lib.cjs: accessibility tree, layout
 // snapshot, element boxes; never Runtime.enable or script in the page) and acts with real X input through xdotool, so a
 // page sees a person's browser (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
 //
@@ -57,11 +57,11 @@ const regex = (s) => {
   }
 };
 
-// The browser window: the last visible Chromium top-level window.
-function chromiumWindow() {
+// The browser window: the last visible Chrome top-level window.
+function chromeWindow() {
   let ids;
   try {
-    ids = lib.exec("xdotool", "search", "--onlyvisible", "--class", "chromium").trim().split("\n").filter(Boolean);
+    ids = lib.exec("xdotool", "search", "--onlyvisible", "--class", "[Gg]oogle-chrome").trim().split("\n").filter(Boolean);
   } catch {
     ids = [];
   }
@@ -88,20 +88,20 @@ function activate(win) {
 async function ensureBrowser() {
   if (await cdp.pageTarget(PORT)) return;
   try {
-    execFileSync("desktop-launch", ["chromium"], { stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync("desktop-launch", ["chrome"], { stdio: ["ignore", "ignore", "pipe"] });
   } catch (e) {
-    fail(`Chromium did not start: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
+    fail(`Chrome did not start: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
   }
   for (let i = 0; i < 60; i++) {
     if (await cdp.pageTarget(PORT)) return;
     lib.pause(500);
   }
-  fail("Chromium did not answer on its debugging port");
+  fail("Chrome did not answer on its debugging port");
 }
 
 async function withPage(fn) {
   const target = await cdp.pageTarget(PORT);
-  if (!target) fail("Chromium is not running: start with desktop-web open <url>");
+  if (!target) fail("Chrome is not running: start with desktop-web open <url>");
   const c = await cdp.connect(target.webSocketDebuggerUrl);
   try {
     return await fn(c, target);
@@ -234,8 +234,8 @@ async function clickNode(c, target, backendNodeId) {
       }
     }
   }
-  const win = chromiumWindow();
-  if (!win) fail("no Chromium window on the screen");
+  const win = chromeWindow();
+  if (!win) fail("no Chrome window on the screen");
   const p = cdp.screenPoint({ win, viewport: { height: vp.clientHeight }, zoom, frame: FRAME }, center);
   activate(win);
   lib.exec("xdotool", "mousemove", String(p.x), String(p.y), "click", "1");
@@ -252,8 +252,8 @@ async function main() {
       if (!/^https?:\/\//.test(url) && !url.startsWith("file:///workspace/")) fail("give a full https:// URL", 64);
       await ensureBrowser();
       const before = await cdp.pageTarget(PORT);
-      const win = chromiumWindow();
-      if (!win) fail("no Chromium window on the screen");
+      const win = chromeWindow();
+      if (!win) fail("no Chrome window on the screen");
       activate(win);
       lib.key("ctrl+l");
       lib.pause(150);
@@ -295,7 +295,7 @@ async function main() {
       const spec = o.pos[0];
       if (!spec || (cmd === "type" && o.pos[1] === undefined)) fail(`usage: desktop-web ${cmd} <ref|"regex">${cmd === "type" ? ' "text"' : ""}`, 64);
       const before = await cdp.pageTarget(PORT);
-      if (!before) fail("Chromium is not running: start with desktop-web open <url>");
+      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
       const label = await withPage(async (c, t) => {
         const tg = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+$/.test(spec) });
         await clickNode(c, t, tg.backendNodeId);
@@ -316,8 +316,8 @@ async function main() {
     case "key": {
       if (o.pos.length === 0) fail("usage: desktop-web key <keys...>", 64);
       const before = await cdp.pageTarget(PORT);
-      const win = chromiumWindow();
-      if (!before || !win) fail("Chromium is not running: start with desktop-web open <url>");
+      const win = chromeWindow();
+      if (!before || !win) fail("Chrome is not running: start with desktop-web open <url>");
       activate(win);
       lib.key(...o.pos);
       const after = await settle(before, { quietMs: 800, capMs: 15000 });
@@ -326,7 +326,7 @@ async function main() {
     }
     case "url": {
       const t = await cdp.pageTarget(PORT);
-      if (!t) fail("Chromium is not running");
+      if (!t) fail("Chrome is not running");
       console.log(header(t).join("\n"));
       return;
     }

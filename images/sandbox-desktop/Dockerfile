@@ -1,6 +1,6 @@
 # Build context: repository root. The sandbox image plus a headless Linux desktop (Xvfb, openbox, the AT-SPI accessibility
-# bus), three apps (Mousepad, LibreOffice Writer, Firefox ESR), agent-desktop that drives them through accessibility, xdotool
-# and scrot as the fallback, and the loopback forwarder that gives Firefox the session's egress token.
+# bus), Mousepad and LibreOffice Writer driven by agent-desktop through accessibility (xdotool and scrot as the fallback),
+# Google Chrome for web pages read by desktop-web, and the loopback forwarder that gives Chrome the session's egress token.
 # The pi-env stage is the same as images/sandbox/Dockerfile (a test keeps them equal).
 FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS pi-env
 ARG TARGETARCH
@@ -43,17 +43,34 @@ USER root
 ENV HOME=/home/pi \
     XDG_CACHE_HOME=/workspace/.cache
 COPY --from=forwarder /usr/local/bin/node /usr/local/bin/node
+ADD https://dl.google.com/linux/linux_signing_key.pub /tmp/google-linux-signing-key.pub
 # Desktop: X server, window manager, session bus, the accessibility bus with its GTK bridge, input and capture tools.
-# xclip and jq serve desktop-url, desktop-page and the agent's own filters, python3-pil desktop-shot; `python` is a link to python3 (websockify's dependency).
-# Apps: Mousepad (GTK), LibreOffice Writer with the GTK3 plugin that exposes its tree, Firefox ESR, and Chromium for web pages
-# through desktop-web (Debian's build, security updates with the distribution).
+# xclip and jq serve desktop-page and the agent's own filters, python3-pil desktop-shot; `python` is a link to python3 (websockify's dependency).
+# Apps: Mousepad (GTK), LibreOffice Writer with the GTK3 plugin that exposes its tree, and Google Chrome for web pages through
+# desktop-web. Chrome, not Debian's Chromium: only Google's build reports the "Google Chrome" brand in
+# navigator.userAgentData, which detectors check (rebrowser's useragent test). It comes from Google's signed apt repository
+# (stable channel, amd64 and arm64), whose key is pinned by fingerprint below.
 # Lab live view (ADR 0065): x11vnc (view-only) and noVNC behind websockify, both started by agent-desktop-run on loopback.
+# The repository is used for this one install: its source file is removed afterwards (and Chrome's package would re-add one),
+# so a later `apt-get update` in this image does not reach Google. A new Chrome comes with a rebuilt image. gnupg is only there
+# to check and convert the key (HOME does not exist yet at this point, hence the temporary GNUPGHOME).
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates tini procps \
+ && apt-get install -y --no-install-recommends git ca-certificates tini procps gnupg \
     xvfb openbox dbus dbus-x11 x11-utils at-spi2-core libatk-bridge2.0-0 xdotool xclip scrot jq python3-pil \
-    mousepad libreoffice-writer libreoffice-gtk3 firefox-esr chromium fonts-dejavu-core fonts-liberation \
+    mousepad libreoffice-writer libreoffice-gtk3 fonts-dejavu-core fonts-liberation \
     x11vnc novnc websockify \
+ && export GNUPGHOME="$(mktemp -d)" \
+ && fpr=$(gpg --show-keys --with-colons /tmp/google-linux-signing-key.pub | awk -F: '/^fpr:/ {print $10; exit}') \
+ && test "$fpr" = EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 \
+ && install -d -m 0755 /etc/apt/keyrings \
+ && gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google-linux-signing-key.pub \
+ && echo "deb [arch=$TARGETARCH signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+    >/etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends google-chrome-stable \
+ && rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources \
+ && apt-get purge -y --auto-remove gnupg \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
  && test -x /usr/bin/python3 && ln -s python3 /usr/bin/python \
  && useradd -U -u 1000 -d /home/pi -M -s /bin/bash pi \
@@ -64,27 +81,14 @@ COPY --from=pi-env --chmod=0755 /pi-env /usr/local/bin/pi-env
 COPY --from=agent-desktop --chmod=0755 /out/agent-desktop /out/agent-desktop-linux-clipboard-owner /usr/local/bin/
 COPY --from=forwarder /src/packages/browser-proxy/dist /opt/browser-proxy/dist
 COPY --from=forwarder /src/packages/browser-proxy/package.json /opt/browser-proxy/package.json
-COPY images/sandbox-desktop/files/firefox-policies.json /usr/lib/firefox-esr/distribution/policies.json
-COPY images/sandbox-desktop/files/chromium-policy.json /etc/chromium/policies/managed/pi-desktop.json
-# "I still don't care about cookies" 1.1.9 (GPL-3.0-only, AMO), force-installed by the policy file: it accepts or hides cookie
-# consent banners on any site, from rules its maintainers keep, so the agent does not spend clicks and screenshots on them.
-# The file goes into distribution/, which the policy COPY above already made: a directory ADD creates is mode 0700 root, and
-# Firefox, running as pi, could not read the extension from it.
-ADD --checksum=sha256:42922f61cfc53e2103e492ddbe5736caf503d9dad4a88690efc4c64dac10d5c7 --chmod=0644 \
-  https://addons.mozilla.org/firefox/downloads/file/4637154/istilldontcareaboutcookies-1.1.9.xpi \
-  /usr/lib/firefox-esr/distribution/idcac-pub@guus.ninja.xpi
+COPY images/sandbox-desktop/files/chrome-policy.json /etc/opt/chrome/policies/managed/pi-desktop.json
 COPY --chmod=0755 images/sandbox-desktop/files/agent-desktop-run /usr/local/bin/agent-desktop-run
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-launch /usr/local/bin/desktop-launch
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-find /usr/local/bin/desktop-find
-COPY --chmod=0755 images/sandbox-desktop/files/desktop-url /usr/local/bin/desktop-url
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-page /usr/local/bin/desktop-page
-COPY --chmod=0755 images/sandbox-desktop/files/desktop-click /usr/local/bin/desktop-click
-COPY --chmod=0755 images/sandbox-desktop/files/desktop-open /usr/local/bin/desktop-open
 COPY --chmod=0644 images/sandbox-desktop/files/desktop-lib.cjs /usr/local/bin/desktop-lib.cjs
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-web /usr/local/bin/desktop-web
 COPY --chmod=0644 images/sandbox-desktop/files/cdp-lib.cjs /usr/local/bin/cdp-lib.cjs
-# desktop-text is desktop-page's first name.
-RUN ln -s desktop-page /usr/local/bin/desktop-text
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-shot /usr/local/bin/desktop-shot
 COPY images/sandbox-desktop/files/novnc-index.html /usr/share/novnc/index.html
 COPY images/sandbox-desktop/files/DESKTOP.md /usr/local/share/pi-desktop/DESKTOP.md

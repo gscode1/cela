@@ -1,4 +1,4 @@
-// Passive CDP reader for the desktop's Chromium (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
+// Passive CDP reader for the desktop's Chrome (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
 // Pages detect a driver through what it turns on, above all Runtime.enable, which every Playwright-style client sends and
 // which leaves a trace the page can see even after the client leaves. This reader sends only the read-only methods in
 // ALLOWED: the accessibility tree, a layout snapshot, element boxes and the window's geometry. It never enables a domain,
@@ -31,7 +31,7 @@ async function pageTarget(port) {
   } catch {
     return undefined;
   }
-  // Chromium's own UI (the address bar's popup, new-tab page parts) is listed as pages under chrome:// and similar schemes.
+  // Chrome's own UI (the address bar's popup, new-tab page parts) is listed as pages under chrome:// and similar schemes.
   return list.find((t) => t.type === "page" && !/^(chrome|chrome-untrusted|chrome-extension|devtools|chrome-search):/.test(t.url));
 }
 
@@ -40,7 +40,7 @@ async function connect(wsUrl, { timeoutMs = 20000 } = {}) {
   const ws = new WebSocket(wsUrl);
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
-    ws.onerror = () => reject(new Error("cannot connect to Chromium"));
+    ws.onerror = () => reject(new Error("cannot connect to Chrome"));
   });
   let id = 0;
   const pending = new Map();
