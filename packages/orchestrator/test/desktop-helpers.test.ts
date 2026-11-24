@@ -406,6 +406,27 @@ describe("desktop image settings", () => {
     },
   );
 
+  it(
+    "leads the skills with the web commands, not desktop-launch (issue #440)",
+    { timeout: 10_000 },
+    () => {
+      const skill = readFileSync(
+        join(root, "images/sandbox-desktop/skills/desktop-sandbox/SKILL.md"),
+        "utf8",
+      );
+      // Nine cost runs never used desktop-open while the skill said to launch apps only with desktop-launch.
+      expect(skill).not.toContain("Do not launch apps any other way");
+      for (const name of ["desktop-open", "desktop-page", "desktop-click"]) {
+        expect(skill.indexOf(name), name).toBeLessThan(skill.indexOf("desktop-launch"));
+      }
+      const refs = readFileSync(
+        join(root, "images/sandbox-desktop/skills/agent-desktop/SKILL.md"),
+        "utf8",
+      );
+      expect(refs).toContain("Web pages do not start here");
+    },
+  );
+
   it("gives agent-desktop-run a quiet mode", { timeout: 10_000 }, () => {
     expect(readFileSync(join(files, "agent-desktop-run"), "utf8")).toContain(
       'if [ "${1:-}" = "-q" ]; then',

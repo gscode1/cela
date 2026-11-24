@@ -178,6 +178,13 @@ Escape, Tab and Page Down to get back. `desktop-text` was never used because the
 
 None of this knows a site: the same keystrokes, finds and extension run everywhere.
 
+Nine cost runs after that change (three tasks, three runs) never used `desktop-open`, and on Allegro not `desktop-click`
+either: 37 to 41 calls, worse than before, spent on `desktop-launch`, broad `desktop-find --all` reads and mouse-wheel
+scrolling with screenshots. The desktop-sandbox skill still said to start apps only with `desktop-launch`, and the
+agent-desktop skill led with the find-a-ref loop. The skills, DESKTOP.md and the flavour facts now lead with the three web
+commands; `desktop-launch` and refs are for Mousepad and Writer; a list that loads on scroll is read with End or Page_Down and
+`desktop-page`, not the wheel and a screenshot (a test keeps the order).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
