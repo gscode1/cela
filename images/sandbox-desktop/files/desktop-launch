@@ -5,9 +5,11 @@
 #   desktop-launch mousepad [file...]
 #   desktop-launch writer [file...]            LibreOffice Writer
 #   desktop-launch firefox [url]               default about:blank; web traffic only through the egress proxy
+#   desktop-launch chromium [url]              the same, with a debugging port on loopback for desktop-web's passive reader
 #
-# Environment: HTTPS_PROXY (the session's egress proxy; when absent Firefox runs without a proxy, which only a network-mode
-# direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_STATE (/tmp/pi-desktop), PI_DESKTOP_WAIT_SECONDS (60).
+# Environment: HTTPS_PROXY (the session's egress proxy; when absent the browsers run without a proxy, which only a
+# network-mode direct sandbox can use), PI_BROWSER_PROXY_PORT (3129), PI_DESKTOP_CDP_PORT (9222), PI_DESKTOP_STATE
+# (/tmp/pi-desktop), PI_DESKTOP_WAIT_SECONDS (60).
 set -euo pipefail
 export NODE_NO_WARNINGS=1 # the platform sets NODE_USE_ENV_PROXY, whose experimental warning would fill the forwarder log
 
@@ -16,7 +18,7 @@ state=${PI_DESKTOP_STATE:-/tmp/pi-desktop}
 wait_seconds=${PI_DESKTOP_WAIT_SECONDS:-60}
 run=(agent-desktop-run --exec)
 
-usage() { echo "usage: desktop-launch mousepad|writer|firefox [args]" >&2; exit 64; }
+usage() { echo "usage: desktop-launch mousepad|writer|firefox|chromium [args]" >&2; exit 64; }
 [[ $# -ge 1 ]] || usage
 app=$1
 shift
@@ -65,6 +67,33 @@ case $app in
     # needs user namespaces, which the Pod does not have; the sandbox runtime is the boundary.
     export MOZ_ENABLE_WAYLAND=0 MOZ_DISABLE_CONTENT_SANDBOX=1 GNOME_ACCESSIBILITY=1 MOZ_CRASHREPORTER_DISABLE=1
     cmd=(firefox-esr --no-remote --profile "$profile" "${1:-about:blank}")
+    ;;
+  chromium)
+    # A fresh profile at every launch, like Firefox; the managed policy file does the rest. The debugging port listens on
+    # loopback only and is read by desktop-web, which never sends Runtime.enable or script (cdp-lib.cjs): a page cannot
+    # tell this browser from a person's. --no-sandbox: Chromium's sandbox needs user namespaces, which the Pod does not
+    # have; the sandbox runtime is the boundary. No --enable-unsafe-swiftshader: detectors read software WebGL as the
+    # Playwright default (rebrowser flags it), and Chromium without it passed the bot checks in the lab.
+    profile=$state/chromium-profile
+    rm -rf "$profile"
+    mkdir -p "$profile"
+    proxy_flags=()
+    if [[ -n ${HTTPS_PROXY:-${https_proxy:-}} ]]; then
+      start_forwarder
+      # The browser reaches the network only through the forwarder and never resolves a name itself: the proxy does.
+      proxy_flags=("--proxy-server=http://127.0.0.1:$proxy_port" "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1")
+    fi
+    shm_flags=()
+    shm_kb=$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')
+    [[ ${shm_kb:-0} -ge 262144 ]] || shm_flags=(--disable-dev-shm-usage)
+    cmd=(chromium --no-sandbox --user-data-dir="$profile"
+      --remote-debugging-address=127.0.0.1 --remote-debugging-port="${PI_DESKTOP_CDP_PORT:-9222}"
+      --window-position=0,0 --window-size=1280,800
+      --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp
+      --no-first-run --no-default-browser-check --password-store=basic --disable-breakpad
+      --disable-features=DnsOverHttps,Translate,MediaRouter
+      ${proxy_flags[@]+"${proxy_flags[@]}"} ${shm_flags[@]+"${shm_flags[@]}"}
+      "${1:-about:blank}")
     ;;
   *) usage ;;
 esac

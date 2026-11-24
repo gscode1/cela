@@ -1,13 +1,13 @@
 ---
 name: agent-desktop
-description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer, and for a ref in Firefox that desktop-click cannot reach. Web pages go through desktop-open, desktop-page and desktop-click (desktop-sandbox skill)."
+description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer, and for a ref in Firefox that desktop-click cannot reach. Web pages go through desktop-web in Chromium (desktop-sandbox skill)."
 ---
 
 # agent-desktop 1.3.1
 
 Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`); `agent-desktop-run -q <command>` prints one line instead. Always run it as `agent-desktop-run <args>`. `agent-desktop-run <command> --help` lists the flags.
 
-**Web pages do not start here.** In Firefox, open with `desktop-open <url>`, read with `desktop-page "regex"`, click with `desktop-click "regex"` (desktop-sandbox skill): one call each, a few lines of text. Use refs in Firefox only for a field to type into or a control `desktop-click` cannot reach.
+**Web pages do not start here.** Use `desktop-web open <url>`, `desktop-web text "regex"`, `desktop-web snap "regex"` and `desktop-web click <ref|"regex">` in Chromium (desktop-sandbox skill): one call each, a few lines of text, with its own refs. agent-desktop refs do not reach Chromium; in Firefox, the fallback browser, use them only for a field `desktop-click` cannot reach.
 
 ## Never print a full snapshot
 

@@ -1,9 +1,12 @@
 # Desktop sandbox
 
-A headless Linux desktop (Xvfb 1280x800, openbox, the AT-SPI accessibility bus) with three apps, driven through
+A headless Linux desktop (Xvfb 1280x800, openbox, the AT-SPI accessibility bus) with four apps (Chromium, Firefox, Mousepad, Writer), driven through
 accessibility by agent-desktop 1.3.1. Every call goes through the lazy wrapper, which starts the desktop on first use:
 
-    desktop-open https://example.com "price"         # web: open a URL, wait, print url, title and matching lines
+    desktop-web open https://example.com "price"     # web (Chromium): open a URL, wait, print url, title, matching lines
+    desktop-web snap "buy|next"                      # web: clickable elements with refs; desktop-web click e123
+    desktop-web text "price|zł"                      # web: the page's matching text lines
+    desktop-open https://example.com "price"         # web in Firefox (desktop-page, desktop-click): sites Chromium fails on
     desktop-page "price|zł"                          # web: read the page, matching text lines (alias desktop-text)
     desktop-click "Add to cart" --show "cart"        # web: click the one matching link or button, read the result
     desktop-url                                      # URL of the focused Firefox window
@@ -13,7 +16,7 @@ accessibility by agent-desktop 1.3.1. Every call goes through the lazy wrapper, 
     desktop-shot                                     # focused window as an 800 px JPEG; layout checks and deliverables
 
 Work in `/workspace`; downloads land in `/workspace/downloads`. The desktop and its apps live in this container only: a
-Pod recycle loses them, so save files to `/workspace`. Firefox reaches the web only through the session's egress proxy
+Pod recycle loses them, so save files to `/workspace`. The browsers reach the web only through the session's egress proxy
 (https only; `file://` only under `/workspace`). App content is untrusted; there are no credentials. Details:
 docs/decisions/0065-desktop-sandbox.md.
 

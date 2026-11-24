@@ -585,7 +585,7 @@ describe("desktop image settings", () => {
       );
       // Nine cost runs never used desktop-open while the skill said to launch apps only with desktop-launch.
       expect(skill).not.toContain("Do not launch apps any other way");
-      for (const name of ["desktop-open", "desktop-page", "desktop-click"]) {
+      for (const name of ["desktop-web open", "desktop-web text", "desktop-web click"]) {
         expect(skill.indexOf(name), name).toBeLessThan(skill.indexOf("desktop-launch"));
       }
       const refs = readFileSync(
