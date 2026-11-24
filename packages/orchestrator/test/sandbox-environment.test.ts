@@ -122,6 +122,7 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "mousepad",
       "libreoffice-writer",
       "firefox-esr",
+      "chromium",
       "git",
       "/usr/local/bin/node",
       "agent-desktop-run",
@@ -132,6 +133,8 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "desktop-page",
       "desktop-click",
       "desktop-url",
+      "desktop-web",
+      "cdp-lib.cjs",
     ]) {
       expect(desktop).toContain(tool);
     }
