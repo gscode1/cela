@@ -49,6 +49,60 @@ const key = (...keys) => exec("xdotool", "key", "--clearmodifiers", ...keys);
 // xdotool type fails on some non-ASCII characters (seen: a non-breaking hyphen); callers pass what it can type.
 const type = (text) => exec("xdotool", "type", "--delay", "2", text);
 
+// Input that reads as a person's to behaviour scoring: keys in small bursts at a typing pace, the pointer travelling to a
+// point near (not exactly at) the target's centre in a few steps, a short dwell before the press and a held button.
+const rand = (a, b) => a + Math.random() * (b - a);
+function humanType(text) {
+  for (let i = 0; i < text.length; ) {
+    const n = Math.min(text.length - i, 1 + Math.floor(rand(0, 4)));
+    exec("xdotool", "type", "--delay", String(Math.round(rand(35, 90))), text.slice(i, i + n));
+    i += n;
+    if (Math.random() < 0.15) pause(rand(80, 260));
+  }
+}
+
+function pointer() {
+  try {
+    const g = Object.fromEntries(exec("xdotool", "getmouselocation", "--shell").trim().split("\n").map((l) => l.split("=")));
+    return { x: Number(g.X), y: Number(g.Y) };
+  } catch {
+    return { x: 640, y: 400 };
+  }
+}
+
+// box: { x, y, w, h } on screen. Aims inside the middle third of the box.
+function humanClick(box) {
+  const tx = Math.round(box.x + box.w / 2 + rand(-1, 1) * Math.min(box.w / 6, 12));
+  const ty = Math.round(box.y + box.h / 2 + rand(-1, 1) * Math.min(box.h / 6, 4));
+  const from = pointer();
+  const steps = 3 + Math.floor(rand(0, 3));
+  for (let k = 1; k <= steps; k++) {
+    const f = k / steps;
+    const ease = f * f * (3 - 2 * f);
+    const jx = k < steps ? rand(-3, 3) : 0;
+    const jy = k < steps ? rand(-3, 3) : 0;
+    exec("xdotool", "mousemove", String(Math.round(from.x + (tx - from.x) * ease + jx)), String(Math.round(from.y + (ty - from.y) * ease + jy)));
+    pause(rand(12, 30));
+  }
+  pause(rand(60, 160));
+  exec("xdotool", "mousedown", "1");
+  pause(rand(50, 110));
+  exec("xdotool", "mouseup", "1");
+  return { x: tx, y: ty };
+}
+
+// Text xdotool cannot type reliably (anything outside printable ASCII) goes in through the clipboard and ctrl+v; the
+// agent's clipboard is put back afterwards.
+function pasteText(text) {
+  const saved = readClipboard();
+  writeClipboard(text);
+  pause(100);
+  key("ctrl+v");
+  pause(150);
+  writeClipboard(saved);
+}
+const typable = (text) => /^[\x20-\x7e]*$/.test(text);
+
 function readClipboard() {
   try {
     return exec("xclip", "-o", "-selection", "clipboard");
@@ -206,12 +260,16 @@ module.exports = {
   failer,
   findAcross,
   grepLines,
+  humanClick,
+  humanType,
   key,
   literalOf,
+  pasteText,
   pause,
   readClipboard,
   savePage,
   sessionDir,
   type,
+  typable,
   writeClipboard,
 };

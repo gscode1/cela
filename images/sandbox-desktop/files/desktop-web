@@ -1,18 +1,23 @@
 #!/usr/bin/env -S node --no-warnings
 // Web pages in the desktop's Chrome: reads them over a passive CDP connection (cdp-lib.cjs: accessibility tree, layout
-// snapshot, element boxes; never Runtime.enable or script in the page) and acts with real X input through xdotool, so a
-// page sees a person's browser (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
+// snapshot, element boxes; never Runtime.enable or script in the page) and acts with real X input through xdotool at a
+// person's pace, so a page sees a person's browser (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
+// Nothing here knows any site or language.
 //
-//   desktop-web open <url> ["regex"]          type the URL into the address bar, wait, print url, title, matching text lines
+//   desktop-web open <url> ["regex"]          type the URL, wait, print url, title, open dialogs, matching lines or an outline
 //   desktop-web text ["regex"]                the page's text lines matching the regex (full text saved to a file)
-//   desktop-web snap ["regex"]                clickable elements and headings with refs: [e123] link "Name"
-//   desktop-web click <ref|"regex">           click it with the mouse; --near "row text", --nth N, --role R, --show "regex"
-//   desktop-web type <ref|"regex"> "text"     click a field, replace its text; --enter presses Return, --append keeps text
-//   desktop-web key <keys...>                 xdotool keys in the browser window (End, Page_Down, alt+Left, Escape)
+//   desktop-web text --lines 120-170          a range of lines of the page (or of --from FILE)
+//   desktop-web snap ["regex"]                open dialogs, then clickable elements and headings with refs: [e123] link "Name"
+//   desktop-web click <ref|"regex">           click it with the mouse and print what changed; --near "row text", --nth N,
+//                                             --role R, --show "regex"
+//   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value; --enter, --append
+//   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes
 //   desktop-web url                           url and title
 //
-// Flags: --limit N (matches shown, default 25 for text, 40 for snap), --context N (text, default 1), --from FILE (text:
-// filter a saved page again), --out FILE. Environment: PI_DESKTOP_CDP_PORT (9222), PI_DESKTOP_FRAME (4, window frame px).
+// Every answer stays within a budget (BUDGET_LINES lines, BUDGET_CHARS characters): a longer one is cut with a note on
+// how to page on. Flags: --limit N (matches, at most 40), --context N (at most 3), --lines A-B, --from FILE, --out FILE.
+// Environment: PI_DESKTOP_CDP_PORT (default: the port desktop-launch wrote), PI_DESKTOP_STATE (/tmp/pi-desktop),
+// PI_DESKTOP_FRAME (4, window frame px).
 "use strict";
 const fs = process.getBuiltinModule("node:fs");
 const path = process.getBuiltinModule("node:path");
@@ -22,26 +27,44 @@ const lib = req("./desktop-lib.cjs");
 const cdp = req("./cdp-lib.cjs");
 
 const fail = lib.failer("desktop-web");
-const PORT = process.env.PI_DESKTOP_CDP_PORT ?? "9222";
+const STATE = process.env.PI_DESKTOP_STATE ?? "/tmp/pi-desktop";
 const FRAME = Number(process.env.PI_DESKTOP_FRAME ?? 4);
-const HEAD_LINES = 15;
+const BUDGET_LINES = 60;
+const BUDGET_CHARS = 4000;
+const WIDTH = 200;
+const REFS = () => path.join(lib.sessionDir(), "web-refs.json");
+
+// desktop-launch starts Chrome on a random port and writes it to the state directory.
+function port() {
+  if (process.env.PI_DESKTOP_CDP_PORT) return process.env.PI_DESKTOP_CDP_PORT;
+  try {
+    return fs.readFileSync(path.join(STATE, "cdp-port"), "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const target = async () => {
+  const p = port();
+  return p ? cdp.pageTarget(p) : undefined;
+};
 
 function parseArgs(argv) {
-  const o = { pos: [], limit: undefined, context: 1, enter: false, append: false };
+  const o = { pos: [], context: 1, enter: false, append: false };
   const val = (i, f) => {
     if (i + 1 >= argv.length) fail(`${f} needs a value`, 64);
     return argv[i + 1];
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--limit") (o.limit = Number(val(i, a))), i++;
-    else if (a === "--context") (o.context = Number(val(i, a))), i++;
+    if (a === "--limit") (o.limit = Math.min(Number(val(i, a)), 40)), i++;
+    else if (a === "--context") (o.context = Math.min(Number(val(i, a)), 3)), i++;
     else if (a === "--near") (o.near = val(i, a)), i++;
     else if (a === "--nth") (o.nth = Number(val(i, a))), i++;
     else if (a === "--show") (o.show = val(i, a)), i++;
     else if (a === "--role") (o.role = val(i, a)), i++;
     else if (a === "--from") (o.from = val(i, a)), i++;
     else if (a === "--out") (o.out = val(i, a)), i++;
+    else if (a === "--lines") (o.lines = val(i, a)), i++;
     else if (a === "--enter") o.enter = true;
     else if (a === "--append") o.append = true;
     else o.pos.push(a);
@@ -56,6 +79,22 @@ const regex = (s) => {
     fail(`bad regex ${JSON.stringify(s)}: ${e.message}`, 64);
   }
 };
+
+// Cuts an answer to the budget and says how to get the rest.
+function budget(lines, hint) {
+  const out = [];
+  let chars = 0;
+  for (const l of lines) {
+    if (out.length >= BUDGET_LINES || chars + l.length > BUDGET_CHARS) {
+      out.push(`[cut at ${out.length} lines: ${hint}]`);
+      return out;
+    }
+    out.push(l);
+    chars += l.length + 1;
+  }
+  return out;
+}
+const PAGE_HINT = 'narrow the regex, or read a range with desktop-web text --lines A-B';
 
 // The browser window: the last visible Chrome top-level window.
 function chromeWindow() {
@@ -86,113 +125,148 @@ function activate(win) {
 }
 
 async function ensureBrowser() {
-  if (await cdp.pageTarget(PORT)) return;
+  if (await target()) return;
   try {
     execFileSync("desktop-launch", ["chrome"], { stdio: ["ignore", "ignore", "pipe"] });
   } catch (e) {
     fail(`Chrome did not start: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
   }
   for (let i = 0; i < 60; i++) {
-    if (await cdp.pageTarget(PORT)) return;
+    if (await target()) return;
     lib.pause(500);
   }
   fail("Chrome did not answer on its debugging port");
 }
 
 async function withPage(fn) {
-  const target = await cdp.pageTarget(PORT);
-  if (!target) fail("Chrome is not running: start with desktop-web open <url>");
-  const c = await cdp.connect(target.webSocketDebuggerUrl);
+  const t = await target();
+  if (!t) fail("Chrome is not running: start with desktop-web open <url>");
+  const c = await cdp.connect(t.webSocketDebuggerUrl);
   try {
-    return await fn(c, target);
+    return await fn(c, t);
   } finally {
     c.close();
   }
 }
 
+async function snapshot(c) {
+  return c.send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
+}
+
+async function pageLines(c) {
+  return cdp.wrapLines(cdp.snapshotLines(await snapshot(c)), WIDTH);
+}
+
+const fingerprint = (lines) => `${lines.length}:${lines.join("\n").length}:${lines.slice(-3).join("|")}`;
+
 // Waits for the page to answer an action: the URL or title changes, or nothing changes within quietMs (an in-page
-// update); then the page height must hold still for ~1 s (content still loading), all within capMs.
-async function settle(before, { quietMs = 1500, capMs = 20000 } = {}) {
+// update); then the page's text must hold still for two reads in a row, and, with `want`, contain a match for it.
+// All within capMs. Returns { target, lines }.
+async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
   const start = Date.now();
-  let changed = false;
   let t = before;
-  while (Date.now() - start < capMs) {
-    t = (await cdp.pageTarget(PORT)) ?? t;
-    if (t.url !== before.url || t.title !== before.title) changed = true;
-    if (changed || Date.now() - start >= quietMs) break;
+  while (Date.now() - start < quietMs) {
+    t = (await target()) ?? t;
+    if (t.url !== before.url || t.title !== before.title) break;
     lib.pause(250);
   }
-  let last = -1;
+  let lines = [];
+  let last;
   let same = 0;
-  while (Date.now() - start < capMs && same < 3) {
-    lib.pause(350);
+  while (Date.now() - start < capMs) {
+    lib.pause(400);
     try {
-      const h = await withPage(async (c) => (await c.send("Page.getLayoutMetrics")).cssContentSize.height);
-      // An empty document between pages holds still at a small height: only a laid-out page counts.
-      same = h === last && h > 200 ? same + 1 : 0;
-      last = h;
+      lines = await withPage((c) => pageLines(c));
     } catch {
       same = 0; // between documents
+      continue;
     }
+    const f = fingerprint(lines);
+    same = lines.length >= 3 && f === last ? same + 1 : 0;
+    last = f;
+    if (same >= 1 && (!want || lines.some((l) => want.test(l)))) break;
   }
-  return (await cdp.pageTarget(PORT)) ?? t;
+  return { target: (await target()) ?? t, lines };
 }
 
 const header = (t) => [`url: ${t.url}`, `title: ${t.title}`];
+const pageFile = (o) => o.out ?? path.join(lib.sessionDir(), "web-page.txt");
 
-async function pageLines(c) {
-  let lines = [];
-  // A page that has just committed can still be empty: give it a few seconds to put text on screen.
-  for (let i = 0; i < 6; i++) {
-    const snap = await c.send("DOMSnapshot.captureSnapshot", { computedStyles: ["display", "visibility"] });
-    lines = cdp.snapshotLines(snap);
-    if (lines.length >= 3) break;
-    lib.pause(800);
-  }
-  return lines;
+async function axTree(c) {
+  const [{ nodes }, snap] = await Promise.all([c.send("Accessibility.getFullAXTree"), snapshot(c)]);
+  const hidden = cdp.hiddenElements(snap);
+  const entries = cdp.axEntries(nodes).filter((e) => !hidden.has(e.backendNodeId));
+  return { nodes, entries: cdp.mainFirst(nodes, entries) };
 }
 
-function showText(lines, pattern, o, target) {
-  const file = lib.savePage(lines, o.out ?? path.join(lib.sessionDir(), "web-page.txt"));
-  const out = target ? header(target) : [];
-  if (pattern) out.push(...lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context }));
-  else {
-    out.push(...lines.slice(0, HEAD_LINES).map((l, i) => `${i + 1}: ${lib.clip(l, 200)}`));
-    if (lines.length > HEAD_LINES) out.push(`... ${lines.length - HEAD_LINES} more lines: desktop-web text "regex"`);
+// What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings.
+function describe(lines, nodes, pattern, o) {
+  const file = lib.savePage(lines, pageFile(o));
+  const out = cdp.dialogLines(cdp.dialogs(nodes));
+  if (pattern) {
+    const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
+    out.push(...hits);
+    if (hits.length === 1 && hits[0].startsWith("no match")) out.push("outline:", ...cdp.outline(nodes, lines));
+  } else {
+    const ol = cdp.outline(nodes, lines);
+    out.push(...(ol.length > 0 ? ["outline (line: heading):", ...ol] : lines.slice(0, 15).map((l, i) => `${i + 1}: ${l}`)));
   }
-  out.push(`(${lines.length} lines in ${file})`);
+  out.push(`(${lines.length} lines in ${file}; read with desktop-web text "regex" or --lines A-B)`);
   return out;
 }
 
-async function axTree(c) {
-  const { nodes } = await c.send("Accessibility.getFullAXTree");
-  return { nodes, entries: cdp.axEntries(nodes) };
+function rememberRefs(entries) {
+  const refs = Object.fromEntries(entries.map((e) => [e.ref, { role: e.role, name: e.name }]));
+  fs.mkdirSync(path.dirname(REFS()), { recursive: true });
+  fs.writeFileSync(REFS(), JSON.stringify(refs));
 }
 
-// Resolves a ref (e123) or a name regex to one element; lists the candidates and exits 2 when the name is ambiguous.
+// Resolves a ref (e123) or a name regex to one element. A ref is checked against what snap listed under it, so a ref left
+// over from another page cannot click a different element. Lists the candidates and exits 2 when a name is ambiguous.
 async function resolveTarget(c, spec, o, { fieldsOnly = false } = {}) {
-  if (/^e\d+$/.test(spec)) return { backendNodeId: Number(spec.slice(1)), label: spec };
   const { nodes, entries } = await axTree(c);
+  if (/^e\d+$/.test(spec)) {
+    const now = entries.find((e) => e.ref === spec);
+    let was;
+    try {
+      was = JSON.parse(fs.readFileSync(REFS(), "utf8"))[spec];
+    } catch {
+      was = undefined;
+    }
+    if (!now) fail(`${spec} is not on the page now (it changed or the element is hidden): run desktop-web snap again`);
+    if (was && (was.role !== now.role || was.name !== now.name))
+      fail(`${spec} is now ${cdp.entryLine(now)}, not the ${was.role} "${lib.clip(was.name, 60)}" snap listed: run desktop-web snap again`);
+    return { entry: now, nodes };
+  }
   const pool = fieldsOnly ? entries.filter((e) => ["textbox", "searchbox", "combobox", "spinbutton"].includes(e.role)) : entries;
   const r = cdp.chooseTarget(nodes, pool, regex(spec), { near: o.near ? regex(o.near) : undefined, nth: o.nth, role: o.role });
-  if (r.pick) return { backendNodeId: r.pick.backendNodeId, label: cdp.entryLine(r.pick) };
-  if (r.none) fail(r.near ? `nothing matching ${JSON.stringify(spec)} near ${JSON.stringify(o.near)}` : `nothing clickable matches ${JSON.stringify(spec)}: try desktop-web snap "word"`);
+  if (r.pick) return { entry: r.pick, nodes };
+  if (r.none) {
+    const d = cdp.dialogLines(cdp.dialogs(nodes));
+    fail(
+      [
+        r.near
+          ? `nothing matching ${JSON.stringify(spec)} near ${JSON.stringify(o.near)}`
+          : `nothing clickable matches ${JSON.stringify(spec)}: try desktop-web snap "word"`,
+        ...d,
+      ].join("\n"),
+    );
+  }
   const rows = cdp.rowTexts(nodes, r.several);
-  const lines = r.several
-    .slice(0, 15)
-    .map((e, i) => {
-      // The row text starts with the element's own name more often than not: show only what tells the rows apart.
-      const row = rows[i].startsWith(e.name) ? rows[i].slice(e.name.length).trim() : rows[i];
-      return `${cdp.entryLine(e, { nameMax: 70 })}  | ${lib.clip(row, 120)}${e.url ? ` -> ${lib.clip(e.url, 90)}` : ""}`;
-    });
+  rememberRefs(r.several);
+  const lines = r.several.slice(0, 15).map((e, i) => {
+    // The row text starts with the element's own name more often than not: show only what tells the rows apart.
+    const row = rows[i].startsWith(e.name) ? rows[i].slice(e.name.length).trim() : rows[i];
+    return `${cdp.entryLine(e, { nameMax: 70 })}  | ${lib.clip(row, 120)}${e.url ? ` -> ${lib.clip(e.url, 90)}` : ""}`;
+  });
   process.stdout.write(
     `${r.several.length} elements match ${JSON.stringify(spec)}; nothing clicked. Click one by ref (desktop-web click e123), or add --near "text from its row":\n${lines.join("\n")}\n`,
   );
   process.exit(2);
 }
 
-// Scrolls the element into view, checks nothing covers its centre, and clicks there with the X mouse.
-async function clickNode(c, target, backendNodeId) {
+// Scrolls the element into view, checks nothing covers it, and clicks it with the X mouse.
+async function clickNode(c, nodes, backendNodeId) {
   try {
     await c.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
   } catch {
@@ -212,7 +286,7 @@ async function clickNode(c, target, backendNodeId) {
   const zoom = lm.cssVisualViewport.zoom ?? 1;
   if (center.x < 0 || center.y < 0 || center.x > vp.clientWidth || center.y > vp.clientHeight)
     fail("the element is outside the visible page and could not be scrolled into view");
-  // Something in front (a cookie dialog, an overlay) gets the click instead: say so rather than click it.
+  // Something in front (a dialog, an overlay) would get the click instead: say what, rather than click it.
   // getNodeForLocation takes document coordinates: the viewport point plus the scroll offset.
   const hit = await c
     .send("DOM.getNodeForLocation", {
@@ -230,16 +304,44 @@ async function clickNode(c, target, backendNodeId) {
       if (!hb || !cdp.wraps(hb.model.border, quad)) {
         const d = (await c.send("DOM.describeNode", { backendNodeId: hit.backendNodeId })).node;
         const cls = (d.attributes ?? []).reduce((s, v, i, a) => (a[i - 1] === "class" ? v : s), "");
-        fail(`another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): a dialog or banner is in front. Read it with desktop-web snap and close or accept it first`);
+        fail(
+          [
+            `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): something is in front. Close or answer it first`,
+            ...cdp.dialogLines(cdp.dialogs(nodes)),
+          ].join("\n"),
+        );
       }
     }
   }
   const win = chromeWindow();
   if (!win) fail("no Chrome window on the screen");
-  const p = cdp.screenPoint({ win, viewport: { height: vp.clientHeight }, zoom, frame: FRAME }, center);
+  const geo = { win, viewport: { height: vp.clientHeight }, zoom, frame: FRAME };
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), 0), y: Math.max(Math.min(...ys), 0) });
+  const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), vp.clientWidth), y: Math.min(Math.max(...ys), vp.clientHeight) });
   activate(win);
-  lib.exec("xdotool", "mousemove", String(p.x), String(p.y), "click", "1");
-  return p;
+  return lib.humanClick({ x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) });
+}
+
+// What an action did: the new page, or the lines and dialogs that appeared, within the budget.
+async function changes(beforeLines, before, after, o) {
+  const out = header(after.target);
+  const navigated = after.target.url !== before.url;
+  const nodes = await withPage(async (c) => (await c.send("Accessibility.getFullAXTree")).nodes).catch(() => []);
+  out.push(...cdp.dialogLines(cdp.dialogs(nodes)));
+  if (o.show) {
+    lib.savePage(after.lines, pageFile(o));
+    out.push(...lib.grepLines(after.lines, regex(o.show), { limit: o.limit ?? 25, context: o.context, width: WIDTH }));
+  } else if (navigated) {
+    out.push(...describe(after.lines, nodes, undefined, o).slice(cdp.dialogLines(cdp.dialogs(nodes)).length));
+  } else {
+    const added = cdp.newLines(beforeLines, after.lines);
+    lib.savePage(after.lines, pageFile(o));
+    out.push(added.length === 0 ? "page text unchanged" : `changed (${added.length} new lines):`, ...added.slice(0, 20));
+    if (added.length > 20) out.push(`... ${added.length - 20} more: desktop-web text "regex"`);
+  }
+  return budget(out, PAGE_HINT);
 }
 
 async function main() {
@@ -248,84 +350,128 @@ async function main() {
   switch (cmd) {
     case "open": {
       const url = o.pos[0];
-      if (!url) fail("usage: desktop-web open <url> [\"regex\"]", 64);
+      if (!url) fail('usage: desktop-web open <url> ["regex"]', 64);
       if (!/^https?:\/\//.test(url) && !url.startsWith("file:///workspace/")) fail("give a full https:// URL", 64);
       await ensureBrowser();
-      const before = await cdp.pageTarget(PORT);
+      const before = await target();
       const win = chromeWindow();
       if (!win) fail("no Chrome window on the screen");
       activate(win);
       lib.key("ctrl+l");
       lib.pause(150);
-      lib.type(url);
+      // A URL is pasted, as people do; typing a long one key by key would take seconds.
+      lib.pasteText(url);
       lib.key("Delete"); // drops an inline completion the address bar may have added
+      lib.pause(120);
       lib.key("Return");
-      const after = await settle(before, { quietMs: 8000, capMs: 25000 });
-      const lines = await withPage((c) => pageLines(c));
-      console.log(showText(lines, o.pos[1], o, after).join("\n"));
-      if (after.url === before.url && before.url !== "about:blank") console.log("note: the address did not change");
+      const after = await settle(before, { quietMs: 8000, capMs: 25000, want: o.pos[1] ? regex(o.pos[1]) : undefined });
+      const nodes = await withPage(async (c) => (await c.send("Accessibility.getFullAXTree")).nodes);
+      const out = [...header(after.target), ...describe(after.lines, nodes, o.pos[1], o)];
+      if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
+      console.log(budget(out, PAGE_HINT).join("\n"));
       return;
     }
     case "text": {
-      if (o.from) {
-        const lines = fs.readFileSync(o.from, "utf8").split("\n");
-        console.log(lib.grepLines(lines, regex(o.pos[0] ?? "."), { limit: o.limit ?? 25, context: o.context }).join("\n"));
+      let lines;
+      let head = [];
+      if (o.from) lines = fs.readFileSync(o.from, "utf8").replace(/\n$/, "").split("\n");
+      else {
+        const r = await withPage(async (c, t) => ({ lines: await pageLines(c), t }));
+        lines = r.lines;
+        head = header(r.t);
+        lib.savePage(lines, pageFile(o));
+      }
+      if (o.lines) {
+        const m = /^(\d+)-(\d+)$/.exec(o.lines);
+        if (!m) fail("--lines takes A-B, e.g. --lines 120-170", 64);
+        const a = Math.max(Number(m[1]), 1);
+        const b = Math.min(Number(m[2]), lines.length, a + BUDGET_LINES - 1);
+        const out = [...head, ...lines.slice(a - 1, b).map((l, i) => `${a + i}: ${l}`)];
+        if (b < Number(m[2]) && b < lines.length) out.push(`[${b - a + 1} lines shown; continue with --lines ${b + 1}-${b + BUDGET_LINES}]`);
+        console.log(budget(out, `continue with --lines`).join("\n"));
         return;
       }
-      const out = await withPage(async (c, t) => showText(await pageLines(c), o.pos[0], o, t));
-      console.log(out.join("\n"));
+      const pattern = o.pos[0];
+      if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
+      const hits = lib.grepLines(lines, regex(pattern), { limit: o.limit ?? 25, context: o.context, width: WIDTH });
+      const out = [...head, ...hits, `(${lines.length} lines${o.from ? "" : ` in ${pageFile(o)}`})`];
+      console.log(budget(out, PAGE_HINT).join("\n"));
       return;
     }
     case "snap": {
       const out = await withPage(async (c, t) => {
-        const { entries } = await axTree(c);
+        const { nodes, entries } = await axTree(c);
+        rememberRefs(entries);
         const re = o.pos[0] ? regex(o.pos[0]) : undefined;
         const lines = entries.map((e) => cdp.entryLine(e)).filter((l) => !re || re.test(l));
         const limit = o.limit ?? 40;
         const shown = lines.slice(0, limit);
-        if (lines.length > limit) shown.push(`${lines.length - limit} more: narrow the regex or raise --limit`);
+        if (lines.length > limit) shown.push(`${lines.length - limit} more: narrow the regex`);
         if (lines.length === 0) shown.push(`no element matches among ${entries.length}`);
-        return [...header(t), ...shown];
+        return [...header(t), ...cdp.dialogLines(cdp.dialogs(nodes)), ...shown];
       });
-      console.log(out.join("\n"));
+      console.log(budget(out, "narrow the regex").join("\n"));
       return;
     }
     case "click":
     case "type": {
       const spec = o.pos[0];
-      if (!spec || (cmd === "type" && o.pos[1] === undefined)) fail(`usage: desktop-web ${cmd} <ref|"regex">${cmd === "type" ? ' "text"' : ""}`, 64);
-      const before = await cdp.pageTarget(PORT);
+      if (!spec || (cmd === "type" && o.pos[1] === undefined))
+        fail(`usage: desktop-web ${cmd} <ref|"regex">${cmd === "type" ? ' "text"' : ""}`, 64);
+      const before = await target();
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
-      const label = await withPage(async (c, t) => {
-        const tg = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+$/.test(spec) });
-        await clickNode(c, t, tg.backendNodeId);
-        return tg.label;
+      const { label, beforeLines, backendNodeId } = await withPage(async (c) => {
+        const beforeLines = await pageLines(c);
+        const { entry, nodes } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !/^e\d+$/.test(spec) });
+        await clickNode(c, nodes, entry.backendNodeId);
+        return { label: cdp.entryLine(entry), beforeLines, backendNodeId: entry.backendNodeId };
       });
+      const first = `${cmd === "click" ? "clicked" : "typed into"} ${label}`;
       if (cmd === "type") {
         lib.pause(150);
         if (!o.append) lib.key("ctrl+a");
-        lib.type(o.pos[1]);
-        if (o.enter) lib.key("Return");
+        if (lib.typable(o.pos[1])) lib.humanType(o.pos[1]);
+        else lib.pasteText(o.pos[1]);
+        // Read the field back: what the page holds is the result, not what was sent.
+        // The accessibility tree catches up with the field a moment after the last key.
+        let now;
+        for (let i = 0; i < 4 && !now; i++) {
+          lib.pause(250);
+          now = await withPage(async (c) => {
+            const { nodes } = await c.send("Accessibility.getFullAXTree");
+            // The field that has focus: pages often swap the clicked input for another element as it gains focus.
+            const has = (m, name) => (m.properties ?? []).some((p) => p.name === name && p.value?.value === true);
+            const field = nodes.find((m) => !m.ignored && has(m, "focused") && has(m, "editable"));
+            return (field ?? nodes.find((m) => m.backendDOMNodeId === backendNodeId))?.value?.value;
+          });
+        }
+        if (!o.enter) {
+          console.log([first, `value now: ${JSON.stringify(now ?? "")}`].join("\n"));
+          return;
+        }
+        lib.key("Return");
+        const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
+        console.log([first, `value was: ${JSON.stringify(now ?? "")}`, ...(await changes(beforeLines, before, after, o))].join("\n"));
+        return;
       }
-      const after = cmd === "click" || o.enter ? await settle(before) : before;
-      const out = [`${cmd === "click" ? "clicked" : "typed into"} ${label}`, ...header(after)];
-      if (o.show) out.push(...(await withPage(async (c) => showText(await pageLines(c), o.show, o))));
-      console.log(out.join("\n"));
+      const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
+      console.log([first, ...(await changes(beforeLines, before, after, o))].join("\n"));
       return;
     }
     case "key": {
       if (o.pos.length === 0) fail("usage: desktop-web key <keys...>", 64);
-      const before = await cdp.pageTarget(PORT);
+      const before = await target();
       const win = chromeWindow();
       if (!before || !win) fail("Chrome is not running: start with desktop-web open <url>");
+      const beforeLines = await withPage((c) => pageLines(c));
       activate(win);
       lib.key(...o.pos);
       const after = await settle(before, { quietMs: 800, capMs: 15000 });
-      console.log(header(after).join("\n"));
+      console.log((await changes(beforeLines, before, after, o)).join("\n"));
       return;
     }
     case "url": {
-      const t = await cdp.pageTarget(PORT);
+      const t = await target();
       if (!t) fail("Chrome is not running");
       console.log(header(t).join("\n"));
       return;
