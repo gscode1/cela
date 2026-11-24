@@ -64,7 +64,8 @@
       "media.peerconnection.enabled": false,
       "browser.translations.enable": false,
       "browser.translations.automaticallyPopup": false,
-      "media.webspeech.synth.enabled": false
+      "media.webspeech.synth.enabled": false,
+      "browser.urlbar.autoFill": false
     }
   }
 }

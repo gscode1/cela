@@ -51,20 +51,28 @@ function firefoxRunning() {
   }
 }
 
+// Returns the address shown before navigating ("" when Firefox was not running).
 function navigate(url) {
   const before = lib.windowTitle();
+  let previous = "";
   if (!firefoxRunning()) {
     const launch = path.join(path.dirname(fs.realpathSync(process.argv[1])), "desktop-launch");
     const r = spawnSync(fs.existsSync(launch) ? launch : "desktop-launch", ["firefox", url], { encoding: "utf8", timeout: 90_000 });
     if (r.status !== 0) fail(`desktop-launch failed: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
   } else {
+    const saved = lib.readClipboard();
     lib.key("ctrl+l");
     lib.pause(200);
+    lib.key("ctrl+c");
+    lib.pause(200);
+    previous = lib.readClipboard().trim();
+    lib.writeClipboard(saved);
     lib.type(url);
     lib.key("Return");
   }
   // A page load changes the title; give a slow page longer than a click gets.
   lib.settle(before, { quietMs: 6000, capMs: 20000 });
+  return previous;
 }
 
 function main() {
@@ -77,7 +85,7 @@ function main() {
       fail(`bad regex: ${e.message}`, 64);
     }
   }
-  navigate(o.url);
+  const previous = navigate(o.url);
   // The title can settle before the body renders (a script-built page, a bot check that reloads): copy again until it has text.
   let page = lib.copyPage();
   for (let i = 1; i < COPY_TRIES && page.lines.length <= 1; i++) {
@@ -86,6 +94,9 @@ function main() {
   }
   if (page.lines.length <= 1) fail(`the page has no text after ${COPY_TRIES} tries (title "${lib.clip(page.title, 80)}"); desktop-shot to see it`);
   const out = [`url: ${page.url}`, `title: ${lib.clip(page.title, 120)}`, `text: ${lib.savePage(page.lines)} (${page.lines.length} lines)`];
+  // Still on the page from before: the navigation did not happen (seen when Firefox autofilled a typed URL to a visited one).
+  // A redirect elsewhere is normal and not reported.
+  if (previous && page.url === previous && o.url !== previous) out.splice(1, 0, `note: the page did not change; still ${lib.clip(previous, 100)}`);
   if (re === undefined) for (const [i, l] of page.lines.slice(0, 15).entries()) out.push(`${i + 1}: ${lib.clip(l, 200)}`);
   else out.push(...lib.grepLines(page.lines, re, { limit: o.limit, context: o.context }));
   process.stdout.write(`${out.join("\n")}\n`);

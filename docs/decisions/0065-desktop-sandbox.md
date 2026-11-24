@@ -197,6 +197,13 @@ and closing the find bar do not clear it; a find-bar search that finds nothing d
 is pasted in one piece (typed letter by letter, find-as-you-type jumps to partial matches). `desktop-page`, `desktop-open` and
 `desktop-click --show` do that after copying, then restore the clipboard.
 
+An amazon.pl run then reported "no results" without seeing the broader search it asked for: Firefox autofilled the typed URL
+`…/s?k=Haddrell` to the visited `…/s?k=Haddrell%27s+UMF25%2B`, and the page never changed. Address bar autofill is off
+(`browser.urlbar.autoFill`), and `desktop-open` reads the address before navigating and says when the page is still there.
+The same runs showed that the desktop profile's skills had never been republished: the skills an agent reads come from the
+skill store, pinned by the profile, so a change to `images/sandbox-desktop/skills` reaches agents only after
+`hack/seed-desktop-profile.mjs` (or the admin API) publishes it and the profile pins the new versions.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
