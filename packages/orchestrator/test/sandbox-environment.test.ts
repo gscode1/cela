@@ -121,23 +121,25 @@ describe("the sandbox facts in a session's instructions (ADR 0049)", () => {
       "scrot",
       "mousepad",
       "libreoffice-writer",
-      "firefox-esr",
-      "chromium",
+      "google-chrome-stable",
       "git",
       "/usr/local/bin/node",
       "agent-desktop-run",
       "desktop-launch",
       "desktop-find",
       "desktop-shot",
-      "desktop-open",
       "desktop-page",
-      "desktop-click",
-      "desktop-url",
       "desktop-web",
       "cdp-lib.cjs",
     ]) {
       expect(desktop).toContain(tool);
     }
+    // Firefox and its web helpers are gone (issue #452): the facts must not offer them.
+    expect(desktop).not.toMatch(/firefox|desktop-open|desktop-click|desktop-url/);
+    expect(FLAVOUR_FACTS.desktop.tools).not.toMatch(
+      /firefox|desktop-open|desktop-click|desktop-url/i,
+    );
+    expect(FLAVOUR_FACTS.desktop.tools).toContain("Google Chrome");
     expect(desktop).toContain("/usr/local/share/pi-desktop/DESKTOP.md");
     expect(FLAVOUR_FACTS.desktop.tools).toContain("/usr/local/share/pi-desktop/DESKTOP.md");
   });

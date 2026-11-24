@@ -142,7 +142,7 @@ spec:
             {{- end }}
       {{- if $flavoured }}
       volumes:
-        # Chromium and Firefox keep shared memory for their renderers here; the 64Mi default of a Pod crashes tabs. It
+        # The flavours' browsers (Chromium, Chrome) keep shared memory for their renderers here; the 64Mi default of a Pod crashes tabs. It
         # counts against the container's memory limit.
         - name: dshm
           emptyDir:
