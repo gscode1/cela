@@ -158,6 +158,7 @@ const CLICKABLE = new Set([
   "slider",
   "listbox",
 ]);
+const IMAGES = new Set(["image", "img", "figure"]);
 const FIELDS = new Set(["textbox", "searchbox", "combobox", "spinbutton", "listbox"]);
 const value = (p) => (p && p.value !== undefined ? p.value : undefined);
 const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
@@ -165,9 +166,16 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Accessibility tree -> the elements an agent acts on, plus named headings, each with a ref (e + backend DOM node id,
 // which stays valid until the element leaves the page; "@TAG" after it names an out-of-process iframe). Headings that repeat a link's name (product cards) are dropped.
+// Named pictures are listed too (hover and shot aim at them, a ref can click one), unless a link or button holds them or
+// they repeat a link's name: then the link is the target already.
 function axEntries(nodes, { extraRoles } = {}) {
   const live = nodes.filter((n) => !n.ignored);
   const linkNames = new Set(live.filter((n) => value(n.role) === "link").map((n) => squash(value(n.name))));
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const inControl = (n) => {
+    for (let p = byId.get(n.parentId); p; p = byId.get(p.parentId)) if (CLICKABLE.has(value(p.role))) return true;
+    return false;
+  };
   const out = [];
   for (const n of live) {
     if (!n.backendDOMNodeId) continue;
@@ -177,6 +185,8 @@ function axEntries(nodes, { extraRoles } = {}) {
     if (props.disabled === true) continue;
     if (role === "heading") {
       if (!name || linkNames.has(name)) continue;
+    } else if (IMAGES.has(role)) {
+      if (!name || linkNames.has(name) || inControl(n)) continue;
     } else if (extraRoles?.has(role)) {
       if (!name) continue;
     } else if (!CLICKABLE.has(role) || (!name && !FIELDS.has(role) && role !== "checkbox")) continue;
@@ -289,7 +299,8 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } 
   const distinct = [];
   const seen = new Set();
   for (const e of withRows) {
-    const k = e.url ? `url:${e.url}` : `ref:${e.ref}`;
+    // Only links collapse by URL (an image link and a title link to one product); same-source pictures stay apart.
+    const k = e.url && e.role === "link" ? `url:${e.url}` : `ref:${e.ref}`;
     if (seen.has(k)) continue;
     seen.add(k);
     distinct.push(e);
@@ -659,7 +670,7 @@ function dialogs(nodes, { max = 8 } = {}) {
       for (const c of m.childIds ?? []) walk(c);
     };
     for (const c of n.childIds ?? []) walk(c);
-    const entries = axEntries(sub).filter((e) => e.role !== "heading");
+    const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role));
     out.push({ role, name: squash(value(n.name)), entries: entries.slice(0, max), more: Math.max(entries.length - max, 0) });
   }
   return out;
