@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --no-warnings
 // Opens a URL in Firefox and returns what the page says, in one call (docs/decisions/0065-desktop-sandbox.md, "Token
 // budget"): launch Firefox if it is not running, otherwise type the URL into the address bar; wait for the title to settle;
 // print url, title and the page's matching lines (desktop-page).
@@ -53,23 +53,24 @@ function firefoxRunning() {
 
 // Returns the address shown before navigating ("" when Firefox was not running).
 function navigate(url) {
-  const before = lib.windowTitle();
-  let previous = "";
+  // A fresh Firefox opens on about:blank and then takes the URL through the address bar like a running one: given on the
+  // command line, a URL's %20 came out as a literal + in the query on one shop (fewer results, and the agent retried).
   if (!firefoxRunning()) {
     const launch = path.join(path.dirname(fs.realpathSync(process.argv[1])), "desktop-launch");
-    const r = spawnSync(fs.existsSync(launch) ? launch : "desktop-launch", ["firefox", url], { encoding: "utf8", timeout: 90_000 });
+    const r = spawnSync(fs.existsSync(launch) ? launch : "desktop-launch", ["firefox", "about:blank"], { encoding: "utf8", timeout: 90_000 });
     if (r.status !== 0) fail(`desktop-launch failed: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
-  } else {
-    const saved = lib.readClipboard();
-    lib.key("ctrl+l");
-    lib.pause(200);
-    lib.key("ctrl+c");
-    lib.pause(200);
-    previous = lib.readClipboard().trim();
-    lib.writeClipboard(saved);
-    lib.type(url);
-    lib.key("Return");
+    lib.pause(1000);
   }
+  const before = lib.windowTitle();
+  const saved = lib.readClipboard();
+  lib.key("ctrl+l");
+  lib.pause(200);
+  lib.key("ctrl+c");
+  lib.pause(200);
+  const previous = lib.readClipboard().trim();
+  lib.writeClipboard(saved);
+  lib.type(url);
+  lib.key("Return");
   // A page load changes the title; give a slow page longer than a click gets.
   lib.settle(before, { quietMs: 6000, capMs: 20000 });
   return previous;
@@ -93,7 +94,7 @@ function main() {
     page = lib.copyPage();
   }
   if (page.lines.length <= 1) fail(`the page has no text after ${COPY_TRIES} tries (title "${lib.clip(page.title, 80)}"); desktop-shot to see it`);
-  const out = [`url: ${page.url}`, `title: ${lib.clip(page.title, 120)}`, `text: ${lib.savePage(page.lines)} (${page.lines.length} lines)`];
+  const out = [`url: ${page.url}`, `title: ${lib.clip(page.title, 120)}`, `text: ${lib.savePage(page.lines, undefined, page.links)} (${page.lines.length} lines)`];
   // Still on the page from before: the navigation did not happen (seen when Firefox autofilled a typed URL to a visited one).
   // A redirect elsewhere is normal and not reported.
   if (previous && page.url === previous && o.url !== previous) out.splice(1, 0, `note: the page did not change; still ${lib.clip(previous, 100)}`);

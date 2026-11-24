@@ -100,6 +100,61 @@ function cleanLines(text) {
   return out;
 }
 
+function readClipboardHtml() {
+  try {
+    return exec("xclip", "-o", "-selection", "clipboard", "-t", "text/html");
+  } catch {
+    return "";
+  }
+}
+
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const decode = (s) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (m, e) => {
+    if (e[0] === "#") return String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1)));
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+const norm = (s) => s.replace(/\s+/g, " ").trim();
+
+// The links of a copied page, in document order: { text, href }. Firefox puts the selection's markup on the clipboard as
+// text/html with absolute hrefs (lab: 1965 of 1966 on a Wikipedia article). Links without text (an image link) are left
+// out: their text-bearing twin carries the same href.
+function parseLinks(html) {
+  const links = [];
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/giu)) {
+    const href = /\bhref\s*=\s*"([^"]*)"/iu.exec(m[1])?.[1] ?? /\bhref\s*=\s*'([^']*)'/iu.exec(m[1])?.[1];
+    if (!href) continue;
+    const url = decode(href);
+    if (!/^https?:\/\//iu.test(url)) continue;
+    const text = norm(decode(m[2].replace(/<[^>]*>/g, " ")));
+    if (text !== "") links.push({ text, href: url });
+  }
+  return links;
+}
+
+// Puts each link on the line of the page text it belongs to, walking both in document order: a link goes to the next line
+// that is its text, or contains it when the text is long enough to be specific. Returns Map<line index, href> and the
+// links with their line.
+function alignLinks(lines, links) {
+  const byLine = new Map();
+  const placed = [];
+  let cursor = 0;
+  for (const link of links) {
+    for (let i = cursor; i < lines.length; i++) {
+      const l = lines[i];
+      const exact = l === link.text;
+      if (exact || (link.text.length >= 8 && l.includes(link.text))) {
+        if (!byLine.has(i)) byLine.set(i, link.href);
+        placed.push({ ...link, line: i });
+        // A line that is exactly one link's text is used up; a longer line can hold several links.
+        cursor = exact ? i + 1 : i;
+        break;
+      }
+    }
+  }
+  return { byLine, placed };
+}
+
 // Reads the browser page without the accessibility tree: ctrl+l and ctrl+c copy the URL, Escape restores the address bar, F6
 // moves focus into the page, ctrl+a and ctrl+c copy its text. Ends with focus in the page and the agent's clipboard put back.
 // focused: copy from whatever has focus (an editor), no URL. The page stays selected until the next click on it.
@@ -123,9 +178,10 @@ function copyPage({ focused = false } = {}) {
   key("ctrl+c");
   pause(500);
   const text = readClipboard();
+  const links = focused ? [] : parseLinks(readClipboardHtml());
   if (!focused) clearPageSelection();
   writeClipboard(saved);
-  return { url, title: windowTitle(), lines: cleanLines(text) };
+  return { url, title: windowTitle(), lines: cleanLines(text), links };
 }
 
 // ctrl+a leaves the whole page selected (highlighted in screenshots and the live view) until the next click. Escape, arrow
@@ -149,7 +205,7 @@ const clip = (s, n) => {
 };
 
 // Matching lines with their neighbours, numbered as in the saved file: "12: hit", "11- context", "--" between groups.
-function grepLines(lines, re, { limit = 25, context = 1, width = 200 } = {}) {
+function grepLines(lines, re, { limit = 25, context = 1, width = 200, hrefs } = {}) {
   const out = [];
   const hits = [];
   for (const [i, l] of lines.entries()) if (re.test(l)) hits.push(i);
@@ -163,7 +219,8 @@ function grepLines(lines, re, { limit = 25, context = 1, width = 200 } = {}) {
     for (let i = from; i <= to; i++) {
       if (shown.has(i) || lines[i] === "") continue;
       shown.add(i);
-      out.push(`${i + 1}${isHit.has(i) ? ":" : "-"} ${clip(lines[i], width)}`);
+      const link = isHit.has(i) && hrefs?.get(i) ? ` -> ${clip(hrefs.get(i), 160)}` : "";
+      out.push(`${i + 1}${isHit.has(i) ? ":" : "-"} ${clip(lines[i], width)}${link}`);
     }
     last = to;
   }
@@ -172,11 +229,31 @@ function grepLines(lines, re, { limit = 25, context = 1, width = 200 } = {}) {
   return out;
 }
 
-function savePage(lines, file) {
+// The text file, and its links next to it (FILE.links.json) for desktop-page --from FILE --links.
+function savePage(lines, file, links) {
   const target = file ?? path.join(sessionDir(), "last-page.txt");
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${lines.join("\n")}\n`);
+  if (links) fs.writeFileSync(`${target}.links.json`, JSON.stringify(links));
   return target;
+}
+
+function loadLinks(file) {
+  try {
+    return JSON.parse(fs.readFileSync(`${file}.links.json`, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+// Opens a URL in the running Firefox through the address bar (autofill is off by policy) and waits on the title.
+function openUrl(url, { quietMs = 6000, capMs = 20000 } = {}) {
+  const before = windowTitle();
+  key("ctrl+l");
+  pause(200);
+  type(url);
+  key("Return");
+  return settle(before, { quietMs, capMs });
 }
 
 // Roles an unscoped find is split into when it fails: what an agent acts on or navigates by. Every find walks the whole
@@ -187,13 +264,19 @@ const FALLBACK_ROLES = ["heading", "link", "button", "textfield", "combobox", "c
 // agent-desktop find over roles. One element without a stable identity or bounds (offscreen, lazily rendered) makes a whole
 // find fail with STALE_REF, so a failing role is skipped and named, and a failing unscoped find is retried role by role.
 // Returns { matches, skipped, truncated, answered, splitRoles }.
-function findAcross({ app, roles = [], literal, root, timeout = "60000", fallbackRoles = FALLBACK_ROLES }) {
+// deadline (ms since epoch): roles not yet searched when it passes are skipped and named, so a caller stays under the agent's
+// tool time limit.
+function findAcross({ app, roles = [], literal, root, timeout = "60000", fallbackRoles = FALLBACK_ROLES, deadline }) {
   const matches = [];
   const skipped = [];
   let truncated = false;
   let answered = 0;
   let splitRoles = false;
   const collect = (role) => {
+    if (deadline !== undefined && Date.now() > deadline) {
+      skipped.push(`${role ?? "all roles"} (out of time)`);
+      return false;
+    }
     const args = ["find"];
     if (app) args.push("--app", app);
     if (role) args.push("--role", role);
@@ -271,6 +354,7 @@ function settle(before, { quietMs = 2000, capMs = 8000 } = {}) {
 
 module.exports = {
   FALLBACK_ROLES,
+  alignLinks,
   clearPageSelection,
   clip,
   cleanLines,
@@ -285,6 +369,9 @@ module.exports = {
   isHidden,
   key,
   literalOf,
+  loadLinks,
+  openUrl,
+  parseLinks,
   nodeLine,
   pause,
   readClipboard,

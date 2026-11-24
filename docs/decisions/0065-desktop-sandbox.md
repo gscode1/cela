@@ -204,6 +204,21 @@ The same runs showed that the desktop profile's skills had never been republishe
 skill store, pinned by the profile, so a change to `images/sandbox-desktop/skills` reaches agents only after
 `hack/seed-desktop-profile.mjs` (or the admin API) publishes it and the profile pins the new versions.
 
+Three runs on the corrected skills (26, 36 and 47 calls) lost 38 of 109 calls in a panel of offers that share one title:
+agent-desktop refused the click on a same-named link with `AMBIGUOUS_TARGET` (it cannot re-identify a ref among same-named
+siblings), seven times, and the agent only wanted those offers' URLs. Firefox's select-all copy also puts the page's markup on
+the clipboard (`text/html`) with absolute hrefs (lab: 1965 of 1966 links on a Wikipedia article, 114 of 114 on a shop
+listing), so the page copy carries every link's URL in document order. `desktop-page --links` prints them after the matching
+lines. `desktop-click` resolves same-named links through it: one URL is one target (an image link and its title link), and
+different URLs are listed with each row's text instead of clicked. `--near TEXT` takes the occurrence in the row of TEXT: a
+link starts its row, so the last occurrence at or before it, and is opened by its URL; a button ends its row, so the first at
+or after it, matched to the same-numbered tree result (the tree's order followed the page for 98 of 112 pairs in the lab, so
+the output names the occurrence it took). A whole-name match beats names that only contain the pattern, a link beats an option
+of the same name, `AMBIGUOUS_TARGET` gets the same fallbacks as a refused click (the link's URL first), and the command stops at
+45 s with a hint, under the agent's 60 s tool limit after which Firefox was seen gone. A fresh Firefox now starts on
+`about:blank` and takes the URL through the address bar: given on the command line, `%20` in a query came out as a literal `+`
+on one shop. The helpers run Node with `--no-warnings`, so the `UNDICI-EHPA` notice no longer lands in results.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
