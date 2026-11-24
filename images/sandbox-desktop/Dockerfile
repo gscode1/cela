@@ -44,7 +44,7 @@ ENV HOME=/home/pi \
     XDG_CACHE_HOME=/workspace/.cache
 COPY --from=forwarder /usr/local/bin/node /usr/local/bin/node
 # Desktop: X server, window manager, session bus, the accessibility bus with its GTK bridge, input and capture tools.
-# xclip and jq serve desktop-url, desktop-text and the agent's own filters, python3-pil desktop-shot; `python` is a link to python3 (websockify's dependency).
+# xclip and jq serve desktop-url, desktop-page and the agent's own filters, python3-pil desktop-shot; `python` is a link to python3 (websockify's dependency).
 # Apps: Mousepad (GTK), LibreOffice Writer with the GTK3 plugin that exposes its tree, Firefox ESR.
 # Lab live view (ADR 0065): x11vnc (view-only) and noVNC behind websockify, both started by agent-desktop-run on loopback.
 # hadolint ignore=DL3008
@@ -64,11 +64,21 @@ COPY --from=agent-desktop --chmod=0755 /out/agent-desktop /out/agent-desktop-lin
 COPY --from=forwarder /src/packages/browser-proxy/dist /opt/browser-proxy/dist
 COPY --from=forwarder /src/packages/browser-proxy/package.json /opt/browser-proxy/package.json
 COPY images/sandbox-desktop/files/firefox-policies.json /usr/lib/firefox-esr/distribution/policies.json
+# "I still don't care about cookies" 1.1.9 (GPL-3.0-only, AMO), force-installed by the policy file: it accepts or hides cookie
+# consent banners on any site, from rules its maintainers keep, so the agent does not spend clicks and screenshots on them.
+ADD --checksum=sha256:42922f61cfc53e2103e492ddbe5736caf503d9dad4a88690efc4c64dac10d5c7 --chmod=0644 \
+  https://addons.mozilla.org/firefox/downloads/file/4637154/istilldontcareaboutcookies-1.1.9.xpi \
+  /usr/lib/firefox-esr/distribution/extensions-pinned/idcac-pub@guus.ninja.xpi
 COPY --chmod=0755 images/sandbox-desktop/files/agent-desktop-run /usr/local/bin/agent-desktop-run
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-launch /usr/local/bin/desktop-launch
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-find /usr/local/bin/desktop-find
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-url /usr/local/bin/desktop-url
-COPY --chmod=0755 images/sandbox-desktop/files/desktop-text /usr/local/bin/desktop-text
+COPY --chmod=0755 images/sandbox-desktop/files/desktop-page /usr/local/bin/desktop-page
+COPY --chmod=0755 images/sandbox-desktop/files/desktop-click /usr/local/bin/desktop-click
+COPY --chmod=0755 images/sandbox-desktop/files/desktop-open /usr/local/bin/desktop-open
+COPY --chmod=0644 images/sandbox-desktop/files/desktop-lib.cjs /usr/local/bin/desktop-lib.cjs
+# desktop-text is desktop-page's first name.
+RUN ln -s desktop-page /usr/local/bin/desktop-text
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-shot /usr/local/bin/desktop-shot
 COPY images/sandbox-desktop/files/novnc-index.html /usr/share/novnc/index.html
 COPY images/sandbox-desktop/files/DESKTOP.md /usr/local/share/pi-desktop/DESKTOP.md

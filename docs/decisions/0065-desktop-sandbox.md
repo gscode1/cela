@@ -145,6 +145,36 @@ the scale and origin for xdotool clicks, and the skills say text first, a screen
 no answer, and one bash call per step (act, wait, check). The rule, in both skills: never print a full snapshot; use
 `desktop-find`, or write to a file and filter it.
 
+Three later runs of the same task (29, 55 and 31 model calls) still spent most calls on the same few patterns: each screenshot
+is two calls (take it, read it) and there were 6 to 15 per run; clicks were refused as offscreen, then scrolled with keys and
+searched again; every run opened with a role dump to find and dismiss Firefox's "Translate this page?" popup and a cookie
+banner; prices were read through broad `desktop-find` calls; `desktop-url` left focus in the address bar, so the agent pressed
+Escape, Tab and Page Down to get back. `desktop-text` was never used because the skill offered it only as a fallback. So:
+
+- `desktop-page` (first named `desktop-text`, which stays as a link) is the default way to read a page: url, title and the
+  matching lines in one call, then focus back in the page and the agent's clipboard restored.
+- `desktop-click "regex"` finds the one matching link or button (one `find` per role with `--text` for the pattern's longest
+  literal run, no result cap, since a page has thousands of links), clicks it and reports the new title. It clicks nothing
+  when several match and lists them for `--nth`. agent-desktop's own scroll-into-view fails in Firefox ("The scroll viewport is
+  not contained on one display"), so an offscreen target is brought into view with Firefox's find bar (its name typed, Return
+  until it is on screen, Escape); if the click is still refused on screen, a mouse click at its centre. Waiting is on the window
+  title, which costs no tree walk; an in-page change is reported as `(same)` rather than waited out.
+- `desktop-open URL ["regex"]` launches or navigates, waits on the title, copies again while the body has no text, and prints
+  the same view as `desktop-page`.
+- `desktop-url` ends with F6 (focus in the page) and restores the clipboard; `desktop-find` defaults to 25 lines and 80-character
+  names; `agent-desktop-run -q` shortens an action's envelope to `ok click` or `ERR CODE: message`. The helpers share
+  `desktop-lib.cjs`.
+- Firefox: the translate popup and the speech-synthesis notice bar are off (policy preferences). Cookie banners are left to "I
+  still don't care about cookies" 1.1.9 (GPL-3.0, AMO, pinned by checksum, force-installed by policy; every other extension is
+  blocked). Measured in the lab on nine news and shop sites in six languages: with it, eight showed no banner; without it, all
+  did. Firefox's built-in cookie banner handling (`cookiebanners.service.mode`) only rejects where it can, missed several
+  of those sites even where its bundled list names them, and is left off. A hand-written list of "accept" labels was tried and
+  dropped: it is a language list, and the button labels do not copy with the page text, so it could not tell when to act.
+- No ad blocker. With uBlock Origin added, one shop served a blank page and another site a bot check, which neither did
+  without it; the gain in tree size and page text was small. A real, ordinary-looking browser is the point of this flavour.
+
+None of this knows a site: the same keystrokes, finds and extension run everywhere.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through

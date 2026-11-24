@@ -131,7 +131,14 @@ describe("desktop image helpers", () => {
     { timeout: 10_000 },
     () => {
       const dockerfile = readFileSync(join(root, "images/sandbox-desktop/Dockerfile"), "utf8");
-      for (const name of ["desktop-find", "desktop-url", "desktop-shot", "desktop-text"]) {
+      for (const name of [
+        "desktop-find",
+        "desktop-url",
+        "desktop-shot",
+        "desktop-page",
+        "desktop-click",
+        "desktop-open",
+      ]) {
         expect(dockerfile).toContain(
           `COPY --chmod=0755 images/sandbox-desktop/files/${name} /usr/local/bin/${name}`,
         );
@@ -240,7 +247,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
     const { status, stderr } = live("--app", "firefox-esr");
     expect(status).toBe(1);
     expect(stderr).toContain("add a regex or --role");
-    expect(stderr).toContain("desktop-text");
+    expect(stderr).toContain("desktop-page");
   });
 
   it("skips a role whose find fails and keeps the others", { timeout: 15_000 }, () => {
@@ -255,7 +262,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
     expect(status).toBe(0);
     expect(out).toContain('@sf:e1 link "LEGO 42143 Ferrari"');
     expect(out.at(-1)).toContain("skipped, find failed: statictext (STALE_REF)");
-    expect(out.at(-1)).toContain("desktop-text");
+    expect(out.at(-1)).toContain("desktop-page");
   });
 
   it("retries a failing unscoped find role by role", { timeout: 15_000 }, () => {
@@ -275,7 +282,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
     expect(notes).not.toContain("all roles");
   });
 
-  it("fails with a desktop-text hint when no role answers", { timeout: 15_000 }, () => {
+  it("fails with a desktop-page hint when no role answers", { timeout: 15_000 }, () => {
     const { status, stderr } = liveFailing(
       ["link"],
       "--app",
@@ -286,106 +293,6 @@ describe("desktop-find on a tree too large to snapshot", () => {
     );
     expect(status).toBe(1);
     expect(stderr).toContain("failed for every role: link (STALE_REF)");
-    expect(stderr).toContain("desktop-text");
-  });
-});
-
-describe("desktop-text", () => {
-  const text = join(root, "images/sandbox-desktop/files/desktop-text");
-  const page = [
-    "Allegro",
-    "",
-    "",
-    "Haddrell's UMF25+ 250 g",
-    "449,00 zł",
-    "dostawa jutro",
-    "Inny miód",
-    "99,95 zł",
-    "koniec",
-  ];
-
-  // A stand-in agent-desktop-run: logs every --exec call and answers `xclip -o` with the clipboard content given.
-  function fakeX(clipboard: string): string {
-    const bin = join(dir, "xbin");
-    spawnSync("mkdir", ["-p", bin]);
-    writeFileSync(join(dir, "clip.txt"), clipboard);
-    writeFileSync(join(dir, "x.log"), "");
-    const run = join(bin, "agent-desktop-run");
-    writeFileSync(
-      run,
-      [
-        "#!/bin/sh",
-        `echo "$*" >> '${join(dir, "x.log")}'`,
-        `case "$*" in *"xclip -o"*) cat '${join(dir, "clip.txt")}';; esac`,
-        "",
-      ].join("\n"),
-    );
-    chmodSync(run, 0o755);
-    return bin;
-  }
-
-  function copy(
-    clipboard: string,
-    ...args: string[]
-  ): { out: string[]; status: number | null; stderr: string } {
-    const r = spawnSync("node", [text, "--out", join(dir, "page.txt"), ...args], {
-      encoding: "utf8",
-      timeout: 10_000,
-      env: { ...process.env, PATH: `${fakeX(clipboard)}:${process.env.PATH ?? ""}` },
-    });
-    return { out: r.stdout.trim().split("\n"), status: r.status, stderr: r.stderr };
-  }
-
-  it(
-    "focuses the page, copies it and prints matching lines with context",
-    { timeout: 15_000 },
-    () => {
-      const { out, status } = copy(page.join("\n"), "zł");
-      expect(status).toBe(0);
-      expect(out[0]).toMatch(/^text: .*page\.txt \(8 lines, \d+ chars\)$/);
-      expect(out).toEqual(
-        expect.arrayContaining([
-          "3- Haddrell's UMF25+ 250 g",
-          "4: 449,00 zł",
-          "5- dostawa jutro",
-          "7: 99,95 zł",
-        ]),
-      );
-      const keys = readFileSync(join(dir, "x.log"), "utf8")
-        .split("\n")
-        .map((l) => /xdotool key --clearmodifiers (\S+)/.exec(l)?.[1])
-        .filter(Boolean);
-      expect(keys).toEqual(["ctrl+l", "Escape", "F6", "ctrl+a", "ctrl+c"]);
-      expect(readFileSync(join(dir, "page.txt"), "utf8")).toContain(
-        "Haddrell's UMF25+ 250 g\n449,00 zł",
-      );
-    },
-  );
-
-  it("copies from the focused widget as it is with --focused", { timeout: 15_000 }, () => {
-    const { status } = copy(page.join("\n"), "--focused", "zł");
-    expect(status).toBe(0);
-    expect(readFileSync(join(dir, "x.log"), "utf8")).not.toMatch(/ctrl\+l|F6/);
-  });
-
-  it("fails when the copy caught only the address bar", { timeout: 15_000 }, () => {
-    const { status, stderr } = copy("https://allegro.pl/x\n", "zł");
-    expect(status).toBe(1);
-    expect(stderr).toContain('only "https://allegro.pl/x"');
-  });
-
-  it("filters a saved page again and caps the matches", { timeout: 15_000 }, () => {
-    const saved = join(dir, "saved.txt");
-    writeFileSync(saved, page.join("\n"));
-    const r = spawnSync("node", [text, "--from", saved, "--limit", "1", "--context", "0", "zł"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
-    const out = r.stdout.trim().split("\n");
-    expect(r.status).toBe(0);
-    expect(out.slice(1)).toEqual([
-      "5: 449,00 zł",
-      "1 more matches, narrow the regex or raise --limit",
-    ]);
+    expect(stderr).toContain("desktop-page");
   });
 });

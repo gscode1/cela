@@ -49,12 +49,22 @@
       "MoreFromMozilla": false
     },
     "SearchSuggestEnabled": false,
+    "ExtensionSettings": {
+      "*": { "installation_mode": "blocked" },
+      "idcac-pub@guus.ninja": {
+        "installation_mode": "force_installed",
+        "install_url": "file:///usr/lib/firefox-esr/distribution/extensions-pinned/idcac-pub@guus.ninja.xpi"
+      }
+    },
     "DownloadDirectory": "/workspace/downloads",
     "PromptForDownloadLocation": false,
     "Preferences": {
       "browser.safebrowsing.malware.enabled": false,
       "browser.safebrowsing.phishing.enabled": false,
-      "media.peerconnection.enabled": false
+      "media.peerconnection.enabled": false,
+      "browser.translations.enable": false,
+      "browser.translations.automaticallyPopup": false,
+      "media.webspeech.synth.enabled": false
     }
   }
 }
