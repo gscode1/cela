@@ -148,7 +148,9 @@ describe("desktop-page", () => {
 describe("desktop image settings", () => {
   it("installs Google Chrome from a signed repository and no Firefox", { timeout: 10_000 }, () => {
     const dockerfile = readFileSync(join(root, "images/sandbox-desktop/Dockerfile"), "utf8");
-    expect(dockerfile).toContain("apt-get install -y --no-install-recommends google-chrome-stable");
+    expect(dockerfile).toContain(
+      'apt-get install -y --no-install-recommends "google-chrome-stable=$CHROME_VERSION"',
+    );
     expect(dockerfile).toContain("signed-by=/etc/apt/keyrings/google-chrome.gpg");
     expect(dockerfile).toContain("arch=$TARGETARCH");
     expect(dockerfile).toContain("https://dl.google.com/linux/chrome/deb/ stable main");
