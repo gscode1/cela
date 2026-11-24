@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>frames</title>
+<body style="font:16px sans-serif">
+<h1>Frames</h1>
+<button id="top-btn" style="padding:6px 14px">Top button</button>
+<p>Same origin, then cross origin:</p>
+<iframe id="same" src="frame.html?label=same" style="width:360px;height:130px;border:2px solid #888;margin-left:60px"></iframe>
+<iframe id="cross" src="__CROSS__/frame.html?label=cross" style="width:360px;height:130px;border:2px solid #888;margin-left:40px"></iframe>
+<p>Buttons below the fold of their frame:</p>
+<iframe id="same-low" src="frame.html?label=samelow&pad=500" style="width:360px;height:130px;border:2px solid #888;margin-left:60px"></iframe>
+<iframe id="cross-low" src="__CROSS__/frame.html?label=crosslow&pad=500" style="width:360px;height:130px;border:2px solid #888;margin-left:40px"></iframe>
+<!-- A frame a person cannot see: its text and button must not be offered. -->
+<iframe id="tiny" src="__CROSS__/frame.html?label=tinyframe" style="width:1px;height:1px;border:0"></iframe>
+<pre id="log"></pre>
+<script src="log.js"></script>

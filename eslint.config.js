@@ -11,6 +11,7 @@ export default tseslint.config(
       "packages/vendor/**",
       ".claude/**",
       "images/sandbox-desktop/files/**",
+      "images/sandbox-desktop/test-pages/**", // pages for the desktop-web suite: browser scripts
     ],
   },
   js.configs.recommended,

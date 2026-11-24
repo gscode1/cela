@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>frame</title>
+<body style="margin:0;font:16px sans-serif">
+<!-- ?label=same|cross gives the two frames different names, so a name regex picks one. -->
+<p id="t"></p>
+<div id="pad"></div>
+<button id="frame-btn" style="padding:6px 14px"></button>
+<pre id="log"></pre>
+<script>
+  const label = new URLSearchParams(location.search).get("label") || "x";
+  document.getElementById("t").textContent = `Inside the frame: frame-text-marker ${label}`;
+  // ?pad=N puts the button N px down inside the frame, below its fold.
+  document.getElementById("pad").style.height = `${Number(new URLSearchParams(location.search).get("pad") || 0)}px`;
+  const b = document.getElementById("frame-btn");
+  b.id = `btn-${label}`;
+  b.textContent = `Button ${label}`;
+</script>
+<script src="log.js"></script>

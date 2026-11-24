@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>zoom</title>
+<body style="font:16px sans-serif">
+<h1>Zoom page</h1>
+<p>Buttons spread over the page, so a wrong scale lands beside them.</p>
+<button id="zoom-a" style="position:absolute;left:40px;top:120px;padding:8px 16px">Zoom A</button>
+<button id="zoom-b" style="position:absolute;left:500px;top:300px;padding:8px 16px">Zoom B</button>
+<button id="zoom-c" style="position:absolute;left:300px;top:560px;padding:8px 16px">Zoom C</button>
+<pre id="log" style="position:absolute;left:40px;top:640px"></pre>
+<p id="info" style="position:absolute;left:600px;top:40px"></p>
+<script>
+  // The page reports its own zoom as text, so the suite can confirm the key presses took effect.
+  const show = () => (document.getElementById("info").textContent = `zoom: ${Math.round(devicePixelRatio * 100)}%`);
+  addEventListener("resize", show);
+  show();
+</script>
+<script src="log.js"></script>
