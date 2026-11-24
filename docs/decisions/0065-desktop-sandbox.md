@@ -219,12 +219,37 @@ of the same name, `AMBIGUOUS_TARGET` gets the same fallbacks as a refused click 
 `about:blank` and takes the URL through the address bar: given on the command line, `%20` in a query came out as a literal `+`
 on one shop. The helpers run Node with `--no-warnings`, so the `UNDICI-EHPA` notice no longer lands in results.
 
+### Chromium and desktop-web (issue #450)
+
+Reading Firefox through select-all/copy and the AT-SPI tree gives text but no element refs, and the Allegro price-comparison task
+took 18–28 tool calls. Firefox cannot be read over a protocol without being seen: `--marionette` or `--remote-debugging-port`
+sets `navigator.webdriver` to true (the `dom.webdriver.enabled` pref no longer hides it on ESR 153), BrowserScan reports "Robot"
+and DataDome answered Allegro, Etsy and Tripadvisor with a captcha in a lab run. The Firefox policy keeps
+`DisableDeveloperTools`, which also keeps both off.
+
+Chromium is in the image next to Firefox and is the default for web pages. `desktop-launch chromium` starts it with the same
+egress forwarder, a fresh profile, a managed policy (`/etc/chromium/policies/managed/pi-desktop.json`: `file://` only under
+`/workspace`, no translate, no sign-in or sync) and a debugging port on loopback. `desktop-web` (with `cdp-lib.cjs`) reads it
+through that port without anything a page can detect: one short connection per command and only the methods in `ALLOWED`
+(`Accessibility.getFullAXTree`, `DOMSnapshot.captureSnapshot`, `DOM.getBoxModel`/`getContentQuads`/`scrollIntoViewIfNeeded`/
+`getNodeForLocation`/`describeNode`, `Page.getLayoutMetrics`, `Browser.getWindowForTarget`). It never enables a domain, never
+evaluates script and never sends CDP input; clicks and keys are X events from xdotool at the element's screen point, computed
+from the window geometry and the layout viewport. A test fails when `desktop-web` sends a method outside `ALLOWED`.
+
+Measured in the lab (Chromium 156, Xvfb, openbox): with this reader rebrowser's `runtimeEnableLeak` stayed green across about
+170 calls, while one `Runtime.enable` turns it red for the rest of the page's life; sannysoft and BrowserScan ("Normal") pass;
+Allegro's listing, consent dialog, offer and price worked without a captcha; clicks landed within 0 px on a test page.
+`--no-sandbox` shows Chromium's "unsupported command-line flag" bar (the reader's geometry accounts for it). No
+`--enable-unsafe-swiftshader`: rebrowser reads software WebGL as Playwright's default, so pages get no WebGL instead. The cookie extension is Firefox-only: in Chromium a consent dialog is one
+`desktop-web click`. A click whose centre another element covers (a dialog) is refused with that element's name instead of
+landing on it. Firefox and `desktop-open`/`desktop-page`/`desktop-click` stay for sites that misbehave in Chromium.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
   the session API) and handing control to a person are separate designs.
 - No audio, clipboard sync with the outside, GPU or file upload through the desktop; files go through `/workspace`.
-- Three apps only. Adding one means changing the image and its skill.
+- Four apps only (Chromium since #450). Adding one means changing the image and its skill.
 - The image is large (about 1.9 GB uncompressed); that is why the flavour is off by default.
 - The Playwright-style e2e suite for the flavour is not part of this change.
 
