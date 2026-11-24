@@ -9,14 +9,21 @@ IMAGE_REPO=registry.example.com/team images/build.sh all --push
 ```
 
 CI (`.github/workflows/images.yml`) runs the same script for every push to `main` and every pull request of this
-repository and publishes to `ghcr.io/<owner>/pi-*:<version>-<short sha>`; the job summary lists the digests.
+repository and publishes to `ghcr.io/<owner>/pi-*:<version>-<short sha>`; the merge job's summary lists the digests. Each
+image and architecture builds in its own job on a native runner (`ubuntu-24.04`, `ubuntu-24.04-arm`; no QEMU) with
+`--push-by-digest`, and the merge job joins the two digests under the tag with `docker buildx imagetools create`
+(issue #436).
+
+Layer cache: `BUILD_CACHE_REPO=<prefix>` reads `<prefix>/pi-<name>:cache-<arch>` for each platform built, and
+`BUILD_CACHE_WRITE=1` also writes it (one `--platform` only). CI writes the cache on pushes to `main`; pull requests and
+`kind.yml` (through `hack/kind-up.sh --build`) only read it. A missing cache only makes the build slower.
 
 `IMAGE_REPO` is a registry/repository **prefix**: images are named `pi-orchestrator`, `pi-ingest`, `pi-sandbox`,
 `pi-sandbox-browser`, `pi-sandbox-desktop`, `pi-egress-proxy`, `pi-e2e-driver` beneath it (default: those local names). Every tag is `<root package version>-<git short sha>`.
 Use a clean checkout so the tag identifies its source. The script prints image references and content digests;
 use `registry.example.com/team/pi-orchestrator@sha256:…` in your values file (`charts/cela`). Without `--push`, a single native
 platform is loaded into Docker; other builds write `pi-<name>-<tag>.oci.tar` in the current directory. No images
-are published automatically. Omitting the image target builds `all`. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
+are published automatically. `--push-by-digest` (needs `IMAGE_REPO`) pushes untagged and prints the digest. Omitting the image target builds `all`. `--platform` accepts `linux/amd64`, `linux/arm64`, or their comma-separated list.
 
 Base images (Node, Go, distroless and sandboxd) are pinned as `tag@sha256:…` using multi-arch index digests so the same
 commit cannot silently pick up a changed base tag. When updating a base, resolve its index with
