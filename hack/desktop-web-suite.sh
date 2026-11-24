@@ -400,7 +400,76 @@ case_stale() {
   check "and clicked" $?
 }
 
-ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale)
+case_slider() {
+  open slider
+  web snap slider
+  check "snap lists a native range with its value and range" "$(ok 'slider "Volume" value=25 min=0 max=100')"
+  check "and an ARIA slider" "$(ok 'slider "Rating" value=2 min=0 max=10')"
+  check "an unnamed range is named by its row" "$(ok 'slider "" near "Opacity of the overlay" value=3 min=0 max=10')"
+  web type Volume 75
+  check "type sets a native range (step 1) and reads it back" "$(ok 'slider "Volume": value 25 -> 75')"
+  has_text 'volume: 75'
+  check "the page saw the value" $?
+  web type Brightness 73
+  check "a range with step 5 ends on the nearest step" "$(ok 'slider "Brightness": value 50 -> 75')"
+  check "and says so" "$(ok '73 is between its steps of 5: 75 is the nearest')"
+  has_text 'bright: 75$'
+  check "the page saw the step value" $?
+  web type Rating 7
+  check "type sets an ARIA slider by dragging its thumb" "$(ok 'slider "Rating": value 2 -> 7')"
+  has_text 'rating: 7 \(pointer\)$'
+  check "the page saw the pointer move it" $?
+  web type Opacity 9
+  check "an unnamed range is set by its row text" "$(ok 'value 3 -> 9')"
+  web type Volume 150
+  check "a value out of range is refused" "$(ok 'takes 0 to 100' 64)"
+}
+
+case_upload() {
+  local file=$WORK/upload-me.txt
+  printf 'hello' >"$file"
+  open upload
+  web snap 'Resume|photo'
+  check "snap marks a file input" "$(ok 'button "Resume".*file input: desktop-web upload')"
+  web type Resume x
+  check "type on a file input is refused" "$(ok 'takes a file, not text' 64)"
+  web url
+  check "and opened no chooser" "$(no 'file chooser')"
+  web upload Resume "$file"
+  check "upload picks the file and reads the input back" "$(ok 'file input now holds: "upload-me.txt"')"
+  has_text 'uploaded resume: upload-me.txt 5 bytes'
+  check "the page got the file" $?
+  web click '^Choose photo$'
+  check "a click that opens the chooser says so" "$(ok 'A file chooser is open')"
+  web click '^Resume$'
+  check "actions are refused while it is open" "$(ok 'file chooser is open' 3)"
+  web snap photo
+  check "reads go on with the notice" "$(ok 'A file chooser is open')"
+  check "and the listing" "$(ok 'button "Choose photo"')"
+  web key Escape
+  check "Escape cancels it" "$(ok 'file chooser closed')"
+  web upload '^Choose photo$' "$file"
+  check "upload through a button that opens a hidden input" "$(ok 'file input now holds: "upload-me.txt"')"
+  has_text 'uploaded photo: upload-me.txt 5 bytes'
+  check "the page got the photo" $?
+  web upload Resume /nonexistent/file.txt
+  check "a missing file is refused before any click" "$(ok 'no file' 64)"
+}
+
+case_drag() {
+  open drag
+  web drag 'Move me' --by 120,0
+  check "a pointer drag by px" "$(ok 'moved: handle by 120,0$')"
+  web drag 'Move me' '^Bin$'
+  check "a pointer drag onto a target" "$(ok 'into bin')"
+  web drag 'Card one' 'Drop here'
+  check "an HTML5 drag starts" "$(ok 'dragstart: card')"
+  check "and drops on the target" "$(ok 'dropped: card on target')"
+  web drag 'no such thing' '^Bin$'
+  check "a source that is not there is refused" "$([[ $RC != 0 ]]; echo $?)"
+}
+
+ALL=(zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks shot custom state names form stale slider upload drag)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sliders</title>
+<style>
+  body { font: 16px sans-serif; }
+  input[type=range] { width: 300px; }
+  .track { position: relative; width: 300px; height: 10px; background: #ccc; margin: 14px 0; cursor: pointer; }
+  .thumb { position: absolute; top: -5px; width: 20px; height: 20px; margin-left: -10px; background: #258; border-radius: 50%; }
+</style>
+<body>
+<h1>Sliders</h1>
+<p><label>Volume <input type="range" id="volume" min="0" max="100" step="1" value="25"></label></p>
+<p><label>Brightness <input type="range" id="bright" min="0" max="100" step="5" value="50"></label></p>
+<!-- an unnamed native range: named by its row -->
+<p>Opacity of the overlay <input type="range" id="opacity" min="0" max="10" value="3"></p>
+<!-- an ARIA slider: a div that moves with the pointer and the arrow keys -->
+<p id="rating-label">Rating</p>
+<div class="track" id="track"><div class="thumb" id="thumb" role="slider" tabindex="0" aria-labelledby="rating-label" aria-valuemin="0" aria-valuemax="10" aria-valuenow="2"></div></div>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  for (const id of ["volume", "bright", "opacity"]) document.getElementById(id).addEventListener("change", (e) => add(`${id}: ${e.target.value}`));
+  const track = document.getElementById("track");
+  const thumb = document.getElementById("thumb");
+  let v = 2;
+  const set = (n, why) => {
+    n = Math.max(0, Math.min(10, n));
+    if (n === v) return;
+    v = n;
+    thumb.style.left = `${v * 10}%`;
+    thumb.setAttribute("aria-valuenow", String(v));
+    add(`rating: ${v} (${why})`);
+  };
+  thumb.style.left = `${v * 10}%`;
+  const fromX = (x) => Math.round(((x - track.getBoundingClientRect().left) / track.clientWidth) * 10);
+  let dragging = false;
+  track.addEventListener("mousedown", (e) => { dragging = true; thumb.focus(); set(fromX(e.clientX), "pointer"); e.preventDefault(); });
+  document.addEventListener("mousemove", (e) => dragging && set(fromX(e.clientX), "pointer"));
+  document.addEventListener("mouseup", () => (dragging = false));
+  thumb.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") set(v + 1, "key");
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") set(v - 1, "key");
+    else return;
+    e.preventDefault();
+  });
+</script>
