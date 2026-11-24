@@ -421,11 +421,40 @@ computed style), input stays real X events, and nothing names a site or language
 The suite gained `custom`, `state`, `names`, `form` and `stale` cases (pages `custom-controls.html`, `state.html`,
 `names.html`, `form.html`, `stale.html`).
 
+### desktop-web: sliders, file upload and the file chooser, drag (issue #468)
+
+The same hard runs found three things `desktop-web` could not do. The reader stays passive (`ALLOWED` unchanged), and input
+stays real X events at a person's pace. `DOM.setFileInputFiles`, `Input.dispatchDragEvent` and
+`Page.setInterceptFileChooserDialog` would be simpler, but they are not input a person makes and are not used.
+
+- **Sliders.** `snap` lists `slider "Volume" value=25 min=0 max=100` from the accessibility node's value, `valuemin` and
+  `valuemax` (`valuetext` when it differs, `vertical`); an unnamed one gets its row text like other controls. `type <slider> 75`
+  presses at the value's proportional point: on the slider itself when it is its own track (a native range: the travel is inset
+  by half a thumb), else it drags the thumb along its track (the nearest ancestor in the layout snapshot several thumbs long).
+  It reads the value back, then presses the arrow keys (the first press learns the step) and reads back again: `value 25 -> 75`.
+  A value between steps ends on the nearest and says so; a slider that did not move or stopped elsewhere exits 1.
+- **File chooser.** A click on a file input opens Chrome's GTK file chooser, a second top-level window of Chrome
+  (`_NET_WM_WINDOW_TYPE_DIALOG`, transient for the browser window). It does not block the renderer, so a JS-dialog probe misses
+  it, but it takes all input. `chromeWindow()` now skips such windows, and every command reports one, as for a JS dialog: reads
+  go on with the notice, actions exit 3, `key` sends its keys to the chooser (`Escape` cancels it).
+- **Upload.** `desktop-web upload <ref|"regex"> /workspace/file` checks the file exists, clicks the target (a file input, or a
+  button that opens a hidden one), waits for the chooser, then `ctrl+l`, types the path, `Return`. It reads back the file inputs
+  of the layout snapshot (`inputValue`, so a hidden input counts) and what changed on the page. A chooser that stays open is
+  cancelled. `type` on a file input is refused with a pointer to `upload` (it used to type into the chooser's search).
+- **Drag.** `desktop-web drag <src> <dst>` or `--by dx,dy` places both elements (any visible text is a target, as a drop zone
+  needs no click listener), then moves to the source, presses, leaves the press point by a few px, travels in eased steps with
+  a slight wobble, dwells and jiggles over the target and releases. Both a pointer-event drag and HTML5 `draggable` with `drop`
+  work under Xvfb: Chrome runs its X drag session on the XTest motion events.
+  A `grab` or `move` cursor now marks clickable text as `pointer` does.
+- `xdotool type` read a burst of text that starts with `-` as an option; text now follows `--`.
+
+The suite gained `slider`, `upload` and `drag` cases (pages `slider.html`, `upload.html`, `drag.html`).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
   the session API) and handing control to a person are separate designs.
-- No audio, clipboard sync with the outside, GPU or file upload through the desktop; files go through `/workspace`.
+- No audio, clipboard sync with the outside or GPU. A page can take a file only from `/workspace`, through `desktop-web upload`.
 - Three apps only (Chrome since #450 and #452; Firefox was removed). Adding one means changing the image and its skill.
 - The image is large (about 1.9 GB uncompressed); that is why the flavour is off by default.
 - The Playwright-style e2e suite for the flavour is not part of this change.
