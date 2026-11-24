@@ -1,0 +1,52 @@
+# Keeps the Chrome pin of images/sandbox-desktop/Dockerfile current. Google's apt repository keeps only its current build, so
+# an old pin stops installing; this workflow reads both architectures' Packages index weekly and, when both list the same newer
+# google-chrome-stable, opens a pull request that moves the ARG default (hack/chrome-bump.mjs;
+# docs/decisions/0065-desktop-sandbox.md, "Chrome is pinned"). The PR's own checks and image build run as for any change.
+name: chrome-bump
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: chrome-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - id: bump
+        run: node hack/chrome-bump.mjs
+      - name: Open the pull request
+        if: steps.bump.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.bump.outputs.latest }}
+          CURRENT: ${{ steps.bump.outputs.current }}
+        run: |
+          branch="chrome-$LATEST"
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qx 0; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            git commit -am "Bump Google Chrome to $LATEST"
+            git push -u origin "$branch"
+            gh pr create --base main --head "$branch" --title "Bump Google Chrome to $LATEST" --body "Moves \`CHROME_VERSION\` in \`images/sandbox-desktop/Dockerfile\` from $CURRENT to $LATEST, the build Google's apt repository serves for both amd64 and arm64 (it keeps only the current one, so the old pin stops installing).
+
+          Verify before merging:
+          - the desktop image builds (the images workflow of this PR);
+          - desktop-web still passes a detector page on the new Chrome (\`desktop-web\` smoke, ADR 0065): its \`navigator.userAgentData\` brands include Google Chrome and no automation signal shows."
+          fi

@@ -38,6 +38,9 @@ RUN mkdir /out && tar -xzf /tmp/agent-desktop.tar.gz -C /out agent-desktop agent
 FROM registry.k8s.io/agent-sandbox/sandboxd:v1.0.11@sha256:c4719d5dd70a29b6c0ce9f90a2bf56c52938b0467684510b0fd78e4a3a775fe9
 ARG TARGETARCH
 USER root
+# Google serves only its current Chrome, so this pin expires within weeks. .github/workflows/chrome-bump.yml opens the PR
+# that moves it (hack/chrome-bump.mjs); a build against an expired pin fails with the message below.
+ARG CHROME_VERSION=158.0.8127.88-1
 # Commands run as uid 1000, user `pi` (added below): dbus and the toolkits look the user up and need a passwd entry, and HOME
 # must be writable (images/sandbox/Dockerfile, issue #324). Caches go to the workspace volume, not the root filesystem.
 ENV HOME=/home/pi \
@@ -49,7 +52,7 @@ ADD https://dl.google.com/linux/linux_signing_key.pub /tmp/google-linux-signing-
 # Apps: Mousepad (GTK), LibreOffice Writer with the GTK3 plugin that exposes its tree, and Google Chrome for web pages through
 # desktop-web. Chrome, not Debian's Chromium: only Google's build reports the "Google Chrome" brand in
 # navigator.userAgentData, which detectors check (rebrowser's useragent test). It comes from Google's signed apt repository
-# (stable channel, amd64 and arm64), whose key is pinned by fingerprint below.
+# (stable channel, amd64 and arm64) at the version in CHROME_VERSION, whose key is pinned by fingerprint below.
 # Lab live view (ADR 0065): x11vnc (view-only) and noVNC behind websockify, both started by agent-desktop-run on loopback.
 # The repository is used for this one install: its source file is removed afterwards (and Chrome's package would re-add one),
 # so a later `apt-get update` in this image does not reach Google. A new Chrome comes with a rebuilt image. gnupg is only there
@@ -68,7 +71,9 @@ RUN apt-get update \
  && echo "deb [arch=$TARGETARCH signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
     >/etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends google-chrome-stable \
+ && { apt-cache madison google-chrome-stable | awk -v v="$CHROME_VERSION" '$3 == v {found = 1} END {exit !found}' \
+      || { echo "CHROME_VERSION=$CHROME_VERSION is no longer served by Google's repository (it keeps only the current build): run hack/chrome-bump.mjs or the chrome-bump workflow to move the pin" >&2; exit 1; }; } \
+ && apt-get install -y --no-install-recommends "google-chrome-stable=$CHROME_VERSION" \
  && rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources \
  && apt-get purge -y --auto-remove gnupg \
  && rm -rf /var/lib/apt/lists/* /tmp/* \
