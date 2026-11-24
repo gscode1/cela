@@ -10,30 +10,34 @@ A Linux desktop (1280x800) with Google Chrome, Mousepad (text editor) and LibreO
 ## Web pages: desktop-web (Google Chrome)
 
 For web pages use `desktop-web`, one call per step. It starts Chrome when needed, types into the address bar and clicks with
-the real mouse, and reads the page without anything a site can detect, so bot checks see a person's browser.
+the real mouse at a person's pace, and reads the page without anything a site can detect, so bot checks see a person's browser.
 
-    desktop-web open <url> ["regex"]            open a page: url, title, the page's text lines matching the regex
+    desktop-web open <url> ["regex"]            open a page: url, title, open dialogs, matching lines (or a heading outline)
     desktop-web text "regex"                    read the current page: matching text lines (full text saved to a file)
-    desktop-web snap ["regex"]                  clickable elements and headings with refs: [e123] link "Honey 250 g"
-    desktop-web click <e123|"regex">            click it; --near "row text", --show "regex" reads the result
-    desktop-web type <e123|"regex"> "text"      replace a field's text; --enter presses Return
-    desktop-web key End|Page_Down|alt+Left      keys in the browser (load more, go back, close a popup with Escape)
+    desktop-web text --lines 120-170            read a range of lines (from the outline's line numbers or a match)
+    desktop-web snap ["regex"]                  open dialogs, then clickable elements and headings with refs: [e123] link "Name"
+    desktop-web click <e123|"regex">            click it and see what changed; --near "row text", --show "regex"
+    desktop-web type <e123|"regex"> "text"      replace a field's text and see its value; --enter presses Return
+    desktop-web key End|Page_Down|alt+Left      keys in the browser (load more, go back, Escape); prints what changed
 
 - Open every page with `desktop-web open`. A URL you can build (a search, a sort order, a page number) is one `open`, cheaper
   than clicking through a form.
-- Read with `desktop-web text "regex"`: prices, names, results, errors. Give a regex of the words you need (`"zł|price|seller"`).
+- Without a regex `open` prints the page's headings with their line numbers: aim `text "regex"` or `text --lines A-B` at the
+  part you need. Give a regex of the words you need, not `.`: every answer is capped at about 60 lines and says how to read on.
   The text covers the whole page, offscreen parts included, so reading needs no scrolling and no screenshot. To look again at
-  what you read, filter the saved file: `desktop-web text "regex" --from <file>`. Never print it with `cat`, `sed`, `head` or `tail`.
-- Act by ref: `desktop-web snap "regex"` lists matching links, buttons, fields, checkboxes and headings with refs; then
-  `desktop-web click e123`. Refs stay valid until the page changes. `desktop-web click "regex"` clicks the one match by name
-  in one call; several matches are listed with each row's text and URL, and nothing is clicked. Matches that lead to one URL
-  count as one.
+  what you read, `desktop-web text "regex" --from <file>`. Never print the file with `cat`, `sed`, `head` or `tail`.
+- After `click`, `type --enter` and `key`, the answer already shows the result: the new page's outline, or the lines that
+  appeared on this one (a dropdown, a filter's results, a panel). Read more only when that is not enough.
+- Act by ref: `desktop-web snap "regex"` lists matching links, buttons, fields, checkboxes and headings with refs, the page's
+  main content first; then `desktop-web click e123`. A ref from an older page is refused: run `snap` again.
+  `desktop-web click "regex"` clicks the one match by name in one call; several matches are listed with each row's text and
+  URL, and nothing is clicked.
 - Rows that share a title (offers from several sellers, flights, variants): `desktop-web click "<title>" --near "<seller,
   price or other text from that row>"`, or click the ref from the list.
 - A link's URL: `desktop-web click` lists it; or read it from the `snap` list. Do not click a link just to learn where it goes.
-- A cookie or consent dialog in front: `desktop-web click "accept|zgadzam|agree"` once. A click whose target is covered by a
-  dialog is refused and names the covering element.
-- A list that loads more as you scroll: `desktop-web key End`, then `desktop-web text "regex"`.
+- Dialogs (cookie consent, sign-up, region, alerts) are listed first by `open` and `snap` with their buttons' refs, and a click
+  that a dialog covers is refused with the dialog's buttons. Answer it with one `click` on the ref of the button you mean.
+- A list that loads more as you scroll: `desktop-web key End`, then read the new lines it prints.
 - Screenshots (`desktop-shot`) only to check layout or as a deliverable (`desktop-shot --out /workspace/<name>.jpg`).
 - `desktop-web url` prints the address. `jq` and `python` exist.
 

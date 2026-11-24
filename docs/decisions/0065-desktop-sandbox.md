@@ -260,6 +260,30 @@ removed, with its policy file, the cookie extension, `desktop-open`, `desktop-cl
 pages go through `desktop-web` only, and two browsers meant two behaviours for the agent to choose between. The desktop keeps
 Mousepad and Writer, `desktop-find`, `desktop-shot` and `desktop-page --focused` (copy the focused app's text).
 
+### desktop-web reads and acts more like a person, in fewer calls (issue #455)
+
+After a review (every change general: nothing about a site, a language or a task):
+
+- **Budget.** Every answer is capped at about 60 lines or 4000 characters and says how to read on. `--limit` and `--context`
+  are clamped, `text --lines A-B` pages through the saved text, and long blocks are wrapped into numbered lines instead of
+  being clipped at 200 characters (the reason an agent dumped whole pages with `text '.*' --limit 400`).
+- **Text from layout.** Pieces of text in one block are joined as a PDF extractor would: a space when their boxes sit on
+  different lines, stand apart, or have a `br`, `img` or form field between them; none when they touch. Text with no visible
+  box, entirely left of or above the page, `visibility: hidden` or under `opacity: 0` is left out, and so are such elements
+  in `snap` and `click` (screen-reader-only text, honeypot links, hidden prompt injection).
+- **Feedback.** `click`, `type --enter` and `key` print what changed: the new page's heading outline, or the lines that
+  appeared. Waiting ends when the page's text holds still (not its height), or when `--show`'s regex matches. `open` without
+  a regex prints the headings with line numbers.
+- **Dialogs.** Open `dialog`/`alertdialog`/`aria-modal` elements are listed by `open`, `snap`, a refused click and after
+  actions, with their buttons' refs, in whatever language the site uses. The Firefox cookie extension is not replaced: it is
+  a per-site rule list.
+- **Refs.** `snap` records each ref's role and name; a click by ref whose element changed or is gone is refused.
+  `snap` lists the `main` landmark first. A button only loses to a link when its name contains the link's.
+- **Input.** Typing goes in short bursts at a typing pace, the pointer travels in a few steps to a point near the middle of
+  the element, dwells and holds the button; URLs and non-ASCII text are pasted. `type` reads the focused field back.
+- **Port.** Chrome's debugging port is random per launch (`$PI_DESKTOP_STATE/cdp-port`). Not `--remote-debugging-port=0`:
+  with it Chrome 158 reports `navigator.webdriver = true`. `Browser.getWindowForTarget` left `ALLOWED` (unused).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
