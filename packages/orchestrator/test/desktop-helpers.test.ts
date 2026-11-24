@@ -41,6 +41,9 @@ interface State {
   clickError?: string;
   // the whole page is selected (ctrl+a in the page); a find-bar paste that finds nothing clears it
   pageSelected?: boolean;
+  // the markup Firefox puts on the clipboard (text/html) with a page copy
+  html?: string;
+  clipHtml?: string;
 }
 
 const fake = `#!/usr/bin/env node
@@ -62,9 +65,9 @@ if (a[0] === "--exec") {
       else if (k === "ctrl+a") { s.selection = s.focus === "url" ? "url" : s.focus === "page" ? "page" : s.selection; if (s.focus === "page") s.pageSelected = true; }
       else if (k === "ctrl+v" && s.focus === "find" && !s.page.includes(s.clip)) s.pageSelected = false;
       else if (k === "ctrl+c") {
-        if (s.selection === "url") s.clip = s.url;
+        if (s.selection === "url") { s.clip = s.url; s.clipHtml = ""; }
         else if (s.selection === "page") {
-          if (s.blankCopies > 0) { s.blankCopies--; s.clip = ""; } else s.clip = s.page;
+          if (s.blankCopies > 0) { s.blankCopies--; s.clip = ""; } else { s.clip = s.page; s.clipHtml = s.html || ""; }
         }
       } else if (k === "Return" && s.focus === "url") {
         s.url = s.typed; s.title = s.afterNavigate.title; s.page = s.afterNavigate.page; s.focus = "page";
@@ -76,7 +79,7 @@ if (a[0] === "--exec") {
   else if (c[0] === "xdotool" && c[1] === "getactivewindow") out(s.title + (s.app === "mousepad" ? " - Mousepad" : " — Mozilla Firefox") + "\\n");
   else if (c[0] === "xdotool" && c[1] === "search") out(s.running ? "4194307\\n" : "");
   else if (c[0] === "xdotool" && c[1] === "mousemove") { s.title = s.afterClick.title; s.url = s.afterClick.url; s.page = s.afterClick.page; }
-  else if (c[0] === "xclip" && c.includes("-o")) out(s.clip);
+  else if (c[0] === "xclip" && c.includes("-o")) out(c.includes("text/html") ? s.clipHtml || "" : s.clip);
   else if (c[0] === "xclip" && c.includes("-i")) s.clip = c.includes("/dev/null") ? "" : fs.readFileSync(0, "utf8");
   save();
   process.exit(0);
@@ -223,6 +226,26 @@ describe("desktop-page", () => {
     expect(keys()).toEqual([]);
   });
 
+  it("appends each matching link's URL with --links", { timeout: 40_000 }, () => {
+    state({
+      page: "Offers\nHoney 250 g\nSellerA\n449,00 zł",
+      html: '<p>Offers</p><a href="https://shop.example/o/1?x=1&amp;y=2">Honey 250 g</a><span>SellerA</span>',
+    });
+    const { out, status } = helper("desktop-page", "Honey|zł", "--links");
+    expect(status).toBe(0);
+    expect(out).toContain("2: Honey 250 g -> https://shop.example/o/1?x=1&y=2");
+    expect(out).toContain("4: 449,00 zł");
+    expect(out[2]).toContain("(4 lines, 1 links)");
+    const again = helper(
+      "desktop-page",
+      "--from",
+      join(dir, "session", "last-page.txt"),
+      "Honey",
+      "--links",
+    );
+    expect(again.out).toContain("2: Honey 250 g -> https://shop.example/o/1?x=1&y=2");
+  });
+
   it("answers to its first name, desktop-text", { timeout: 40_000 }, () => {
     const link = join(bin, "desktop-text");
     spawnSync("ln", ["-s", join(files, "desktop-page"), link]);
@@ -267,19 +290,109 @@ describe("desktop-click", () => {
     expect(calls().some((l) => l.startsWith("click"))).toBe(false);
   });
 
+  it("treats same-named links with one URL as one target and opens it", { timeout: 40_000 }, () => {
+    state({
+      nodes: [
+        { ref_id: "@s1:e5", role: "link", name: "Same book" },
+        { ref_id: "@s1:e6", role: "link", name: "Same book " },
+      ],
+      page: "Books\nSame book\n£10",
+      html: '<a href="https://shop.example/b/1"><img src="c.jpg"></a><a href="https://shop.example/b/1">Same book</a> £10',
+    });
+    const { out, status } = helper("desktop-click", "Same book");
+    expect(status).toBe(0);
+    expect(out[0]).toBe('opened link "Same book" (2 links, one URL) -> https://shop.example/b/1');
+    expect(calls()).toContain("--exec xdotool type --delay 2 https://shop.example/b/1");
+    expect(calls().some((l) => l.startsWith("click"))).toBe(false);
+  });
+
   it(
-    "clicks the first of identical candidates (one target shown twice)",
+    "lists same-named links to different pages with their row text, and opens one with --near",
+    { timeout: 60_000 },
+    () => {
+      const rows = {
+        nodes: [
+          { ref_id: "@s1:e1", role: "link", name: "Honey 250 g" },
+          { ref_id: "@s1:e2", role: "link", name: "Honey 250 g" },
+          { ref_id: "@s1:e3", role: "link", name: "Honey 250 g" },
+        ],
+        page: "Offers\nHoney 250 g\nSellerA\n449,00 zł\nHoney 250 g\nSellerB\n518,76 zł\nHoney 250 g\nSellerC\n529,14 zł",
+        html: ["1", "2", "3"]
+          .map((n) => `<a href="https://shop.example/o/${n}">Honey 250 g</a>`)
+          .join(" x "),
+      };
+      state(rows);
+      const listed = helper("desktop-click", "Honey 250 g");
+      expect(listed.status).toBe(2);
+      expect(listed.out[0]).toContain(
+        '3 links named "Honey 250 g" lead to different pages, opened none; add --near',
+      );
+      expect(listed.out).toContain("  2. line 5: SellerB · 518,76 zł -> https://shop.example/o/2");
+      state(rows);
+      writeFileSync(join(dir, "calls.log"), "");
+      const near = helper("desktop-click", "Honey 250 g", "--near", "SellerB");
+      expect(near.status).toBe(0);
+      expect(near.out[0]).toBe(
+        'opened link "Honey 250 g" (near "SellerB", line 5) -> https://shop.example/o/2',
+      );
+      expect(calls().some((l) => l.startsWith("find"))).toBe(false);
+    },
+  );
+
+  it(
+    "picks the row's button with --near when the target is not a link",
     { timeout: 40_000 },
     () => {
       state({
         nodes: [
-          { ref_id: "@s1:e5", role: "link", name: "Same book" },
-          { ref_id: "@s1:e6", role: "link", name: "Same book " },
+          { ref_id: "@s1:e1", role: "button", name: "Edit" },
+          { ref_id: "@s1:e2", role: "button", name: "Edit" },
+          { ref_id: "@s1:e3", role: "button", name: "Edit" },
+        ],
+        page: "Users\nalice\nEdit\nbob\nEdit\ncarol\nEdit",
+        html: "",
+      });
+      const { out, status } = helper("desktop-click", "^Edit$", "--near", "^bob$");
+      expect(status).toBe(0);
+      expect(out[0]).toBe(
+        'clicked button "Edit" @s1:e2 (accessibility, occurrence 2 of 3 in the text, line 5)',
+      );
+    },
+  );
+
+  it(
+    "prefers the element whose whole name matches over names that contain it",
+    { timeout: 40_000 },
+    () => {
+      state({
+        nodes: [
+          { ref_id: "@s1:e1", role: "button", name: "Add to compare Honey 250 g" },
+          { ref_id: "@s1:e2", role: "link", name: "Honey 250 g" },
+          { ref_id: "@s1:e3", role: "button", name: "Add to favourites Honey 250 g" },
         ],
       });
-      const { out, status } = helper("desktop-click", "Same book");
+      const { out, status } = helper("desktop-click", "Honey 250 g");
       expect(status).toBe(0);
-      expect(out[0]).toBe('clicked link "Same book" @s1:e5 (accessibility, first of 2 identical)');
+      expect(out[0]).toContain('link "Honey 250 g" @s1:e2');
+    },
+  );
+
+  it(
+    "opens a link by its URL when agent-desktop will not tell it apart",
+    { timeout: 40_000 },
+    () => {
+      state({
+        nodes: [{ ref_id: "@s1:e4", role: "link", name: "Only offer" }],
+        refuse: { "@s1:e4": 99 },
+        clickError: "AMBIGUOUS_TARGET",
+        page: "Offers\nOnly offer\n10 zł",
+        html: '<a href="https://shop.example/o/9">Only offer</a>',
+      });
+      const { out, status } = helper("desktop-click", "Only offer");
+      expect(status).toBe(0);
+      expect(out[0]).toBe(
+        'clicked link "Only offer" @s1:e4 (opened its URL) -> https://shop.example/o/9',
+      );
     },
   );
 

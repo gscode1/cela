@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --no-warnings
 // Takes one accessibility snapshot, saves the full JSON to a file and prints only the matching nodes, one short line each.
 // A raw `agent-desktop snapshot` is hundreds of kB (class lists, action lists, offscreen nodes) and would be re-read on every
 // turn; this prints a few hundred bytes (docs/decisions/0065-desktop-sandbox.md, "Token budget"). No dependencies.

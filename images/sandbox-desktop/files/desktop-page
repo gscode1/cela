@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --no-warnings
 // The default way to read what a web page says: URL, title and the page's matching text lines in one call, no accessibility
 // tree, no screenshot (docs/decisions/0065-desktop-sandbox.md, "Token budget"). Select all and copy in the focused Firefox
 // window; the full text is saved to a file. It gives text, not refs: act with desktop-click "text" or desktop-find --role.
@@ -7,10 +7,12 @@
 //   desktop-page "zł|price"             url, title, matching lines with one line of context
 //   desktop-page                        url, title and the first lines
 //   desktop-page --focused "TODO"       copy from whatever has focus (an editor), no URL
+//   desktop-page "Haddrell" --links     matching lines, and the URL of each line that is a link (no click needed)
 //   desktop-page --from FILE "regex"    filter the saved text again without copying
 //
-// Flags: --limit N matches (default 25), --context N (default 1), --out FILE (default $AGENT_DESKTOP_SESSION_DIR or
-// ~/.agent-desktop-session, last-page.txt), --from FILE, --focused. Afterwards focus is in the page and the clipboard holds
+// Flags: --limit N matches (default 25), --context N (default 1), --links (append "-> URL" to matching lines that are links,
+// from the HTML Firefox copies with the text), --out FILE (default $AGENT_DESKTOP_SESSION_DIR or
+// ~/.agent-desktop-session, last-page.txt; links in FILE.links.json), --from FILE, --focused. Afterwards focus is in the page and the clipboard holds
 // what it held before; the page stays selected until the next click on it. Copied text includes collapsed and offscreen text.
 "use strict";
 // getBuiltinModule and createRequire work whether Node treats this extensionless file as CommonJS (the image) or as an ES
@@ -23,7 +25,7 @@ const fail = lib.failer(NAME);
 const HEAD_LINES = 15;
 
 function parseArgs(argv) {
-  const o = { limit: 25, context: 1, focused: false, pattern: undefined };
+  const o = { limit: 25, context: 1, focused: false, links: false, pattern: undefined };
   const value = (i, flag) => {
     if (i + 1 >= argv.length) fail(`${flag} needs a value`, 64);
     return argv[i + 1];
@@ -35,8 +37,9 @@ function parseArgs(argv) {
     else if (a === "--out") (o.out = value(i, a)), i++;
     else if (a === "--from") (o.from = value(i, a)), i++;
     else if (a === "--focused") o.focused = true;
+    else if (a === "--links") o.links = true;
     else if (a === "-h" || a === "--help") {
-      process.stdout.write(`usage: ${NAME} [--focused] [--limit N] [--context N] [--from FILE] [--out FILE] [regex]\n`);
+      process.stdout.write(`usage: ${NAME} [--focused] [--links] [--limit N] [--context N] [--from FILE] [--out FILE] [regex]\n`);
       process.exit(0);
     } else if (a.startsWith("--")) fail(`unknown flag ${a}`, 64);
     else if (o.pattern === undefined) o.pattern = a;
@@ -59,9 +62,11 @@ function main() {
   }
   const out = [];
   let lines;
+  let links = [];
   let file = o.from;
   if (o.from) {
     lines = fs.readFileSync(o.from, "utf8").split("\n");
+    links = lib.loadLinks(o.from);
   } else {
     if (!o.focused && !lib.firefoxActive()) fail("the active window is not Firefox; for an editor or Writer use --focused", 64);
     const page = lib.copyPage({ focused: o.focused });
@@ -70,16 +75,18 @@ function main() {
     if (o.focused ? lines.length === 0 : lines.length <= 1) {
       fail(`copied ${lines.length === 0 ? "nothing" : `only "${lib.clip(lines[0], 80)}"`}; is a browser window focused with a page loaded? For another app use --focused`);
     }
-    file = lib.savePage(lines, o.out);
+    links = page.links;
+    file = lib.savePage(lines, o.out, links);
     if (page.url) out.push(`url: ${page.url}`);
     if (page.title) out.push(`title: ${lib.clip(page.title, 120)}`);
   }
-  out.push(`text: ${file} (${lines.length} lines)`);
+  out.push(`text: ${file} (${lines.length} lines${links.length > 0 ? `, ${links.length} links` : ""})`);
+  const hrefs = o.links ? lib.alignLinks(lines, links).byLine : undefined;
   if (re === undefined) {
-    for (const [i, l] of lines.slice(0, HEAD_LINES).entries()) out.push(`${i + 1}: ${lib.clip(l, 200)}`);
+    for (const [i, l] of lines.slice(0, HEAD_LINES).entries()) out.push(`${i + 1}: ${lib.clip(l, 200)}${hrefs?.get(i) ? ` -> ${lib.clip(hrefs.get(i), 160)}` : ""}`);
     out.push(`Add a regex to list matching lines, for example: ${NAME} 'price|zł|€|\\$'`);
   } else {
-    out.push(...lib.grepLines(lines, re, { limit: o.limit, context: o.context }));
+    out.push(...lib.grepLines(lines, re, { limit: o.limit, context: o.context, hrefs }));
   }
   process.stdout.write(`${out.join("\n")}\n`);
 }
