@@ -294,6 +294,41 @@ After a review (every change general: nothing about a site, a language or a task
 - **Port.** Chrome's debugging port is random per launch (`$PI_DESKTOP_STATE/cdp-port`). Not `--remote-debugging-port=0`:
   with it Chrome 158 reports `navigator.webdriver = true`. `Browser.getWindowForTarget` left `ALLOWED` (unused).
 
+### desktop-web test suite and what it found (issue #458)
+
+`hack/desktop-web-suite.sh` drives `desktop-web` over local pages (`images/sandbox-desktop/test-pages/`, not in the image) and
+checks outcomes from the pages' own text: every page logs a click as `clicked: <id> at x,y`, read back with `desktop-web text`,
+so nothing is injected into a page. Cases: page zoom 125% and 80%, a horizontal scrollbar, a sticky header and footer, an element
+far down, a 12 px target, a dialog over content, open shadow DOM, same-origin and cross-origin iframes (also with the button below
+the frame's fold and a 1 px frame), hidden links and text (offscreen, opacity 0, `visibility`, screen-reader-only clip), and text
+spacing. To run it, copy the pages and the script into a container of the desktop image (or a sandbox pod) and run it there:
+
+```
+docker cp images/sandbox-desktop/test-pages <container>:/workspace/web-suite
+docker cp hack/desktop-web-suite.sh <container>:/workspace/
+docker exec <container> bash /workspace/desktop-web-suite.sh [case...]
+```
+
+It serves the pages with two `python3 -m http.server` on loopback; the cross-origin frames come from `127.0.0.2` (another
+address is another site, so Chrome puts the frame in its own process, and a name such as `localhost` would not resolve in a pod,
+where the egress proxy flags map every name but `127.0.0.1` to "not found"). Waits are generous (`SUITE_WAIT`, 240 s per call)
+because gVisor is several times slower than runc. Every fix below is general, none names a site, language or task:
+
+- **Horizontal scrollbar.** `clientHeight` leaves it out, and the viewport's top is found from the full height, so every click
+  landed one scrollbar's thickness low. The thickness is now measured: hit testing covers the whole page area, so the first
+  point below `clientHeight` that hits nothing is the bottom (`scrollbarThickness`).
+- **Iframes.** `Accessibility.getFullAXTree` covers one frame only. A frame of the same process is read with its frame id from
+  `Page.getFrameTree`; a frame of another site is a separate target of type `iframe` in `/json/list`, read through its own short
+  connection, and its boxes are placed in the page by its iframe element's content box (`DOM.getFrameOwner`, `DOM.getBoxModel`).
+  Refs of such an element end in `@TAG` (`e12@A1B2`). Clicks check for a cover at each frame on the way. An iframe whose element
+  a person cannot see is left out like any hidden element. At most 10 out-of-process iframes are read per command. Both added
+  methods only read and enable nothing; the detector page stayed green (below).
+- **Clipped text.** Text cut away by an `overflow: hidden`/`clip` ancestor (a collapsed accordion) or its own `clip: rect()`
+  (the usual screen-reader-only pattern) is left out of `text` and `snap`, as offscreen and transparent text already was.
+  Scrollable boxes do not cut: their content is one scroll away.
+
+Two inline-blocks on one line read as two lines of text; that is deliberate (a row of cards or tabs), the suite pins it.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
