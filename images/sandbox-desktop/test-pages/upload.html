@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>uploads</title>
+<style>
+  body { font: 16px sans-serif; }
+  .styled { padding: 8px 14px; background: #258; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+</style>
+<body>
+<h1>Uploads</h1>
+<p><label>Resume <input type="file" id="resume"></label></p>
+<!-- the real input is hidden; a styled button opens its chooser -->
+<p><input type="file" id="photo" accept="image/*,.txt" style="display:none"><button class="styled" id="pick">Choose photo</button> <span id="photo-name">no photo yet</span></p>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const photo = document.getElementById("photo");
+  document.getElementById("pick").addEventListener("click", () => photo.click());
+  document.getElementById("resume").addEventListener("change", (e) => add(`uploaded resume: ${[...e.target.files].map((f) => `${f.name} ${f.size} bytes`).join(", ")}`));
+  photo.addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    document.getElementById("photo-name").textContent = f ? `photo: ${f.name}` : "no photo yet";
+    add(`uploaded photo: ${f ? `${f.name} ${f.size} bytes` : "none"}`);
+  });
+</script>

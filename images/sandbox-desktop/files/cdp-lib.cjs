@@ -208,6 +208,11 @@ function axEntries(nodes, { extraRoles } = {}) {
       // aria-invalid="false" comes as the token "false"; any other token (true, grammar, spelling) is a complaint
       invalid: props.invalid !== undefined && props.invalid !== false && props.invalid !== "false" ? true : undefined,
       readonly: props.readonly === true || undefined,
+      // a slider's range (aria-valuemin/max, or a native range's min and max) and its value as the page words it
+      min: role === "slider" && typeof props.valuemin === "number" ? props.valuemin : undefined,
+      max: role === "slider" && typeof props.valuemax === "number" ? props.valuemax : undefined,
+      vertical: role === "slider" && props.orientation === "vertical" ? true : undefined,
+      valuetext: role === "slider" && squash(props.valuetext) && squash(props.valuetext) !== squash(value(n.value)) ? squash(props.valuetext) : undefined,
       description: description && description !== name ? description : undefined,
       url: typeof props.url === "string" ? props.url : undefined,
     });
@@ -289,6 +294,8 @@ function annotate(entries, snap, hidden) {
       const ph = squash(a.placeholder);
       if (ph && ph !== e.name) e = { ...e, placeholder: clip(ph, 80) };
       if (a.type === "password") e = { ...e, secret: true };
+      // a file input takes a file through the browser's file chooser, never typed text
+      if (a.type === "file") e = { ...e, file: true };
       if (!LETTER.test(e.name)) {
         // a control clicked through its label is drawn by it: the label's words (its title) come first
         const t = e.via !== undefined ? [...ix.tokens(ix.find(e.via)), ...ix.tokens(at)].slice(0, 4) : ix.tokens(at);
@@ -323,7 +330,14 @@ function entryLine(e, { nameMax = 120 } = {}) {
   if (e.mark) line += ` ‹${e.mark}›`;
   if (e.placeholder) line += ` placeholder="${clip(e.placeholder, 60)}"`;
   if (e.near) line += ` near "${e.near}"`;
-  if (e.value) line += ` value="${clip(e.value, 60)}"`;
+  if (e.role === "slider") {
+    // numbers, unquoted: what `type <slider> N` takes
+    if (e.value) line += ` value=${e.value}`;
+    if (e.valuetext) line += ` "${clip(e.valuetext, 30)}"`;
+    if (e.min !== undefined) line += ` min=${e.min}`;
+    if (e.max !== undefined) line += ` max=${e.max}`;
+    if (e.vertical) line += " vertical";
+  } else if (e.value) line += ` value="${clip(e.value, 60)}"`;
   if (e.checked !== undefined) line += ` checked=${e.checked}`;
   if (e.expanded !== undefined) line += ` expanded=${e.expanded}`;
   if (e.focused) line += " focused";
@@ -333,11 +347,12 @@ function entryLine(e, { nameMax = 120 } = {}) {
   if (e.disabled) line += " disabled";
   if (e.description && e.description !== e.placeholder) line += ` desc="${clip(e.description, 80)}"`;
   if (e.options) line += ` options: ${optionsText(e.options)}`;
+  if (e.file) line += " (file input: desktop-web upload)";
   return line;
 }
 
 // An element in a short line: its name, or the words of its markup when it has none.
-const shortName = (e, n = 60) => (e.name || !e.mark ? `"${clip(e.name, n)}"` : `‹${e.mark}›`);
+const shortName = (e, n = 60) => (e.name ? `"${clip(e.name, n)}"` : e.mark ? `‹${e.mark}›` : e.near ? `near "${clip(e.near, n)}"` : '""');
 
 // How an element's state differs between two reads: `checked false -> true`, `value "a" -> "b"`.
 const STATE = ["checked", "expanded", "value", "name"];
@@ -746,8 +761,9 @@ function snapshotGroups(snap, { marks = false } = {}) {
 // whose own element shows a pointer cursor (inherited from the clickable element around it), or that sits, within its line's
 // block, in an element the snapshot marks clickable (it has a click listener). Each is { backendNodeId, name } of the text's
 // own element, the box a click aims at. `skip` holds backend ids already listed: text inside one (a link's own text) is that
-// element, and text whose element holds one (a label around its field) belongs to it; neither is another target.
-function textTargets(snap, re, { skip = new Set() } = {}) {
+// element, and text whose element holds one (a label around its field) belongs to it; neither is another target. With `any`
+// every visible line counts, clickable or not: what a drag picks up or drops on (a drop zone) needs no click listener.
+function textTargets(snap, re, { skip = new Set(), any = false } = {}) {
   const out = [];
   const perDoc = new Map();
   for (const g of snapshotGroups(snap)) {
@@ -762,14 +778,15 @@ function textTargets(snap, re, { skip = new Set() } = {}) {
     }
     const { clickable, holds } = perDoc.get(doc);
     let hit;
+    let ok = false;
     for (const t of g.texts) {
       const p = v.parent[t];
-      let ok = v.style(p)?.[7] === "pointer";
+      ok = /^(pointer|grab|move)$/.test(v.style(p)?.[7] ?? "");
       for (let a = p; !ok && a >= 0; a = v.parent[a]) {
         if (clickable.has(a)) ok = true;
         if (a === g.block) break;
       }
-      if (ok) {
+      if (ok || any) {
         hit = p;
         break;
       }
@@ -777,7 +794,7 @@ function textTargets(snap, re, { skip = new Set() } = {}) {
     if (hit === undefined || holds.has(hit)) continue;
     let listed = false;
     for (let a = hit; a >= 0 && !listed; a = v.parent[a]) listed = skip.has(doc.nodes.backendNodeId[a]);
-    if (!listed) out.push({ backendNodeId: doc.nodes.backendNodeId[hit], name: clip(g.text, 120) });
+    if (!listed) out.push({ backendNodeId: doc.nodes.backendNodeId[hit], name: clip(g.text, 120), clickable: !any || ok });
   }
   return out;
 }
@@ -973,6 +990,71 @@ function wraps(outer, inner) {
   return contains && area(o) <= 4 * Math.max(area(i), 1);
 }
 
+// The file inputs of layout snapshots, shown or not (a styled button often stands in for a hidden one), with the value each
+// holds (the browser's "C:\\fakepath\\name" for a picked file, "" for none): { backendNodeId, value }.
+function fileInputs(snaps) {
+  const out = [];
+  for (const snap of snaps)
+    for (const doc of snap.documents ?? []) {
+      const vals = new Map((doc.nodes.inputValue?.index ?? []).map((i, k) => [i, doc.nodes.inputValue.value[k]]));
+      doc.nodes.nodeName.forEach((n, i) => {
+        if (doc.nodes.nodeType[i] !== 1 || snap.strings[n]?.toUpperCase() !== "INPUT" || nodeAttrs(snap, doc, i).type?.toLowerCase() !== "file") return;
+        const v = vals.get(i);
+        out.push({ backendNodeId: doc.nodes.backendNodeId[i], value: v === undefined || v < 0 ? "" : snap.strings[v] });
+      });
+    }
+  return out;
+}
+
+// Where a press sets a slider to `want`: the proportional point along its track `box` (screen px). The thumb's centre cannot
+// reach the ends of a native range, so its travel is inset by half a thumb (about half the track's height); a few px off is
+// corrected with the arrow keys afterwards. A vertical slider grows upwards.
+function sliderPoint(box, { min, max, vertical = false }, want, { inset } = {}) {
+  const f = max > min ? Math.min(Math.max((want - min) / (max - min), 0), 1) : 0;
+  if (vertical) {
+    const pad = inset ?? Math.min(box.w / 2, 10);
+    return { x: Math.round(box.x + box.w / 2), y: Math.round(box.y + box.h - pad - f * (box.h - 2 * pad)) };
+  }
+  const pad = inset ?? Math.min(box.h / 2, 10);
+  return { x: Math.round(box.x + pad + f * (box.w - 2 * pad)), y: Math.round(box.y + box.h / 2) };
+}
+
+// Arrow presses from value `now` to `want` once a press is known to move the slider by `step` (undefined: not yet known,
+// press once to learn it). Positive is up. 0 when the slider is as close as its steps allow.
+function sliderPresses(now, want, step) {
+  if (now === want) return 0;
+  if (!step) return now < want ? 1 : -1;
+  const n = Math.round((want - now) / step);
+  return Math.max(Math.min(n, 200), -200) || 0; // never -0
+}
+
+// The track of a slider drawn as a thumb alone (role slider on a small knob): the nearest ancestor in the layout snapshot
+// that is several thumbs long along the slider's axis and holds the thumb's centre. Undefined when the slider is its own
+// track (a native range, or a wide element) or no such ancestor exists. Returns the ancestor's backend node id.
+function sliderTrack(snap, backendNodeId, { vertical = false } = {}) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const b = v.bounds(i);
+    if (!b) return undefined;
+    const long = (x) => (vertical ? x.h : x.w);
+    const across = (x) => (vertical ? x.w : x.h);
+    if (long(b) >= 3 * Math.max(across(b), 1)) return undefined;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    for (let a = v.parent[i]; a >= 0; a = v.parent[a]) {
+      const ab = v.bounds(a);
+      if (!ab) continue;
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[a]))) return undefined;
+      const holds = cx >= ab.x - 1 && cx <= ab.x + ab.w + 1 && cy >= ab.y - b.h && cy <= ab.y + ab.h + b.h;
+      if (holds && long(ab) >= 3 * long(b) && across(ab) <= 4 * Math.max(across(b), 8)) return doc.nodes.backendNodeId[a];
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 // All backend ids in a DOM.describeNode subtree, to tell whether the element under the click point is the target.
 function subtreeIds(node, out = new Set()) {
   if (!node) return out;
@@ -988,6 +1070,10 @@ function subtreeIds(node, out = new Set()) {
 module.exports = {
   ALLOWED,
   STYLES,
+  fileInputs,
+  sliderPoint,
+  sliderPresses,
+  sliderTrack,
   annotate,
   closedDialogs,
   controlDiffs,
