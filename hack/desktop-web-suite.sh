@@ -274,6 +274,14 @@ case_hover() {
   check "hover reveals a caption" "$(grep -q 'user-two' "$OUT"; echo $?)"
   web hover '^Menu$'
   check "hover opens a menu" "$(grep -q 'Sub item alpha' "$OUT"; echo $?)"
+  # Three pictures with one name and one source: snap lists each, and --nth or a ref reaches any of them.
+  web snap 'Same face'
+  check "snap lists each same-named picture" "$([ "$(grep -c 'image "Same face"' "$OUT")" = 3 ]; echo $?)"
+  local second; second=$(grep 'image "Same face"' "$OUT" | sed -n '2s/.*\[\(e[0-9]*\)\].*/\1/p')
+  web hover 'Same face' --nth 3
+  check "hover --nth 3 reaches the third same-named picture" "$(grep -q 'same-3' "$OUT"; echo $?)"
+  web hover "$second"
+  check "hover by ref reaches the second" "$(grep -q 'same-2' "$OUT"; echo $?)"
 }
 
 case_marks() {

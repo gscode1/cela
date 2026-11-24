@@ -26,7 +26,7 @@ interface CdpLib {
     nodes: AxNode[],
     entries: Entry[],
     re: RegExp,
-    o?: { near?: RegExp; nth?: number },
+    o?: { near?: RegExp; nth?: number; showable?: boolean },
   ): { pick?: Entry; several?: Entry[]; none?: boolean };
   snapshotLines(snap: unknown, o?: { marks?: boolean }): string[];
   screenPoint(
@@ -192,6 +192,50 @@ describe("desktop-web's CDP reader", () => {
   it("treats matches that lead to one URL as one", () => {
     const nodes = tree().filter((n) => n.nodeId !== "8");
     expect(cdp.chooseTarget(nodes, cdp.axEntries(nodes), /honey/i).pick?.ref).toBe("e104");
+  });
+
+  it("lists named pictures apart even with one source, but not those a link holds or names", () => {
+    const img = (id: string, name: string, parentId: string, src: string): AxNode => ({
+      nodeId: id,
+      parentId,
+      role: { value: "image" },
+      name: { value: name },
+      backendDOMNodeId: Number(id) + 100,
+      properties: [{ name: "url", value: { value: src } }],
+    });
+    const nodes: AxNode[] = [
+      {
+        nodeId: "1",
+        role: { value: "RootWebArea" },
+        name: { value: "Hovers" },
+        childIds: ["2", "3", "4", "5"],
+      },
+      img("2", "User Avatar", "1", "https://t.test/avatar.jpg"),
+      img("3", "User Avatar", "1", "https://t.test/avatar.jpg"),
+      img("4", "User Avatar", "1", "https://t.test/avatar.jpg"),
+      {
+        nodeId: "5",
+        parentId: "1",
+        role: { value: "link" },
+        name: { value: "Honey" },
+        backendDOMNodeId: 105,
+        childIds: ["6"],
+      },
+      img("6", "Jar", "5", "https://t.test/jar.jpg"),
+      img("7", "Honey", "1", "https://t.test/honey.jpg"),
+    ];
+    const entries = cdp.axEntries(nodes);
+    expect(entries.map((e) => cdp.entryLine(e))).toEqual([
+      '[e102] image "User Avatar"',
+      '[e103] image "User Avatar"',
+      '[e104] image "User Avatar"',
+      '[e105] link "Honey"',
+    ]);
+    expect(cdp.chooseTarget(nodes, entries, /avatar/i, { showable: true }).several?.length).toBe(3);
+    expect(cdp.chooseTarget(nodes, entries, /avatar/i, { nth: 2, showable: true }).pick?.ref).toBe(
+      "e103",
+    );
+    expect(cdp.chooseTarget(nodes, entries, /avatar/i).none).toBe(true);
   });
 
   // A DOMSnapshot document from a list of nodes: parent index, type (1 element, 3 text), tag, text, styles

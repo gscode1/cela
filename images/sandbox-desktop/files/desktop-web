@@ -443,7 +443,7 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
       [
         r.near
           ? `nothing matching ${JSON.stringify(spec)} near ${JSON.stringify(o.near)}`
-          : `nothing clickable matches ${JSON.stringify(spec)}: try desktop-web snap "word"`,
+          : `nothing ${read.showable ? "" : "clickable "}matches ${JSON.stringify(spec)}: try desktop-web snap "word"`,
         ...d,
       ].join("\n"),
     );
