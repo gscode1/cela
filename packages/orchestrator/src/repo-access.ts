@@ -94,6 +94,8 @@ export class RepoAccess {
   readonly #access = new Map<string, Access>();
   readonly #byConversation = new Map<number, SessionRow>();
   readonly #inFlight = new Map<string, Promise<Access>>();
+  /** A park in progress per session: a provision that starts meanwhile waits for it, so it never races the revoke. */
+  readonly #parking = new Map<string, Promise<void>>();
   readonly #prepared = new Set<string>();
   /** The proxy token each conversation's env was opened with, to notice when the agent is replaced under it. */
   readonly #envToken = new Map<number, string>();
@@ -151,7 +153,10 @@ export class RepoAccess {
   ensureAccess(session: SessionRow): Promise<Access> {
     const running = this.#inFlight.get(session.id);
     if (running !== undefined) return running;
-    const work = this.#ensure(session).finally(() => this.#inFlight.delete(session.id));
+    const parking = this.#parking.get(session.id);
+    const work = (
+      parking === undefined ? this.#ensure(session) : parking.then(() => this.#ensure(session))
+    ).finally(() => this.#inFlight.delete(session.id));
     this.#inFlight.set(session.id, work);
     return work;
   }
@@ -296,6 +301,35 @@ export class RepoAccess {
     }
     await this.#revoke(session.id, session.onecli?.agentId, session.onecli?.secretIds ?? []);
     log("repo-access-revoked", { session: session.id });
+  }
+
+  /**
+   * The session's sandbox was suspended for idleness: revoke its agent and secrets so nothing idle holds a OneCLI
+   * identity (docs/decisions/0069-park-onecli-agent.md). The workspace stays prepared; the next env open provisions a
+   * new agent through `shellEnv`. Waits for a provision in flight, and a provision that starts meanwhile waits for
+   * this. The egress binding is left as it is: it seals a token that is dead now, and the next `bindOneCli` replaces it.
+   */
+  park(session: SessionRow): Promise<void> {
+    if (session.repo === null || this.#deps.onecli === undefined) return Promise.resolve();
+    const running = this.#parking.get(session.id);
+    if (running !== undefined) return running;
+    const inFlight = this.#inFlight.get(session.id);
+    const work = (async () => {
+      await inFlight?.catch(() => undefined);
+      const access = this.#access.get(session.id);
+      this.#access.delete(session.id);
+      for (const [conversationId, known] of this.#byConversation) {
+        if (known.id === session.id) this.#envToken.delete(conversationId);
+      }
+      await this.#revoke(
+        session.id,
+        access?.agentId ?? session.onecli?.agentId,
+        access?.secretIds ?? session.onecli?.secretIds ?? [],
+      );
+      log("repo-access-parked", { session: session.id });
+    })().finally(() => this.#parking.delete(session.id));
+    this.#parking.set(session.id, work);
+    return work;
   }
 
   /**

@@ -1,5 +1,7 @@
 # 0004: Idle shutdown by suspending the sandbox
 
+Amended by [0069](0069-park-onecli-agent.md) (2026-11-24): after the suspend, a repo session's OneCLI agent and secrets are revoked; the next env open provisions new ones.
+
 Status: accepted, 2026-11-16 (issue #9). Replaces the "set `shutdownAfterSeconds` as a backstop" line of Phase 4.
 
 Note (install slice 11b, issue #141): `deploy/orchestrator-rbac.yaml` is now `charts/pi-durable/templates/rbac.yaml`.

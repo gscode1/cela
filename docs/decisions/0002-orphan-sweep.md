@@ -1,5 +1,7 @@
 # 0002: Orphan sweep
 
+Amended by [0069](0069-park-onecli-agent.md) (2026-11-24): a repo session's OneCLI agent is also revoked while its sandbox is suspended, and recreated on the next env open.
+
 Status: accepted, 2026-11-16 (issue #9). Implements the "periodic sweep" of the plan's Lifecycle baseline.
 
 Note (install slice 11b, issue #141): `deploy/orchestrator-rbac.yaml` is now `charts/pi-durable/templates/rbac.yaml`.

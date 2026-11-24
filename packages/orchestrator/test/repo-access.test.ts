@@ -354,6 +354,68 @@ describe("teardown", () => {
   });
 });
 
+describe("park while the sandbox is suspended (ADR 0069)", () => {
+  it("revokes the agent and both secrets, and the next env open provisions a new agent", async () => {
+    const repos = access();
+    await repos.shellEnv(session(), 7);
+    const [before] = [...onecli.agents.keys()];
+
+    await repos.park(session());
+    expect(onecli.agents.size).toBe(0);
+    expect([...onecli.secrets.values()].some((s) => s.name.startsWith(NAME))).toBe(false);
+    expect(onecli.secretNamed("Codex subscription")).toBeDefined();
+
+    const env = await repos.shellEnv(session(), 7);
+    const [agent] = [...onecli.agents.values()];
+    expect(onecli.agents.size).toBe(1);
+    expect(agent?.id).not.toBe(before);
+    expect(env?.HTTPS_PROXY).toBe(`http://x:${agent?.accessToken ?? ""}@onecli.onecli:10255`);
+    expect([...onecli.secrets.values()].filter((s) => s.name.startsWith(`${NAME}-`))).toHaveLength(
+      2,
+    );
+  });
+
+  it("removes the stored agent after a restart, when this process never provisioned it", async () => {
+    await access().shellEnv(session(), 7);
+    const agentId = [...onecli.agents.keys()][0] ?? "";
+    await access().park(session({ onecli: { agentId, secretIds: [] } }));
+    expect(onecli.agents.size).toBe(0);
+  });
+
+  it("waits for a provision in flight, and a provision started meanwhile waits for the park", async () => {
+    const repos = access();
+    const first = repos.shellEnv(session(), 7);
+    const parked = repos.park(session());
+    await Promise.all([first, parked]);
+    expect(onecli.agents.size).toBe(0);
+
+    await repos.shellEnv(session(), 7);
+    const again = repos.park(session());
+    const reopened = repos.shellEnv(session(), 7);
+    await Promise.all([again, reopened]);
+    expect(onecli.agents.size).toBe(1);
+  });
+
+  it("makes no OneCLI call for a session without a repo, and is repeatable", async () => {
+    const repos = access();
+    await repos.park(session({ repo: null }));
+    expect(onecli.calls).toEqual([]);
+    await repos.shellEnv(session(), 7);
+    await repos.park(session());
+    await repos.park(session());
+    expect(onecli.agents.size).toBe(0);
+  });
+
+  it("does not touch another session's agent", async () => {
+    const other = "99999999-2222-4333-8444-555555555555";
+    await access().shellEnv(session({ id: other, conversationId: 8 }), 8);
+    const repos = access();
+    await repos.shellEnv(session(), 7);
+    await repos.park(session());
+    expect([...onecli.agents.values()].map((a) => a.identifier)).toEqual([agentIdentifier(other)]);
+  });
+});
+
 describe("name prefix", () => {
   it("names the agent and secrets with the prefix, and teardown touches only that prefix's objects", async () => {
     const e2e = "pi-e2e-ab12-";
@@ -494,6 +556,23 @@ describe("behind the egress proxy (ADR 0037)", () => {
     const [agent] = [...onecli.agents.values()];
     const row = db.bindings[0];
     expect(row?.ciphertext.toString("hex")).not.toBe(before);
+    expect(
+      openBinding(KEY, SESSION, {
+        keyId: row?.key_id ?? "",
+        nonce: row?.nonce ?? Buffer.alloc(0),
+        ciphertext: row?.ciphertext ?? Buffer.alloc(0),
+      }),
+    ).toBe(agent?.accessToken);
+  });
+
+  it("binds the new agent's token after a park", async () => {
+    const { repos, db } = proxied();
+    await repos.shellEnv(session(), 7);
+    await repos.park(session());
+    await repos.shellEnv(session(), 7);
+    const [agent] = [...onecli.agents.values()];
+    const row = db.bindings[0];
+    expect(db.bindings).toHaveLength(1);
     expect(
       openBinding(KEY, SESSION, {
         keyId: row?.key_id ?? "",

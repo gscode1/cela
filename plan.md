@@ -111,6 +111,7 @@ Wire orchestrator, storage and sandbox together, then run:
 - Authentication: OIDC or a static token for the PoC; per-session ownership check.
 - Cleanup: delete the SandboxClaim and PVC on session deletion. The `shutdownAfterSeconds` backstop was dropped: an
   absolute deadline deletes the PVC. Idle sandboxes are suspended instead ([ADR 0004](docs/decisions/0004-idle-suspend.md)),
+  which also revokes a repo session's OneCLI agent until the next resume ([ADR 0069](docs/decisions/0069-park-onecli-agent.md)),
   and a periodic sweep removes what deletion missed ([ADR 0002](docs/decisions/0002-orphan-sweep.md)).
 
 **Status 2026-11-17: done and running.** The session API is `packages/ingest` (stateless, 2 replicas, static tokens per owner in `PI_API_TOKENS`) in front of the orchestrator; `docs/session-api.md` is the contract. Since the first cut it gained, each with an ADR: model settings and an admin API in Postgres (0008), the MCP server catalog and native remote MCP tools (0007, 0009), versioned session profiles (0010), skills pinned in profiles and skills and `AGENTS.md`/`CLAUDE.md` read from the cloned repo (0011, 0014, 0015), schema sharding (0017). The e2e suites run in a throwaway namespace per run (0013).

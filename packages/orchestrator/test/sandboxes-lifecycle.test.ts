@@ -230,6 +230,39 @@ describe("idle suspend and resume", () => {
     sandboxes.stop();
   });
 
+  it("runs the suspended hook after the Pod is suspended, and stays suspended when the hook fails", async () => {
+    vi.useFakeTimers();
+    const parked: number[] = [];
+    const sandboxes = new Sandboxes(
+      config({ PI_SANDBOX_IDLE_EVICT_SECONDS: "60", PI_SANDBOX_IDLE_SUSPEND_SECONDS: "120" }),
+      () => Promise.resolve("session-key"),
+      {
+        execInFlight: ledger.fn,
+        suspended: (conversationId) => {
+          events.push("park");
+          parked.push(conversationId);
+          return Promise.reject(new Error("OneCLI is down"));
+        },
+      },
+    );
+    kube.listSandboxes.mockResolvedValue([
+      { name: "pi-conv-5", mode: "Running", podTerminated: false },
+    ]);
+    kube.suspendSandbox.mockImplementation(() => {
+      events.push("suspend");
+      return Promise.resolve(true);
+    });
+    await exec(sandboxes, 5);
+    events.length = 0;
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(parked).toEqual([5]);
+    expect(events.filter((e) => e === "suspend" || e === "park").slice(0, 2)).toEqual([
+      "suspend",
+      "park",
+    ]);
+    sandboxes.stop();
+  });
+
   it("does not suspend a sandbox with a call in flight, and not at all when the threshold is 0", async () => {
     vi.useFakeTimers();
     const off = make({ PI_SANDBOX_IDLE_SUSPEND_SECONDS: "0" });
