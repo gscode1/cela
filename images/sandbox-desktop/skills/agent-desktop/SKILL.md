@@ -1,27 +1,29 @@
 ---
 name: agent-desktop
-description: "Drive the sandbox's desktop apps (Mousepad, LibreOffice Writer, Firefox) with agent-desktop 1.3.1 through accessibility refs: snapshot, click, type, press, get, screenshot. Command reference and workflow."
+description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer, and for a ref in Firefox that desktop-click cannot reach. Web pages go through desktop-open, desktop-page and desktop-click (desktop-sandbox skill)."
 ---
 
 # agent-desktop 1.3.1
 
-Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`). Always run it as `agent-desktop-run <args>` (see the desktop-sandbox skill). `agent-desktop-run <command> --help` lists the flags.
+Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`); `agent-desktop-run -q <command>` prints one line instead. Always run it as `agent-desktop-run <args>`. `agent-desktop-run <command> --help` lists the flags.
+
+**Web pages do not start here.** In Firefox, open with `desktop-open <url>`, read with `desktop-page "regex"`, click with `desktop-click "regex"` (desktop-sandbox skill): one call each, a few lines of text. Use refs in Firefox only for a field to type into or a control `desktop-click` cannot reach.
 
 ## Never print a full snapshot
 
 A raw snapshot is hundreds of kB of JSON (class lists, offscreen nodes) that you re-read on every turn. Use `desktop-find`: it saves the snapshot to a file and prints only matching nodes, `@ref role "name"`.
 
-    desktop-find --app firefox-esr                      summary: windows, counts by role
-    desktop-find --app firefox-esr "add to cart|koszyk"  regex on name/value, any case
-    desktop-find --app firefox-esr --role button,link --limit 20
+    desktop-find --app mousepad                          summary: windows, counts by role
+    desktop-find --app soffice.bin "Save|Bold"           regex on name/value, any case
+    desktop-find --app firefox-esr --role textfield "search" --limit 10
     desktop-find --from /home/pi/.agent-desktop-session/last-snapshot.json "price"   filter the saved file again, no new walk
-    desktop-find --app firefox-esr --all "x"            also offscreen nodes; --skeleton, --root @ref, --max-depth N narrow big trees
+    --skeleton, --root @ref, --max-depth N narrow big trees; --all adds offscreen nodes (keep --limit small)
 
-Never run `snapshot` without redirecting it. In Firefox, prefer the one-call helpers (desktop-sandbox skill): `desktop-open`, `desktop-page "regex"` to read, `desktop-click "regex"` to click. `desktop-url` prints the URL. `agent-desktop-run -q` shortens an action's envelope to one line.
+Never run `snapshot` without redirecting it.
 
-## Loop: observe, act on a ref, verify
+## Loop for Mousepad and Writer: observe, act on a ref, verify
 
-1. `desktop-launch <app>` once, then `desktop-find --app <name> <regex>`. App names: `mousepad`, `soffice.bin` (Writer), `firefox-esr`. `list-apps` shows what runs.
+1. `desktop-launch mousepad|writer` once, then `desktop-find --app <name> <regex>`. App names: `mousepad`, `soffice.bin` (Writer), `firefox-esr`. `list-apps` shows what runs.
 2. Large app (Writer has about 1500 refs): `desktop-find --skeleton --app <name>` first, then drill into one region with `desktop-find --root <ref> --app <name> <regex>`. A big web page overflows the snapshot (`RefMap exceeds 1MB`) and `--root` inside a page is refused as ambiguous: there, always give a regex or `--role`, and `desktop-find` switches to `agent-desktop find` by itself (a literal word is faster than a regex).
 3. Act on a ref from that snapshot. A ref belongs to one snapshot: after the UI changes, snapshot again (`STALE_REF`, `SNAPSHOT_NOT_FOUND`).
 4. Verify the effect with `get <ref> --property value|text|states` or one new `desktop-find`. Take one snapshot per step: every call walks the whole tree and costs seconds.
