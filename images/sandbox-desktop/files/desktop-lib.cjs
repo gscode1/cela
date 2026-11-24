@@ -70,8 +70,9 @@ function pointer() {
   }
 }
 
-// box: { x, y, w, h } on screen. Aims inside the middle third of the box.
-function humanClick(box) {
+// box: { x, y, w, h } on screen. Aims inside the middle third of the box. The pointer travels there in a few steps (a hover
+// is this alone, with a dwell for the page's own hover handling); a click presses and releases after a short dwell.
+function humanMove(box) {
   const tx = Math.round(box.x + box.w / 2 + rand(-1, 1) * Math.min(box.w / 6, 12));
   const ty = Math.round(box.y + box.h / 2 + rand(-1, 1) * Math.min(box.h / 6, 4));
   const from = pointer();
@@ -84,11 +85,20 @@ function humanClick(box) {
     exec("xdotool", "mousemove", String(Math.round(from.x + (tx - from.x) * ease + jx)), String(Math.round(from.y + (ty - from.y) * ease + jy)));
     pause(rand(12, 30));
   }
+  return { x: tx, y: ty };
+}
+
+function humanPress() {
   pause(rand(60, 160));
   exec("xdotool", "mousedown", "1");
   pause(rand(50, 110));
   exec("xdotool", "mouseup", "1");
-  return { x: tx, y: ty };
+}
+
+function humanClick(box) {
+  const at = humanMove(box);
+  humanPress();
+  return at;
 }
 
 // Text xdotool cannot type reliably (anything outside printable ASCII) goes in through the clipboard and ctrl+v; the
@@ -249,7 +259,36 @@ function literalOf(pattern) {
   return runs.sort((a, b) => b.length - a.length)[0];
 }
 
+// Chrome draws a JS alert, confirm, prompt and leave-page dialog itself, and its accessibility tree (AT-SPI) answers while the
+// page is blocked: a node with role dialog (the title is its name, the message its description) with buttons and, for a
+// prompt, a text field. `tree` is the root of an agent-desktop snapshot; returns undefined when it holds no dialog.
+function atspiDialog(tree) {
+  const find = (n) => {
+    if (!n) return undefined;
+    if (n.role === "dialog" || n.role === "alert") return n;
+    for (const c of n.children ?? []) {
+      const d = find(c);
+      if (d) return d;
+    }
+    return undefined;
+  };
+  const dlg = find(tree);
+  if (!dlg) return undefined;
+  const buttons = [];
+  const fields = [];
+  const texts = [];
+  const walk = (n) => {
+    if (n.role === "button" && n.name) buttons.push({ name: n.name, focused: (n.states ?? []).includes("focused") });
+    else if (/^(textfield|textbox|entry|text|combobox)$/.test(n.role ?? "")) fields.push(n.value ?? n.name ?? "");
+    else if (n.role === "statictext" && n.name) texts.push(n.name);
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(dlg);
+  return { title: dlg.name ?? "", message: dlg.description ?? texts.join(" "), buttons, fields };
+}
+
 module.exports = {
+  atspiDialog,
   FALLBACK_ROLES,
   clip,
   cleanLines,
@@ -261,6 +300,8 @@ module.exports = {
   findAcross,
   grepLines,
   humanClick,
+  humanMove,
+  humanPress,
   humanType,
   key,
   literalOf,

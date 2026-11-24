@@ -5,7 +5,8 @@ accessibility by agent-desktop 1.3.1. Every call goes through the lazy wrapper, 
 
     desktop-web open https://example.com "price"     # web (Chrome): open a URL, wait, print url, title, matching lines
     desktop-web snap "buy|next"                      # web: clickable elements with refs; desktop-web click e123
-    desktop-web text "price|zł"                      # web: the page's matching text lines
+    desktop-web text "price|zł"                      # web: the page's matching text lines (--marks: icons and ratings inline)
+    desktop-web select e11 "Option B"                # web: a dropdown; also hover, wait "text", key Return (a JS dialog), shot
     desktop-page --focused "TODO"                    # an app's text (Mousepad, Writer): select all, copy, matching lines
     desktop-launch mousepad|writer [file]            # desktop apps; then refs via desktop-find and agent-desktop-run
     desktop-find --app mousepad --role textfield     # compact snapshot filter; never print a raw snapshot

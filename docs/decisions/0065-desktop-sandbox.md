@@ -338,6 +338,57 @@ only mean refused: it now rewrites it to 403 without the `Proxy-Authenticate` ch
 started with `--disable-background-networking --disable-component-update`, which ends its own calls to Google's update,
 account and variation services through the session's proxy.
 
+### desktop-web: blocked pages, dropdowns, waits, hover, shots, marks (issue #462)
+
+Live runs on a public practice site with native controls showed where `desktop-web` still cost calls: about 20 calls to pick an
+option in a native `<select>` (the popup is browser UI the reader cannot see, so the agent clicked and arrowed by hand), `sleep 6`
+loops for content that appears later, raw `xdotool mousemove` to hover, and minutes lost on a JS `confirm()`: while a JS dialog
+is open the renderer is blocked, `DOMSnapshot` and `getFullAXTree` hang until the 20 s timeout and `desktop-web` said nothing
+(measured here: a click on a confirm button returned nothing for more than 60 s). On a book shop's listing the star ratings exist
+only as a CSS class, so the agent took nine screenshots. Every change below is general: no site, language or task is named, the
+reader stays passive (`ALLOWED` is unchanged: no new method, no `Runtime`, no `*.enable`, no script in a page, no CDP input) and
+all input is still real X events through xdotool.
+
+- **Blocked page.** Every command first checks that the page answers: `/json/list` lists the target but
+  `Page.getLayoutMetrics`, answered by the renderer, does not come back within 2.5 s. `settle` checks once after a second and
+  again whenever a read fails, so a click that opens a dialog says so after about 3 s instead of hanging. The notice does not
+  over-assert (a dialog is "probably" open, "or the page is busy") and carries the way out: `desktop-web key Return`,
+  `desktop-web key Escape`, and for a prompt `desktop-web key --text "answer" Return` (`--text` types, as a person does, into
+  the focused dialog field, replacing a default). `key` used to read the page before sending its keys, so Return never reached
+  the dialog; it now reads nothing while blocked (the last saved text stands in as "before"), sends the keys, probes again and
+  prints `dialog closed` with what changed or `Still blocked`. Chrome draws these dialogs itself and they are in the AT-SPI
+  tree while the page is stuck: `agent-desktop-run snapshot --app chrome --timeout-ms 3000` returns a window "<origin> says"
+  with the message (the dialog node's description), buttons (the default one focused) and a prompt's field, so the notice prints
+  the message as text (about 2.5 s, no new Chrome flag). When it finds none, the notice captures where such a dialog sits (top
+  centre of the window, under the toolbar) with `desktop-shot --region` and prints the path. `activate` now does nothing when
+  Chrome's window already has focus: `windowactivate` on it would close a dropdown popup (a separate grab window).
+- **Dropdowns.** A closed select's options are nodes of the layout snapshot already read (`optionSelected`, the `disabled`,
+  `hidden`, `label`, `multiple` and `size` attributes): `snap` prints `combobox "Name" value="..." options: A | B | C`, cut by
+  count and length with `(+N more)`, and a hint. `desktop-web select <ref|"regex"> "option"` matches exact text, then ignoring
+  case, then as a regex, and lists an ambiguous match. For a native single select it clicks once (the popup opens), counts the
+  Up/Down presses over enabled options from the selected one, presses Return (one `change`, never one per step, and no arrows on a
+  closed select) and reads the value back. A `multiple` or `size>1` select and ARIA comboboxes or listboxes clicks the control if
+  it needs opening and then the option element matching the text.
+- **Waiting.** `desktop-web wait "regex" [--gone] [--timeout N]` (N at most 60, default 20) polls the page text and prints the
+  matching lines. After a click, key, select or Return the answer ends with `result may come later: desktop-web wait "regex"` when
+  it printed one new line or none or the tree shows a `progressbar` or `busy=true`. `key` takes `--show` like `click`.
+- **Hover and shots.** `hover` is `humanClick` split into a move and a press (`desktop-lib`), reusing the click's resolve,
+  scroll and covered-by checks, with a dwell before it prints what appeared. `shot <ref|"regex"> [--pad N]` scrolls the element
+  into view, maps its box to screen pixels like a click and calls `desktop-shot --region` (no `Page.captureScreenshot`); hover and
+  shot also find named images and groups.
+- **Marks.** `text "regex" --marks` (opt-in, never the default, and the saved page text stays plain so line numbers keep their
+  meaning) writes elements that have a visible box but no text and no accessible name into the line where they sit, as
+  `‹class words title:"..." data=value src:file.png›` from their markup: the outermost such element, else its first descendant that
+  has any words, generated-looking class names left out, at most 200 per page. It is a fallback before `shot`.
+- **Skills.** A web task needs only the desktop-sandbox skill (agent-desktop is for Mousepad and Writer); no raw `xdotool` or
+  `sleep` on a web page; a meaning shown only by an icon, colour or image goes `--marks`, then `shot`; "build URLs" became "a URL
+  pattern you have seen on this site"; the line that implied JS alerts are listed with refs is replaced by how the browser's own
+  dialogs behave.
+
+The suite gained `dialogs`, `select`, `wait`, `hover`, `marks` and `shot` cases (test pages `dialogs.html`, `selects.html`,
+`later.html`, `hover.html`, `marks.html`), and unit tests cover option parsing, matching, arrow counting, marks and the AT-SPI
+dialog reading.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through

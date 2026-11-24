@@ -158,14 +158,14 @@ const CLICKABLE = new Set([
   "slider",
   "listbox",
 ]);
-const FIELDS = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
+const FIELDS = new Set(["textbox", "searchbox", "combobox", "spinbutton", "listbox"]);
 const value = (p) => (p && p.value !== undefined ? p.value : undefined);
 const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Accessibility tree -> the elements an agent acts on, plus named headings, each with a ref (e + backend DOM node id,
 // which stays valid until the element leaves the page; "@TAG" after it names an out-of-process iframe). Headings that repeat a link's name (product cards) are dropped.
-function axEntries(nodes) {
+function axEntries(nodes, { extraRoles } = {}) {
   const live = nodes.filter((n) => !n.ignored);
   const linkNames = new Set(live.filter((n) => value(n.role) === "link").map((n) => squash(value(n.name))));
   const out = [];
@@ -177,6 +177,8 @@ function axEntries(nodes) {
     if (props.disabled === true) continue;
     if (role === "heading") {
       if (!name || linkNames.has(name)) continue;
+    } else if (extraRoles?.has(role)) {
+      if (!name) continue;
     } else if (!CLICKABLE.has(role) || (!name && !FIELDS.has(role) && role !== "checkbox")) continue;
     out.push({
       ref: `e${n.backendDOMNodeId}${n.frameTag ? `@${n.frameTag}` : ""}`,
@@ -201,7 +203,23 @@ function entryLine(e, { nameMax = 120 } = {}) {
   if (e.checked !== undefined) line += ` checked=${e.checked}`;
   if (e.expanded !== undefined) line += ` expanded=${e.expanded}`;
   if (e.focused) line += " focused";
+  if (e.options) line += ` options: ${optionsText(e.options)}`;
   return line;
+}
+
+// A select's options on one line: "A | B | C (disabled)", cut to a few and said so. Truncated by
+// count and characters, never silently: "(+N more)".
+function optionsText(options, { maxItems = 12, maxChars = 220 } = {}) {
+  const parts = [];
+  let size = 0;
+  for (const o of options) {
+    const t = `${clip(o.text, 40)}${o.disabled ? " (disabled)" : ""}`;
+    if (parts.length >= maxItems || size + t.length > maxChars) break;
+    parts.push(t);
+    size += t.length + 3;
+  }
+  const more = options.length - parts.length;
+  return `${parts.join(" | ")}${more > 0 ? ` | (+${more} more)` : ""}`;
 }
 
 // The text of the row each candidate sits in: its highest ancestor that holds no other candidate (a product card, a table
@@ -249,8 +267,8 @@ function rowTexts(nodes, candidates, { max = 200 } = {}) {
 // Matches with one URL count as one (an image link and a title link to the same product); --near picks by row text.
 // An element named exactly like the pattern wins ("Accept" over "Do not accept"); a button whose name contains a matching
 // link's name loses to that link; --role narrows to one role.
-function chooseTarget(nodes, entries, re, { near, nth, role } = {}) {
-  let matches = entries.filter((e) => CLICKABLE.has(e.role) && re.test(e.name) && (!role || e.role === role));
+function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } = {}) {
+  let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && re.test(e.name) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
   const exact = matches.filter((e) => new RegExp(`^(?:${re.source})$`, re.flags).test(e.name));
   if (exact.length > 0) matches = exact;
@@ -280,6 +298,92 @@ function chooseTarget(nodes, entries, re, { near, nth, role } = {}) {
   if (distinct.length === 1) return { pick: distinct[0] };
   matches = distinct;
   return { several: matches };
+}
+
+// Attributes of a DOMSnapshot node as a name -> value map.
+function nodeAttrs(snap, doc, i) {
+  const a = doc.nodes.attributes?.[i] ?? [];
+  const out = {};
+  for (let k = 0; k + 1 < a.length; k += 2) out[snap.strings[a[k]]] = a[k + 1] >= 0 ? snap.strings[a[k + 1]] : "";
+  return out;
+}
+
+// The native <select> elements of a layout snapshot, by backend node id: whether a list is shown (multiple, or size above
+// 1) and the options with their text, selected state and whether a person can pick them (not disabled, not hidden, not in a
+// disabled group). Options of a closed select have no box, but the snapshot lists them as nodes all the same.
+function selectInfos(snap) {
+  const out = new Map();
+  for (const doc of snap.documents ?? []) {
+    const str = (i) => (i >= 0 ? snap.strings[i] : "");
+    const n = doc.nodes;
+    const kids = new Map();
+    n.parentIndex.forEach((p, i) => {
+      if (p >= 0) kids.set(p, [...(kids.get(p) ?? []), i]);
+    });
+    const selected = new Set(n.optionSelected?.index ?? []);
+    const textOf = (i) => {
+      if (n.nodeType[i] === 3) return str(n.nodeValue[i]);
+      return (kids.get(i) ?? []).map(textOf).join("");
+    };
+    n.nodeName.forEach((nameIdx, i) => {
+      if (n.nodeType[i] !== 1 || str(nameIdx).toUpperCase() !== "SELECT") return;
+      const a = nodeAttrs(snap, doc, i);
+      const options = [];
+      const walk = (j, off) => {
+        for (const k of kids.get(j) ?? []) {
+          if (n.nodeType[k] !== 1) continue;
+          const tag = str(n.nodeName[k]).toUpperCase();
+          const at = nodeAttrs(snap, doc, k);
+          if (tag === "OPTGROUP") walk(k, off || at.disabled !== undefined);
+          else if (tag === "OPTION") {
+            const text = squash(at.label || textOf(k));
+            options.push({ text, selected: selected.has(k), disabled: off || at.disabled !== undefined || at.hidden !== undefined });
+          }
+        }
+      };
+      walk(i, false);
+      const size = Number(a.size);
+      out.set(n.backendNodeId[i], { multiple: a.multiple !== undefined, size: Number.isFinite(size) ? size : 0, options });
+    });
+  }
+  return out;
+}
+
+// Which of `texts` a person means by `query`: the one that equals it, else the one that equals it ignoring case, else the one
+// the query matches as a regular expression. Returns { index } for one, { several: [index...] } when a step matches more than
+// one (nothing is chosen for the person), or { none }.
+function matchOption(texts, query) {
+  const q = squash(query);
+  let re;
+  try {
+    re = new RegExp(query, "i");
+  } catch {
+    re = undefined;
+  }
+  const tiers = [(t) => t === q, (t) => t.toLowerCase() === q.toLowerCase(), (t) => re?.test(t) === true];
+  for (const tier of tiers) {
+    const hits = texts.map((t, i) => (tier(squash(t)) ? i : -1)).filter((i) => i >= 0);
+    if (hits.length === 1) return { index: hits[0] };
+    if (hits.length > 1) return { several: hits };
+  }
+  return { none: true };
+}
+
+// Arrow presses from the selected option to option `target` in an open single-select popup: only options a person can pick
+// count, since the keyboard skips the others. Negative is Up.
+function arrowSteps(options, target) {
+  const live = options.map((o, i) => (o.disabled ? -1 : i)).filter((i) => i >= 0);
+  const cur = options.findIndex((o) => o.selected);
+  const from = live.indexOf(cur >= 0 ? cur : (live[0] ?? 0));
+  const to = live.indexOf(target);
+  return to - from;
+}
+
+// A progress bar or an element marked busy in the accessibility tree: the page is still working on something.
+function busy(nodes) {
+  return nodes.some(
+    (n) => !n.ignored && (value(n.role) === "progressbar" || (n.properties ?? []).some((p) => p.name === "busy" && value(p.value) === true)),
+  );
 }
 
 // Layout snapshot -> lines of visible text, one per block-level element (a price split into "145" ",95" "zł" reads
@@ -357,10 +461,50 @@ function docView(snap, doc) {
   return { str, style, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
 }
 
-function snapshotLines(snap) {
+// Elements that stand for themselves or carry a name of their own: never marked as a nameless picture.
+const NO_MARK = new Set(["HTML", "HEAD", "BODY", "SCRIPT", "STYLE", "NOSCRIPT", "BR", "HR", "WBR", "OPTION", "OPTGROUP", "TEMPLATE"]);
+const RICH = new Set(["INPUT", "SELECT", "TEXTAREA", "BUTTON", "IFRAME", "VIDEO", "AUDIO", "CANVAS", "OBJECT", "EMBED"]);
+const MAX_MARKS = 200;
+
+// What a person would call a nameless element from its markup alone: a few class words, title, data-* values and the file
+// name of its image. Generated class names (a run of letters and digits) say nothing and are left out.
+function markTokens(snap, doc, i) {
+  const a = nodeAttrs(snap, doc, i);
+  const out = [];
+  for (const c of (a.class ?? "").split(/\s+/)) {
+    if (c.length < 2 || c.length > 32 || (c.match(/\d/g) ?? []).length >= 3) continue;
+    if (out.length < 3) out.push(c);
+  }
+  if (a.title) out.push(`title:"${clip(squash(a.title), 30)}"`);
+  let data = 0;
+  for (const [k, v] of Object.entries(a)) {
+    if (!k.startsWith("data-") || !v || v.length > 24 || data >= 2) continue;
+    out.push(`${k.slice(5)}=${v}`);
+    data++;
+  }
+  const src = (a.src ?? "").split(/[?#]/)[0]?.split("/").pop();
+  if (src && !src.startsWith("data:")) out.push(`src:${clip(src, 24)}`);
+  return out;
+}
+
+// Layout snapshot -> lines. With `marks`, a rendered element that has a box a person can see but no text and no accessible
+// name of its own (an icon, a rating drawn from a class, an image without alt) is written into the line where it sits as
+// `‹class words title data src›`, taken from its markup: meaning that is only a picture, as a last resort before a screenshot.
+function snapshotLines(snap, { marks = false } = {}) {
   const lines = [];
+  let marked = 0;
   for (const doc of snap.documents ?? []) {
     const v = docView(snap, doc);
+    // Elements whose subtree holds text or a control: not nameless pictures.
+    const content = new Set();
+    const covered = new Set();
+    if (marks) {
+      for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
+        const isText = doc.nodes.nodeType[i] === 3 && v.str(doc.nodes.nodeValue[i]).trim() !== "";
+        const rich = doc.nodes.nodeType[i] === 1 && RICH.has(v.str(doc.nodes.nodeName[i]).toUpperCase());
+        if (isText || rich) for (let p = doc.nodes.parentIndex[i]; p >= 0 && !content.has(p); p = doc.nodes.parentIndex[p]) content.add(p);
+      }
+    }
     const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
     const blockOf = (i) => {
       let p = v.parent[i];
@@ -376,6 +520,37 @@ function snapshotLines(snap) {
       if (!v.layoutOf.has(i)) continue;
       if (doc.nodes.nodeType[i] === 1) {
         if (VOID.has(name(i)) && groups.has(blockOf(i))) groups.get(blockOf(i)).brk = true;
+        if (marks && v.parent[i] >= 0 && covered.has(v.parent[i])) covered.add(i);
+        else if (marks && marked < MAX_MARKS && !content.has(i) && !NO_MARK.has(name(i)) && !RICH.has(name(i))) {
+          const b = v.bounds(i);
+          const shown = v.visible(i);
+          const at = nodeAttrs(snap, doc, i);
+          const named = (at["aria-label"] ?? at.alt ?? "").trim() !== "";
+          if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !named && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
+            // The element's own words, else those of its first descendant that has any.
+            let tokens = markTokens(snap, doc, i);
+            const below = (j) => {
+              for (let k = j + 1; k < doc.nodes.parentIndex.length && tokens.length === 0; k++) {
+                let inside = false;
+                for (let p = k; p >= 0; p = doc.nodes.parentIndex[p]) if (p === i) inside = true;
+                if (!inside) break;
+                if (doc.nodes.nodeType[k] === 1) tokens = markTokens(snap, doc, k);
+              }
+            };
+            below(i);
+            covered.add(i);
+            if (tokens.length > 0) {
+              marked++;
+              const text = `‹${clip(tokens.join(" "), 60)}›`;
+              const own = /^(block|flex|grid|list-item|table|flow-root)$/.test(v.style(i)?.[0] ?? "inline");
+              const g = group(own ? i : blockOf(i));
+              if (g.text !== "" && !/\s$/.test(g.text)) g.text += " ";
+              g.text += text;
+              g.box = b;
+              g.brk = true;
+            }
+          }
+        }
         continue;
       }
       if (doc.nodes.nodeType[i] !== 3) continue;
@@ -593,6 +768,11 @@ module.exports = {
   targetList,
   rowTexts,
   screenPoint,
+  arrowSteps,
+  busy,
+  matchOption,
+  optionsText,
+  selectInfos,
   snapshotLines,
   subtreeIds,
   wraps,

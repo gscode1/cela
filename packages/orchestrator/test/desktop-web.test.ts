@@ -20,7 +20,7 @@ interface CdpLib {
   ALLOWED: Set<string>;
   assertAllowed(method: string): void;
   axEntries(nodes: AxNode[]): Entry[];
-  entryLine(e: Entry): string;
+  entryLine(e: Entry & { options?: Opt[] }): string;
   rowTexts(nodes: AxNode[], candidates: Entry[]): string[];
   chooseTarget(
     nodes: AxNode[],
@@ -28,7 +28,7 @@ interface CdpLib {
     re: RegExp,
     o?: { near?: RegExp; nth?: number },
   ): { pick?: Entry; several?: Entry[]; none?: boolean };
-  snapshotLines(snap: unknown): string[];
+  snapshotLines(snap: unknown, o?: { marks?: boolean }): string[];
   screenPoint(
     g: {
       win: { x: number; y: number; height: number };
@@ -62,6 +62,24 @@ interface CdpLib {
   shiftQuad(q: number[], dx: number, dy: number): number[];
   quadOrigin(q: number[]): { x: number; y: number };
   scrollbarThickness(hits: (y: number) => Promise<boolean>, client: number): Promise<number>;
+  selectInfos(snap: unknown): Map<number, SelectInfo>;
+  matchOption(
+    texts: string[],
+    query: string,
+  ): { index?: number; several?: number[]; none?: boolean };
+  arrowSteps(options: Opt[], target: number): number;
+  optionsText(options: Opt[]): string;
+  busy(nodes: AxNode[]): boolean;
+}
+interface Opt {
+  text: string;
+  selected: boolean;
+  disabled: boolean;
+}
+interface SelectInfo {
+  multiple: boolean;
+  size: number;
+  options: Opt[];
 }
 interface FrameTree {
   frame: { id: string };
@@ -185,6 +203,8 @@ describe("desktop-web's CDP reader", () => {
     text?: string;
     style?: [string, string, string];
     box?: [number, number, number, number];
+    attrs?: Record<string, string>;
+    picked?: boolean;
   }
   function snapOf(ns: N[]) {
     const strings: string[] = [];
@@ -213,6 +233,11 @@ describe("desktop-web's CDP reader", () => {
             nodeName: ns.map((n) => at(n.tag ?? (n.type === 3 ? "#text" : "SPAN"))),
             nodeValue: ns.map((n) => (n.text === undefined ? -1 : at(n.text))),
             backendNodeId: ns.map((_, i) => 1000 + i),
+            // attribute names and values as string indexes; an empty value is -1, as Chrome sends it
+            attributes: ns.map((n) =>
+              Object.entries(n.attrs ?? {}).flatMap(([k, v]) => [at(k), v === "" ? -1 : at(v)]),
+            ),
+            optionSelected: { index: ns.flatMap((n, i) => (n.picked ? [i] : [])) },
           },
           layout,
         },
@@ -465,6 +490,204 @@ describe("desktop-web's CDP reader", () => {
     ]);
   });
 
+  it("lists a select's options with their state, from the layout snapshot", () => {
+    const snap = snapOf([
+      doc, // 0
+      { parent: 0, type: 1, tag: "SELECT", style: BLOCKSTYLE, box: [0, 0, 100, 20] }, // 1
+      { parent: 1, type: 1, tag: "OPTION" }, // 2
+      { parent: 2, type: 3, text: "Pick one" },
+      { parent: 1, type: 1, tag: "OPTION", attrs: { disabled: "" } }, // 4
+      { parent: 4, type: 3, text: "Off" },
+      { parent: 1, type: 1, tag: "OPTGROUP", attrs: { disabled: "" } }, // 6
+      { parent: 6, type: 1, tag: "OPTION" }, // 7
+      { parent: 7, type: 3, text: "In  a dead\n group" },
+      { parent: 1, type: 1, tag: "OPTION", picked: true, attrs: { label: "Shown label" } }, // 9
+      { parent: 9, type: 3, text: "ignored text" },
+      { parent: 1, type: 1, tag: "OPTION", attrs: { hidden: "" } }, // 11
+      { parent: 11, type: 3, text: "Hidden" },
+      { parent: 0, type: 1, tag: "SELECT", attrs: { multiple: "", size: "4" } }, // 13
+    ]);
+    const infos = cdp.selectInfos(snap);
+    expect(infos.get(1001)).toEqual({
+      multiple: false,
+      size: 0,
+      options: [
+        { text: "Pick one", selected: false, disabled: false },
+        { text: "Off", selected: false, disabled: true },
+        { text: "In a dead group", selected: false, disabled: true },
+        { text: "Shown label", selected: true, disabled: false },
+        { text: "Hidden", selected: false, disabled: true },
+      ],
+    });
+    expect(infos.get(1013)).toMatchObject({ multiple: true, size: 4 });
+  });
+
+  it("matches an option by exact text, then ignoring case, then as a regex, and lists ambiguity", () => {
+    const texts = ["Option 1", "option 10", "Fifth Choice", "Option 3"];
+    expect(cdp.matchOption(texts, "Option 1")).toEqual({ index: 0 });
+    expect(cdp.matchOption(texts, "OPTION 3")).toEqual({ index: 3 });
+    expect(cdp.matchOption(texts, "^fifth")).toEqual({ index: 2 });
+    expect(cdp.matchOption(texts, "Option")).toEqual({ several: [0, 1, 3] });
+    expect(cdp.matchOption(texts, "zebra")).toEqual({ none: true });
+    expect(cdp.matchOption(["a", "A"], "a")).toEqual({ index: 0 }); // exact before case-insensitive
+    expect(cdp.matchOption(["(x", "y"], "(x")).toEqual({ index: 0 }); // not a valid regex: still the text
+  });
+
+  it("counts arrow presses over enabled options only, from the selected one", () => {
+    const o = (text: string, selected = false, disabled = false): Opt => ({
+      text,
+      selected,
+      disabled,
+    });
+    const opts = [o("Pick", true), o("One"), o("Off", false, true), o("Three"), o("Four")];
+    expect(cdp.arrowSteps(opts, 3)).toBe(2); // One, then Three: the disabled one is skipped
+    expect(cdp.arrowSteps(opts, 4)).toBe(3);
+    expect(cdp.arrowSteps(opts, 0)).toBe(0);
+    const later = [o("Pick"), o("One"), o("Off", false, true), o("Three", true), o("Four")];
+    expect(cdp.arrowSteps(later, 1)).toBe(-1);
+    expect(cdp.arrowSteps(later, 4)).toBe(1);
+    expect(cdp.arrowSteps([o("A"), o("B")], 1)).toBe(1); // nothing selected: counts from the first
+  });
+
+  it("shows a select's options in its snap line, cut to a few and said so", () => {
+    const e = {
+      ref: "e11",
+      backendNodeId: 11,
+      nodeId: "1",
+      role: "combobox",
+      name: "Size",
+      value: "B",
+      options: ["A", "B", "C (x)"].map((text) => ({
+        text,
+        selected: text === "B",
+        disabled: text.startsWith("C"),
+      })),
+    };
+    expect(cdp.entryLine(e)).toBe(
+      '[e11] combobox "Size" value="B" options: A | B | C (x) (disabled)',
+    );
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      text: `Choice ${String(i)}`,
+      selected: false,
+      disabled: false,
+    }));
+    const line = cdp.optionsText(many);
+    expect(line).toMatch(/\| \(\+\d+ more\)$/);
+    expect(line.length).toBeLessThan(260);
+  });
+
+  it("knows a page that is still working from a progress bar or a busy element", () => {
+    const n = (
+      role: string,
+      props: { name: string; value: { value: unknown } }[] = [],
+      ignored = false,
+    ): AxNode => ({
+      nodeId: role,
+      role: { value: role },
+      properties: props,
+      ignored,
+    });
+    expect(cdp.busy([n("button"), n("progressbar")])).toBe(true);
+    expect(cdp.busy([n("main", [{ name: "busy", value: { value: true } }])])).toBe(true);
+    expect(
+      cdp.busy([
+        n("main", [{ name: "busy", value: { value: false } }]),
+        n("progressbar", [], true),
+      ]),
+    ).toBe(false);
+  });
+
+  it("marks nameless pictures inline only when asked, from their markup", () => {
+    const box = (x: number, y: number, w: number, h: number): [number, number, number, number] => [
+      x,
+      y,
+      w,
+      h,
+    ];
+    const inline = ["inline-block", "visible", "1"] as [string, string, string];
+    const nodes: N[] = [
+      doc, // 0
+      { parent: 0, type: 1, tag: "DIV", style: BLOCKSTYLE, box: box(0, 0, 400, 200) }, // 1 page
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: box(0, 0, 400, 16) }, // 2
+      t("Rating", box(0, 0, 40, 16), 2), // 3
+      // a block of empty icons: one mark for the block, from its own class words, not one per icon
+      {
+        parent: 1,
+        type: 1,
+        tag: "P",
+        style: BLOCKSTYLE,
+        box: box(0, 20, 400, 16),
+        attrs: { class: "star-rating Three" },
+      }, // 4
+      {
+        parent: 4,
+        type: 1,
+        tag: "I",
+        style: inline,
+        box: box(0, 20, 14, 14),
+        attrs: { class: "icon-star" },
+      }, // 5
+      {
+        parent: 4,
+        type: 1,
+        tag: "I",
+        style: inline,
+        box: box(16, 20, 14, 14),
+        attrs: { class: "icon-star" },
+      }, // 6
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: box(0, 40, 400, 20) }, // 7
+      t("status", box(0, 40, 40, 16), 7), // 8
+      // an inline icon in a line of text: a generated class name says nothing, the data attribute does
+      {
+        parent: 7,
+        type: 1,
+        tag: "SPAN",
+        style: inline,
+        box: box(45, 40, 12, 12),
+        attrs: { class: "x1a2b3c4d5 dot", "data-state": "up" },
+      }, // 9
+      t("fine", box(60, 40, 30, 16), 7), // 10
+      {
+        parent: 7,
+        type: 1,
+        tag: "IMG",
+        style: inline,
+        box: box(95, 40, 40, 20),
+        attrs: { src: "/img/brand-mark.png?v=2" },
+      }, // 11
+      {
+        parent: 7,
+        type: 1,
+        tag: "IMG",
+        style: inline,
+        box: box(140, 40, 40, 20),
+        attrs: { src: "/a.png", alt: "Logo" },
+      }, // 12 has a name
+      {
+        parent: 7,
+        type: 1,
+        tag: "SPAN",
+        style: inline,
+        box: box(190, 40, 1, 1),
+        attrs: { class: "speck" },
+      }, // 13 too small to see
+      {
+        parent: 7,
+        type: 1,
+        tag: "INPUT",
+        style: inline,
+        box: box(200, 40, 80, 16),
+        attrs: { class: "field" },
+      }, // 14 a control
+    ];
+    expect(cdp.snapshotLines(snapOf(nodes))).toEqual(["Rating", "status fine"]);
+    expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
+      "Rating",
+      "‹star-rating Three›",
+      "status ‹dot state=up› fine ‹src:brand-mark.png›",
+    ]);
+  });
+
   it("drops a button that repeats a matching link's name, but lists a different button", () => {
     const e = (ref: string, role: string, name: string): Entry => ({
       ref,
@@ -484,5 +707,57 @@ describe("desktop-web's CDP reader", () => {
       "e1",
       "e3",
     ]);
+  });
+});
+
+describe("desktop-lib's reading of Chrome's own dialog", () => {
+  const lib = createRequire(import.meta.url)(join(files, "desktop-lib.cjs")) as {
+    atspiDialog(tree: unknown):
+      | {
+          title: string;
+          message: string;
+          buttons: { name: string; focused: boolean }[];
+          fields: string[];
+        }
+      | undefined;
+  };
+  it("reads the title, message, buttons and a prompt's field from the accessibility tree", () => {
+    const tree = {
+      role: "window",
+      children: [
+        {
+          role: "dialog",
+          name: "127.0.0.1:1 says",
+          description: "Your name?",
+          children: [
+            {
+              role: "group",
+              children: [
+                { role: "statictext", name: "Your name?" },
+                { role: "textfield", value: "default" },
+              ],
+            },
+            {
+              role: "group",
+              children: [
+                { role: "button", name: "Cancel" },
+                { role: "button", name: "OK", states: ["focused"] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(lib.atspiDialog(tree)).toEqual({
+      title: "127.0.0.1:1 says",
+      message: "Your name?",
+      buttons: [
+        { name: "Cancel", focused: false },
+        { name: "OK", focused: true },
+      ],
+      fields: ["default"],
+    });
+    expect(lib.atspiDialog({ role: "window", children: [{ role: "group" }] })).toBeUndefined();
+    expect(lib.atspiDialog(undefined)).toBeUndefined();
   });
 });

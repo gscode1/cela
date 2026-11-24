@@ -1,13 +1,13 @@
 ---
 name: agent-desktop
-description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer. Web pages go through desktop-web in Google Chrome (desktop-sandbox skill)."
+description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. Only for Mousepad and LibreOffice Writer, not for web pages: those go through desktop-web in Google Chrome and need only the desktop-sandbox skill."
 ---
 
 # agent-desktop 1.3.1
 
 Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`); `agent-desktop-run -q <command>` prints one line instead. Always run it as `agent-desktop-run <args>`. `agent-desktop-run <command> --help` lists the flags.
 
-**Web pages do not start here.** Use `desktop-web open <url>`, `desktop-web text "regex"`, `desktop-web snap "regex"` and `desktop-web click <ref|"regex">` in Google Chrome (desktop-sandbox skill): one call each, a few lines of text, with its own refs. agent-desktop refs do not reach Chrome.
+**Web pages do not start here, and need nothing from this skill.** This skill is for Mousepad and LibreOffice Writer. For a web page use `desktop-web` in Google Chrome (`open`, `text`, `snap`, `click`, `type`, `select`, `hover`, `wait`, `key`, `shot`; desktop-sandbox skill): one call each, a few lines of text, with its own refs. agent-desktop refs do not reach Chrome.
 
 ## Never print a full snapshot
 

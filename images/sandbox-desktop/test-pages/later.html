@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>later</title>
+<body style="font:16px sans-serif">
+<h1>Content that arrives later</h1>
+<button id="start" style="padding:8px 16px">Start</button>
+<div id="state">Idle</div>
+<div id="bar" role="progressbar" aria-label="Loading" hidden style="width:200px;height:12px;background:#ccc"></div>
+<script>
+  document.getElementById("start").onclick = () => {
+    document.getElementById("state").textContent = "Loading...";
+    document.getElementById("bar").hidden = false;
+    setTimeout(() => {
+      document.getElementById("state").textContent = "Done: report ready";
+      document.getElementById("bar").hidden = true;
+    }, 3500);
+  };
+</script>

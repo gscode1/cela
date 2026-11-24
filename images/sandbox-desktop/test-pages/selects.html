@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selects</title>
+<body style="font:16px sans-serif">
+<h1>Selects</h1>
+<p><label for="one">Dropdown</label>
+<select id="one">
+  <option value="">Please select an option</option>
+  <option value="1">Option 1</option>
+  <option value="2" disabled>Option 2 (off)</option>
+  <option value="3">Option 3</option>
+  <optgroup label="More">
+    <option value="4">Option 4</option>
+    <option value="5">Fifth Choice</option>
+  </optgroup>
+</select></p>
+<p><label for="many">Colours</label>
+<select id="many" multiple size="4">
+  <option>Red</option><option>Green</option><option>Blue</option><option>Yellow</option>
+</select></p>
+<p><span id="cb-label">Size</span>
+<button id="cb" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="cb-label" style="padding:6px 12px">Pick a size</button>
+<div id="cb-list" role="listbox" aria-label="Sizes" style="display:none;border:1px solid #888;width:160px">
+  <div role="option" tabindex="0" style="padding:6px">Small</div>
+  <div role="option" tabindex="0" style="padding:6px">Medium</div>
+  <div role="option" tabindex="0" style="padding:6px">Large</div>
+</div></p>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  document.getElementById("one").addEventListener("change", (e) => add(`changed: ${e.target.selectedOptions[0].text}`));
+  document.getElementById("many").addEventListener("change", (e) => add(`picked: ${[...e.target.selectedOptions].map((o) => o.text).join(",")}`));
+  const cb = document.getElementById("cb");
+  const list = document.getElementById("cb-list");
+  cb.onclick = () => {
+    const open = list.style.display === "none";
+    list.style.display = open ? "block" : "none";
+    cb.setAttribute("aria-expanded", String(open));
+  };
+  list.onclick = (e) => {
+    if (e.target.getAttribute("role") !== "option") return;
+    cb.textContent = e.target.textContent;
+    list.style.display = "none";
+    cb.setAttribute("aria-expanded", "false");
+    add(`size: ${e.target.textContent}`);
+  };
+</script>
