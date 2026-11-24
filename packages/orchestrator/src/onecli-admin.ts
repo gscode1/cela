@@ -198,9 +198,14 @@ export class OneCliAdmin {
     return error instanceof OneCliTransportError;
   }
 
-  /** Whether a failed POST may have been applied: anything but a 4xx, which OneCLI answers before it writes. */
+  /**
+   * Whether the next round's lookup may change the outcome: a POST that may have been applied (anything but a 4xx,
+   * which OneCLI answers before it writes), or a 409, which says the name is taken. A 409 also comes right after the
+   * object of that name was deleted (a parked agent being recreated, ADR 0069); the lookup then finds nothing and the
+   * POST is tried again after the backoff.
+   */
   #ambiguous(error: unknown): boolean {
-    if (error instanceof OneCliError) return error.status >= 500;
+    if (error instanceof OneCliError) return error.status >= 500 || error.status === 409;
     return error instanceof OneCliTransportError;
   }
 

@@ -141,6 +141,36 @@ describe("OneCliAdmin retry and timeout", () => {
     }
   });
 
+  it("looks up again after a 409 (the name of a just-deleted agent), then creates it", async () => {
+    const calls: string[] = [];
+    let posts = 0;
+    let made = false;
+    const fetch: FetchLike = (url, init) => {
+      calls.push(`${init.method} ${url}`);
+      if (init.method === "POST") {
+        posts += 1;
+        made = posts > 1;
+        return Promise.resolve({
+          status: posts === 1 ? 409 : 201,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+        });
+      }
+      const body = made ? [{ id: "a2", name: "i", identifier: "i", accessToken: "t" }] : [];
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    };
+    const { admin: a, sleeps } = admin(fetch);
+    const { agent, created } = await a.ensureAgent("i");
+    expect(agent.id).toBe("a2");
+    expect(created).toBe(true);
+    expect(posts).toBe(2);
+    expect(sleeps).toEqual([100]);
+  });
+
   it("does not retry a create refused with a 4xx", async () => {
     const calls: string[] = [];
     const fetch: FetchLike = (url, init) => {
