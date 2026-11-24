@@ -1,7 +1,7 @@
 // Passive CDP reader for the desktop's Chrome (docs/decisions/0065-desktop-sandbox.md, "Chromium and desktop-web").
 // Pages detect a driver through what it turns on, above all Runtime.enable, which every Playwright-style client sends and
 // which leaves a trace the page can see even after the client leaves. This reader sends only the read-only methods in
-// ALLOWED: the accessibility tree, a layout snapshot, element boxes and the window's geometry. It never enables a domain,
+// ALLOWED: the accessibility tree, a layout snapshot and element boxes. It never enables a domain,
 // never runs script in the page and never sends input: clicks and keys go through xdotool as real X events.
 // Installed next to desktop-web in /usr/local/bin and loaded by path. No dependencies.
 "use strict";
@@ -9,7 +9,6 @@
 // Every method this reader may send. A test keeps desktop-web's calls inside this list.
 const ALLOWED = new Set([
   "Accessibility.getFullAXTree",
-  "Browser.getWindowForTarget",
   "DOM.describeNode",
   "DOM.getBoxModel",
   "DOM.getContentQuads",
@@ -175,14 +174,20 @@ function rowTexts(nodes, candidates, { max = 200 } = {}) {
 
 // Picks what a click by name means. Returns { pick } or { several } (entries with their row text) or { none }.
 // Matches with one URL count as one (an image link and a title link to the same product); --near picks by row text.
-// An element named exactly like the pattern wins ("Zgadzam się" over "Nie zgadzam się"); links win over buttons whose
-// names repeat them ("Add to compare <product>"); --role narrows to one role.
+// An element named exactly like the pattern wins ("Accept" over "Do not accept"); a button whose name contains a matching
+// link's name loses to that link; --role narrows to one role.
 function chooseTarget(nodes, entries, re, { near, nth, role } = {}) {
   let matches = entries.filter((e) => CLICKABLE.has(e.role) && re.test(e.name) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
   const exact = matches.filter((e) => new RegExp(`^(?:${re.source})$`, re.flags).test(e.name));
   if (exact.length > 0) matches = exact;
-  else if (!role && matches.some((e) => e.role === "link")) matches = matches.filter((e) => e.role === "link");
+  else if (!role) {
+    // A button whose name repeats a matching link's ("Add <product> to cart" next to the "<product>" link) is the
+    // link's companion: drop it. Any other button stays, so a real choice is listed, never decided silently.
+    const linkNames = matches.filter((e) => e.role === "link" && e.name).map((e) => e.name.toLowerCase());
+    if (linkNames.length > 0)
+      matches = matches.filter((e) => e.role !== "button" || !linkNames.some((n) => e.name.toLowerCase().includes(n)));
+  }
   const rows = rowTexts(nodes, matches);
   let withRows = matches.map((e, i) => ({ ...e, row: rows[i] }));
   if (near) {
@@ -204,34 +209,214 @@ function chooseTarget(nodes, entries, re, { near, nth, role } = {}) {
   return { several: matches };
 }
 
-// Layout snapshot -> lines of visible text, one per block-level element, so a price split into "145" ",95" "zł" reads
-// "145,95 zł". Needs captureSnapshot with computedStyles ["display", "visibility"].
+// Layout snapshot -> lines of visible text, one per block-level element (a price split into "145" ",95" "zł" reads
+// "145,95 zł"). Needs captureSnapshot with computedStyles STYLES. Within a block, pieces of text are joined the way a PDF
+// text extractor does it, from layout alone: a space where the source has none but the boxes sit on different lines, stand
+// apart by more than a sliver, or have a replaced or void element (br, img, input...) between them; no space where they
+// touch. Text a person cannot see is left out: no box or a box under 2 px², entirely left of or above the page, visibility
+// hidden, or under an ancestor with opacity 0 (screen-reader-only text, honeypot links, prompt injection).
+const STYLES = ["display", "visibility", "opacity"];
 const BLOCK = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root|inline-block|inline-flex|inline-grid)$/;
+const VOID = new Set(["BR", "IMG", "INPUT", "SELECT", "TEXTAREA", "HR", "SVG", "VIDEO", "CANVAS", "IFRAME", "OBJECT", "EMBED"]);
+
+// Per-document helpers over a DOMSnapshot document: style, bounds, effective visibility.
+function docView(snap, doc) {
+  const str = (i) => (i >= 0 ? snap.strings[i] : "");
+  const layoutOf = new Map();
+  doc.layout.nodeIndex.forEach((ni, li) => layoutOf.set(ni, li));
+  const style = (i) => {
+    const li = layoutOf.get(i);
+    return li === undefined ? undefined : doc.layout.styles[li].map(str);
+  };
+  const bounds = (i) => {
+    const li = layoutOf.get(i);
+    const b = li === undefined ? undefined : doc.layout.bounds?.[li];
+    return b ? { x: b[0], y: b[1], w: b[2], h: b[3] } : undefined;
+  };
+  const parent = doc.nodes.parentIndex;
+  const transparent = new Map();
+  const seeThrough = (i) => {
+    if (i < 0) return false;
+    if (transparent.has(i)) return transparent.get(i);
+    const v = style(i)?.[2] === "0" || seeThrough(parent[i]);
+    transparent.set(i, v);
+    return v;
+  };
+  const offscreen = (b) => b.x + b.w <= 0 || b.y + b.h <= 0;
+  const tiny = (b) => b.w * b.h < 2;
+  return { str, style, bounds, parent, layoutOf, seeThrough, offscreen, tiny };
+}
+
 function snapshotLines(snap) {
   const lines = [];
   for (const doc of snap.documents ?? []) {
-    const str = (i) => (i >= 0 ? snap.strings[i] : "");
-    const style = new Map();
-    doc.layout.nodeIndex.forEach((ni, li) => style.set(ni, doc.layout.styles[li].map(str)));
-    const parent = doc.nodes.parentIndex;
+    const v = docView(snap, doc);
+    const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
     const blockOf = (i) => {
-      let p = parent[i];
-      while (p > 0 && !BLOCK.test(style.get(p)?.[0] ?? "inline")) p = parent[p];
+      let p = v.parent[i];
+      while (p > 0 && !BLOCK.test(v.style(p)?.[0] ?? "inline")) p = v.parent[p];
       return p;
     };
     const groups = new Map();
-    doc.nodes.nodeValue.forEach((v, i) => {
-      if (doc.nodes.nodeType[i] !== 3 || !style.has(i)) return;
-      if (style.get(i)?.[1] === "hidden") return;
-      const g = blockOf(i);
-      groups.set(g, (groups.get(g) ?? "") + str(v));
-    });
-    for (const t of groups.values()) {
-      const s = squash(t);
-      if (s) lines.push(s);
+    const group = (g) => {
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false });
+      return groups.get(g);
+    };
+    for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
+      if (!v.layoutOf.has(i)) continue;
+      if (doc.nodes.nodeType[i] === 1) {
+        if (VOID.has(name(i)) && groups.has(blockOf(i))) groups.get(blockOf(i)).brk = true;
+        continue;
+      }
+      if (doc.nodes.nodeType[i] !== 3) continue;
+      const b = v.bounds(i);
+      if (!b || v.tiny(b) || v.offscreen(b) || v.style(i)?.[1] === "hidden" || v.seeThrough(i)) continue;
+      const raw = v.str(doc.nodes.nodeValue[i]);
+      if (raw.trim() === "") {
+        const g0 = groups.get(blockOf(i));
+        if (g0 && g0.text !== "") g0.text += " ";
+        continue;
+      }
+      const g = group(blockOf(i));
+      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || apart(g.box, b))) g.text += " ";
+      g.text += raw;
+      g.box = b;
+      g.brk = false;
+    }
+    for (const g of groups.values()) {
+      const t = squash(g.text);
+      if (t) lines.push(t);
     }
   }
   return lines;
+}
+
+// Two consecutive text boxes of one block read as separate words: on different lines, or a visible gap between them.
+function apart(a, b) {
+  if (!a) return false;
+  const h = Math.max(Math.min(a.h, b.h), 1);
+  const overlap = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (overlap < 0.5 * h) return true;
+  return b.x - (a.x + a.w) > 0.15 * h;
+}
+
+// Backend ids of elements a person cannot see (no visible box in their subtree, left of or above the page, or under
+// opacity 0), so snap and click leave them out like the text above.
+function hiddenElements(snap) {
+  const hidden = new Set();
+  for (const doc of snap.documents ?? []) {
+    const v = docView(snap, doc);
+    const seen = new Set();
+    for (const [i] of v.layoutOf) {
+      const b = v.bounds(i);
+      if (!b || v.tiny(b) || v.offscreen(b) || v.seeThrough(i)) continue;
+      for (let p = i; p >= 0 && !seen.has(p); p = v.parent[p]) seen.add(p);
+    }
+    for (const [i] of v.layoutOf) {
+      if (doc.nodes.nodeType[i] !== 1) continue;
+      const b = v.bounds(i);
+      const gone = !seen.has(i) || (b && v.offscreen(b)) || v.seeThrough(i);
+      if (gone && doc.nodes.backendNodeId) hidden.add(doc.nodes.backendNodeId[i]);
+    }
+  }
+  return hidden;
+}
+
+// Long blocks become several numbered lines instead of one clipped line, so every part of a page can be read.
+function wrapLines(lines, width = 200) {
+  const out = [];
+  for (const l of lines) {
+    if (l.length <= width) {
+      out.push(l);
+      continue;
+    }
+    let rest = l;
+    while (rest.length > width) {
+      let cut = rest.lastIndexOf(" ", width);
+      if (cut < width / 2) cut = width;
+      out.push(rest.slice(0, cut).trim());
+      rest = rest.slice(cut).trim();
+    }
+    if (rest) out.push(rest);
+  }
+  return out;
+}
+
+// Lines of `after` that `before` did not have, in order, once each: what an action changed on the page.
+function newLines(before, after) {
+  const had = new Set(before);
+  const out = [];
+  const seen = new Set();
+  for (const l of after) {
+    if (had.has(l) || seen.has(l)) continue;
+    seen.add(l);
+    out.push(l);
+  }
+  return out;
+}
+
+// Open modal dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in
+// them, so a consent banner or a popup is reported in any site's language without knowing its words.
+function dialogs(nodes, { max = 8 } = {}) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const out = [];
+  for (const n of nodes) {
+    if (n.ignored) continue;
+    const role = value(n.role);
+    const modal = (n.properties ?? []).some((p) => p.name === "modal" && value(p.value) === true);
+    if (role !== "dialog" && role !== "alertdialog" && !modal) continue;
+    const sub = [];
+    const walk = (id) => {
+      const m = byId.get(id);
+      if (!m) return;
+      sub.push(m);
+      for (const c of m.childIds ?? []) walk(c);
+    };
+    for (const c of n.childIds ?? []) walk(c);
+    const entries = axEntries(sub).filter((e) => e.role !== "heading");
+    out.push({ role, name: squash(value(n.name)), entries: entries.slice(0, max), more: Math.max(entries.length - max, 0) });
+  }
+  return out;
+}
+
+function dialogLines(ds) {
+  const out = [];
+  for (const d of ds) {
+    out.push(`open ${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""} (act on it first):`);
+    for (const e of d.entries) out.push(`  ${entryLine(e, { nameMax: 70 })}`);
+    if (d.more) out.push(`  ... ${d.more} more: desktop-web snap`);
+  }
+  return out;
+}
+
+// The page's headings with the text line each starts at, an outline to aim a regex at.
+function outline(nodes, lines, { max = 20 } = {}) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.ignored || value(n.role) !== "heading") continue;
+    const name = squash(value(n.name));
+    if (!name) continue;
+    const level = (n.properties ?? []).find((p) => p.name === "level");
+    const at = lines.findIndex((l) => l.startsWith(name.slice(0, 40)));
+    out.push(`${at >= 0 ? `${at + 1}:` : "-:"} ${"#".repeat(Number(value(level?.value) ?? 2))} ${clip(name, 100)}`);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+// Entries inside the main landmark first (header and navigation come before the content in document order).
+function mainFirst(nodes, entries) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const inMain = new Set();
+  const walk = (id) => {
+    const m = byId.get(id);
+    if (!m || inMain.has(id)) return;
+    inMain.add(id);
+    for (const c of m.childIds ?? []) walk(c);
+  };
+  for (const n of nodes) if (!n.ignored && value(n.role) === "main") walk(n.nodeId);
+  if (inMain.size === 0) return entries;
+  return [...entries.filter((e) => inMain.has(e.nodeId)), ...entries.filter((e) => !inMain.has(e.nodeId))];
 }
 
 // CSS viewport point -> X screen point. The window's X geometry (xdotool) has a frame of `frame` px on the left, right and
@@ -272,6 +457,14 @@ function subtreeIds(node, out = new Set()) {
 
 module.exports = {
   ALLOWED,
+  STYLES,
+  dialogLines,
+  dialogs,
+  hiddenElements,
+  mainFirst,
+  newLines,
+  outline,
+  wrapLines,
   assertAllowed,
   axEntries,
   chooseTarget,
