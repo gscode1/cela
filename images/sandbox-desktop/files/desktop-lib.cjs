@@ -47,7 +47,8 @@ const exec = (...args) =>
   execFileSync("agent-desktop-run", ["--exec", ...args], { encoding: "utf8", maxBuffer: BIG, stdio: ["ignore", "pipe", "ignore"] });
 const key = (...keys) => exec("xdotool", "key", "--clearmodifiers", ...keys);
 // xdotool type fails on some non-ASCII characters (seen: a non-breaking hyphen); callers pass what it can type.
-const type = (text) => exec("xdotool", "type", "--delay", "2", text);
+// "--" ends xdotool's options: text that starts with "-" (a burst of "upload-me") is typed, not read as an option.
+const type = (text) => exec("xdotool", "type", "--delay", "2", "--", text);
 
 // Input that reads as a person's to behaviour scoring: keys in small bursts at a typing pace, the pointer travelling to a
 // point near (not exactly at) the target's centre in a few steps, a short dwell before the press and a held button.
@@ -55,7 +56,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 function humanType(text) {
   for (let i = 0; i < text.length; ) {
     const n = Math.min(text.length - i, 1 + Math.floor(rand(0, 4)));
-    exec("xdotool", "type", "--delay", String(Math.round(rand(35, 90))), text.slice(i, i + n));
+    exec("xdotool", "type", "--delay", String(Math.round(rand(35, 90))), "--", text.slice(i, i + n));
     i += n;
     if (Math.random() < 0.15) pause(rand(80, 260));
   }
