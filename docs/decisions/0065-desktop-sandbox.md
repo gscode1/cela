@@ -496,6 +496,35 @@ The suite gained `infobar` (Chrome's accessibility tree holds no such bar) and `
 `redirect.html`, `missing.html`, `challenge.html`, `loading.html`, a local server that never answers), and `spacing` and
 `marks` cover the text changes; `spacing` now expects `eta theta` as one line.
 
+### desktop-web: a control's own decoration, labels, scoped dropdowns, "nothing happened", form hints (issue #473)
+
+Round 2 of the hard local tests (a shop's filters and sort control, a practice form, a payment demo, a map's directions form).
+Reading stays passive and input stays real X events; nothing here knows a site, a language or a host.
+
+- **Own decoration.** `annotate` records a control's visible `<label>` (`labelEl`, also when the input itself is visible) and
+  its own box (`boxEl`): the highest ancestor, at most three levels up, that holds no other listed control. The covered-by
+  check accepts a hit inside either, so a sibling's or a `for=` label's `::before` drawn over the input no longer refuses the
+  click; the `checked false -> true` read-back is the proof. Anything else in front is still refused, and the refusal names
+  the dialog the hit is in and says to run the rest of the chain again.
+- **Labels.** A field or slider without a name in letters gets `label "…"`: the text ending just left of it on its height
+  (words of the line before it), else the nearest short line just above it, never text drawn inside it. It is matched by a
+  regex (and counts as an exact name); markup words (`‹…›`) are printed only when there is no label and no row text.
+- **Dropdowns.** `select` on an in-page dropdown takes the options it owns (its subtree and what it names in
+  `aria-controls`), else options that appeared as it opened, else the lines of text that appeared (a list without roles),
+  clicked as text. It never falls back to every option of the page (a menu elsewhere). On a failure it presses Escape to close
+  the popup it opened and says when the address changed all the same. An answer lists new options with refs, and `hover` and
+  `shot` take any visible text as a target.
+- **Nothing happened.** "result may come later" appears only when the page shows it is busy (a progress bar, `busy`).
+  Otherwise an action after which nothing changed (no text, state, dialog or address change) says `nothing happened`, lists
+  invalid and required-but-empty fields and how to look (`desktop-web shot <ref>`); the same no-op on the same control and
+  address twice in a row (a session file) says to stop clicking it. `type --enter` counts the field's own new value.
+- **Forms.** Of several fields matching `type`, the one outside the banner and navigation landmarks is used, and the answer
+  says so (`--near` picks another). A field in a `<form>` with no visible button says to use `--enter`. A new address that
+  keeps the path (only the query or fragment changed) or more than half the page's lines prints what changed, not an outline. `type ""` clears a field
+  (ctrl+a, BackSpace).
+
+The suite gained `decor`, `dropdown` and `acting` cases (pages `custom.html`, `dropdown.html`, `acting.html`).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
