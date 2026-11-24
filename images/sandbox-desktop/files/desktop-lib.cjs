@@ -57,6 +57,16 @@ function windowTitle() {
   }
 }
 
+// True when the active window is Firefox; the keystrokes of copyPage and desktop-url mean something else in other apps
+// (ctrl+l aligns left in Writer, F6 moves focus to its toolbar).
+function firefoxActive() {
+  try {
+    return / [—-] Mozilla Firefox$/u.test(exec("xdotool", "getactivewindow", "getwindowname").trim());
+  } catch {
+    return false;
+  }
+}
+
 function readClipboard() {
   try {
     return exec("xclip", "-o", "-selection", "clipboard");
@@ -249,6 +259,7 @@ module.exports = {
   copyPage,
   desktop,
   envelope,
+  firefoxActive,
   exec,
   failer,
   findAcross,

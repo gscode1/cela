@@ -35,6 +35,10 @@ interface State {
   afterNavigate: { title: string; page: string };
   // how many page copies return nothing before the page has text
   blankCopies: number;
+  // the active window's app: Firefox unless set
+  app?: "mousepad";
+  // an error code every accessibility click answers with (until the element is on screen)
+  clickError?: string;
 }
 
 const fake = `#!/usr/bin/env node
@@ -66,7 +70,7 @@ if (a[0] === "--exec") {
       } else if (k === "Escape" && s.focus === "find") s.focus = "page";
     }
   } else if (c[0] === "xdotool" && c[1] === "type") s.typed = c[c.length - 1];
-  else if (c[0] === "xdotool" && c[1] === "getactivewindow") out(s.title + " — Mozilla Firefox\\n");
+  else if (c[0] === "xdotool" && c[1] === "getactivewindow") out(s.title + (s.app === "mousepad" ? " - Mousepad" : " — Mozilla Firefox") + "\\n");
   else if (c[0] === "xdotool" && c[1] === "search") out(s.running ? "4194307\\n" : "");
   else if (c[0] === "xdotool" && c[1] === "mousemove") { s.title = s.afterClick.title; s.url = s.afterClick.url; s.page = s.afterClick.page; }
   else if (c[0] === "xclip" && c.includes("-o")) out(s.clip);
@@ -85,7 +89,7 @@ if (a[0] === "find") {
   if ((s.refuse[ref] || 0) > 0 && !(s.bounds[ref] && s.bounds[ref].y < 800)) {
     s.refuse[ref]--;
     save();
-    out({ version: "2.6", ok: false, command: "click", error: { code: "ACTION_FAILED", message: "Target is not actionable: visible (live offscreen state is true)" } });
+    out({ version: "2.6", ok: false, command: "click", error: { code: s.clickError || "ACTION_FAILED", message: "Target is not actionable: visible (live offscreen state is true)" } });
     process.exit(1);
   }
   s.title = s.afterClick.title; s.url = s.afterClick.url; s.page = s.afterClick.page;
@@ -188,6 +192,21 @@ describe("desktop-page", () => {
     expect(keys()).toEqual(["ctrl+a", "ctrl+c"]);
   });
 
+  it("takes one line of an editor as a document with --focused", { timeout: 40_000 }, () => {
+    state({ app: "mousepad", page: "price 42 PLN" });
+    const { out, status } = helper("desktop-page", "--focused", "price");
+    expect(status).toBe(0);
+    expect(out).toContain("1: price 42 PLN");
+  });
+
+  it("refuses to press Firefox keys in another app", { timeout: 40_000 }, () => {
+    state({ app: "mousepad" });
+    const { status, stderr } = helper("desktop-page", "price");
+    expect(status).toBe(64);
+    expect(stderr).toContain("not Firefox; for an editor or Writer use --focused");
+    expect(keys()).toEqual([]);
+  });
+
   it("answers to its first name, desktop-text", { timeout: 40_000 }, () => {
     const link = join(bin, "desktop-text");
     spawnSync("ln", ["-s", join(files, "desktop-page"), link]);
@@ -232,6 +251,22 @@ describe("desktop-click", () => {
     expect(calls().some((l) => l.startsWith("click"))).toBe(false);
   });
 
+  it(
+    "clicks the first of identical candidates (one target shown twice)",
+    { timeout: 40_000 },
+    () => {
+      state({
+        nodes: [
+          { ref_id: "@s1:e5", role: "link", name: "Same book" },
+          { ref_id: "@s1:e6", role: "link", name: "Same book " },
+        ],
+      });
+      const { out, status } = helper("desktop-click", "Same book");
+      expect(status).toBe(0);
+      expect(out[0]).toBe('clicked link "Same book" @s1:e5 (accessibility, first of 2 identical)');
+    },
+  );
+
   it("clicks the chosen candidate with --nth", { timeout: 40_000 }, () => {
     state({ nodes });
     const { out, status } = helper("desktop-click", "offer", "--nth", "1");
@@ -244,6 +279,19 @@ describe("desktop-click", () => {
     const { out, status } = helper("desktop-click", "Delta");
     expect(status).toBe(2);
     expect(out[0]).toContain("no link/button matches /Delta/");
+  });
+
+  it("treats a click that times out like a refused one", { timeout: 40_000 }, () => {
+    state({
+      nodes: [{ ref_id: "@s1:e8", role: "link", name: "Theta deep in a long page" }],
+      refuse: { "@s1:e8": 5 },
+      clickError: "TIMEOUT",
+      bounds: { "@s1:e8": { x: 100, y: 32_000, width: 200, height: 20 } },
+    });
+    const { out, status } = helper("desktop-click", "Theta");
+    expect(status).toBe(0);
+    expect(out[0]).toContain("@s1:e8 (accessibility)");
+    expect(keys()).toContain("ctrl+f");
   });
 
   it(
@@ -344,9 +392,12 @@ describe("desktop image settings", () => {
       const ext = policies.policies.ExtensionSettings;
       expect(ext["*"]?.installation_mode).toBe("blocked");
       expect(ext["idcac-pub@guus.ninja"]?.installation_mode).toBe("force_installed");
-      expect(ext["idcac-pub@guus.ninja"]?.install_url).toMatch(
-        /^file:\/\/\/usr\/lib\/firefox-esr\//,
-      );
+      // The policy loads the file the image puts there, from a directory that existed before the ADD (an ADD-created
+      // directory is root-only and Firefox runs as pi).
+      const target = (ext["idcac-pub@guus.ninja"]?.install_url ?? "").replace(/^file:\/\//, "");
+      expect(target).toBe("/usr/lib/firefox-esr/distribution/idcac-pub@guus.ninja.xpi");
+      expect(dockerfile).toContain(`istilldontcareaboutcookies-1.1.9.xpi \\\n  ${target}\n`);
+      expect(dockerfile).toContain("/usr/lib/firefox-esr/distribution/policies.json");
       expect(policies.policies.Preferences).toMatchObject({
         "browser.translations.enable": false,
         "browser.translations.automaticallyPopup": false,
@@ -359,5 +410,37 @@ describe("desktop image settings", () => {
     expect(readFileSync(join(files, "agent-desktop-run"), "utf8")).toContain(
       'if [ "${1:-}" = "-q" ]; then',
     );
+  });
+});
+
+describe("desktop-url", () => {
+  function url(): { out: string; status: number | null; stderr: string } {
+    const r = spawnSync("bash", [join(files, "desktop-url")], {
+      encoding: "utf8",
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        FAKE_STATE: join(dir, "state.json"),
+        FAKE_LOG: join(dir, "calls.log"),
+      },
+    });
+    return { out: r.stdout.trim(), status: r.status, stderr: r.stderr };
+  }
+
+  it("refuses outside Firefox instead of pressing its keys", { timeout: 20_000 }, () => {
+    state({ app: "mousepad" });
+    const { status, stderr } = url();
+    expect(status).toBe(64);
+    expect(stderr).toContain("not Firefox");
+    expect(keys()).toEqual([]);
+  });
+
+  it("prints the URL and leaves focus in the page", { timeout: 20_000 }, () => {
+    const { out, status } = url();
+    expect(status).toBe(0);
+    expect(out).toBe("https://shop.example/list");
+    expect(keys().at(-1)).toBe("F6");
+    expect(readState().clip).toBe("agent's own clipboard");
   });
 });

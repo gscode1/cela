@@ -63,10 +63,11 @@ function main() {
   if (o.from) {
     lines = fs.readFileSync(o.from, "utf8").split("\n");
   } else {
+    if (!o.focused && !lib.firefoxActive()) fail("the active window is not Firefox; for an editor or Writer use --focused", 64);
     const page = lib.copyPage({ focused: o.focused });
     lines = page.lines;
-    // A failed page focus copies the address bar (one line) or nothing.
-    if (lines.length <= 1) {
+    // A failed page focus copies the address bar (one line) or nothing; in an editor one line is a document.
+    if (o.focused ? lines.length === 0 : lines.length <= 1) {
       fail(`copied ${lines.length === 0 ? "nothing" : `only "${lib.clip(lines[0], 80)}"`}; is a browser window focused with a page loaded? For another app use --focused`);
     }
     file = lib.savePage(lines, o.out);

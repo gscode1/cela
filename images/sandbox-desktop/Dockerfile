@@ -66,9 +66,11 @@ COPY --from=forwarder /src/packages/browser-proxy/package.json /opt/browser-prox
 COPY images/sandbox-desktop/files/firefox-policies.json /usr/lib/firefox-esr/distribution/policies.json
 # "I still don't care about cookies" 1.1.9 (GPL-3.0-only, AMO), force-installed by the policy file: it accepts or hides cookie
 # consent banners on any site, from rules its maintainers keep, so the agent does not spend clicks and screenshots on them.
+# The file goes into distribution/, which the policy COPY above already made: a directory ADD creates is mode 0700 root, and
+# Firefox, running as pi, could not read the extension from it.
 ADD --checksum=sha256:42922f61cfc53e2103e492ddbe5736caf503d9dad4a88690efc4c64dac10d5c7 --chmod=0644 \
   https://addons.mozilla.org/firefox/downloads/file/4637154/istilldontcareaboutcookies-1.1.9.xpi \
-  /usr/lib/firefox-esr/distribution/extensions-pinned/idcac-pub@guus.ninja.xpi
+  /usr/lib/firefox-esr/distribution/idcac-pub@guus.ninja.xpi
 COPY --chmod=0755 images/sandbox-desktop/files/agent-desktop-run /usr/local/bin/agent-desktop-run
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-launch /usr/local/bin/desktop-launch
 COPY --chmod=0755 images/sandbox-desktop/files/desktop-find /usr/local/bin/desktop-find

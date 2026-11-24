@@ -76,6 +76,13 @@ function resolve(o) {
     if (o.nth >= pool.length) fail(`--nth ${o.nth} but only ${pool.length} matches`, 2);
     return pool[o.nth];
   }
+  // The same role and name on every candidate (a product's image link and title link, a header and footer copy of one
+  // control) is one target shown twice: click the first. Different names stay a choice for the agent.
+  const same = pool.every((n) => n.role === pool[0].role && (n.name ?? "").trim() === (pool[0].name ?? "").trim());
+  if (pool.length > 1 && same) {
+    pool[0].note = `first of ${pool.length} identical`;
+    return pool[0];
+  }
   if (pool.length > 1) {
     const lines = [`${pool.length} matches, clicked none; add --nth N or narrow the pattern${note}:`];
     for (const [i, n] of pool.slice(0, MAX_CANDIDATES).entries()) lines.push(`  --nth ${i}: ${lib.nodeLine(n)}`);
@@ -123,8 +130,9 @@ function main() {
   const beforeTitle = lib.windowTitle();
   let how = "accessibility";
   let result = click(ref);
-  if (!result.ok && result.error?.code === "ACTION_FAILED") {
-    // Refused, usually because it is out of view and agent-desktop's own scroll fails in Firefox.
+  // Refused (usually out of view; agent-desktop's own scroll fails in Firefox) or timed out resolving the element on a very
+  // large page: bring it into view and try again, then a mouse click.
+  if (!result.ok && ["ACTION_FAILED", "TIMEOUT"].includes(result.error?.code)) {
     const name = target.name ?? lib.envelope(lib.desktop(["get", ref, "--property", "text"])).data?.value;
     if (bringIntoView(ref, name)) result = click(ref);
     if (!result.ok) {
@@ -141,7 +149,7 @@ function main() {
     fail(`clicked nothing, ${err.code ?? "ERROR"}: ${err.message ?? "click failed"}`, 3);
   }
   const title = lib.settle(beforeTitle);
-  const out = [`clicked ${target.role ? `${target.role} ` : ""}${target.name ? `"${lib.clip(target.name, 80)}" ` : ""}${ref} (${how})`];
+  const out = [`clicked ${target.role ? `${target.role} ` : ""}${target.name ? `"${lib.clip(target.name, 80)}" ` : ""}${ref} (${how}${target.note ? `, ${target.note}` : ""})`];
   out.push(`title: ${lib.clip(title, 120)} (${title === beforeTitle ? "same" : "changed"})`);
   if (o.show !== undefined) {
     let re;

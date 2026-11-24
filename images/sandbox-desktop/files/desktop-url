@@ -5,6 +5,10 @@
 set -euo pipefail
 
 run=(agent-desktop-run --exec)
+# The keys below mean something else in other apps (ctrl+l aligns left in Writer, F6 moves focus to its toolbar).
+title=$("${run[@]}" xdotool getactivewindow getwindowname 2>/dev/null || true)
+[[ $title == *" — Mozilla Firefox" || $title == *" - Mozilla Firefox" ]] ||
+  { echo "desktop-url: the active window is not Firefox (${title:-none})" >&2; exit 64; }
 saved=$("${run[@]}" xclip -o -selection clipboard 2>/dev/null || true)
 "${run[@]}" xdotool key --clearmodifiers ctrl+l
 sleep 0.3
