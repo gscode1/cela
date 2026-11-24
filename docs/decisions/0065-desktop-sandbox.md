@@ -17,7 +17,7 @@ that costs and which control path works.
 
 `sandboxFlavour: desktop` selects the image `pi-sandbox-desktop` (`images/sandbox-desktop`): the sandboxd base, the `pi-env`
 bridge, a virtual X server (Xvfb, 1280x800) with openbox, a session D-Bus and the AT-SPI bus, and three apps: mousepad,
-LibreOffice Writer and Firefox ESR. It is behind `sandbox.flavours.desktop.enabled`, **off by default** (the image is large
+LibreOffice Writer and Google Chrome (the first version had Firefox ESR; see "Chromium and desktop-web", issue #452). It is behind `sandbox.flavours.desktop.enabled`, **off by default** (the image is large
 and nobody asked for it until a profile does), and needs `images.sandboxDesktop` when on (the chart fails without a tag or
 digest, like the other images). The flavour composes with sizes, network modes and named runtimes exactly like `browser`:
 
@@ -46,9 +46,9 @@ credentials stay in the orchestrator, as always.
 
 ### Network
 
-Firefox reaches the web only through the session's egress proxy, via the same loopback forwarder as the browser image
-(`packages/browser-proxy`, 127.0.0.1:3129), and its enterprise policy sets the proxy for all protocols and disables
-telemetry, updates, DNS over HTTPS, sync and the password manager. The seeded profile is `proxied` with the `open-web` rule
+Chrome (originally Firefox, which had the same rule through its enterprise policy) reaches the web only through the session's egress proxy, via the same loopback forwarder as the browser image
+(`packages/browser-proxy`, 127.0.0.1:3129): `desktop-launch chrome` passes `--proxy-server` and refuses to resolve names itself, and its
+managed policy disables telemetry, DNS over HTTPS, sync and the password manager. The seeded profile is `proxied` with the `open-web` rule
 set, like `browser`. The `-direct` twins are rendered for the flavour when the gate `security.allowDirectSandboxEgress`
 is on, as for the browser; direct mode keeps its own rules (no repo, no credentialed MCP, no `onecli` route).
 
@@ -93,7 +93,7 @@ syscall and a socket round trip are. Measured on the same node:
   (`node hack/seed-desktop-profile.mjs --runtime gvisorkvm`).
 - More CPU does not help gVisor (10 to 15% at best, inside noise): the chain is latency-bound.
 
-### Firefox runs without its own sandbox
+### Firefox runs without its own sandbox (superseded: Firefox was removed in #452; Chrome runs with `--no-sandbox` for the same reason)
 
 Firefox's content sandbox needs user namespaces, which the Pod does not have (all capabilities dropped), so the launcher
 sets `MOZ_DISABLE_CONTENT_SANDBOX=1`, like Chromium's `--no-sandbox` in the browser image (ADR 0041). The runtime is the
@@ -120,6 +120,10 @@ RBAC runs `kubectl port-forward pod/<sandbox pod> 6080:6080` and opens `http://l
 not work under gVisor (plan.md), so there is no live view there. The console view stays deferred.
 
 ### Token budget
+
+Superseded in part by #452: the Firefox web helpers described below (`desktop-open`, `desktop-click`, `desktop-url`, `desktop-page`
+without `--focused`, `--links`) are gone with Firefox; web pages are read by `desktop-web`. `desktop-page --focused`, `desktop-find`
+and `desktop-shot` remain. The measurements and design reasons stay as history.
 
 A raw snapshot is the expensive call. In one Allegro task a desktop agent used 2.84M tokens; 37% came from a single
 `agent-desktop snapshot -i --compact` printed to stdout: 364 kB of JSON of which `dom_classes` were 21k characters,
@@ -227,7 +231,7 @@ sets `navigator.webdriver` to true (the `dom.webdriver.enabled` pref no longer h
 and DataDome answered Allegro, Etsy and Tripadvisor with a captcha in a lab run. The Firefox policy keeps
 `DisableDeveloperTools`, which also keeps both off.
 
-Chromium is in the image next to Firefox and is the default for web pages. `desktop-launch chromium` starts it with the same
+Chromium is in the image next to Firefox and is the default for web pages. `desktop-launch chromium` (now `chrome`) starts it with the same
 egress forwarder, a fresh profile, a managed policy (`/etc/chromium/policies/managed/pi-desktop.json`: `file://` only under
 `/workspace`, no translate, no sign-in or sync) and a debugging port on loopback. `desktop-web` (with `cdp-lib.cjs`) reads it
 through that port without anything a page can detect: one short connection per command and only the methods in `ALLOWED`
@@ -242,14 +246,26 @@ Allegro's listing, consent dialog, offer and price worked without a captcha; cli
 `--no-sandbox` shows Chromium's "unsupported command-line flag" bar (the reader's geometry accounts for it). No
 `--enable-unsafe-swiftshader`: rebrowser reads software WebGL as Playwright's default, so pages get no WebGL instead. The cookie extension is Firefox-only: in Chromium a consent dialog is one
 `desktop-web click`. A click whose centre another element covers (a dialog) is refused with that element's name instead of
-landing on it. Firefox and `desktop-open`/`desktop-page`/`desktop-click` stay for sites that misbehave in Chromium.
+landing on it. Firefox and `desktop-open`/`desktop-page`/`desktop-click` stay for sites that misbehave in Chromium (superseded below).
+
+#### Google Chrome replaces Chromium, Firefox is removed (issue #452)
+
+Debian's Chromium fails rebrowser's `useragent` check: its `navigator.userAgentData` brands lack "Google Chrome", which a person's
+Chrome always reports. The image now installs `google-chrome-stable` from Google's signed apt repository
+(`https://dl.google.com/linux/chrome/deb/ stable main`, amd64 and arm64), with the signing key checked against its pinned fingerprint
+`EB4C 1BFD 4F04 2F6D DDCC EC91 7721 F63B D38B 4796` during the build; the repository's source file is removed afterwards, so later
+`apt-get update` runs in the image do not use it and a new Chrome means a rebuilt image. `desktop-launch chrome` (`chromium` is an
+alias) runs it with the flags above, and the managed policy moved to `/etc/opt/chrome/policies/managed/pi-desktop.json`. Firefox ESR is
+removed, with its policy file, the cookie extension, `desktop-open`, `desktop-click`, `desktop-url` and the `desktop-text` link: web
+pages go through `desktop-web` only, and two browsers meant two behaviours for the agent to choose between. The desktop keeps
+Mousepad and Writer, `desktop-find`, `desktop-shot` and `desktop-page --focused` (copy the focused app's text).
 
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
   the session API) and handing control to a person are separate designs.
 - No audio, clipboard sync with the outside, GPU or file upload through the desktop; files go through `/workspace`.
-- Four apps only (Chromium since #450). Adding one means changing the image and its skill.
+- Three apps only (Chrome since #450 and #452; Firefox was removed). Adding one means changing the image and its skill.
 - The image is large (about 1.9 GB uncompressed); that is why the flavour is off by default.
 - The Playwright-style e2e suite for the flavour is not part of this change.
 

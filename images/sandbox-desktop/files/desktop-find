@@ -3,8 +3,8 @@
 // A raw `agent-desktop snapshot` is hundreds of kB (class lists, action lists, offscreen nodes) and would be re-read on every
 // turn; this prints a few hundred bytes (docs/decisions/0065-desktop-sandbox.md, "Token budget"). No dependencies.
 //
-//   desktop-find --app firefox-esr "add to cart"        nodes whose name, value or description match the regex (any case)
-//   desktop-find --app firefox-esr --role button,link   all visible buttons and links, first --limit of them
+//   desktop-find --app mousepad "TODO"                  nodes whose name, value or description match the regex (any case)
+//   desktop-find --app soffice.bin --role button,link   all visible buttons and links, first --limit of them
 //   desktop-find --app mousepad                         no filter: a summary (windows, counts by role), not the tree
 //   desktop-find --from FILE [filters]                  filter a saved snapshot without walking the tree again
 //
@@ -76,13 +76,13 @@ function takeSnapshot(o) {
   }
 }
 
-// A heavy web page in Firefox can overflow agent-desktop's 1 MB ref map even at a small --max-depth, and --root refs inside
+// A heavy document can overflow agent-desktop's 1 MB ref map even at a small --max-depth, and --root refs inside
 // web content are rejected as ambiguous. `agent-desktop find` still answers, so with a filter we fall back to it (one find
 // per role, skipping a role that fails; see findAcross in desktop-lib.cjs) and apply the same regex here.
 function findFallback(o) {
   const r = lib.findAcross({ app: o.app, roles: o.roles, literal: lib.literalOf(o.pattern), root: o.root, timeout: o.timeout });
   if (r.answered === 0) {
-    fail(`agent-desktop find failed for every role: ${r.skipped.join(", ")}. For a web page's text use desktop-page 'regex'`);
+    fail(`agent-desktop find failed for every role: ${r.skipped.join(", ")}. For a document's text use desktop-page --focused 'regex'`);
   }
   return { ok: true, data: { app: o.app, tree: { children: r.matches }, viaFind: true, truncated: r.truncated, skipped: r.skipped, splitRoles: r.splitRoles } };
 }
@@ -167,7 +167,7 @@ function main() {
   if (env.overflow) {
     if (re === undefined && o.roles.length === 0) {
       fail(
-        "the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find, or use desktop-page 'regex' for a web page's text",
+        "the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find, or use desktop-page --focused 'regex' for a document's text",
       );
     }
     env = findFallback(o);
@@ -195,15 +195,15 @@ function main() {
     for (const n of hits.slice(0, o.limit)) out.push(line(n));
     if (hits.length > o.limit) out.push(`${hits.length - o.limit} more, narrow the filter (regex, --role, --limit)`);
     if (hits.length === 0) {
-      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}; in a web page, desktop-page 'regex' searches all of its text`);
+      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}; desktop-page --focused 'regex' searches all of a document's text`);
     }
     if (env.data.complete === false) out.push("snapshot incomplete: raise --timeout-ms");
     if (env.data.viaFind) out.push(`(tree too large to snapshot; used agent-desktop find${env.data.truncated ? ", which hit its 500-match limit: add --role or a literal word" : ""})`);
     if (env.data.splitRoles) {
-      out.push(`searched only ${lib.FALLBACK_ROLES.join(", ")} because the search without a role failed; page text: desktop-page 'regex'`);
+      out.push(`searched only ${lib.FALLBACK_ROLES.join(", ")} because the search without a role failed; document text: desktop-page --focused 'regex'`);
     }
     if (env.data.skipped?.length > 0) {
-      out.push(`skipped, find failed: ${env.data.skipped.join(", ")}. Text there may be missing: desktop-page 'regex' reads the whole page`);
+      out.push(`skipped, find failed: ${env.data.skipped.join(", ")}. Text there may be missing: desktop-page --focused 'regex' reads the whole document`);
     }
   }
   process.stdout.write(`${out.join("\n")}\n`);

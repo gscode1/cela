@@ -22,7 +22,7 @@ export const FLAVOUR_FACTS: Readonly<Record<SandboxFlavour, { tools: string }>> 
   },
   desktop: {
     tools:
-      "git, node 22, python3 (with PIL), jq, a virtual X desktop (Xvfb, openbox) with Chromium, Firefox, mousepad and LibreOffice Writer. Web pages: desktop-web open URL, desktop-web text REGEX, desktop-web snap REGEX, desktop-web click REF|REGEX (Chromium; one call each, a few lines of text); desktop-open/desktop-page/desktop-click do the same in Firefox. Desktop apps: desktop-launch, desktop-find and agent-desktop-run agent-desktop, xdotool. Also desktop-shot, desktop-url and scrot (usage: /usr/local/share/pi-desktop/DESKTOP.md)",
+      "git, node 22, python3 (with PIL), jq, a virtual X desktop (Xvfb, openbox) with Google Chrome, mousepad and LibreOffice Writer. Web pages: desktop-web open URL, desktop-web text REGEX, desktop-web snap REGEX, desktop-web click REF|REGEX (one call each, a few lines of text). Desktop apps: desktop-launch mousepad|writer, desktop-find and agent-desktop-run agent-desktop, desktop-page --focused REGEX to read an app's text, xdotool. Also desktop-shot and scrot (usage: /usr/local/share/pi-desktop/DESKTOP.md)",
   },
 };
 

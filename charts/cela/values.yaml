@@ -192,14 +192,14 @@ sandbox:
       shmSize: 256Mi # memory-backed /dev/shm; counts against the memory limit
       warmPoolReplicas: 0 # must be 0 (the schema refuses more); see sandbox.sizes
     # The desktop flavour (docs/decisions/0065-desktop-sandbox.md): the sandbox image plus a virtual X desktop (Xvfb, openbox),
-    # mousepad, LibreOffice Writer, Firefox and agent-desktop (images/sandbox-desktop).
+    # mousepad, LibreOffice Writer, Google Chrome and agent-desktop (images/sandbox-desktop).
     # Off (the default): none of it exists and the API refuses `sandboxFlavour: desktop`. On: renders
     # pi-env-desktop[-direct]-template[-<size>] and -pool[-<size>] for every size and network mode, and for each named runtime that lists
     # `desktop`; needs images.sandboxDesktop. It costs nothing until a session asks for it (no warm Pods). A desktop session never has
     # credentials (no repo, no onecli route, no credentialed MCP), and its desktop is lost when the Pod is recycled.
     desktop:
       enabled: false
-      # Its own limits, whatever the size: a desktop with Firefox or LibreOffice needs far more than a shell (measured: ADR 0065).
+      # Its own limits, whatever the size: a desktop with Chrome or LibreOffice needs far more than a shell (measured: ADR 0065).
       # The size still sets the workspace volume.
       resources:
         requests: { cpu: "1", memory: 2Gi }

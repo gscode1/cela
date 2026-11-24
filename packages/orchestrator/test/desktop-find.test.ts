@@ -16,14 +16,14 @@ const fixture = {
   ok: true,
   command: "snapshot",
   data: {
-    app: "firefox-esr",
+    app: "soffice.bin",
     complete: true,
     ref_count: 8,
     snapshot_id: "sabc",
     tree: {
       ref_id: ref(1),
       role: "window",
-      name: "Allegro - Mozilla Firefox",
+      name: "Offers - LibreOffice Writer",
       children: [
         {
           ref_id: ref(2),
@@ -76,7 +76,7 @@ describe("desktop-find", () => {
   it("prints a summary, not the tree, when there is no regex or role", { timeout: 15_000 }, () => {
     const { out } = find();
     expect(out[0]).toBe(`snapshot: ${file}`);
-    expect(out.join("\n")).toContain('windows: "Allegro - Mozilla Firefox"');
+    expect(out.join("\n")).toContain('windows: "Offers - LibreOffice Writer"');
     expect(out.join("\n")).toMatch(/roles: .*button 1/);
     expect(out.join("\n")).not.toContain("@sabc:e4");
   });
@@ -127,18 +127,11 @@ describe("desktop-find", () => {
 
 describe("desktop image helpers", () => {
   it(
-    "installs both helpers, the packages they need and quiet Node in the wrapper",
+    "installs the helpers, the packages they need and quiet Node in the wrapper",
     { timeout: 10_000 },
     () => {
       const dockerfile = readFileSync(join(root, "images/sandbox-desktop/Dockerfile"), "utf8");
-      for (const name of [
-        "desktop-find",
-        "desktop-url",
-        "desktop-shot",
-        "desktop-page",
-        "desktop-click",
-        "desktop-open",
-      ]) {
+      for (const name of ["desktop-find", "desktop-shot", "desktop-page"]) {
         expect(dockerfile).toContain(
           `COPY --chmod=0755 images/sandbox-desktop/files/${name} /usr/local/bin/${name}`,
         );
@@ -233,18 +226,18 @@ describe("desktop-find on a tree too large to snapshot", () => {
   }
 
   it("falls back to agent-desktop find and filters the same way", { timeout: 15_000 }, () => {
-    const { out, status } = live("--app", "firefox-esr", "--role", "link", "Ferrari");
+    const { out, status } = live("--app", "soffice.bin", "--role", "link", "Ferrari");
     expect(status).toBe(0);
     expect(out).toContain('@sf:e1 link "LEGO 42143 Ferrari"');
     expect(out.join("\n")).not.toContain("offscreen");
     expect(out.join("\n")).not.toContain("Porsche");
     expect(out.at(-1)).toContain("used agent-desktop find");
     const calls = readFileSync(join(dir, "args.log"), "utf8");
-    expect(calls).toMatch(/^find --app firefox-esr --role link --text Ferrari /m);
+    expect(calls).toMatch(/^find --app soffice.bin --role link --text Ferrari /m);
   });
 
   it("refuses an unfiltered call instead of printing a huge tree", { timeout: 15_000 }, () => {
-    const { status, stderr } = live("--app", "firefox-esr");
+    const { status, stderr } = live("--app", "soffice.bin");
     expect(status).toBe(1);
     expect(stderr).toContain("add a regex or --role");
     expect(stderr).toContain("desktop-page");
@@ -254,7 +247,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
     const { out, status } = liveFailing(
       ["statictext"],
       "--app",
-      "firefox-esr",
+      "soffice.bin",
       "--role",
       "statictext,link",
       "Ferrari",
@@ -266,7 +259,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
   });
 
   it("retries a failing unscoped find role by role", { timeout: 15_000 }, () => {
-    const { out, status } = liveFailing(["", "button"], "--app", "firefox-esr", "Ferrari|Porsche");
+    const { out, status } = liveFailing(["", "button"], "--app", "soffice.bin", "Ferrari|Porsche");
     expect(status).toBe(0);
     expect(out).toContain('@sf:e1 link "LEGO 42143 Ferrari"');
     const calls = readFileSync(join(dir, "args.log"), "utf8")
@@ -286,7 +279,7 @@ describe("desktop-find on a tree too large to snapshot", () => {
     const { status, stderr } = liveFailing(
       ["link"],
       "--app",
-      "firefox-esr",
+      "soffice.bin",
       "--role",
       "link",
       "Ferrari",

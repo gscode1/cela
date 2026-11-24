@@ -1,13 +1,13 @@
 ---
 name: agent-desktop
-description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer, and for a ref in Firefox that desktop-click cannot reach. Web pages go through desktop-web in Chromium (desktop-sandbox skill)."
+description: "agent-desktop 1.3.1 reference: accessibility refs, snapshot, click, type, press, get. For Mousepad and LibreOffice Writer. Web pages go through desktop-web in Google Chrome (desktop-sandbox skill)."
 ---
 
 # agent-desktop 1.3.1
 
 Reads and operates apps through their accessibility tree. Each command prints one JSON envelope (`ok`, `data` or `error`); `agent-desktop-run -q <command>` prints one line instead. Always run it as `agent-desktop-run <args>`. `agent-desktop-run <command> --help` lists the flags.
 
-**Web pages do not start here.** Use `desktop-web open <url>`, `desktop-web text "regex"`, `desktop-web snap "regex"` and `desktop-web click <ref|"regex">` in Chromium (desktop-sandbox skill): one call each, a few lines of text, with its own refs. agent-desktop refs do not reach Chromium; in Firefox, the fallback browser, use them only for a field `desktop-click` cannot reach.
+**Web pages do not start here.** Use `desktop-web open <url>`, `desktop-web text "regex"`, `desktop-web snap "regex"` and `desktop-web click <ref|"regex">` in Google Chrome (desktop-sandbox skill): one call each, a few lines of text, with its own refs. agent-desktop refs do not reach Chrome.
 
 ## Never print a full snapshot
 
@@ -15,7 +15,7 @@ A raw snapshot is hundreds of kB of JSON (class lists, offscreen nodes) that you
 
     desktop-find --app mousepad                          summary: windows, counts by role
     desktop-find --app soffice.bin "Save|Bold"           regex on name/value, any case
-    desktop-find --app firefox-esr --role textfield "search" --limit 10
+    desktop-find --app mousepad --role textfield --limit 10
     desktop-find --from /home/pi/.agent-desktop-session/last-snapshot.json "price"   filter the saved file again, no new walk
     --skeleton, --root @ref, --max-depth N narrow big trees; --all adds offscreen nodes (keep --limit small)
 
@@ -23,8 +23,8 @@ Never run `snapshot` without redirecting it.
 
 ## Loop for Mousepad and Writer: observe, act on a ref, verify
 
-1. `desktop-launch mousepad|writer` once, then `desktop-find --app <name> <regex>`. App names: `mousepad`, `soffice.bin` (Writer), `firefox-esr`. `list-apps` shows what runs.
-2. Large app (Writer has about 1500 refs): `desktop-find --skeleton --app <name>` first, then drill into one region with `desktop-find --root <ref> --app <name> <regex>`. A big web page overflows the snapshot (`RefMap exceeds 1MB`) and `--root` inside a page is refused as ambiguous: there, always give a regex or `--role`, and `desktop-find` switches to `agent-desktop find` by itself (a literal word is faster than a regex).
+1. `desktop-launch mousepad|writer` once, then `desktop-find --app <name> <regex>`. App names: `mousepad`, `soffice.bin` (Writer). `list-apps` shows what runs.
+2. Large app (Writer has about 1500 refs): `desktop-find --skeleton --app <name>` first, then drill into one region with `desktop-find --root <ref> --app <name> <regex>`. A very large tree overflows the snapshot (`RefMap exceeds 1MB`) and `--root` inside it can be refused as ambiguous: then give a regex or `--role`, and `desktop-find` switches to `agent-desktop find` by itself (a literal word is faster than a regex).
 3. Act on a ref from that snapshot. A ref belongs to one snapshot: after the UI changes, snapshot again (`STALE_REF`, `SNAPSHOT_NOT_FOUND`).
 4. Verify the effect with `get <ref> --property value|text|states` or one new `desktop-find`. Take one snapshot per step: every call walks the whole tree and costs seconds.
 
@@ -33,7 +33,7 @@ Never run `snapshot` without redirecting it.
 - `snapshot` (via `desktop-find`; redirect it to a file if run directly): `-i` interactive nodes only, `--compact`, `--skeleton`, `--root <ref>`, `--max-depth N`, `--window-id <id>`, `--surface menu|sheet|alert`.
 - `find --app <name> --role <role> --name <text>`: search by role or name; it walks the tree too.
 - `click`, `toggle`, `check`, `uncheck`, `select`, `expand`, `collapse`, `scroll-to`, `clear`, `set-value`: act on a ref, headless.
-- `type <ref> "<text>"`: inserts text into a field. Use `--headed` for browser-family apps (Firefox): headless typing is refused there.
+- `type <ref> "<text>"`: inserts text into a field.
 - `press <combo> --app <name>`: keys such as `ctrl+s`, `return`, `ctrl+l`. Run `focus-window --app <name>` first, or the key goes to the wrong window.
 - `double-click`, `hover`, `drag`, `mouse-click --xy X Y`, `scroll`: physical input, `--headed` only.
 - `get <ref> --property text|value|title|bounds|role|states`, `is <ref> visible|enabled|checked|focused`.
