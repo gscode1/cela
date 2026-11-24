@@ -138,8 +138,10 @@ function tunnel(
     const responseHead = buffered.subarray(0, end + 4);
     const rest = buffered.subarray(end + 4);
     const status = /^HTTP\/1\.[01] (\d{3})/.exec(responseHead.toString("latin1"))?.[1];
-    // The proxy's answer reaches the browser unchanged: its 403 and 407 bodies say why a host was refused.
-    client.write(responseHead);
+    // The proxy's answer reaches the browser, its body saying why a host was refused, with one change: a 407 becomes
+    // 403. The browser holds no proxy credentials (this forwarder adds the session's), so a 407 can only be a refusal,
+    // and a headed Chrome answers any 407, even for a page's tracker, with a modal sign-in dialog over the window.
+    client.write(status === "407" ? refusalHead(responseHead) : responseHead);
     if (status === undefined || !status.startsWith("2")) {
       client.end(rest);
       remote.destroy();
@@ -153,4 +155,11 @@ function tunnel(
     remote.on("close", () => client.destroy());
   };
   remote.on("data", onData);
+}
+
+/** A 407 response head turned into a 403 without its Proxy-Authenticate challenge; the other headers stay. */
+export function refusalHead(head: Buffer): Buffer {
+  const lines = head.toString("latin1").split("\r\n");
+  lines[0] = (lines[0] ?? "").replace(/^(HTTP\/1\.[01]) 407 .*$/, "$1 403 Forbidden");
+  return Buffer.from(lines.filter((l) => !/^proxy-authenticate:/i.test(l)).join("\r\n"), "latin1");
 }

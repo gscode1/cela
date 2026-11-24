@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseUpstream, startForwarder, type Forwarder } from "../src/forwarder.js";
+import { parseUpstream, refusalHead, startForwarder, type Forwarder } from "../src/forwarder.js";
 
 const TOKEN = "tok-123_abc";
 const expected = `Basic ${Buffer.from(`x:${TOKEN}`).toString("base64")}`;
@@ -165,10 +165,21 @@ describe("startForwarder", { timeout: 15_000 }, () => {
     expect(out).toMatch(/^HTTP\/1\.1 403 Forbidden/);
   });
 
-  it("shows the proxy's 407 when it has no token to add", async () => {
+  it("turns the proxy's 407 into 403, so a browser never asks for a proxy password", async () => {
     const { forwarder: f } = await start(false);
-    const out = await exchange(f.port, "CONNECT example.org:443 HTTP/1.1\r\n\r\n", /407/);
-    expect(out).toMatch(/^HTTP\/1\.1 407 /);
+    const out = await exchange(f.port, "CONNECT example.org:443 HTTP/1.1\r\n\r\n", /403/);
+    expect(out).toMatch(/^HTTP\/1\.1 403 Forbidden/);
+    expect(out).not.toMatch(/proxy-authenticate/i);
+  });
+
+  it("drops only the challenge from a 407 head", () => {
+    const head = Buffer.from(
+      'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="egress"\r\nX-Reason: denied\r\n\r\n',
+      "latin1",
+    );
+    expect(refusalHead(head).toString("latin1")).toBe(
+      "HTTP/1.1 403 Forbidden\r\nX-Reason: denied\r\n\r\n",
+    );
   });
 
   it("refuses plain HTTP requests with 405 and sends nothing upstream", async () => {
