@@ -1,0 +1,10 @@
+Package: google-chrome-beta
+Version: 999.0.1.1-1
+
+Package: google-chrome-stable
+Architecture: amd64
+Version: 158.0.8127.88-1
+Depends: fonts-liberation
+
+Package: google-chrome-unstable
+Version: 999.0.2.1-1
