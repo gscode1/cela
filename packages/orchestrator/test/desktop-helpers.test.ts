@@ -395,6 +395,24 @@ describe("desktop-open", () => {
     expect(calls()).toContain("--exec xdotool type --delay 2 https://docs.example/start");
   });
 
+  it("says so when the page did not change", { timeout: 40_000 }, () => {
+    // The fake navigates on Return only when the typed URL is new; here it keeps the old page, as Firefox's autofill did.
+    state({
+      afterNavigate: {
+        title: "List - Shop",
+        page: "Shop\nOffers\nAlpha 10,00 zł\nBeta 12,50 zł\nFooter",
+      },
+    });
+    writeFileSync(
+      join(bin, "agent-desktop-run"),
+      fake.replace("s.url = s.typed; s.title", "s.title"),
+    );
+    const { out, status } = helper("desktop-open", "https://shop.example/list?q=al");
+    expect(status).toBe(0);
+    expect(out[1]).toBe("note: the page did not change; still https://shop.example/list");
+    expect(readState().clip).toBe("agent's own clipboard");
+  });
+
   it("copies again while the page has no text yet", { timeout: 40_000 }, () => {
     state({ blankCopies: 2 });
     const { out, status } = helper("desktop-open", "https://docs.example/start");
@@ -436,6 +454,7 @@ describe("desktop image settings", () => {
       expect(dockerfile).toContain(`istilldontcareaboutcookies-1.1.9.xpi \\\n  ${target}\n`);
       expect(dockerfile).toContain("/usr/lib/firefox-esr/distribution/policies.json");
       expect(policies.policies.Preferences).toMatchObject({
+        "browser.urlbar.autoFill": false,
         "browser.translations.enable": false,
         "browser.translations.automaticallyPopup": false,
         "media.webspeech.synth.enabled": false,
