@@ -16,8 +16,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
     desktop-web text "regex"                    read the current page: matching text lines (full text saved to a file)
     desktop-web text --lines 120-170            read a range of lines (from the outline's line numbers or a match)
     desktop-web snap ["regex"]                  open dialogs, then clickable elements, named pictures and headings with refs: [e123] link "Name"
-    desktop-web click <e123|"regex">            click it and see what changed; --near "row text", --show "regex"
-    desktop-web type <e123|"regex"> "text"      replace a field's text and see its value; --enter presses Return
+    desktop-web click <e123|"regex">            click it, see its new state and what changed; --near "row text", --show "regex"
+    desktop-web type <e123|"regex"> "text"      replace a field's text, see its value and what appeared; --enter presses Return
     desktop-web select <e123|"regex"> "option"  pick an option of a dropdown (native or in-page); snap lists the options
     desktop-web hover <e123|"regex">            pointer over it (menus, captions that appear on hover); prints what appeared
     desktop-web wait "regex" [--gone]           wait until the text appears (or disappears), --timeout N (at most 60 s)
@@ -30,12 +30,23 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   part you need. Give a regex of the words you need, not `.`: every answer is capped at about 60 lines and says how to read on.
   The text covers the whole page, offscreen parts included, so reading needs no scrolling and no screenshot. To look again at
   what you read, `desktop-web text "regex" --from <file>`. Never print the file with `cat`, `sed`, `head` or `tail`.
-- After `click`, `type --enter` and `key`, the answer already shows the result: the new page's outline, or the lines that
-  appeared on this one (a dropdown, a filter's results, a panel). Read more only when that is not enough.
+- After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
+  new page's outline, or what changed on this one (lines that appeared or went, a dialog that closed, an alert, other controls'
+  state, a filter's results, an autocomplete's options). Read more only when that is not enough. `type` exits 1 when the field
+  kept its value (read-only: use the control that sets it).
 - Act by ref: `desktop-web snap "regex"` lists matching links, buttons, fields, checkboxes, named pictures and headings with refs, the page's
-  main content first; then `desktop-web click e123`. A ref from an older page is refused: run `snap` again.
+  main content first; then `desktop-web click e123`. A ref the page has replaced is found again when one element has its role
+  and name (the answer says so); otherwise run `snap` again.
   `desktop-web click "regex"` clicks the one match by name in one call; several matches are listed with each row's text and
-  URL, and nothing is clicked.
+  URL, and nothing is clicked. With no element of that name it clicks the one line of clickable text that matches (a filter
+  option drawn without a role); `snap "regex"` lists those as `clickable "text"`.
+- A regex matches an element's name and its placeholder. A control without a name shows words from its markup (`button ‹icon
+  car›`) or its row (`combobox "" near "State Select state"`), and a regex matches those too. `disabled` controls are listed
+  but not clicked; `required`, `invalid` and `desc="error text"` mark a form's fields, and an answer where nothing else
+  changed lists the invalid fields.
+- Chain steps that do not need the previous answer with `&&` in one bash call, by regex, not ref:
+  `desktop-web type "Email" "a@b.c" && desktop-web type "Phone" "555" && desktop-web click "^Send$"`. A step that fails
+  (no match, several, disabled, read-only) exits non-zero and stops the chain.
 - Rows that share a title (offers from several sellers, flights, variants): `desktop-web click "<title>" --near "<seller,
   price or other text from that row>"`, or click the ref from the list.
 - A link's URL: `desktop-web click` lists it; or read it from the `snap` list. Do not click a link just to learn where it goes.
@@ -47,8 +58,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   The next answer says "dialog closed" and what changed. Do not wait it out: it never closes by itself.
 - A dropdown: `desktop-web snap` shows `combobox "Name" value="..." options: A | B | C`; then `desktop-web select e11 "B"` (exact
   text, else ignoring case, else a regex; an ambiguous one is listed). Do not click it open and step through it by hand.
-- Content that appears later (a request, a countdown): `desktop-web wait "text"`, or `--gone` for a spinner. A click or key whose
-  answer shows little or nothing new says `result may come later`. Never `sleep` on a web page.
+- Content that appears later (a request, a countdown): `desktop-web wait "text"`, or `--gone` for a spinner. A click or key after
+  which nothing changed, or the page shows it is busy, says `result may come later`. Never `sleep` on a web page.
 - A hover menu or caption: `desktop-web hover <ref|"regex">` (several same-named pictures: their refs from `snap`, or `--nth N`), not raw `xdotool mousemove`. Keys: `desktop-web key`.
 - A list that loads more as you scroll: `desktop-web key End`, then read the new lines it prints.
 - Meaning that is only an icon, a colour or an image (a rating drawn by its class, a status dot): `desktop-web text "regex" --marks`

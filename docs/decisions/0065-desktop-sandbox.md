@@ -371,7 +371,7 @@ all input is still real X events through xdotool.
   it needs opening and then the option element matching the text.
 - **Waiting.** `desktop-web wait "regex" [--gone] [--timeout N]` (N at most 60, default 20) polls the page text and prints the
   matching lines. After a click, key, select or Return the answer ends with `result may come later: desktop-web wait "regex"` when
-  it printed one new line or none or the tree shows a `progressbar` or `busy=true`. `key` takes `--show` like `click`.
+  nothing changed (since #467: no line, dialog, alert or control state) or the tree shows a `progressbar` or `busy=true`. `key` takes `--show` like `click`.
 - **Hover and shots.** `hover` is `humanClick` split into a move and a press (`desktop-lib`), reusing the click's resolve,
   scroll and covered-by checks, with a dwell before it prints what appeared. `shot <ref|"regex"> [--pad N]` scrolls the element
   into view, maps its box to screen pixels like a click and calls `desktop-shot --region` (no `Page.captureScreenshot`); hover and
@@ -388,6 +388,38 @@ all input is still real X events through xdotool.
 The suite gained `dialogs`, `select`, `wait`, `hover`, `marks` and `shot` cases (test pages `dialogs.html`, `selects.html`,
 `later.html`, `hover.html`, `marks.html`), and unit tests cover option parsing, matching, arrow counting, marks and the AT-SPI
 dialog reading.
+
+### desktop-web: label-backed and text targets, state after actions, names, validation, stale refs (issue #467)
+
+Hard local runs (a hotel search, a shop's filters, practice forms, a map's route panel) failed on general gaps. The reader stays
+passive (`ALLOWED` unchanged; everything below uses the accessibility tree and layout snapshot already read, plus the `cursor`
+computed style), input stays real X events, and nothing names a site or language.
+
+- **Custom checkboxes.** Such controls keep the real input at opacity 0 or 1 px and draw the box in a `<label>`; the hidden-element
+  filter dropped them like honeypots. A hidden checkbox, radio or switch is now kept when its own label (an ancestor, or `for=`)
+  is visible, and clicked on the label; its state still comes from the input's accessibility node. A hidden input without a
+  visible label stays out.
+- **Clickable text.** When `click "regex"` matches no element, it clicks the one visible line whose element shows a pointer
+  cursor or is marked clickable by the snapshot (role-less options). Text inside a listed element, or around one (a label), is
+  that element's. `snap "regex"` lists these as `clickable "text"`; a plain `snap` does not.
+- **State after the action.** `click` reads the element again after the page settles (`radio "Male": checked false -> true`).
+  The answer also reports lines that went, dialogs that closed, new `alert`/`status` text and up to five other controls whose
+  `checked`, `expanded`, value or name changed. The "result may come later" hint appears only when none of that changed or the
+  page is busy; a link click that kept the address says so. `type` prints `value now` (also with `--enter`), exits 1 when the
+  field kept its value (read-only), and without `--enter` shows at most five new options or lines (an autocomplete, a
+  debounced filter).
+- **Names.** A field's `placeholder` is printed and matched. A control whose name has no letters gets the words of its markup
+  (`button ‹tool icon-bike›`, as `--marks` does), else the text of its row (`combobox "" near "State Select state"`); both are
+  matched by a regex. Disabled controls are listed as `disabled` and a click refuses them (exit 1). When `open` or `text`
+  finds no line, elements whose name or placeholder matches are listed.
+- **Validation.** Entries show `required`, `invalid`, `readonly` and the accessible description (`desc=`, the
+  `aria-describedby` error). An answer where nothing else changed lists the invalid fields.
+- **Stale refs.** A ref whose element the page replaced is found again by the role and name remembered from the listing when
+  exactly one element has them, and the answer says so.
+- **Chaining.** The skill tells the agent to chain independent steps with `&&` by regex; the exit codes above stop a chain.
+
+The suite gained `custom`, `state`, `names`, `form` and `stale` cases (pages `custom-controls.html`, `state.html`,
+`names.html`, `form.html`, `stale.html`).
 
 ## Limits and deferred
 
