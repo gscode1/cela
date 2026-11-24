@@ -22,7 +22,7 @@ export const FLAVOUR_FACTS: Readonly<Record<SandboxFlavour, { tools: string }>> 
   },
   desktop: {
     tools:
-      "git, node 22, python3 (with PIL), jq, a virtual X desktop (Xvfb, openbox) with mousepad, LibreOffice Writer and Firefox, driven through agent-desktop-run agent-desktop, desktop-launch, desktop-find, desktop-shot, desktop-text, desktop-url, xdotool and scrot (usage: /usr/local/share/pi-desktop/DESKTOP.md)",
+      "git, node 22, python3 (with PIL), jq, a virtual X desktop (Xvfb, openbox) with mousepad, LibreOffice Writer and Firefox, driven through agent-desktop-run agent-desktop, desktop-launch, desktop-open, desktop-page, desktop-click, desktop-find, desktop-shot, desktop-url, xdotool and scrot (usage: /usr/local/share/pi-desktop/DESKTOP.md)",
   },
 };
 

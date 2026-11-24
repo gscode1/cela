@@ -5,6 +5,7 @@
 #
 #   agent-desktop-run <agent-desktop args>      run agent-desktop in the session
 #   agent-desktop-run --exec <cmd> [args]       run any command in the session (desktop-launch, xdotool, scrot)
+#   agent-desktop-run -q <agent-desktop args>   one line instead of the JSON envelope: "ok click" or "ERR CODE: message"
 #
 # Adapted from the agent-desktop Docker guide.
 set -eu
@@ -112,4 +113,13 @@ if [ "${1:-}" = "--exec" ]; then
   exec "$@"
 fi
 # The platform sets NODE_USE_ENV_PROXY, whose experimental warning (UNDICI-EHPA) would otherwise land in the agent's results.
+if [ "${1:-}" = "-q" ]; then
+  # An action's envelope is 250-600 characters the agent rereads every turn; -q keeps the outcome only.
+  shift
+  rc=0
+  out=$(NODE_NO_WARNINGS=1 agent-desktop "$@") || rc=$?
+  printf '%s\n' "$out" | jq -r 'if .ok then "ok \(.command)" else "ERR \(.error.code // "ERROR"): \(.error.message // "")" end' 2>/dev/null ||
+    printf '%s\n' "$out"
+  exit "$rc"
+fi
 NODE_NO_WARNINGS=1 exec agent-desktop "$@"

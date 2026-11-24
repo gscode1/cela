@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+// The default way to read what a web page says: URL, title and the page's matching text lines in one call, no accessibility
+// tree, no screenshot (docs/decisions/0065-desktop-sandbox.md, "Token budget"). Select all and copy in the focused Firefox
+// window; the full text is saved to a file. It gives text, not refs: act with desktop-click "text" or desktop-find --role.
+// desktop-text is the same command under its first name.
+//
+//   desktop-page "zł|price"             url, title, matching lines with one line of context
+//   desktop-page                        url, title and the first lines
+//   desktop-page --focused "TODO"       copy from whatever has focus (an editor), no URL
+//   desktop-page --from FILE "regex"    filter the saved text again without copying
+//
+// Flags: --limit N matches (default 25), --context N (default 1), --out FILE (default $AGENT_DESKTOP_SESSION_DIR or
+// ~/.agent-desktop-session, last-page.txt), --from FILE, --focused. Afterwards focus is in the page and the clipboard holds
+// what it held before; the page stays selected until the next click on it. Copied text includes collapsed and offscreen text.
+"use strict";
+// getBuiltinModule and createRequire work whether Node treats this extensionless file as CommonJS (the image) or as an ES
+// module (the repo); the shared code sits next to it.
+const fs = process.getBuiltinModule("node:fs");
+const lib = process.getBuiltinModule("node:module").createRequire(fs.realpathSync(process.argv[1]))("./desktop-lib.cjs");
+
+const NAME = process.argv[1].endsWith("desktop-text") ? "desktop-text" : "desktop-page";
+const fail = lib.failer(NAME);
+const HEAD_LINES = 15;
+
+function parseArgs(argv) {
+  const o = { limit: 25, context: 1, focused: false, pattern: undefined };
+  const value = (i, flag) => {
+    if (i + 1 >= argv.length) fail(`${flag} needs a value`, 64);
+    return argv[i + 1];
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--limit") (o.limit = Number(value(i, a))), i++;
+    else if (a === "--context") (o.context = Number(value(i, a))), i++;
+    else if (a === "--out") (o.out = value(i, a)), i++;
+    else if (a === "--from") (o.from = value(i, a)), i++;
+    else if (a === "--focused") o.focused = true;
+    else if (a === "-h" || a === "--help") {
+      process.stdout.write(`usage: ${NAME} [--focused] [--limit N] [--context N] [--from FILE] [--out FILE] [regex]\n`);
+      process.exit(0);
+    } else if (a.startsWith("--")) fail(`unknown flag ${a}`, 64);
+    else if (o.pattern === undefined) o.pattern = a;
+    else fail(`unexpected argument ${a}`, 64);
+  }
+  if (!Number.isInteger(o.limit) || o.limit < 1) fail("--limit needs a positive integer", 64);
+  if (!Number.isInteger(o.context) || o.context < 0) fail("--context needs a non-negative integer", 64);
+  return o;
+}
+
+function main() {
+  const o = parseArgs(process.argv.slice(2));
+  let re;
+  if (o.pattern !== undefined) {
+    try {
+      re = new RegExp(o.pattern, "iu");
+    } catch (e) {
+      fail(`bad regex: ${e.message}`, 64);
+    }
+  }
+  const out = [];
+  let lines;
+  let file = o.from;
+  if (o.from) {
+    lines = fs.readFileSync(o.from, "utf8").split("\n");
+  } else {
+    const page = lib.copyPage({ focused: o.focused });
+    lines = page.lines;
+    // A failed page focus copies the address bar (one line) or nothing.
+    if (lines.length <= 1) {
+      fail(`copied ${lines.length === 0 ? "nothing" : `only "${lib.clip(lines[0], 80)}"`}; is a browser window focused with a page loaded? For another app use --focused`);
+    }
+    file = lib.savePage(lines, o.out);
+    if (page.url) out.push(`url: ${page.url}`);
+    if (page.title) out.push(`title: ${lib.clip(page.title, 120)}`);
+  }
+  out.push(`text: ${file} (${lines.length} lines)`);
+  if (re === undefined) {
+    for (const [i, l] of lines.slice(0, HEAD_LINES).entries()) out.push(`${i + 1}: ${lib.clip(l, 200)}`);
+    out.push(`Add a regex to list matching lines, for example: ${NAME} 'price|zł|€|\\$'`);
+  } else {
+    out.push(...lib.grepLines(lines, re, { limit: o.limit, context: o.context }));
+  }
+  process.stdout.write(`${out.join("\n")}\n`);
+}
+
+main();

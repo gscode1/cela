@@ -2,7 +2,17 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "packages/vendor/**", ".claude/**"] },
+  // The desktop image's helpers are dependency-free scripts run by the image's Node, outside every tsconfig; tests cover them
+  // (packages/orchestrator/test/desktop-*.test.ts).
+  {
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "packages/vendor/**",
+      ".claude/**",
+      "images/sandbox-desktop/files/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {

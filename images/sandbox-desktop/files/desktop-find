@@ -9,7 +9,7 @@
 //   desktop-find --from FILE [filters]                  filter a saved snapshot without walking the tree again
 //
 // Flags: --app NAME, --skeleton, --root @ref, --max-depth N, --timeout-ms N (passed to snapshot; default 60000), --role R[,R] (repeatable),
-// --limit N (default 40), --all (also offscreen/hidden nodes and non-interactive ones), --out FILE (default
+// --limit N (default 25), --all (also offscreen/hidden nodes and non-interactive ones), --out FILE (default
 // $AGENT_DESKTOP_SESSION_DIR or ~/.agent-desktop-session, last-snapshot.json), --from FILE.
 // Line: @ref role "name" =value [states]. Refs are valid for the snapshot they came from, so act soon after.
 "use strict";
@@ -18,8 +18,9 @@ const { execFileSync } = process.getBuiltinModule("node:child_process");
 const fs = process.getBuiltinModule("node:fs");
 const os = process.getBuiltinModule("node:os");
 const path = process.getBuiltinModule("node:path");
+const lib = process.getBuiltinModule("node:module").createRequire(fs.realpathSync(process.argv[1]))("./desktop-lib.cjs");
 
-const NAME_MAX = 120;
+const NAME_MAX = 80;
 const VALUE_MAX = 80;
 const HIDDEN = new Set(["offscreen", "hidden"]);
 
@@ -29,7 +30,7 @@ function fail(message, code = 1) {
 }
 
 function parseArgs(argv) {
-  const o = { roles: [], limit: 40, all: false, pattern: undefined, passthrough: [], timeout: "60000" };
+  const o = { roles: [], limit: 25, all: false, pattern: undefined, passthrough: [], timeout: "60000" };
   const value = (i, flag) => {
     if (i + 1 >= argv.length) fail(`${flag} needs a value`, 64);
     return argv[i + 1];
@@ -75,62 +76,15 @@ function takeSnapshot(o) {
   }
 }
 
-// Roles an unscoped find is split into when it fails: what an agent acts on or navigates by. Every find walks the whole
-// tree (about 7 s on a large page, and agent-desktop serialises parallel ones), so the list stays short; plain text
-// (statictext, paragraph) is desktop-text's job, which reads the page in seconds.
-const FALLBACK_ROLES = ["heading", "link", "button", "textfield", "combobox", "checkbox"];
-
 // A heavy web page in Firefox can overflow agent-desktop's 1 MB ref map even at a small --max-depth, and --root refs inside
-// web content are rejected as ambiguous. `agent-desktop find` still answers, so with a filter we fall back to one find per
-// role (or one unscoped find) and apply the same regex here. The result has the same line format.
-// One element without a stable identity or bounds (offscreen, lazily rendered) makes a whole find fail with STALE_REF, so a
-// failing role is skipped and named, not fatal, and a failing unscoped find is retried role by role: partial results beat
-// none, which sent agents into screenshot loops.
+// web content are rejected as ambiguous. `agent-desktop find` still answers, so with a filter we fall back to it (one find
+// per role, skipping a role that fails; see findAcross in desktop-lib.cjs) and apply the same regex here.
 function findFallback(o) {
-  const literal = o.pattern !== undefined && !/[\\^$.*+?()[\]{}|]/.test(o.pattern) ? o.pattern : undefined;
-  const matches = [];
-  const skipped = [];
-  let truncated = false;
-  let answered = 0;
-  let splitRoles = false;
-  const runFind = (role) => {
-    const args = ["find"];
-    if (o.app) args.push("--app", o.app);
-    if (role) args.push("--role", role);
-    if (literal) args.push("--text", literal);
-    if (o.root) args.push("--root", o.root);
-    args.push("--limit", "500", "--timeout-ms", o.timeout);
-    let text;
-    try {
-      text = execFileSync("agent-desktop-run", args, { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
-    } catch (e) {
-      text = typeof e.stdout === "string" ? e.stdout : "";
-      if (text.trim() === "") return { error: String(e.stderr || e.message).trim().split("\n")[0].slice(0, 80) || "failed" };
-    }
-    const env = parseEnvelope(text, { tolerate: true });
-    return env.failed ? { error: env.failed } : { env };
-  };
-  const collect = (role) => {
-    const r = runFind(role);
-    if (r.error) {
-      skipped.push(`${role ?? "all roles"} (${r.error})`);
-      return false;
-    }
-    answered++;
-    matches.push(...r.env.data.matches);
-    truncated ||= r.env.data.truncated === true;
-    return true;
-  };
-  if (o.roles.length > 0) for (const role of o.roles) collect(role);
-  else if (!collect(undefined)) {
-    skipped.length = 0;
-    splitRoles = true;
-    for (const role of FALLBACK_ROLES) collect(role);
+  const r = lib.findAcross({ app: o.app, roles: o.roles, literal: lib.literalOf(o.pattern), root: o.root, timeout: o.timeout });
+  if (r.answered === 0) {
+    fail(`agent-desktop find failed for every role: ${r.skipped.join(", ")}. For a web page's text use desktop-page 'regex'`);
   }
-  if (answered === 0) {
-    fail(`agent-desktop find failed for every role: ${skipped.join(", ")}. For a web page's text use desktop-text 'regex'`);
-  }
-  return { ok: true, data: { app: o.app, tree: { children: matches }, viaFind: true, truncated, skipped, splitRoles } };
+  return { ok: true, data: { app: o.app, tree: { children: r.matches }, viaFind: true, truncated: r.truncated, skipped: r.skipped, splitRoles: r.splitRoles } };
 }
 
 // allowOverflow: a RefMap overflow returns { overflow: true }. tolerate: any error envelope returns { failed: CODE }.
@@ -213,7 +167,7 @@ function main() {
   if (env.overflow) {
     if (re === undefined && o.roles.length === 0) {
       fail(
-        "the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find, or use desktop-text 'regex' for a web page's text",
+        "the tree is too large to snapshot (RefMap exceeds 1MB); add a regex or --role, which then uses agent-desktop find, or use desktop-page 'regex' for a web page's text",
       );
     }
     env = findFallback(o);
@@ -241,15 +195,15 @@ function main() {
     for (const n of hits.slice(0, o.limit)) out.push(line(n));
     if (hits.length > o.limit) out.push(`${hits.length - o.limit} more, narrow the filter (regex, --role, --limit)`);
     if (hits.length === 0) {
-      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}; in a web page, desktop-text 'regex' searches all of its text`);
+      out.push(`no match among ${pool.length} ${o.all ? "" : "visible "}nodes; run desktop-find without a filter for a summary${o.all ? "" : ", or --all to include offscreen nodes"}; in a web page, desktop-page 'regex' searches all of its text`);
     }
     if (env.data.complete === false) out.push("snapshot incomplete: raise --timeout-ms");
     if (env.data.viaFind) out.push(`(tree too large to snapshot; used agent-desktop find${env.data.truncated ? ", which hit its 500-match limit: add --role or a literal word" : ""})`);
     if (env.data.splitRoles) {
-      out.push(`searched only ${FALLBACK_ROLES.join(", ")} because the search without a role failed; page text: desktop-text 'regex'`);
+      out.push(`searched only ${lib.FALLBACK_ROLES.join(", ")} because the search without a role failed; page text: desktop-page 'regex'`);
     }
     if (env.data.skipped?.length > 0) {
-      out.push(`skipped, find failed: ${env.data.skipped.join(", ")}. Text there may be missing: desktop-text 'regex' reads the whole page`);
+      out.push(`skipped, find failed: ${env.data.skipped.join(", ")}. Text there may be missing: desktop-page 'regex' reads the whole page`);
     }
   }
   process.stdout.write(`${out.join("\n")}\n`);

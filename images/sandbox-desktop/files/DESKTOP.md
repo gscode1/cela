@@ -6,8 +6,10 @@ accessibility by agent-desktop 1.3.1. Every call goes through the lazy wrapper, 
     agent-desktop-run status
     desktop-launch mousepad|writer|firefox [args]
     desktop-find --app mousepad --role textfield     # compact snapshot filter; never print a raw snapshot
+    desktop-open https://example.com "price"         # open a URL, wait, print url, title and matching lines
+    desktop-page "price|zł"                          # read the page: url, title, matching text lines (alias desktop-text)
+    desktop-click "Add to cart"                      # find the one matching link or button, click, report what changed
     desktop-url                                      # URL of the focused Firefox window
-    desktop-text "price|zł"                          # page text lines matching a regex, when desktop-find fails
     agent-desktop-run --exec xdotool key ctrl+s       # any command in the same session
     desktop-shot                                     # focused window as an 800 px JPEG; text first, shots to verify
 

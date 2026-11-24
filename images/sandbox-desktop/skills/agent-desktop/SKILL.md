@@ -17,7 +17,7 @@ A raw snapshot is hundreds of kB of JSON (class lists, offscreen nodes) that you
     desktop-find --from /home/pi/.agent-desktop-session/last-snapshot.json "price"   filter the saved file again, no new walk
     desktop-find --app firefox-esr --all "x"            also offscreen nodes; --skeleton, --root @ref, --max-depth N narrow big trees
 
-Never run `snapshot` without redirecting it. Batch act, wait and find in one call: `agent-desktop-run click <ref> && sleep 2 && desktop-find --app firefox-esr "cart"`. `desktop-url` prints the focused Firefox's URL (no ref reading). If `desktop-find` fails or skips roles on a big page, `desktop-text <regex>` reads the page text instead; use it before screenshots.
+Never run `snapshot` without redirecting it. In Firefox, prefer the one-call helpers (desktop-sandbox skill): `desktop-open`, `desktop-page "regex"` to read, `desktop-click "regex"` to click. `desktop-url` prints the URL. `agent-desktop-run -q` shortens an action's envelope to one line.
 
 ## Loop: observe, act on a ref, verify
 
