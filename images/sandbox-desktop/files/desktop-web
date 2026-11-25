@@ -30,15 +30,18 @@
 //   desktop-web drag <src> <dst>              press on src, move there at a person's pace, release over dst; --by dx,dy (px)
 //                                             instead of dst. src and dst: refs, element names or any visible text
 //   desktop-web hover <ref|"regex">           move the pointer over it (menus, captions) and print what appeared; any
-//                                             visible text is a target too
+//                                             visible text is a target too; when nothing changed, its title as tooltip:
 //   desktop-web shot <ref|"regex">            screenshot of that element's or text's area (icons, colours, images): prints the file;
-//                                             --pad N takes N more px around it
+//                                             --pad N takes N more px around it. A narrow target comes with its row; a target
+//                                             something covers adds "note: covered by" and what is in front
 //   desktop-web wait "regex" [--gone]         wait until the text appears (or disappears); --timeout N seconds (at most 60)
 //   desktop-web url                           url and title
-//   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›
+//   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›, named
+//                                             ones as ‹"Accepted"›, and text with a datetime or a title that says more as
+//                                             ‹datetime=…›, ‹title:"…"›
 //   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
-//   desktop-web text "regex" --table          a table row as its cells joined by " | " (empty cells kept), with the table's
-//                                             header rows above the matches as "cols: ..."
+//   desktop-web text "regex" --table          a table row (a <tr>, or role=row in an ARIA grid) as its cells joined by " | "
+//                                             (empty cells kept), with the table's header rows above the matches as "cols: ..."
 //
 // What an action changed counts lines that kept their text but moved (a sort, a drag swap: "order changed (lines A-B)"),
 // a control's selected, pressed and sort state, the clicked control drawn again by the page, and controls that appeared
@@ -53,8 +56,11 @@
 // control opens it, never their text. click, type and drag refuse a bot check's own widget.
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
-// the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
-// is reported the same way: reads go on, actions are refused until it is cancelled (desktop-web key Escape).
+// the dialog's message and buttons and how to answer it with desktop-web key. A page that misses three probes with no such
+// dialog open is said to be busy (a heavy load), never a dialog. A file chooser window open over the browser is reported
+// the same way: reads go on, actions are refused until it is cancelled (desktop-web key Escape). `open` lists a fixed layer
+// at the page's centre that holds a button (a consent overlay without a dialog role) as "open overlay", and a click it
+// covers is refused with its controls.
 //
 // Every answer stays within a budget (BUDGET_LINES lines, BUDGET_CHARS characters): a longer one is cut with a note on
 // how to page on. Flags: --limit N (matches, at most 40), --context N (at most 3), --lines A-B, --from FILE, --out FILE.
