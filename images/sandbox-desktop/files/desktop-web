@@ -428,19 +428,52 @@ async function probe() {
   }
 }
 
-// What a blocked page shows: Chrome's own dialog is in the accessibility tree (AT-SPI) even while the page is stuck, so its
-// title, message and buttons are text; when it is not there, a screenshot of where such a dialog sits (the top centre of the
-// window, under the toolbar). Says how to answer it.
-function blockedLines({ still = false } = {}) {
-  const out = [
-    `${still ? "Still blocked: the" : "The"} page is not answering: a browser dialog (alert, confirm, prompt or leave-page) is probably open, or the page is busy.`,
-  ];
-  let d;
+// Chrome's own JS dialog from its accessibility tree (AT-SPI), which answers while the page is stuck: { dialog } when one is
+// open, {} when there is none, { unread: true } when the tree could not be read.
+function browserDialog() {
   try {
-    d = lib.atspiDialog(lib.envelope(lib.desktop(["snapshot", "--app", "chrome", "--timeout-ms", "3000"])).data?.tree);
+    const d = lib.atspiDialog(lib.envelope(lib.desktop(["snapshot", "--app", "chrome", "--timeout-ms", "3000"])).data?.tree);
+    return d ? { dialog: d } : {};
   } catch {
-    d = undefined;
+    return { unread: true };
   }
+}
+
+// Whether a page whose probe timed out is really blocked: a heavy load (a long script, a big page building) misses one probe
+// too. Blocked when Chrome shows its own dialog, or when two more probes 1.5 s apart time out as well; then returns what
+// blockedLines prints. Undefined when the page answered after all.
+async function stuck() {
+  const first = browserDialog();
+  if (first.dialog) return first;
+  for (let k = 0; k < 2; k++) {
+    lib.pause(1500);
+    if ((await probe()).state !== "blocked") return undefined;
+  }
+  const last = browserDialog();
+  return last.dialog || last.unread ? last : { busy: true };
+}
+
+// Probes the page and, when the probe times out, asks stuck(): what blockedLines prints when the page is blocked, else
+// undefined.
+async function blockedNow() {
+  return (await probe()).state === "blocked" ? stuck() : undefined;
+}
+
+// What a blocked page shows (`why`, from stuck()): Chrome's own dialog is in the accessibility tree even while the page is
+// stuck, so its title, message and buttons are text; when the tree cannot be read, a screenshot of where such a dialog sits
+// (the top centre of the window, under the toolbar). Says how to answer it. A page that is only busy (no dialog found) says
+// so, and nothing about a dialog.
+function blockedLines({ still = false, why } = {}) {
+  if (why.busy || (!why.dialog && !why.unread)) {
+    return [
+      `${still ? "Still busy" : "The page is busy"}: it has not answered for several seconds, and no browser dialog is open.`,
+      'Wait and read it again: desktop-web wait "regex" or desktop-web text "regex".',
+    ];
+  }
+  const out = [
+    `${still ? "Still blocked: the" : "The"} page is not answering: a browser dialog (alert, confirm, prompt or leave-page) is ${why.dialog ? "open" : "probably open, or the page is busy"}.`,
+  ];
+  const d = why.dialog;
   if (d) {
     out.push(`dialog "${lib.clip(d.title, 80)}": ${lib.clip(d.message, 300)}`);
     if (d.fields.length > 0) out.push(`text field: ${JSON.stringify(d.fields[0])}`);
@@ -458,7 +491,7 @@ function blockedLines({ still = false } = {}) {
     }
   }
   out.push(
-    'OK: desktop-web key Return. Cancel: desktop-web key Escape. A prompt: desktop-web key --text "answer" Return. If nothing is open the page is busy: wait and run the command again.',
+    `OK: desktop-web key Return. Cancel: desktop-web key Escape. A prompt: desktop-web key --text "answer" Return.${d ? "" : " If nothing is open the page is busy: wait and run the command again."}`,
   );
   return out;
 }
@@ -471,8 +504,9 @@ async function guard({ read = false } = {}) {
     console.log(chooserLines(d).join("\n"));
     if (!read) process.exit(3);
   }
-  if ((await probe()).state !== "blocked") return;
-  console.log(blockedLines().join("\n"));
+  const why = await blockedNow();
+  if (!why) return;
+  console.log(blockedLines({ why }).join("\n"));
   process.exit(3);
 }
 
@@ -493,7 +527,8 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
     // A click that opens a JS dialog changes nothing else: look once after a second, not after the whole quiet time.
     if (!probed && Date.now() - start >= 1000) {
       probed = true;
-      if ((await probe()).state === "blocked") return { target: t, lines: [], blocked: true };
+      const why = await blockedNow();
+      if (why) return { target: t, lines: [], blocked: why };
     }
   }
   let text = { lines: [], notes: [] };
@@ -505,7 +540,8 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
       text = await withPage((c) => pageText(c));
     } catch {
       same = 0; // between documents
-      if ((await probe()).state === "blocked") return { target: (await target()) ?? t, lines: [], notes: [], blocked: true };
+      const why = await blockedNow();
+      if (why) return { target: (await target()) ?? t, lines: [], notes: [], blocked: why };
       continue;
     }
     const f = fingerprint(text.lines);
@@ -1095,7 +1131,7 @@ async function finishSlider(entry, { want, from }, { pre, before, head, o }) {
   const off = got !== want;
   if (off && step && Math.abs(got - want) < step) lines.push(`(${want} is between its steps of ${step}: ${got} is the nearest it takes)`);
   else if (off) lines.push(got === from ? "the slider did not move: desktop-web shot it, or try desktop-web key Right/Left after a click on it" : `it stopped at ${got}, not ${want}`);
-  console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: true }, { self: entry, selfChanged: got !== from }))].join("\n"));
+  console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, { ...o, noHint: true }, { self: entry, selfChanged: got !== from }))].join("\n"));
   if (off && !(step && Math.abs(got - want) < step)) process.exit(1);
 }
 
@@ -1152,7 +1188,8 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     const order = after.lines.length > 0 ? cdp.orderChange(pre.lines, after.lines) : undefined;
     // options are printed as such, and an open dialog's controls with the dialog
     const inDialog = cdp.dialogLines(shown).join("\n");
-    const appeared = now
+    // after a dialog blocked the page nothing was read before the key: every control would read as new
+    const appeared = now && pre.nodes.length > 0
       ? cdp.appearedControls(pre.entries, now.entries).filter((e) => !OPTION_ROLES.has(e.role) && !(e.role === "listbox" && opts.length > 0) && !inDialog.includes(`[${e.ref}]`))
       : [];
     const focusWas = focus ? cdp.focusOf(pre.nodes, pre.entries) : undefined;
@@ -1287,7 +1324,7 @@ async function main() {
       if ((after.notes ?? []).some((n) => BOT_NOTE.test(n))) countBotCheck(after.target.url);
       const moved = redirected(url, after.target.url) ? [`redirected from ${lib.clip(url, 120)}`] : [];
       if (after.blocked) {
-        console.log([...header(after.target, moved), ...blockedLines()].join("\n"));
+        console.log([...header(after.target, moved), ...blockedLines({ why: after.blocked })].join("\n"));
         return;
       }
       const nodes = await withPage(axNodes);
@@ -1441,19 +1478,19 @@ async function main() {
           const after = await settle(before, { quietMs: 700, capMs: 6000 });
           // a form that shows no button is sent with Return (a directions or search form)
           const hint = entry.noSubmit && o.pos[1] !== "" ? ["no submit button in its form: use --enter to send it"] : [];
-          console.log([...lines, ...(after.blocked ? blockedLines() : await afterTyping(pre, after, o.pos[1], o)), ...hint].join("\n"));
+          console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await afterTyping(pre, after, o.pos[1], o)), ...hint].join("\n"));
           return;
         }
         lib.key("Return");
         const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
         // the field's own new value is a change: a date field or an autocomplete that takes Return shows nothing else
         const selfChanged = value !== squash(entry.value);
-        console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, o, { self: entry, selfChanged }))].join("\n"));
+        console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, o, { self: entry, selfChanged }))].join("\n"));
         return;
       }
       const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
       if (after.blocked) {
-        console.log([...head, `clicked ${cdp.entryLine(entry)}`, ...blockedLines()].join("\n"));
+        console.log([...head, `clicked ${cdp.entryLine(entry)}`, ...blockedLines({ why: after.blocked })].join("\n"));
         return;
       }
       // Read the element again: its state after the click (checked, expanded, value) is the answer, not the one before.
@@ -1480,7 +1517,10 @@ async function main() {
       const win = chromeWindow();
       if (state.state === "none" || !win) fail("Chrome is not running: start with desktop-web open <url>");
       const before = state.target;
-      const wasBlocked = state.state === "blocked";
+      // a page that only misses the probe (a heavy load) is read as usual; one held by Chrome's dialog is not
+      const why = state.state === "blocked" ? await stuck() : undefined;
+      const wasBlocked = why !== undefined;
+      const hadDialog = why?.dialog !== undefined;
       // A blocked page cannot be read, and the keys are what unblocks it: the text of the last read stands in as "before".
       let pre;
       if (wasBlocked) {
@@ -1500,7 +1540,7 @@ async function main() {
       activate(chooser ?? win);
       if (o.text !== undefined) {
         // A prompt's field may hold a default: replace it. (Not on a live page, where ctrl+a would select the page.)
-        if (wasBlocked) lib.key("ctrl+a");
+        if (hadDialog) lib.key("ctrl+a");
         if (lib.typable(o.text)) lib.humanType(o.text);
         else lib.pasteText(o.text);
       }
@@ -1508,13 +1548,13 @@ async function main() {
       if (wasBlocked) lib.pause(500);
       const after = await settle(before, { quietMs: 800, capMs: 15000, want: o.show ? regex(o.show) : undefined });
       if (after.blocked) {
-        console.log(blockedLines({ still: wasBlocked }).join("\n"));
+        console.log(blockedLines({ still: wasBlocked, why: after.blocked }).join("\n"));
         return;
       }
       const closed = chooser && !chooserWindow() ? ["file chooser closed"] : [];
       const y1 = y0 && after.target.url === before.url ? await scrollOf() : undefined;
       const scrolled = y1 && Math.abs(y1.y - y0.y) >= 1 ? `scrolled ${y0.y} -> ${y1.y} of ${y1.h} px` : undefined;
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true, scrolled }))].join("\n"));
+      console.log([...(hadDialog ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true, scrolled }))].join("\n"));
       return;
     }
     case "select": {
@@ -1585,7 +1625,7 @@ async function main() {
       }
       const after = await settle(before, { quietMs: 800 });
       if (after.blocked) {
-        console.log(blockedLines().join("\n"));
+        console.log(blockedLines({ why: after.blocked }).join("\n"));
         return;
       }
       // Read the select back: what the page holds is the result, not what was sent. A page that draws the select again as it
@@ -1629,7 +1669,7 @@ async function main() {
       });
       if (cmd === "hover") {
         const after = await settle(before, { quietMs: 700 });
-        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry }))].join("\n"));
+        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry }))].join("\n"));
         return;
       }
       // A little room around the element, and never a sliver: small icons are easier to read with their surroundings.
@@ -1660,8 +1700,9 @@ async function main() {
         try {
           lines = await withPage((c) => pageLines(c), { timeoutMs: 8000 });
         } catch {
-          if ((await probe()).state === "blocked") {
-            console.log(blockedLines().join("\n"));
+          const why = await blockedNow();
+          if (why) {
+            console.log(blockedLines({ why }).join("\n"));
             process.exit(3);
           }
         }
@@ -1737,7 +1778,7 @@ async function main() {
       const held = now ? cdp.fileInputs(now.read.map((r) => r.snap)).filter((f) => f.value && !inputs.some((x) => x.backendNodeId === f.backendNodeId && x.value === f.value)) : [];
       const out = [...(note ? [note] : []), `picked ${file} in the file chooser of ${cdp.entryLine(entry, { nameMax: 60 })}`];
       if (held.length > 0) out.push(`file input now holds: ${held.map((f) => JSON.stringify(path.basename(f.value.replace(/\\/g, "/")))).join(", ")}`);
-      console.log([...out, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: held.length > 0 }, { now, self: entry, selfChanged: held.length > 0 }))].join("\n"));
+      console.log([...out, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, { ...o, noHint: held.length > 0 }, { now, self: entry, selfChanged: held.length > 0 }))].join("\n"));
       return;
     }
     case "drag": {
@@ -1768,7 +1809,7 @@ async function main() {
       const after = await settle(before, { quietMs: 900 });
       const notes = [r.src.note, r.dst?.note].filter(Boolean).map((n) => n.replace("used the text", "used the text it shows"));
       const what = r.dst ? `to ${cdp.entryLine(r.dst.entry, { nameMax: 60 })}` : `by ${o.by.dx},${o.by.dy} px`;
-      console.log([...new Set(notes), `dragged ${cdp.entryLine(r.src.entry, { nameMax: 60 })} ${what}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, o, { self: r.src.entry }))].join("\n"));
+      console.log([...new Set(notes), `dragged ${cdp.entryLine(r.src.entry, { nameMax: 60 })} ${what}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, o, { self: r.src.entry }))].join("\n"));
       return;
     }
     case "url": {

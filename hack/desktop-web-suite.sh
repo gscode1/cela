@@ -267,6 +267,14 @@ case_select() {
   check "the page saw the pick" $?
 }
 
+# A select that loads a page busy for 4 s: the probe misses, no dialog is open, and the answer is the new page.
+case_busy() {
+  open busy
+  web select 'Sort by' 'Price'
+  check "a select that loads a busy page prints the new page" "$(ok 'Sorted by price, lowest first')"
+  check "a busy load is no dialog" "$(no 'dialog|not answering')"
+}
+
 case_wait() {
   open later
   web click '^Start$'
@@ -828,7 +836,7 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

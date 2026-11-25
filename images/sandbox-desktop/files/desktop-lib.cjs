@@ -324,9 +324,11 @@ function literalOf(pattern) {
 // Chrome draws a JS alert, confirm, prompt and leave-page dialog itself, and its accessibility tree (AT-SPI) answers while the
 // page is blocked: a node with role dialog (the title is its name, the message its description) with buttons and, for a
 // prompt, a text field. `tree` is the root of an agent-desktop snapshot; returns undefined when it holds no dialog.
+// Only Chrome's own count: the page's content (the webarea) holds the page's dialogs and alerts, and the toolbar keeps hidden,
+// empty alert nodes for its announcements. A page busy loading is no dialog.
 function atspiDialog(tree) {
   const find = (n) => {
-    if (!n) return undefined;
+    if (!n || n.role === "webarea" || (n.states ?? []).includes("hidden")) return undefined;
     if (n.role === "dialog" || n.role === "alert") return n;
     for (const c of n.children ?? []) {
       const d = find(c);
