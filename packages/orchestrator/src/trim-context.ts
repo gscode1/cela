@@ -133,13 +133,14 @@ function boundaryOf(
   messages: readonly Message[],
   mode: ContextTrim,
   options: TrimContextOptions,
-): number {
+): { end: number; moved: boolean } {
   const assistants: number[] = [];
   messages.forEach((message, index) => {
     if (message.role === "assistant") assistants.push(index);
   });
   let boundary = 0;
   let removed = 0;
+  let jumpedAt = 0;
   for (let count = 1; count <= assistants.length; count++) {
     const newest = assistants[count - 1];
     const last = newest === undefined ? undefined : messages[newest];
@@ -152,9 +153,11 @@ function boundaryOf(
     if (total - removed >= options.minRatio * prompt) {
       boundary = candidate;
       removed = total;
+      jumpedAt = count;
     }
   }
-  return boundary;
+  // The previous request carried one assistant message fewer, so its boundary is this one unless the last step jumped.
+  return { end: boundary, moved: jumpedAt > 0 && jumpedAt === assistants.length };
 }
 
 function elideText(text: string, options: TrimContextOptions): string | undefined {
@@ -231,11 +234,26 @@ export function trimMessages(
   mode: ContextTrim,
   options: TrimContextOptions = TRIM_CONTEXT_DEFAULTS,
 ): readonly Message[] {
-  if (mode === "off") return messages;
-  const end = boundaryOf(messages, mode, options);
-  if (end === 0) return messages;
+  return trimRequest(messages, mode, options).messages;
+}
+
+/**
+ * `trimMessages`, and whether the boundary moved at this request: the one request after a jump that rewrites the
+ * cached prefix (the `trimMoved` field of the `model-call` log line, docs/metrics.md).
+ */
+export function trimRequest(
+  messages: readonly Message[],
+  mode: ContextTrim,
+  options: TrimContextOptions = TRIM_CONTEXT_DEFAULTS,
+): { messages: readonly Message[]; moved: boolean } {
+  if (mode === "off") return { messages, moved: false };
+  const { end, moved } = boundaryOf(messages, mode, options);
+  if (end === 0) return { messages, moved: false };
   const result = applyTrim(messages, end, mode, options);
-  return result.some((message, index) => message !== messages[index]) ? result : messages;
+  return {
+    messages: result.some((message, index) => message !== messages[index]) ? result : messages,
+    moved,
+  };
 }
 
 /** The mode of a conversation's session; throws when it cannot be told (then that request is sent whole). */
@@ -262,6 +280,8 @@ const DEFAULT_MODE: ContextTrimOf = () => Promise.resolve(sessionContextTrim(und
 export function createTrimContextExtension(
   options: TrimContextOptions = TRIM_CONTEXT_DEFAULTS,
   modeOf: ContextTrimOf = DEFAULT_MODE,
+  /** Told, per generation task, whether each request moved the boundary (`ModelCalls.trimmed`). */
+  onRequest?: (taskId: string, moved: boolean) => void,
 ): Extension {
   const modes = new Map<number, ContextTrim>();
   const modeFor = async (conversationId: number): Promise<ContextTrim | undefined> => {
@@ -287,7 +307,8 @@ export function createTrimContextExtension(
         beforeRequest: async ({ messages }, api) => {
           const mode = await modeFor(Number(api.conversationId));
           if (mode === undefined) return undefined;
-          const trimmed = trimMessages(messages, mode, options);
+          const { messages: trimmed, moved } = trimRequest(messages, mode, options);
+          onRequest?.(String(api.taskId), moved);
           return trimmed === messages ? undefined : { messages: trimmed };
         },
       }),

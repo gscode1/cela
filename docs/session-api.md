@@ -201,7 +201,7 @@ Guarantees:
 
 | SSE event | `id:` | Data |
 |---|---|---|
-| `entry` | the Pi Durable entry id | `{ id, kind, messages: [{ role, text, calls?, isError? }] }`: one committed transcript entry (user input, assistant answer or tool call, tool result), once, in order. Entries without model messages are not sent. `text` shows an image as `[image]`; the transcript holds the image fitted to the model's limits ([ADR 0055](decisions/0055-fit-images.md)), or a note that it was left out; the model's requests carry old screenshots and large results trimmed ([ADR 0067](decisions/0067-trim-context.md)), the transcript does not. |
+| `entry` | the Pi Durable entry id | `{ id, kind, messages: [{ role, text, calls?, isError?, usage? }] }`: one committed transcript entry (user input, assistant answer or tool call, tool result), once, in order. Entries without model messages are not sent. `usage` is on assistant messages only: `{ input, output, cacheRead, cacheWrite, cost }`, the tokens and USD cost of the request that produced it ([metrics](metrics.md#model-calls-and-the-prompt-cache)). `text` shows an image as `[image]`; the transcript holds the image fitted to the model's limits ([ADR 0055](decisions/0055-fit-images.md)), or a note that it was left out; the model's requests carry old screenshots and large results trimmed ([ADR 0067](decisions/0067-trim-context.md)), the transcript does not. |
 | `live` | none | `{ running, queued, partial?, tools?, runFailure? }`: the run in progress, from `pi.live` and `pi.inbox`. Sent on connect and on every change. `running: false` with `queued: 0` means idle. |
 | `deleted` | none | The session was deleted; the stream ends. |
 | comment `: keepalive` | | Every 15 s. |

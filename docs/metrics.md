@@ -1,4 +1,4 @@
-# Timing and memory metrics
+# Timing, model and memory metrics
 
 Issue #58. [Decision 0004](decisions/0004-idle-suspend.md) quotes a resume of about 15 s, which is one observation of
 Pod Ready. This page defines what the orchestrator now logs so that time to first instruction, resume latency and
@@ -63,6 +63,48 @@ or swept, after an hour, or when more than 1000 are pending.
 `sandbox-resumed`, `env-reopen`, `env-prepare-failed`, `exec-record-failed` and `bridge-cap-wait`. Filter one turn with
 `kubectl logs deploy/pi-orchestrator | grep '"turn":"<event id>"'`. Lines of the idle sweeps (`sandbox-suspended`,
 `sandbox-recycled`, `bridge-cap-evict`) belong to no turn and keep their fields.
+
+## Model calls and the prompt cache
+
+Issue #497. Pi Durable keeps the provider's usage on every assistant message, but the orchestrator used to publish only
+the conversation's sum (`pi.usage`, shown as `usage` by `GET /sessions/{id}`). A prompt-cache miss (a prefix paid
+again as uncached input) could only be inferred from those totals. Now each call is visible on its own.
+
+`model-call`, one line per provider response, from the `model-calls` extension (`packages/orchestrator/src/model-calls.ts`,
+an `afterResponse` generation hook in the pinned host default next to `trim-context`). The hook runs once per terminal
+response, live, before Pi Durable commits it: a restarted orchestrator does not log the stored messages again, and a
+request sent again after a crash is a new paid call with its own line. Failed and aborted responses are logged too
+(`stopReason`). Compaction requests are not generation requests and have no line; `pi.usage` still counts them.
+
+```json
+{"t":"...","event":"model-call","session":"6f1c...","conversation":7,"turn":"0b7e...","seq":3,"model":"...","provider":"openai-codex",
+ "input":1830,"output":212,"cacheRead":14336,"cacheWrite":0,"cost":0.00694,"stopReason":"toolUse","ms":4210,"trimMoved":false}
+```
+
+| Field                                     | Meaning                                                                                                     |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `session`, `conversation`                 | As in the turn lines. `session` is `control-<id>` for a /control conversation.                              |
+| `turn`                                    | The inbox event id of the run's newest input (its Pi Durable `requestId`), as in `turn-timing`. Absent when the run has no open input. |
+| `seq`                                     | The call's number in its run, from 1: tool rounds so far plus one (`pi.live`). A retried attempt repeats it. |
+| `model`, `provider`                       | The model id and provider the request went to.                                                              |
+| `input`, `cacheRead`, `cacheWrite`, `output` | Tokens as the provider reported them. The prompt is `input + cacheRead + cacheWrite`.                   |
+| `cost`                                    | USD, `usage.cost.total` from the model catalog's prices.                                                    |
+| `stopReason`                              | `stop`, `length`, `toolUse`, `error` or `aborted`.                                                          |
+| `ms`                                      | Request start to the end of the response (`durationMs`); absent when the provider stream did not measure it. |
+| `trimMoved`                               | The trim boundary moved at this request, so the cached prefix was rewritten on purpose ([ADR 0067](decisions/0067-trim-context.md)). A miss with `trimMoved: false` is the provider's (or a prefix that changed for another reason). |
+
+The line carries numbers and identifiers only: never message text, thinking, tool arguments, error messages or URLs
+(`test/model-calls.test.ts` checks it). A lookup that fails (session, turn) leaves its field out and logs
+`model-call-lookup-failed`; the request never fails for it.
+
+**Cache ratio per call.** For call `i > 1` of a run, the previous prompt `P = input + cacheRead + cacheWrite` of call
+`i - 1` is what the provider could have cached. `cacheRead` close to `P` is a hit; `cacheRead` near zero (or only the
+static head of the prompt) is a miss, and `P - cacheRead` tokens were billed again as uncached input. Per turn:
+`kubectl logs deploy/pi-orchestrator | grep '"event":"model-call"' | grep '"turn":"<event id>"'`.
+
+The same usage is on the session stream: every assistant message of an `entry` event carries
+`usage: { input, output, cacheRead, cacheWrite, cost }` ([session API](session-api.md#streaming)), so a client that
+saved a stream can compute the ratio without the orchestrator log.
 
 ## Bridge memory
 
