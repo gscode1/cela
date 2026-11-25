@@ -1243,7 +1243,7 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
         const own = squash(g.text.slice(m.start)).toLowerCase();
         const tokens = [];
         if (m.datetime) tokens.push(`‹datetime=${clip(m.datetime, 40)}›`);
-        if (m.title && m.title.toLowerCase() !== own) {
+        if (m.title && m.title.toLowerCase() !== own && m.title !== m.datetime) {
           tokens.push(`‹title:"${clip(m.title, 80)}"›`);
           g.titles.add(m.title);
         }
