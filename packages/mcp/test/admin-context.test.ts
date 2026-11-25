@@ -61,7 +61,7 @@ describe("admin mode", { timeout: 10_000 }, () => {
     await withClient(env, async (client) => {
       const tools = (await client.listTools()).tools;
       const count = tools.filter((tool) => tool.name.startsWith("admin_")).length;
-      expect(count).toBe(dangerous ? 13 : writes ? 12 : 9);
+      expect(count).toBe(dangerous ? 16 : writes ? 14 : 10);
       expect(tools.some((tool) => tool.name === "admin_put_profile")).toBe(writes);
       expect(tools.some((tool) => tool.name === "admin_delete_profile")).toBe(writes);
     });
