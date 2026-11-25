@@ -1065,6 +1065,18 @@ function hiddenElements(snap) {
   return hidden;
 }
 
+// Whether the element shows a box: it has a layout box (a display:none element has none, and hiddenElements, which looks
+// at boxes, does not list it) and is not visibility:hidden. An iframe without one is a tracker's, whatever its document draws.
+function showsBox(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId?.indexOf(backendNodeId) ?? -1;
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    return v.layoutOf.has(i) && v.style(i)?.[1] !== "hidden";
+  }
+  return false;
+}
+
 // Long blocks become several numbered lines instead of one clipped line, so every part of a page can be read.
 function wrapLines(lines, width = 200) {
   const out = [];
@@ -1098,8 +1110,10 @@ function newLines(before, after) {
   return out;
 }
 
-// Open modal dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in
-// them, so a consent banner or a popup is reported in any site's language without knowing its words.
+// Open dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in them, so a
+// consent banner or a popup is reported in any site's language without knowing its words. `modal`: it holds the page back
+// (aria-modal, a <dialog> shown as modal, or an alert dialog); a dialog that is not (a <dialog open>, a panel with the role)
+// leaves the page usable.
 function dialogs(nodes, { max = 8 } = {}) {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]));
   const out = [];
@@ -1119,6 +1133,7 @@ function dialogs(nodes, { max = 8 } = {}) {
     const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role));
     out.push({
       role,
+      modal: modal || role === "alertdialog",
       name: squash(value(n.name)),
       backendNodeId: n.backendDOMNodeId,
       frameTag: n.frameTag,
@@ -1132,7 +1147,7 @@ function dialogs(nodes, { max = 8 } = {}) {
 function dialogLines(ds) {
   const out = [];
   for (const d of ds) {
-    out.push(`open ${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""} (act on it first):`);
+    out.push(`open ${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""} (${d.modal === false ? "not modal" : "act on it first"}):`);
     for (const e of d.entries) out.push(`  ${entryLine(e, { nameMax: 70 })}`);
     if (d.more) out.push(`  ... ${d.more} more: desktop-web snap`);
   }
@@ -1215,27 +1230,49 @@ const CHALLENGES = [
   ["HUMAN (PerimeterX)", (u) => /(^|\.)(px-cdn\.net|px-cloud\.net|perimeterx\.net|humansecurity\.com)$/.test(u.hostname)],
   ["Arkose", (u) => /(^|\.)(arkoselabs\.com|funcaptcha\.com)$/.test(u.hostname)],
 ];
+// The challenge provider a frame's URL belongs to, or undefined.
+function challengeOf(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return undefined;
+  }
+  return CHALLENGES.find(([, test]) => test(u))?.[0];
+}
 // A bot check says little: a page this short (in lines) can be one; a longer one is a page with content. A site's error page
 // keeps the site's menus and footer around its message, so it may be longer.
 const SHORT_PAGE = 40;
 const ERROR_PAGE = 150;
-// An HTTP error status at the start or the end of a title or heading: "404 - Shop", "Error 404", "Not found (404)".
-const STATUS = /^\W*(40[0-8]|410|429|451|50[0-4])(\D|$)|(^|\D)(40[0-8]|410|429|451|50[0-4])\W*$/;
+// An HTTP error status at the start or the end of a title's part or a heading: "404 - Shop", "Error 404", "x | 522: Connection
+// timed out" (Cloudflare's own error pages run from 520 to 530). A number inside one ("SSD 500 GB") is a product's.
+const CODE = "(40[0-8]|410|429|451|5[0-2]\\d|530)";
+const STATUS = new RegExp(`^\\W*${CODE}(\\D|$)|(^|\\D)${CODE}\\W*$`);
+// A line of the page that is a status and nothing else, or one word and the status ("Error 404"): a price ("404 zł") is not.
+const STATUS_LINE = new RegExp(`^(\\p{L}+ )?${CODE}$`, "u");
+// A title's parts: "Shop | 522: Connection timed out". A hyphen counts only between spaces ("Wi-Fi 500" is one part).
+const TITLE_PARTS = /\s*[|:]\s*|\s+[-–—]\s+/;
+const ORDINAL = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 
 // What the page is, beyond its text, as notices for an answer's header. `parts` are the page and its out-of-process frames
 // as read: { snap, hidden (backend ids), url (a frame's target URL) }. Says when the page is Chrome's own error page, may be
-// a site's error page (a status number at the edge of the title or first h1 of a page that is not long), looks like a bot check (a visible frame
-// of a challenge provider on a short page), or shows a frame that has drawn nothing yet. There is no HTTP status: reading it
-// would take Network.enable, which a page can detect.
-function pageNotices(parts, { lines = [], title = "" } = {}) {
+// a site's error page (a status number at the edge of a title's part or an h1 to h3, or a line among the first that is only
+// the status, of a page that is not long), looks like a bot check (a visible frame of a challenge provider on a short page),
+// or shows a frame that has drawn nothing yet. There is no HTTP status: reading it would take Network.enable, which a page
+// can detect. `sighting(host)` is how many times this session has met a bot check on the page's host, this time included:
+// the first may be a one-off, the second is the site's answer.
+function pageNotices(parts, { lines = [], title = "", sighting = () => 1 } = {}) {
   const out = [];
   const short = lines.length <= SHORT_PAGE;
   const str = (snap, i) => (i >= 0 ? snap.strings[i] : "");
   const main = parts[0]?.snap?.documents?.[0];
+  const status = () =>
+    squash(title).split(TITLE_PARTS).some((t) => STATUS.test(t)) ||
+    headings(parts[0]).some((h) => STATUS.test(h)) ||
+    lines.slice(0, SHORT_PAGE).some((l) => STATUS_LINE.test(squash(l)));
   if (main && /^chrome-error:/.test(str(parts[0].snap, main.documentURL)))
     out.push("Chrome error page: the page did not load (Chrome's reason is in its text)");
-  else if (lines.length <= ERROR_PAGE && (STATUS.test(squash(title)) || STATUS.test(firstH1(parts[0]) ?? "")))
-    out.push("may be an error page: a status number in the title or heading");
+  else if (lines.length <= ERROR_PAGE && status()) out.push("may be an error page: a status number in the title, a heading or a line of its own");
   const frames = [];
   const loading = [];
   // a document that has drawn nothing: no text and no element with a box but its root
@@ -1251,7 +1288,8 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
       frames.push(part.url);
       const doc = snap.documents?.[0];
       const html = doc?.layout?.bounds?.[0];
-      if (empty(snap, doc) && (!html || (html[2] >= 100 && html[3] >= 50))) loading.push(part.url);
+      // a frame that has laid out nothing at all is one a person cannot see either (a tracker's)
+      if (html && html[2] >= 100 && html[3] >= 50 && empty(snap, doc)) loading.push(part.url);
     }
     for (const doc of snap.documents ?? []) {
       const v = docView(snap, doc);
@@ -1262,6 +1300,7 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
         if (!b || v.tiny(b) || v.offscreen(b) || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
         const sub = inner.has(i) ? snap.documents[inner.get(i)] : undefined;
         let url = sub ? str(snap, sub.documentURL) : "";
+        // a srcdoc or a frame not loaded yet: what it was asked to show
         if (!/^https?:/.test(url)) {
           try {
             url = new URL(nodeAttrs(snap, doc, i).src ?? "", str(snap, doc.documentURL)).href;
@@ -1274,18 +1313,20 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
       }
     }
   }
-  for (const f of short ? frames : []) {
-    let u;
+  const hit = short ? frames.map(challengeOf).find(Boolean) : undefined;
+  if (hit) {
+    let host = "";
     try {
-      u = new URL(f);
+      host = new URL(str(parts[0].snap, main?.documentURL)).host;
     } catch {
-      continue;
+      // no host: counted as a first sight
     }
-    const hit = CHALLENGES.find(([, test]) => test(u));
-    if (hit) {
-      out.push(`looks like a bot check (${hit[0]}): report it, do not retry`);
-      break;
-    }
+    const n = host ? sighting(host) : 1;
+    out.push(
+      n <= 1
+        ? `looks like a bot check (${hit}): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.`
+        : `bot check again (${hit}, ${ORDINAL(n)} time on ${host}): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.`,
+    );
   }
   if (loading.length > 0) {
     const host = (u) => {
@@ -1301,14 +1342,15 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
   return out;
 }
 
-// The text of the first visible h1 of a part's main document.
-function firstH1(part) {
+// The texts of the visible h1, h2 and h3 of a part's main document, each cut at 200 characters.
+function headings(part) {
   const doc = part?.snap?.documents?.[0];
-  if (!doc) return undefined;
+  if (!doc) return [];
   const { snap } = part;
   const v = docView(snap, doc);
+  const out = [];
   for (const [i] of v.layoutOf) {
-    if (doc.nodes.nodeType[i] !== 1 || v.str(doc.nodes.nodeName[i]).toUpperCase() !== "H1" || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
+    if (doc.nodes.nodeType[i] !== 1 || !/^H[1-3]$/.test(v.str(doc.nodes.nodeName[i]).toUpperCase()) || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
     let text = "";
     for (let k = i + 1; k < doc.nodes.parentIndex.length && text.length < 200; k++) {
       let p = doc.nodes.parentIndex[k];
@@ -1316,9 +1358,9 @@ function firstH1(part) {
       if (p !== i) break;
       if (doc.nodes.nodeType[k] === 3) text += v.str(doc.nodes.nodeValue[k]);
     }
-    return squash(text);
+    out.push(squash(text));
   }
-  return undefined;
+  return out;
 }
 
 // The accessibility node ids a combobox or list owns: its own subtree and the subtrees of the elements it names in
@@ -1488,6 +1530,8 @@ module.exports = {
   dialogLines,
   dialogs,
   hiddenElements,
+  showsBox,
+  challengeOf,
   mainFirst,
   ownedNodes,
   inLandmark,

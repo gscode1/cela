@@ -56,7 +56,7 @@ interface CdpLib {
   dialogs(
     nodes: AxNode[],
   ): { role: string; name: string; backendNodeId?: number; entries: Entry[] }[];
-  dialogLines(ds: { role: string; name: string; entries: Entry[] }[]): string[];
+  dialogLines(ds: { role: string; name: string; modal?: boolean; entries: Entry[] }[]): string[];
   outline(
     nodes: AxNode[],
     lines: string[],
@@ -70,8 +70,10 @@ interface CdpLib {
   decodeEntities(s: string): string;
   pageNotices(
     parts: { snap: unknown; hidden?: Set<number>; url?: string }[],
-    o: { lines: string[]; title: string },
+    o: { lines: string[]; title: string; sighting?: (host: string) => number },
   ): string[];
+  challengeOf(url: string): string | undefined;
+  showsBox(snap: unknown, backendNodeId: number): boolean;
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
   ownedNodes(nodes: AxNode[], entry: Entry): Set<string>;
   inLandmark(nodes: AxNode[], entry: Entry, roles: Set<string>): boolean;
@@ -657,10 +659,14 @@ describe("desktop-web's CDP reader", () => {
         lines: ["Oops"],
         title: "404 Not Found",
       }),
-    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    ).toEqual([
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ]);
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { ...long, title: "404 - Shop" }),
-    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    ).toEqual([
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ]);
     const longer = Array.from({ length: 151 }, (_, i) => `line ${String(i)}`);
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: longer, title: "Error 404" }),
@@ -669,12 +675,33 @@ describe("desktop-web's CDP reader", () => {
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: ["x"], title: "SSD 500 GB" }),
     ).toEqual([]);
+    const error = [
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ];
+    // a status at the edge of one of the title's parts, a line that is only a word and the status
+    const at = (title: string, lines: string[]) =>
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines, title });
+    expect(at("a.test | 522: Connection timed out", ["x"])).toEqual(error);
+    expect(at("Shop - 503", ["x"])).toEqual(error);
+    expect(at("a.test/c/1634", ["Home", "Error 404", "Oops"])).toEqual(error);
+    expect(at("a.test/c/1634", ["Home", "404"])).toEqual(error);
+    // a price, a hyphenated name and a number inside a line are no status
+    expect(
+      at("Monitors - Shop", ["Monitor Alpha", "404 zł", "1 404,00 zł", "Top 500 models"]),
+    ).toEqual([]);
+    expect(at("Wi-Fi 500 Mbps router", ["x"])).toEqual([]);
     const challenge = page("https://a.test/", [
       frame("https://challenges.cloudflare.com/turnstile"),
     ]);
     expect(cdp.pageNotices([{ snap: challenge }], short)).toEqual([
-      "looks like a bot check (Cloudflare challenge): report it, do not retry",
+      "looks like a bot check (Cloudflare challenge): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.",
     ]);
+    // the second time on the host: the site's answer
+    expect(cdp.pageNotices([{ snap: challenge }], { ...short, sighting: () => 2 })).toEqual([
+      "bot check again (Cloudflare challenge, 2nd time on a.test): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.",
+    ]);
+    expect(cdp.challengeOf("https://www.google.com/recaptcha/api2/anchor?k=1")).toBe("reCAPTCHA");
+    expect(cdp.challengeOf("https://www.google.com/search?q=recaptcha")).toBeUndefined();
     expect(cdp.pageNotices([{ snap: challenge }], long)).toEqual([]);
     expect(cdp.pageNotices([{ snap: challenge, hidden: new Set([1003]) }], short)).toEqual([]);
     const badge = page("https://a.test/", [
@@ -686,9 +713,15 @@ describe("desktop-web's CDP reader", () => {
       snap: page("https://newassets.hcaptcha.com/c"),
       url: "https://newassets.hcaptcha.com/c",
     };
-    const blank = { snap: snapOf([doc]), url: "https://pay.test/frame" };
+    const blank = {
+      snap: snapOf([doc, { ...div, tag: "HTML", box: [0, 0, 300, 150] }]),
+      url: "https://pay.test/frame",
+    };
+    // a frame that has laid out nothing (a tracker's, its iframe not shown) is not loading
+    const unlaid = { snap: snapOf([doc]), url: "https://m.test/frame" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/") }, unlaid], short)).toEqual([]);
     expect(cdp.pageNotices([{ snap: page("https://a.test/") }, hc, blank], short)).toEqual([
-      "looks like a bot check (hCaptcha): report it, do not retry",
+      "looks like a bot check (hCaptcha): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.",
       "a frame is still loading (pay.test): read again in a moment",
     ]);
   });
@@ -785,7 +818,10 @@ describe("desktop-web's CDP reader", () => {
     });
     const nodes = [
       ax("1", "RootWebArea", "Page", undefined, { childIds: ["2", "5"] }),
-      ax("2", "dialog", "Prywatność", "1", { childIds: ["3", "4"] }),
+      ax("2", "dialog", "Prywatność", "1", {
+        childIds: ["3", "4"],
+        properties: [{ name: "modal", value: { value: true } }],
+      }),
       ax("3", "button", "Zgadzam się", "2"),
       ax("4", "button", "Ustawienia", "2"),
       ax("5", "main", "", "1", { childIds: ["6"] }),
@@ -804,6 +840,9 @@ describe("desktop-web's CDP reader", () => {
       "e104",
     ]);
     expect(cdp.dialogs(nodes.filter((n) => n.nodeId !== "2"))).toEqual([]);
+    // a dialog that does not hold the page back (a <dialog open>) says so
+    const open = nodes.map((n) => (n.nodeId === "2" ? { ...n, properties: [] } : n));
+    expect(cdp.dialogLines(cdp.dialogs(open))[0]).toBe('open dialog "Prywatność" (not modal):');
   });
 
   it("outlines headings with the text line they start at", () => {
