@@ -30,6 +30,20 @@ export {
   THINKING_LEVELS,
 } from "./models.js";
 export type { ModelChoice, ModelPolicy, ThinkingLevel } from "./models.js";
+export {
+  formatSessionCursor,
+  listSessions,
+  parseSessionCursor,
+  SESSION_LIST_DEFAULT,
+  SESSION_LIST_MAX,
+  SESSION_STATUSES,
+} from "./session-list.js";
+export type {
+  SessionCursor,
+  SessionListItem,
+  SessionListPage,
+  SessionListQuery,
+} from "./session-list.js";
 export { AdminConflictError, CREATE_ONLY_REVISION, parseExpectedRevision } from "./revision.js";
 export { AdminBlockedError, CATALOG_LOCK } from "./deletion.js";
 export type { BlockedBy } from "./deletion.js";
