@@ -81,6 +81,7 @@ interface CdpLib {
   hiddenElements(snap: unknown): Set<number>;
   wrapLines(lines: string[], width?: number): string[];
   newLines(before: string[], after: string[]): string[];
+  appearedControls(before: Entry[], after: Entry[]): Entry[];
   orderChange(before: string[], after: string[]): { from: number; to: number } | undefined;
   focusOf(
     nodes: AxNode[],
@@ -1079,6 +1080,11 @@ describe("desktop-web's CDP reader", () => {
     expect(wrapped.every((l) => l.length <= 100)).toBe(true);
     expect(wrapped.join(" ")).toBe(`short ${long}`);
     expect(cdp.newLines(["a", "b"], ["a", "b", "c", "c", "d"])).toEqual(["c", "d"]);
+    // counted: "Red" picked in a second list is new though the first list shows it too, and one copy fewer is gone
+    expect(cdp.newLines(["Red", "Blue"], ["Red", "Blue", "Red"])).toEqual(["Red"]);
+    expect(cdp.newLines(["Red", "Blue", "Red"], ["Red", "Blue"])).toEqual([]);
+    expect(cdp.newLines(["Red", "Blue"], ["Red", "Blue", "Red"]).length).toBe(1);
+    expect(cdp.newLines(["Red", "Blue", "Red"], ["Blue", "Red"])).toEqual([]);
   });
 
   it("maps a viewport point to the screen below the toolbar and inside the frame", () => {
@@ -1375,7 +1381,7 @@ describe("desktop-web's CDP reader", () => {
     attrs?: Record<string, string>,
   ): N => ({ parent, type: 1, tag, style, box, ...(attrs ? { attrs } : {}) });
 
-  it("keeps a hidden checkbox whose label a person sees, clicked through the label, and drops a honeypot", () => {
+  it("keeps a hidden checkbox whose label a person sees, clicked through the label, or a clickable box of its own, and drops a honeypot", () => {
     const snap = snapOf([
       doc, // 0
       el(0, "DIV", sty("block"), [0, 0, 400, 200]), // 1
@@ -1385,11 +1391,13 @@ describe("desktop-web's CDP reader", () => {
       el(1, "INPUT", sty("inline-block", "0"), [0, 30, 14, 14], { type: "checkbox", id: "s" }), // 5
       el(1, "LABEL", sty("block"), [0, 30, 200, 20], { for: "s" }), // 6 label tied by for=
       t("Superb", [20, 30, 60, 16], 6), // 7
-      el(1, "INPUT", sty("inline-block", "0"), [0, 60, 14, 14], { type: "checkbox" }), // 8 honeypot
+      el(1, "INPUT", sty("inline-block", "0"), [0, 60, 1, 1], { type: "checkbox" }), // 8 honeypot
       el(1, "INPUT", sty("inline-block"), [0, 90, 200, 20], {
         placeholder: "Where are you going?",
         type: "password",
       }), // 9
+      el(1, "INPUT", sty("inline-block", "0"), [0, 120, 40, 40], { type: "checkbox" }), // 10 a row's toggle, no label
+      el(1, "INPUT", sty("inline-block", "0"), [0, 170, 6, 6], { type: "checkbox" }), // 11 too small to aim at
     ]);
     const hidden = cdp.hiddenElements(snap);
     expect(hidden.has(1003) && hidden.has(1005) && hidden.has(1008)).toBe(true);
@@ -1406,6 +1414,8 @@ describe("desktop-web's CDP reader", () => {
         e(1005, "checkbox", "Superb"),
         e(1008, "checkbox", "Trap"),
         e(1009, "textbox", "Destination"),
+        e(1010, "checkbox", "Toggle Todo"),
+        e(1011, "checkbox", "Tiny"),
       ],
       snap,
       hidden,
@@ -1414,6 +1424,7 @@ describe("desktop-web's CDP reader", () => {
       ["e1003", 1002],
       ["e1005", 1006],
       ["e1009", undefined],
+      ["e1010", undefined],
     ]);
     expect(cdp.entryLine(out[2] as Entry)).toBe(
       '[e1009] textbox "Destination" placeholder="Where are you going?"',
@@ -1485,6 +1496,163 @@ describe("desktop-web's CDP reader", () => {
     ]);
     expect(cdp.chooseTarget(nodes, named, /bike/i).pick?.ref).toBe("e1002");
     expect(cdp.chooseTarget(nodes, named, /state/i).pick?.ref).toBe("e1004");
+  });
+
+  it("lists a role-less tabindex=0 element as focusable, never tabindex=-1, a scroller or a container of controls", () => {
+    const scroll = [
+      "block",
+      "visible",
+      "1",
+      "static",
+      "auto",
+      "auto",
+      "auto",
+      "auto",
+    ] as unknown as [string, string, string];
+    const handle = { tabindex: "0", class: "ui-slider-handle ui-corner-all" };
+    const snap = snapOf([
+      doc, // 0
+      el(0, "DIV", sty("block"), [0, 0, 600, 400]), // 1
+      el(1, "P", sty("block"), [0, 0, 300, 20]), // 2
+      t("Price range:", [0, 0, 90, 16], 2), // 3
+      el(1, "DIV", sty("block"), [0, 40, 300, 10]), // 4 the track
+      el(4, "SPAN", sty("block"), [45, 35, 18, 18], handle), // 5
+      el(4, "SPAN", sty("block"), [180, 35, 18, 18], handle), // 6
+      el(1, "DIV", sty("block"), [0, 80, 300, 20], { tabindex: "-1" }), // 7
+      t("Only script focuses this", [0, 80, 160, 16], 7), // 8
+      el(1, "DIV", scroll, [0, 110, 300, 60], { tabindex: "0" }), // 9
+      t("A long text", [0, 110, 80, 16], 9), // 10
+      el(1, "DIV", sty("block"), [0, 180, 300, 20], { tabindex: "0" }), // 11 a card around a link
+      el(11, "A", sty("inline"), [0, 180, 60, 16], { href: "#c" }), // 12
+      t("its link", [0, 180, 60, 16], 12), // 13
+    ]);
+    const focusable = { properties: [{ name: "focusable", value: { value: true } }] };
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      id?: number,
+      parentId?: string,
+      kids?: string[],
+      extra = {},
+    ) => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      ...(id ? { backendDOMNodeId: id } : {}),
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+      ...extra,
+    });
+    const nodes: AxNode[] = [
+      ax("root", "RootWebArea", "Price", 1000, undefined, ["c"], focusable),
+      ax("c", "generic", "", 1001, "root", ["p", "s", "m", "sc", "card"]),
+      ax("p", "paragraph", "", 1002, "c", ["st"]),
+      ax("st", "StaticText", "Price range:", 1003, "p"),
+      ax("s", "generic", "", 1004, "c", ["h1", "h2"]),
+      ax("h1", "generic", "", 1005, "s", [], focusable),
+      ax("h2", "generic", "", 1006, "s", [], focusable),
+      ax("m", "generic", "", 1007, "c", [], focusable),
+      ax("sc", "generic", "", 1009, "c", [], focusable),
+      ax("card", "generic", "", 1011, "c", ["a"], focusable),
+      ax("a", "link", "its link", 1012, "card", ["at"]),
+      ax("at", "StaticText", "its link", 1013, "a"),
+    ];
+    const entries = cdp.axEntries(nodes);
+    expect(entries.map((e) => `${e.ref} ${e.role}`)).toEqual([
+      "e1005 focusable",
+      "e1006 focusable",
+      "e1007 focusable",
+      "e1009 focusable",
+      "e1011 focusable",
+      "e1012 link",
+    ]);
+    const kept = cdp.nameUnnamed(nodes, cdp.annotate(entries, snap, cdp.hiddenElements(snap)));
+    expect(kept.map((e) => e.ref)).toEqual(["e1005", "e1006", "e1012"]);
+    // a handle's own row has no text (the other handle shares the track): the text around the track names it
+    expect(cdp.entryLine(kept[0] as Entry)).toMatch(
+      /^\[e1005\] focusable ‹[^›]*ui-slider-handle[^›]*› near "Price range: its link"$/,
+    );
+    const r = cdp.chooseTarget(nodes, kept, /focusable/i, { near: /Price range/i });
+    expect(r.pick?.ref).toBe("e1005");
+  });
+
+  it("shows the row of controls that share a role and name, and never matches a name against it", () => {
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      parentId?: string,
+      kids?: string[],
+    ) => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+    });
+    const nodes: AxNode[] = [
+      ax("root", "RootWebArea", "", undefined, ["l", "add"]),
+      ax("l", "list", "", "root", ["li1", "li2"]),
+      ax("li1", "listitem", "", "l", ["t1", "s1"]),
+      ax("t1", "checkbox", "Toggle Todo", "li1"),
+      ax("s1", "StaticText", "write report", "li1"),
+      ax("li2", "listitem", "", "l", ["t2", "s2"]),
+      ax("t2", "checkbox", "Toggle Todo", "li2"),
+      ax("s2", "StaticText", "call mom", "li2"),
+      ax("add", "button", "Add", "root"),
+    ];
+    const e = (nodeId: string, role: string, name: string): Entry => ({
+      ref: `e${nodeId}`,
+      backendNodeId: 1,
+      nodeId,
+      role,
+      name,
+    });
+    const named = cdp.nameUnnamed(nodes, [
+      e("t1", "checkbox", "Toggle Todo"),
+      e("t2", "checkbox", "Toggle Todo"),
+      e("add", "button", "Add"),
+    ]);
+    expect(named.map((x) => cdp.entryLine(x))).toEqual([
+      '[et1] checkbox "Toggle Todo" near "write report"',
+      '[et2] checkbox "Toggle Todo" near "call mom"',
+      '[eadd] button "Add"',
+    ]);
+    expect(cdp.chooseTarget(nodes, named, /write report/i).none).toBe(true);
+    expect(cdp.chooseTarget(nodes, named, /toggle/i, { near: /call mom/i }).pick?.ref).toBe("et2");
+  });
+
+  it("names the controls an action added, a new ref and a new row first", () => {
+    const e = (ref: string, role: string, name: string, near?: string): Entry => ({
+      ref,
+      backendNodeId: 1,
+      nodeId: ref,
+      role,
+      name,
+      ...(near ? { near } : {}),
+    });
+    // a pick adds a second "Remove Red" (the first now shows its row too); the option list is not a control that appeared
+    const before = [e("e1", "button", "Remove Red"), e("e2", "button", "Remove Blue")];
+    const after = [
+      e("e1", "button", "Remove Red", "Red"),
+      e("e2", "button", "Remove Blue"),
+      e("e9", "button", "Remove Red", "Red"),
+      e("h", "heading", "Colours"),
+    ];
+    expect(cdp.appearedControls(before, after).map((x) => x.ref)).toEqual(["e9"]);
+    // a list drawn again: every ref is new, the row that came back is the one that appeared
+    const was = [
+      e("a1", "checkbox", "Toggle", "buy milk"),
+      e("a3", "checkbox", "Toggle", "call mom"),
+    ];
+    const now = [
+      e("b1", "checkbox", "Toggle", "buy milk"),
+      e("b2", "checkbox", "Toggle", "write report"),
+      e("b3", "checkbox", "Toggle", "call mom"),
+    ];
+    expect(cdp.appearedControls(was, now).map((x) => x.ref)).toEqual(["b2"]);
+    expect(cdp.appearedControls(now, now)).toEqual([]);
   });
 
   it("gives a control its label and its own box, the highest ancestor that holds no other control", () => {

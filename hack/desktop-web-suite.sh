@@ -772,7 +772,63 @@ case_acting() {
   check "not an outline either" "$(no 'outline')"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide)
+# Two multi-selects share "Red": a pick adds a line already on the page and a second "Remove Red" button; End scrolls.
+case_chips() {
+  open chips
+  web select 'Multi Select' 'Red'
+  check "a pick in a multi-select prints the chip's remove button" "$(ok 'appeared: \[e[0-9]+\] button "Remove Red"')"
+  check "and the line already shown in the other list" "$(ok '^Red$')"
+  check "not that nothing happened" "$(no 'nothing happened')"
+  has_text 'picked: Red in Multi Select'
+  check "the page saw the pick" $?
+  open chips
+  web key End
+  check "End on a long page says how far it scrolled" "$(ok 'scrolled 0 -> [1-9][0-9]* of [0-9]+ px')"
+  check "which is a change" "$(no 'nothing happened')"
+}
+
+# TodoMVC-style rows: an opacity-0 toggle per row without a label, and a label renamed on double click (delegated listeners).
+case_todos() {
+  open todos
+  web snap 'Toggle'
+  check "an opacity-0 toggle without a label is listed, by its row" "$(ok 'checkbox "Toggle Todo" near "write report" checked=false')"
+  web click 'Toggle' --near 'write report'
+  check "it is clicked on its own box" "$(ok 'checkbox "Toggle Todo": checked false -> true')"
+  has_text 'toggled: write report true'
+  check "the page saw that row's toggle" $?
+  web click 'buy milk'
+  check "plain click falls back to the one line of plain text, and says so" "$(ok 'clicked the plain text')"
+  web click --double 'call mom'
+  check "--double edits a label: the field appears focused" "$(ok 'appeared: \[e[0-9]+\] textbox .*value="call mom" focused')"
+  local ref
+  ref=$(grep -oE 'appeared: \[e[0-9]+\] textbox' "$OUT" | grep -oE 'e[0-9]+' | head -1)
+  web type "${ref:-none}" 'call dad' --enter
+  check "type --enter renames it" "$(ok 'value now: "call dad"')"
+  has_text 'renamed: call mom -> call dad'
+  check "the page saw the rename" $?
+}
+
+# A jQuery-style range slider: role-less tabindex=0 handles are listed as focusable and move with the arrow keys; tabindex=-1,
+# a scroller and a card that holds a link are not listed.
+case_handle() {
+  open handle
+  web snap 'focusable'
+  check "a role-less tabindex=0 handle is listed with its class words and row" "$(ok 'focusable ‹ui-slider-handle ui-corner-all› near "[^"]*Price range')"
+  check "both handles, nothing else" "$([[ $(grep -c 'focusable' "$OUT") == 2 ]]; echo $?)"
+  check "no tabindex=-1 element, scroller or card" "$(no 'script focuses|scrolls inside|A card')"
+  local ref
+  ref=$(grep -oE '\[e[0-9]+\] focusable' "$OUT" | grep -oE 'e[0-9]+' | head -1)
+  web type "${ref:-none}" 80
+  check "type refuses a handle and says how to move it" "$(ok 'click it, then desktop-web key' 64)"
+  web click "${ref:-none}"
+  check "a click focuses it and says the keys move it" "$(ok 'it has the focus: move it with desktop-web key')"
+  web key Right
+  check "the arrow key moves it" "$(ok 'value "\$75 - \$300" -> "\$80 - \$300"')"
+  has_text 'price: \$80 - \$300'
+  check "the page saw the key" $?
+}
+
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

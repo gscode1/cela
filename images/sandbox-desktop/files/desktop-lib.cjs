@@ -102,6 +102,17 @@ function humanClick(box) {
   return at;
 }
 
+// Two presses at one point, 60-120 ms apart: well inside the desktop's double-click time, as a person's double click is.
+function humanDoubleClick(box) {
+  const at = humanMove(box);
+  humanPress();
+  pause(rand(60, 120));
+  exec("xdotool", "mousedown", "1");
+  pause(rand(50, 110));
+  exec("xdotool", "mouseup", "1");
+  return at;
+}
+
 // A drag as a person makes one: the pointer travels to the source, presses, holds a moment, leaves the press point by a few
 // px (browsers start a drag only past a small threshold), travels in eased steps with a slight wobble, then dwells over the
 // target with a small jiggle (drop targets react to movement over them: dragover fires on motion) and releases there.
@@ -352,6 +363,7 @@ module.exports = {
   findAcross,
   grepLines,
   humanClick,
+  humanDoubleClick,
   humanDrag,
   humanMove,
   humanPress,
