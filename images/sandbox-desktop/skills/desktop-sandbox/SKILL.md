@@ -31,6 +31,8 @@ A web task needs only this section (the agent-desktop skill is for Mousepad and 
   need. Give the words you need, not `.`: an answer is capped at about 60 lines and says how to read on.
   The text covers the whole page, offscreen parts included: no scrolling, no screenshot. Read the saved file again with
   `desktop-web text "regex" --from <file>`, never with `cat`, `sed`, `head` or `tail`.
+- Meaning that is only an icon, a colour or a class (a star rating, a status dot) is not in the text: add `--marks` to
+  `text`, not a screenshot.
 - Answers start with `title:`, and `url:` only when the address changed. Notices under them say what the page is (redirect,
   error page, bot check, almost no text); act on them.
 - After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
