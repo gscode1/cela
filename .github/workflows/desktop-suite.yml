@@ -51,16 +51,17 @@ jobs:
         run: |
           images/build.sh sandbox-desktop --platform linux/amd64
           echo "IMAGE=$(docker image ls --format '{{.Repository}}:{{.Tag}}' cela/pi-sandbox-desktop | head -n1)" >> "$GITHUB_ENV"
-      - name: Start the desktop (image entrypoint)
-        # --shm-size: Chrome crashes on the 64 MB default /dev/shm.
+      - name: Start the container (image entrypoint)
+        # --shm-size: Chrome crashes on the 64 MB default /dev/shm. The entrypoint is sandboxd, which starts Xvfb and the
+        # desktop on the first desktop call (the suite's first desktop-web open), so the wait is for sandboxd.
         run: |
           docker run -d --name suite --shm-size=1g "$IMAGE"
           for i in $(seq 1 60); do
-            docker exec suite pgrep -x Xvfb >/dev/null 2>&1 && exit 0
+            docker logs suite 2>&1 | grep -q 'sandboxd listening' && exit 0
             sleep 1
           done
           docker logs suite
-          echo "Xvfb did not start" >&2
+          echo "sandboxd did not start" >&2
           exit 1
       - name: Run the suite as pi
         run: |
