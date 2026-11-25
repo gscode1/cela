@@ -8,6 +8,13 @@
  *   node smoke.mjs 1.0.0 npx -y ./cela-mcp-1.0.0.tgz
  */
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { URL } from "node:url";
+
+// The expected tools come from the manifest (checked against the registered tools by a unit test), so the list
+// cannot drift when a tool is added.
+const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+const manifestTools = manifest.tools.map((t) => t.name).sort();
 
 const [expectedVersion, command, ...args] = process.argv.slice(2);
 if (expectedVersion === undefined || command === undefined) {
@@ -67,15 +74,7 @@ try {
   send({ jsonrpc: "2.0", method: "notifications/initialized" });
   const { tools } = await request(2, "tools/list", {});
   const names = tools.map((t) => t.name).sort();
-  const wanted = [
-    "cancel",
-    "delete_session",
-    "get_session",
-    "run_task",
-    "send_message",
-    "start_session",
-    "wait",
-  ];
+  const wanted = manifestTools;
   if (init.serverInfo?.name !== "cela" || init.serverInfo?.version !== expectedVersion) {
     throw new Error(`unexpected serverInfo ${JSON.stringify(init.serverInfo)}`);
   }
