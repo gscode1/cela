@@ -21,11 +21,22 @@
 <div class="field"><div class="lbl">Subjects</div><div class="ctl"><div class="ph">Pick subjects</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="subjects"></div></div>
 <div class="field"><div class="lbl">State</div><div class="ctl"><div class="ph">Select state</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="state"></div></div>
 <div class="field"><div class="lbl">City</div><div class="ctl"><div class="ph">Select city</div><input role="combobox" aria-expanded="false" aria-autocomplete="list" id="city"></div></div>
+<!-- a combobox whose instruction moved into its description once a value was picked -->
+<div class="field"><div class="lbl">Town</div><div class="ctl"><input role="combobox" aria-expanded="false" aria-autocomplete="list" aria-describedby="town-hint" id="town"></div><span id="town-hint" hidden>Select town</span></div>
+<!-- a range with no name of its own -->
+<div class="field"><div class="lbl">Level</div><input type="range" id="level" min="0" max="10" value="2"></div>
+<!-- two scales whose options share their names: the question above each tells them apart -->
+<div role="heading" aria-level="3">How experienced are you?</div>
+<div class="field">Low <label><input type="radio" name="exp" value="1">1</label> <label><input type="radio" name="exp" value="2">2</label> <label><input type="radio" name="exp" value="3">3</label> High</div>
+<div role="heading" aria-level="3">How satisfied are you?</div>
+<div class="field">Low <label><input type="radio" name="sat" value="1">1</label> <label><input type="radio" name="sat" value="2">2</label> <label><input type="radio" name="sat" value="3">3</label> High</div>
 <p><button id="next" disabled>Next step</button></p>
 <pre id="log"></pre>
 <script src="log.js"></script>
 <script>
   const log = document.getElementById("log");
-  for (const id of ["subjects", "state", "city"]) document.getElementById(id).addEventListener("focus", () => (log.textContent += `${log.textContent ? "\n" : ""}focused: ${id}`));
+  for (const r of document.querySelectorAll("input[type=radio]")) r.addEventListener("change", () => (log.textContent += `${log.textContent ? "\n" : ""}radio ${r.name}: ${r.value}`));
+  document.getElementById("level").addEventListener("change", (e) => (log.textContent += `${log.textContent ? "\n" : ""}level: ${e.target.value}`));
+  for (const id of ["subjects", "state", "city", "town"]) document.getElementById(id).addEventListener("focus", () => (log.textContent += `${log.textContent ? "\n" : ""}focused: ${id}`));
   document.getElementById("dest").addEventListener("input", (e) => (document.getElementById("next").disabled = !e.target.value));
 </script>

@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>twins</title>
+<style>
+  body { font: 16px sans-serif; }
+  header { padding: 6px; border-bottom: 1px solid #888; }
+  .row { display: flex; gap: 16px; margin: 6px 0; }
+  /* an off-canvas copy of the filter bar, as a narrow layout's drawer: fixed just right of the viewport */
+  #drawer { position: fixed; left: 100%; top: 120px; width: 260px; }
+  .cols { display: flex; gap: 20px; margin-top: 12px; }
+  .col { width: 90px; height: 70px; border: 2px solid #555; cursor: move; }
+  .col header { border: 0; text-align: center; font-weight: bold; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; }
+  #modal.open { display: flex; }
+  #modal > div { background: #fff; padding: 20px; }
+</style>
+<body>
+<header role="banner"><label>Search filters <input id="head-search"></label></header>
+<h1>Results</h1>
+<div class="bar"><button id="filters-main">Show all filters</button></div>
+<div id="drawer" class="bar"><button id="filters-drawer">Show all filters</button></div>
+<div class="row"><span>Alpha lamp 10 zł</span><button id="add-alpha">Add</button></div>
+<div class="row"><span>Beta lamp 12 zł</span><button id="add-beta">Add</button></div>
+<p><button id="open-modal">Open the filter dialog</button></p>
+<div class="cols">
+  <div class="col" id="column-a" draggable="true"><header>A</header></div>
+  <div class="col" id="column-b" draggable="true"><header>B</header></div>
+</div>
+<div id="modal" role="dialog" aria-modal="true" aria-label="Filters">
+  <div><label>Search filters <input id="modal-search"></label> <button id="close-modal">Close</button></div>
+</div>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const modal = document.getElementById("modal");
+  document.getElementById("open-modal").addEventListener("click", () => modal.classList.add("open"));
+  document.getElementById("close-modal").addEventListener("click", () => modal.classList.remove("open"));
+  for (const id of ["head-search", "modal-search"]) document.getElementById(id).addEventListener("input", (e) => add(`typed in ${id}: ${e.target.value}`));
+  // HTML5 drag and drop that swaps the two columns' letters, as a sortable board does
+  let from;
+  for (const c of document.querySelectorAll(".col")) {
+    c.addEventListener("dragstart", (e) => { from = c; e.dataTransfer.setData("text/plain", c.id); });
+    c.addEventListener("dragover", (e) => e.preventDefault());
+    c.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (!from || from === c) return;
+      const a = from.querySelector("header");
+      const b = c.querySelector("header");
+      [a.textContent, b.textContent] = [b.textContent, a.textContent];
+      add(`swapped: ${[...document.querySelectorAll(".col header")].map((h) => h.textContent).join(" ")}`);
+    });
+  }
+</script>

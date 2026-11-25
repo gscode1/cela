@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>menu</title>
+<style>
+  body { font: 16px sans-serif; }
+  .bar { display: flex; gap: 8px; align-items: center; }
+  .kebab { width: 32px; height: 28px; }
+  [role=menu] { border: 1px solid #888; padding: 4px; width: 200px; }
+  [role=menu][hidden] { display: none; }
+  [role=menuitem] { padding: 4px; cursor: pointer; }
+</style>
+<body>
+<nav aria-label="Site"><button aria-expanded="false" id="products">Products</button></nav>
+<main>
+  <h1>Issues</h1>
+  <!-- the list's sort order hides in an overflow menu whose button shows only an icon -->
+  <div class="bar">
+    <button aria-haspopup="dialog" aria-expanded="false" id="author">Author</button>
+    <button aria-haspopup="dialog" aria-expanded="false" id="labels">Labels</button>
+    <button class="kebab" aria-haspopup="menu" aria-expanded="false" aria-label="More list controls" id="more"><svg width="16" height="16"><circle cx="8" cy="3" r="2"/><circle cx="8" cy="8" r="2"/><circle cx="8" cy="13" r="2"/></svg></button>
+  </div>
+  <div role="menu" id="more-menu" hidden>
+    <div role="menuitem" id="newest">Sort by newest</div>
+    <div role="menuitem" id="oldest">Sort by oldest</div>
+  </div>
+  <p>Issue one</p>
+  <p>Issue two</p>
+</main>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const more = document.getElementById("more");
+  const menu = document.getElementById("more-menu");
+  more.addEventListener("click", () => {
+    menu.hidden = !menu.hidden;
+    more.setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  for (const id of ["newest", "oldest"])
+    document.getElementById(id).addEventListener("click", () => {
+      add(`sorted: ${id}`);
+      menu.hidden = true;
+      more.setAttribute("aria-expanded", "false");
+    });
+</script>

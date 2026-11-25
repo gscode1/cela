@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>table</title>
+<style>
+  body { font: 16px sans-serif; }
+  th, td { border: 1px solid #888; padding: 4px 10px; }
+  th.sort { cursor: pointer; }
+</style>
+<body>
+<h1>Largest towns</h1>
+<!-- a two-level header: two groups with the same column names, a footnote link inside a sortable header, and a header that
+     only labels its column -->
+<table id="towns">
+  <thead>
+    <tr>
+      <th class="sort" rowspan="2" tabindex="0" title="Sort ascending">Town<sup><a id="note-link" href="away.html">[1]</a></sup></th>
+      <th colspan="2">Metro area</th>
+      <th colspan="2">Town proper</th>
+      <th rowspan="2">Remarks</th>
+    </tr>
+    <tr>
+      <th class="sort" tabindex="0" title="Sort ascending">Population</th>
+      <th class="sort" tabindex="0" title="Sort ascending">Area</th>
+      <th class="sort" tabindex="0" title="Sort ascending">Population</th>
+      <th class="sort" tabindex="0" title="Sort ascending">Area</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Ostrava</td><td>1200</td><td>500</td><td>280</td><td>214</td><td>steel</td></tr>
+    <tr><td>Brno</td><td>700</td><td>800</td><td>390</td><td>230</td><td>fairs</td></tr>
+    <tr><td>Aš</td><td>900</td><td>100</td><td>13</td><td>56</td><td>border</td></tr>
+  </tbody>
+</table>
+<p>Read about <a id="pop-link" href="away.html">Population</a> counts.</p>
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const heads = [...document.querySelectorAll("th.sort")];
+  // the column of each sortable header, in the body's cells
+  const col = new Map([[heads[0], 0], [heads[1], 1], [heads[2], 2], [heads[3], 3], [heads[4], 4]]);
+  for (const th of heads)
+    th.addEventListener("click", () => {
+      const asc = th.getAttribute("aria-sort") !== "ascending";
+      for (const h of heads) h.removeAttribute("aria-sort");
+      th.setAttribute("aria-sort", asc ? "ascending" : "descending");
+      th.title = asc ? "Sort descending" : "Sort ascending";
+      const k = col.get(th);
+      const body = document.querySelector("#towns tbody");
+      const rows = [...body.rows].sort((a, b) => {
+        const x = a.cells[k].textContent;
+        const y = b.cells[k].textContent;
+        const d = isNaN(x) ? x.localeCompare(y) : Number(x) - Number(y);
+        return asc ? d : -d;
+      });
+      for (const r of rows) body.appendChild(r);
+      add(`sorted: column ${k} ${asc ? "ascending" : "descending"}, first ${rows[0].cells[0].textContent}`);
+    });
+</script>
