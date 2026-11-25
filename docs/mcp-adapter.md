@@ -170,15 +170,16 @@ and ingest, the validator, answers `400`. It **replaces the whole definition**: 
 the next version, with no merge, so fields you omit revert to their defaults and a read-modify-write starts from
 `admin_get_profile`. An identical definition writes nothing; without `definition` only `enabledForNew` changes. `admin_delete_profile` requires `name` and the current
 `expectedRevision`. Read the profile first; a 409 means reload before retrying. Delete requires the profile to be
-disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. The other tools of the table below are planned (issue #511). Only enable this mode for trusted clients: a shell-capable agent can read its environment.
+disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. The other tools are in the table below. Only enable this mode for trusted clients: a shell-capable agent can read its environment.
 
 ### Tools by flag
 
 Three flags, each needing the one before ([ADR 0070](decisions/0070-mcp-admin-parity.md)): `PI_MCP_ADMIN` (reads),
 `PI_MCP_ADMIN_WRITES` (writes that only affect sessions created afterwards) and `PI_MCP_ADMIN_DANGEROUS` (everything that
-can cut off or widen what running and future sessions reach). "Since" is the first adapter version with the tool;
-"planned (#511)" tools are not built yet and this table is their contract. Every tool answers the ingest JSON as
-structured content, scrubbed of both tokens and labelled untrusted; writes take `expectedRevision`.
+can cut off or widen what running and future sessions reach). "Since" is the first adapter version with the tool.
+Every tool answers the ingest JSON as structured content, scrubbed of both tokens and labelled untrusted; writes take
+`expectedRevision`. A refused call is an error result `{ error, status, details? }`: `details` holds the other fields of
+ingest's error body, such as the `blockedBy` of a refused delete (profiles, sessions), also scrubbed and untrusted.
 
 | Tool | Flag | What it calls | Since |
 |---|---|---|---|

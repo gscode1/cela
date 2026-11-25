@@ -196,7 +196,7 @@ describe("admin MCP server tools", { timeout: 10_000 }, () => {
       });
       api.onAdmin("DELETE", "/admin/mcp-servers/demo", {
         status: 409,
-        body: { error: "blocked", blockedBy: ["coding"] },
+        body: { error: "blocked", blockedBy: { profiles: [{ name: "coding", version: 2 }] } },
       });
       await withClient(env(), async (client) => {
         const put = await client.callTool({
@@ -210,7 +210,11 @@ describe("admin MCP server tools", { timeout: 10_000 }, () => {
           arguments: { name: "demo", expectedRevision: 1 },
         });
         expect(del.isError).toBe(true);
-        expect(del.structuredContent).toMatchObject({ status: 409 });
+        expect(del.structuredContent).toEqual({
+          error: "blocked",
+          status: 409,
+          details: { blockedBy: { profiles: [{ name: "coding", version: 2 }] } },
+        });
       });
     });
   });

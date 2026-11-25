@@ -7,6 +7,8 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_CHARS = 300;
+/** The other fields of an error body (`blockedBy`, ...) are kept only when they serialise to at most this many chars. */
+const MAX_DETAILS_CHARS = 4096;
 
 /** The methods of the admin API the adapter uses. */
 export type AdminMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -112,12 +114,20 @@ export class ApiError extends Error {
   readonly status: number;
   /** Seconds, from a `Retry-After` header. */
   readonly retryAfter: number | undefined;
+  /** The fields of the error body besides `error` (a 409's `blockedBy`), scrubbed of the token. Untrusted. */
+  readonly details: Record<string, unknown> | undefined;
 
-  constructor(status: number, message: string, retryAfter?: number) {
+  constructor(
+    status: number,
+    message: string,
+    retryAfter?: number,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.retryAfter = retryAfter;
+    this.details = details;
   }
 }
 
@@ -276,14 +286,20 @@ export class SessionApi {
     }
   }
 
-  /** The error for a non-success response, with the server's `error` text. Consumes the body. */
+  /**
+   * The error for a non-success response, with the server's `error` text and, when the body is a JSON object, its other
+   * fields as `details` (ingest's `blockedBy` on a refused delete). Consumes the body.
+   */
   async errorFromResponse(res: Response): Promise<ApiError> {
     let message = `session API answered ${String(res.status)}`;
+    let details: Record<string, unknown> | undefined;
     try {
       const body: unknown = JSON.parse(await res.text());
-      if (typeof body === "object" && body !== null && "error" in body) {
-        const text = body.error;
+      if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+        const { error: text, ...rest } = body as Record<string, unknown>;
         if (typeof text === "string" && text !== "") message = text;
+        if (Object.keys(rest).length > 0 && JSON.stringify(rest).length <= MAX_DETAILS_CHARS)
+          details = this.#scrubValue(rest) as Record<string, unknown>;
       }
     } catch {
       // not JSON: keep the generic message
@@ -292,11 +308,23 @@ export class SessionApi {
       res.status,
       this.#scrub(message.slice(0, MAX_MESSAGE_CHARS)),
       parseRetryAfter(res.headers.get("retry-after")),
+      details,
     );
   }
 
   #scrub(text: string): string {
     return text.split(this.#token).join("[redacted]");
+  }
+
+  /** `#scrub` over the strings and keys of a parsed JSON value. */
+  #scrubValue(value: unknown): unknown {
+    if (typeof value === "string") return this.#scrub(value);
+    if (Array.isArray(value)) return value.map((item) => this.#scrubValue(item));
+    if (typeof value === "object" && value !== null)
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [this.#scrub(key), this.#scrubValue(item)]),
+      );
+    return value;
   }
 
   async #fetch(

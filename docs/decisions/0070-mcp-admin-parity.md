@@ -56,9 +56,12 @@ Route inventory (checked against `packages/ingest`, 2026-11-25):
   are schema-wide and 0 is allowed. `admin_put_mcp_server` binds a OneCLI secret by name only.
 - **Session listing.** The routes and the index above are part of this decision, with `docs/session-api.md`. The tools
   `list_sessions` and `list_events` (the existing `GET /events` feed) use the session token and shipped with them;
-  `admin_list_sessions` is a read-tier tool on the admin token (the session tools never hold admin rights, 0050) and is
-  still to come. A test pins that a caller who is not an admin never sees another owner's session id, and no answer
+  `admin_list_sessions` is a read-tier tool on the admin token (the session tools never hold admin rights, 0050). Both
+  leave deleted sessions out unless `status` is `deleted`. A test pins that a caller who is not an admin never sees another owner's session id, and no answer
   carries a transcript.
+- **Refusals keep their details.** A failed admin call is `{ error, status, details? }`: `details` is the rest of ingest's
+  error body (a refused delete's `blockedBy`), scrubbed of both tokens, labelled untrusted and dropped when it is over
+  4 KiB. An agent needs it to see what blocks a delete without a second call.
 - **Excluded on purpose.**
   - *API tokens.* Ingest reads `PI_API_TOKENS` from its environment and has no Kubernetes API access. Managing them
     would need Secret RBAC or a token table, and would let a prompt-injected admin agent mint durable credentials.

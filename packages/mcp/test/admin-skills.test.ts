@@ -374,7 +374,10 @@ describe("admin skill tools against a fake API", { timeout: 10_000 }, () => {
         status: 409,
         body: {
           error: "skill is in use",
-          blockedBy: { profiles: [{ name: "coding", version: 4 }] },
+          blockedBy: {
+            profiles: [{ name: "coding", version: 4 }],
+            sessions: { count: 2, sample: ["a", "b"] },
+          },
         },
       });
       await run({}, async (client) => {
@@ -390,10 +393,19 @@ describe("admin skill tools against a fake API", { timeout: 10_000 }, () => {
           expectedRevision: 1,
         });
         expect(blocked.isError).toBe(true);
-        expect(blocked.structuredContent).toMatchObject({
+        expect(blocked.structuredContent).toEqual({
           status: 409,
           error: "skill is in use",
+          details: {
+            blockedBy: {
+              profiles: [{ name: "coding", version: 4 }],
+              sessions: { count: 2, sample: ["a", "b"] },
+            },
+          },
         });
+        expect(blocked.content).toEqual([
+          expect.objectContaining({ text: expect.stringContaining("blockedBy") as string }),
+        ]);
       });
     });
   });

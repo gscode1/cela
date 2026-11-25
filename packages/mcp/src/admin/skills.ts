@@ -158,7 +158,7 @@ export function registerSkillTools(ctx: AdminContext): void {
     ctx.server.registerTool(
       "admin_delete_skill",
       {
-        description: `Delete a skill with every version and file. expectedRevision is its current version (currentVersion of admin_get_skill). Refused with 409 and blockedBy while a profile's current version or a session that is not deleted pins it; the name cannot be created again. ${untrusted}`,
+        description: `Delete a skill with every version and file. expectedRevision is its current version (currentVersion of admin_get_skill). Refused with 409 while a profile's current version or a session that is not deleted pins it: the error result's details.blockedBy lists them (profiles, sessions); the name cannot be created again. ${untrusted}`,
         inputSchema: z.object({
           name: skillName,
           expectedRevision: z

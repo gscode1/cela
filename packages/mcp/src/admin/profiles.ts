@@ -167,7 +167,7 @@ export function registerProfileTools(ctx: AdminContext): void {
   ctx.server.registerTool(
     "admin_delete_profile",
     {
-      description: `Delete a profile at its current revision. It must be disabled (enabledForNew false) and not the default profile; running sessions keep their snapshot, and the name cannot be created again. ${untrusted}`,
+      description: `Delete a profile at its current revision (a 409 explains in details.blockedBy). It must be disabled (enabledForNew false) and not the default profile; running sessions keep their snapshot, and the name cannot be created again. ${untrusted}`,
       inputSchema: z.object({
         name: profileName,
         expectedRevision: z

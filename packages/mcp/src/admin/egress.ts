@@ -202,7 +202,7 @@ export function registerEgressTools(ctx: AdminContext): void {
   ctx.server.registerTool(
     "admin_delete_egress_rule_set",
     {
-      description: `Delete an egress rule set and its rules (the history keeps them). 409 while a profile names it. ${untrusted}`,
+      description: `Delete an egress rule set and its rules (the history keeps them). 409 while a profile names it (details.blockedBy.profiles lists them). ${untrusted}`,
       inputSchema: z.object({ name: ruleSetName, expectedRevision }),
       annotations: destructiveAnnotations,
     },

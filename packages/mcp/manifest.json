@@ -78,7 +78,7 @@
     "admin_enabled": {
       "type": "boolean",
       "title": "Enable admin tools",
-      "description": "Add read-only admin tools (profiles, skills, MCP servers, egress rule sets, settings). Needs the admin token below.",
+      "description": "Add read-only admin tools (profiles, skills, MCP servers, egress rule sets and status, settings, catalogs, history, all owners' session list). Needs the admin token below.",
       "default": false,
       "required": false
     },
@@ -93,14 +93,14 @@
     "admin_writes": {
       "type": "boolean",
       "title": "Enable admin writes",
-      "description": "Add tools that create and change profiles, skills and MCP servers. Needs admin tools enabled.",
+      "description": "Add tools that create, change and delete profiles, publish skills, create and change MCP servers and run the network probe. Needs admin tools enabled.",
       "default": false,
       "required": false
     },
     "admin_dangerous": {
       "type": "boolean",
       "title": "Enable dangerous admin tools",
-      "description": "Add tools that delete catalog entries, change deployment settings and change egress rules. Needs profile writes enabled.",
+      "description": "Add tools that delete skills and MCP servers, change deployment settings and change egress rules. Needs admin writes enabled.",
       "default": false,
       "required": false
     },
