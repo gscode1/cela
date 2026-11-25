@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, SessionApi } from "../src/api.js";
 import { assistant, FakeApi } from "./fake-api.js";
 
@@ -198,5 +198,94 @@ describe("SessionApi", { timeout: 15_000 }, () => {
     await rejection(api.enableLiveView("nope"));
     await rejection(api.disableLiveView("nope"));
     expect(fake.requests).toHaveLength(before);
+  });
+});
+
+describe("SessionApi.admin", { timeout: 15_000 }, () => {
+  let admin: SessionApi;
+  beforeEach(() => {
+    admin = new SessionApi({ apiUrl: fake.url, token: fake.adminToken });
+  });
+
+  it.each(["GET", "PUT", "DELETE"] as const)("sends %s with the admin token", async (method) => {
+    fake.onAdmin(method, "/admin/settings", { body: { ok: method } });
+    const answer = await admin.admin(
+      method,
+      "/admin/settings?x=1",
+      method === "PUT" ? { a: 1 } : undefined,
+    );
+    expect(answer).toEqual({ ok: method });
+    expect(fake.adminRequests).toEqual([
+      {
+        method,
+        path: "/admin/settings",
+        query: { x: "1" },
+        body: method === "PUT" ? { a: 1 } : undefined,
+      },
+    ]);
+    expect(fake.requests[0]?.headers.authorization).toBe(`Bearer ${fake.adminToken}`);
+  });
+
+  it("posts a JSON body, and a POST without one sends none", async () => {
+    fake.onAdmin("POST", "/admin/skills/demo/versions", (request) => ({
+      status: 201,
+      body: { echoed: request.body },
+    }));
+    expect(
+      await admin.admin("POST", "/admin/skills/demo/versions", { files: [{ path: "SKILL.md" }] }),
+    ).toEqual({ echoed: { files: [{ path: "SKILL.md" }] } });
+    expect(fake.requests[0]?.headers["content-type"]).toBe("application/json");
+    fake.onAdmin("POST", "/admin/status/probe", { status: 202, body: { started: true } });
+    expect(await admin.admin("POST", "/admin/status/probe")).toEqual({ started: true });
+    expect(fake.adminRequests[1]?.body).toBeUndefined();
+    expect(fake.requests[1]?.headers["content-type"]).toBeUndefined();
+  });
+
+  it("records repeated query keys and answers 404 for an unscripted route", async () => {
+    const error = await rejection(admin.admin("GET", "/admin/nope?a=1&a=2&b=3"));
+    expect(error.status).toBe(404);
+    expect(fake.adminRequests[0]?.query).toEqual({ a: ["1", "2"], b: "3" });
+  });
+
+  it("refuses a path outside /admin/ and a bad timeout before any request", async () => {
+    expect((await rejection(admin.admin("GET", "/sessions"))).message).toBe("not an admin path");
+    for (const timeoutMs of [0, -1, 1.5, Number.NaN]) {
+      const error = await rejection(
+        admin.admin("GET", "/admin/settings", undefined, undefined, { timeoutMs }),
+      );
+      expect(error.message).toContain("timeoutMs");
+    }
+    expect(fake.requests).toEqual([]);
+  });
+
+  it("times out after the per-call timeout, and keeps 30 s by default", async () => {
+    fake.onAdmin("POST", "/admin/slow", { body: {}, delayMs: 500 });
+    const error = await rejection(
+      admin.admin("POST", "/admin/slow", {}, undefined, { timeoutMs: 50 }),
+    );
+    expect(error.status).toBe(0);
+    expect(error.message).toContain("request failed");
+    // A longer per-call timeout than the answer's delay succeeds.
+    expect(await admin.admin("POST", "/admin/slow", {}, undefined, { timeoutMs: 5000 })).toEqual(
+      {},
+    );
+    const spy = vi.spyOn(AbortSignal, "timeout");
+    fake.onAdmin("GET", "/admin/fast");
+    await admin.admin("GET", "/admin/fast");
+    await admin.admin("GET", "/admin/fast", undefined, undefined, { timeoutMs: 120_000 });
+    expect(spy.mock.calls).toEqual([[30_000], [120_000]]);
+    spy.mockRestore();
+  });
+
+  it("scrubs its token from an error and refuses a non-JSON answer", async () => {
+    fake.onAdmin("GET", "/admin/e", {
+      status: 409,
+      body: { error: `stale ${fake.adminToken}` },
+    });
+    const error = await rejection(admin.admin("GET", "/admin/e"));
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("stale [redacted]");
+    fake.onAdmin("GET", "/admin/html", { rawBody: "<html>" });
+    expect((await rejection(admin.admin("GET", "/admin/html"))).message).toContain("not JSON");
   });
 });

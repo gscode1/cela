@@ -23,6 +23,10 @@
  *  - `GET /sessions?status=&limit=&cursor=`: the sessions as metadata only (no entries), newest added first, `deleted` ones
  *    only for `status=deleted`; `nextCursor` is `c<offset>`. `GET /events?cursor=&limit=`: pages `api.feed` (the test sets
  *    it); a cursor is the `cursor` of a row. A bad `limit` or `status` is 400.
+ *  - `/admin/*`: a recorder with programmable answers, for the admin tools (`api.adminToken` is its bearer token, not
+ *    `api.token`). Every request is recorded in `api.adminRequests` with method, path, parsed query and body;
+ *    `api.onAdmin("PUT", "/admin/profiles/coding", { status: 200, body: {...} })` scripts the answer (a string or a
+ *    RegExp matches the path; a function answers from the request; the last matching script wins). No script: 404.
  *  - Every request is recorded in `api.requests`.
  *  - `api.redirectTo = "<url>"` answers every request with a 307 to that URL.
  */
@@ -58,6 +62,29 @@ export interface RecordedRequest {
   /** Parsed JSON when the body is JSON, the raw text otherwise, undefined when empty. */
   body: unknown;
 }
+
+/** A request to `/admin/*`, as the recorder saw it. */
+export interface AdminRequest {
+  method: string;
+  /** The path without its query. */
+  path: string;
+  /** The query as parsed; a key sent more than once has an array. */
+  query: Record<string, string | string[]>;
+  /** Parsed JSON when the body is JSON, the raw text otherwise, undefined when empty. */
+  body: unknown;
+}
+
+/** What the recorder answers; `body` is sent as JSON, `rawBody` as it is (for a non-JSON answer). */
+export interface AdminResponse {
+  status?: number;
+  body?: unknown;
+  rawBody?: string;
+  headers?: Record<string, string>;
+  /** Wait this long before answering (to provoke a client timeout). */
+  delayMs?: number;
+}
+
+type AdminReply = AdminResponse | ((request: AdminRequest) => AdminResponse);
 
 export interface FakeSession {
   id: string;
@@ -98,7 +125,16 @@ export const assistant = (text: string): EntryMessage => ({ role: "assistant", t
 
 export class FakeApi {
   readonly token = "test-token-0123456789";
+  /** Bearer token of `/admin/*` (a different one from `token`, as in admin mode). */
+  readonly adminToken = "test-admin-token-0123456789";
   readonly requests: RecordedRequest[] = [];
+  /** Requests to `/admin/*`, in arrival order. */
+  readonly adminRequests: AdminRequest[] = [];
+  readonly #adminScripts: {
+    method: string;
+    path: string | RegExp;
+    reply: AdminReply;
+  }[] = [];
   /** When set, every request is answered with a 307 to this URL. */
   redirectTo: string | undefined;
   /** Status of the next `POST /sessions` instead of creating one (e.g. 400). */
@@ -169,6 +205,11 @@ export class FakeApi {
   /** Drops a session, so later reads answer 404. */
   forget(id: string): void {
     this.#sessions.delete(id);
+  }
+
+  /** Scripts the answer to `/admin/*` requests of this method and path (see the header). */
+  onAdmin(method: string, path: string | RegExp, reply: AdminReply = { body: {} }): void {
+    this.#adminScripts.push({ method, path, reply });
   }
 
   /** Requests of one kind, e.g. `api.requestsTo("POST", "/events")` (path suffix match). */
@@ -270,8 +311,13 @@ export class FakeApi {
       res.end();
       return;
     }
-    if (req.headers.authorization !== `Bearer ${this.token}`) {
+    const admin = path.startsWith("/admin/");
+    if (req.headers.authorization !== `Bearer ${admin ? this.adminToken : this.token}`) {
       json(res, 401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+      return;
+    }
+    if (admin) {
+      await this.#admin(res, method, path, body);
       return;
     }
     const parts = path.split("?")[0]?.split("/").filter(Boolean) ?? [];
@@ -372,6 +418,36 @@ export class FakeApi {
       hasMore: at + 1 + limit < this.feed.length,
       truncated: false,
     });
+  }
+
+  async #admin(res: ServerResponse, method: string, path: string, body: unknown): Promise<void> {
+    const url = new URL(path, "http://fake.invalid");
+    const query: Record<string, string | string[]> = {};
+    for (const key of new Set(url.searchParams.keys())) {
+      const values = url.searchParams.getAll(key);
+      query[key] = values.length === 1 ? (values[0] ?? "") : values;
+    }
+    const request: AdminRequest = { method, path: url.pathname, query, body };
+    this.adminRequests.push(request);
+    const script = this.#adminScripts
+      .filter(
+        (s) =>
+          s.method === method &&
+          (typeof s.path === "string" ? s.path === url.pathname : s.path.test(url.pathname)),
+      )
+      .at(-1);
+    if (script === undefined) {
+      json(res, 404, { error: `fake api: no admin route scripted for ${method} ${url.pathname}` });
+      return;
+    }
+    const answer = typeof script.reply === "function" ? script.reply(request) : script.reply;
+    if (answer.delayMs !== undefined) await delay(answer.delayMs);
+    if (answer.rawBody !== undefined) {
+      res.writeHead(answer.status ?? 200, answer.headers ?? {});
+      res.end(answer.rawBody);
+      return;
+    }
+    json(res, answer.status ?? 200, answer.body ?? {}, answer.headers);
   }
 
   async #create(res: ServerResponse, body: unknown): Promise<void> {
