@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "cela-mcp",
   "display_name": "cela",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Run tasks in durable, sandboxed agent sessions on a cela deployment through its session API.",
   "long_description": "A stdio MCP server for the cela session API. It starts a durable agent session with its own sandbox and workspace, sends it a task and returns the result. It only calls your cela ingest over HTTPS with your token: it has no database access and holds no model or GitHub credential. Read-only admin tools, catalog writes and dangerous admin tools are off unless you turn them on in the settings.",
   "author": {

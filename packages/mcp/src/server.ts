@@ -6,7 +6,7 @@ import { registerTools, type ToolOptions } from "./tools.js";
 
 export const SERVER_NAME = "cela";
 // Keep in step with package.json; a test checks it.
-export const SERVER_VERSION = "1.1.0";
+export const SERVER_VERSION = "1.2.0";
 
 /**
  * Read by the client's model on every connection: it carries the workflow rules that no single tool description can
