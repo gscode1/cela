@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dialog-cap</title>
+<body style="font:16px sans-serif">
+<h1>Page behind a long dialog</h1>
+<div role="dialog" aria-modal="true" aria-label="Choices" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center">
+  <div style="background:#fff;padding:24px;width:420px">
+    <p>Twelve links come before the two buttons, as language options and partner links do in a consent dialog.</p>
+    <a href="#l1" id="lang1">Option 1</a>
+    <a href="#l2" id="lang2">Option 2</a>
+    <a href="#l3" id="lang3">Option 3</a>
+    <a href="#l4" id="lang4">Option 4</a>
+    <a href="#l5" id="lang5">Option 5</a>
+    <a href="#l6" id="lang6">Option 6</a>
+    <a href="#l7" id="lang7">Option 7</a>
+    <a href="#l8" id="lang8">Option 8</a>
+    <a href="#l9" id="lang9">Option 9</a>
+    <a href="#l10" id="lang10">Option 10</a>
+    <a href="#l11" id="lang11">Option 11</a>
+    <a href="#l12" id="lang12">Option 12</a>
+    <button id="dlg-yes">Allow</button>
+    <button id="dlg-no">Refuse</button>
+  </div>
+</div>
+<pre id="log" style="position:absolute;left:100px;top:600px"></pre>
+<script src="log.js"></script>

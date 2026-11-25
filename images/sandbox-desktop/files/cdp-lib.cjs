@@ -758,8 +758,18 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false, t
   let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && matchTexts(e).some((t) => re.test(t)) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
   const whole = new RegExp(`^(?:${re.source})$`, re.flags);
-  const exact = matches.filter((e) => [e.name, e.placeholder, e.label, e.group && `${e.group} ${e.name}`].some((t) => t && whole.test(t)));
   const notes = [];
+  // A field to type into while a modal is open is one inside it: a field behind it takes no input, whatever its name
+  // (rule 2 below, applied before rule 1 so an exact name behind the dialog does not hide the dialog's own field).
+  const inModal = modalIds(nodes);
+  if (fields) {
+    const inside = matches.filter((e) => inModal.has(e.nodeId));
+    if (inside.length > 0 && inside.length < matches.length) {
+      notes.push(`${matches.length} fields match; used the one in the open dialog (another: its ref)`);
+      matches = inside;
+    }
+  }
+  const exact = matches.filter((e) => [e.name, e.placeholder, e.label, e.group && `${e.group} ${e.name}`].some((t) => t && whole.test(t)));
   if (exact.length > 0) {
     if (exact.length < matches.length) notes.push(`${matches.length} elements match; used the one named exactly so`);
     matches = exact;
@@ -796,7 +806,6 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false, t
   const done = (pick, note) => ({ pick, note: [...notes, note].filter(Boolean).join("; ") || undefined });
   if (distinct.length === 1) return done(distinct[0]);
   let left = distinct;
-  const inModal = modalIds(nodes);
   const modal = left.filter((e) => inModal.has(e.nodeId));
   if (modal.length > 0 && modal.length < left.length) {
     if (modal.length === 1) return done(modal[0], `${left.length} elements match; used the one in the open dialog (another: its ref)`);
@@ -1768,6 +1777,14 @@ function findAgain(entries, entry) {
   return like.length > 1 ? { several: true } : undefined;
 }
 
+// The entries a dialog listing keeps when there are more than `max`: its buttons first (the decision is a button, and
+// language options and partner links in front of it would push it behind "... N more"), then the others, each in tree order.
+// Refs belong to the entries, so the order changes none.
+function capEntries(entries, max) {
+  if (entries.length <= max) return entries;
+  return [...entries.filter((e) => e.role === "button"), ...entries.filter((e) => e.role !== "button")].slice(0, max);
+}
+
 // Open dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in them, so a
 // consent banner or a popup is reported in any site's language without knowing its words. `modal`: it holds the page back
 // (aria-modal, a <dialog> shown as modal, or an alert dialog); a dialog that is not (a <dialog open>, a panel with the role)
@@ -1795,7 +1812,7 @@ function dialogs(nodes, { max = 8 } = {}) {
       name: squash(value(n.name)),
       backendNodeId: n.backendDOMNodeId,
       frameTag: n.frameTag,
-      entries: entries.slice(0, max),
+      entries: capEntries(entries, max),
       more: Math.max(entries.length - max, 0),
     });
   }
@@ -1807,7 +1824,7 @@ function dialogs(nodes, { max = 8 } = {}) {
 function layerControls(nodes, ids, { tag = "", max = 8 } = {}) {
   const sub = nodes.filter((n) => !n.ignored && (n.frameTag ?? "") === tag && ids.has(n.backendDOMNodeId));
   const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role) && (e.role !== "columnheader" || e.focusable));
-  return { entries: entries.slice(0, max), more: Math.max(entries.length - max, 0), buttons: entries.filter((e) => e.role === "button").length };
+  return { entries: capEntries(entries, max), more: Math.max(entries.length - max, 0), buttons: entries.filter((e) => e.role === "button").length };
 }
 
 // The elements at or above a node (by backend id) that a layout snapshot shows with position fixed, nearest first: layers
