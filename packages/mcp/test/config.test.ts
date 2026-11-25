@@ -71,4 +71,41 @@ describe("parseConfig", { timeout: 10_000 }, () => {
       expect(failure({ ...ok, PI_MCP_MAX_SESSIONS: bad }).message).toContain("PI_MCP_MAX_SESSIONS");
     }
   });
+
+  it("parses the admin flags into three tiers", () => {
+    const admin = { PI_MCP_ADMIN: "true", PI_API_ADMIN_TOKEN: "admin-token" };
+    expect(parseConfig({ ...ok, ...admin }).admin).toEqual({
+      token: "admin-token",
+      writes: false,
+      dangerous: false,
+    });
+    expect(parseConfig({ ...ok, ...admin, PI_MCP_ADMIN_WRITES: "true" }).admin).toMatchObject({
+      writes: true,
+      dangerous: false,
+    });
+    expect(
+      parseConfig({
+        ...ok,
+        ...admin,
+        PI_MCP_ADMIN_WRITES: "true",
+        PI_MCP_ADMIN_DANGEROUS: "true",
+      }).admin,
+    ).toMatchObject({ writes: true, dangerous: true });
+  });
+
+  it("requires writes for dangerous, and admin mode for both", () => {
+    const admin = { PI_MCP_ADMIN: "true", PI_API_ADMIN_TOKEN: "admin-token" };
+    expect(failure({ ...ok, ...admin, PI_MCP_ADMIN_DANGEROUS: "true" }).message).toBe(
+      "PI_MCP_ADMIN_DANGEROUS requires PI_MCP_ADMIN_WRITES",
+    );
+    expect(failure({ ...ok, PI_MCP_ADMIN_DANGEROUS: "true" }).message).toContain(
+      "PI_MCP_ADMIN_WRITES",
+    );
+    expect(
+      failure({ ...ok, PI_MCP_ADMIN_WRITES: "true", PI_MCP_ADMIN_DANGEROUS: "true" }).message,
+    ).toBe("PI_MCP_ADMIN_WRITES requires PI_MCP_ADMIN");
+    expect(failure({ ...ok, ...admin, PI_MCP_ADMIN_DANGEROUS: "yes" }).message).toBe(
+      "PI_MCP_ADMIN_DANGEROUS must be true or false",
+    );
+  });
 });

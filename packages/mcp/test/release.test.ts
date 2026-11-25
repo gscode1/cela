@@ -82,6 +82,7 @@ describe("release packaging", { timeout: 20_000 }, () => {
       "PI_API_TOKEN",
       "PI_API_URL",
       "PI_MCP_ADMIN",
+      "PI_MCP_ADMIN_DANGEROUS",
       "PI_MCP_ADMIN_WRITES",
       "PI_MCP_MAX_SESSIONS",
     ]);
@@ -107,18 +108,47 @@ describe("release packaging", { timeout: 20_000 }, () => {
     expect(config.admin).toBeUndefined();
   });
 
-  it("turns on admin mode and writes from the settings", async () => {
+  it("turns on admin mode, writes and dangerous tools from the settings", async () => {
     const env = await renderEnv({
       ...required,
       admin_enabled: true,
       admin_token: "admin-token",
       admin_writes: true,
+      admin_dangerous: true,
       max_sessions: 5,
     });
     expect(parseConfig(env)).toMatchObject({
       maxSessions: 5,
-      admin: { token: "admin-token", writes: true },
+      admin: { token: "admin-token", writes: true, dangerous: true },
     });
+  });
+
+  it("keeps writes and dangerous tools off unless their settings are on", async () => {
+    const env = await renderEnv({
+      ...required,
+      admin_enabled: true,
+      admin_token: "admin-token",
+      admin_writes: true,
+    });
+    expect(parseConfig(env).admin).toEqual({
+      token: "admin-token",
+      writes: true,
+      dangerous: false,
+    });
+    const reads = await renderEnv({ ...required, admin_enabled: true, admin_token: "admin-token" });
+    expect(parseConfig(reads).admin).toEqual({
+      token: "admin-token",
+      writes: false,
+      dangerous: false,
+    });
+    // The dangerous tier needs the writes tier, as at the command line.
+    const only = await renderEnv({
+      ...required,
+      admin_enabled: true,
+      admin_token: "admin-token",
+      admin_dangerous: true,
+    });
+    expect(() => parseConfig(only)).toThrow("PI_MCP_ADMIN_DANGEROUS requires PI_MCP_ADMIN_WRITES");
   });
 
   it("asks for the admin token when admin mode has none", async () => {
