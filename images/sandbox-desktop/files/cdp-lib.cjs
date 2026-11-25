@@ -1400,10 +1400,14 @@ function ariaRows(snap, doc, v) {
 function tableRows(done, doc, v, di, aria) {
   const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
   const rowOf = (c) => aria.rowOf.get(c) ?? v.parent[c];
+  // A TD or TH under a TR is a cell of that row whatever its display: a restyled table (display:grid, tr display:contents)
+  // keeps its markup, and a row that is display:contents has no box of its own.
+  const isCell = (p) => /^(TD|TH)$/.test(name(p)) && v.parent[p] >= 0 && name(v.parent[p]) === "TR";
   const cellOf = (i) => {
     for (let p = i; p >= 0; p = v.parent[p]) {
       if (aria.rowOf.has(p)) return p;
       if (aria.cells.has(p)) return -1;
+      if (isCell(p)) return p;
       const d = v.display(p);
       if (d === "table-cell") return v.display(v.parent[p]) === "table-row" ? p : -1;
       if (/^(table|table-row|table-row-group|table-header-group|table-footer-group)$/.test(d)) return -1;
@@ -1413,7 +1417,8 @@ function tableRows(done, doc, v, di, aria) {
   const cells = new Map(aria.cells);
   for (const [i] of v.layoutOf) {
     const row = v.parent[i];
-    if (row >= 0 && !aria.cells.has(row) && v.display(i) === "table-cell" && v.display(row) === "table-row") {
+    // a cell has a box even when its row (display:contents) has none; a display:none cell has none and is no cell
+    if (row >= 0 && !aria.cells.has(row) && (isCell(i) || (v.display(i) === "table-cell" && v.display(row) === "table-row"))) {
       if (!cells.has(row)) cells.set(row, []);
       cells.get(row).push(i);
     }
@@ -1448,6 +1453,7 @@ function tableRows(done, doc, v, di, aria) {
       head = aria.cells.get(row).every((k) => aria.role(k) === "columnheader");
     } else {
       while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
+      if (tab < 0) for (tab = row; tab >= 0 && name(tab) !== "TABLE"; ) tab = v.parent[tab];
       head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
       for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
     }
@@ -2034,8 +2040,11 @@ function pageNotices(parts, { lines = [], title = "", sighting = () => 1 } = {})
     squash(title).split(TITLE_PARTS).some((t) => STATUS.test(t)) ||
     headings(parts[0]).some((h) => STATUS.test(h)) ||
     lines.slice(0, SHORT_PAGE).some((l) => STATUS_LINE.test(squash(l)));
-  if (main && /^chrome-error:/.test(str(parts[0].snap, main.documentURL)))
-    out.push("Chrome error page: the page did not load (Chrome's reason is in its text)");
+  if (main && /^chrome-error:/.test(str(parts[0].snap, main.documentURL))) {
+    // Chrome's reason is in the page's text ("net::ERR_CERT_COMMON_NAME_INVALID"); naming it keeps a chain from reading the page as content
+    const code = /ERR_[A-Z_]+/.exec(lines.join("\n"))?.[0];
+    out.push(`Chrome error page${code ? ` (net::${code})` : ""}: the page did not load. Do not retry, click through or work around it; report the host and move on`);
+  }
   else if (lines.length <= ERROR_PAGE && status()) out.push("may be an error page: a status number in the title, a heading or a line of its own");
   const frames = [];
   const loading = [];

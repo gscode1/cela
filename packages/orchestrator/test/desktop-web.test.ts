@@ -799,7 +799,15 @@ describe("desktop-web's CDP reader", () => {
       title: "Shop",
     };
     expect(cdp.pageNotices([{ snap: page("chrome-error://chromewebdata/") }], short)).toEqual([
-      "Chrome error page: the page did not load (Chrome's reason is in its text)",
+      "Chrome error page: the page did not load. Do not retry, click through or work around it; report the host and move on",
+    ]);
+    expect(
+      cdp.pageNotices([{ snap: page("chrome-error://chromewebdata/") }], {
+        lines: ["Your connection is not private", "NET::ERR_CERT_COMMON_NAME_INVALID"],
+        title: "Privacy error",
+      }),
+    ).toEqual([
+      "Chrome error page (net::ERR_CERT_COMMON_NAME_INVALID): the page did not load. Do not retry, click through or work around it; report the host and move on",
     ]);
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], {
@@ -1106,6 +1114,43 @@ describe("desktop-web's CDP reader", () => {
       { table: "0:1", head: true },
       { table: "0:1", head: false },
       undefined,
+    ]);
+  });
+
+  it("reads TD and TH under a TR as cells of that row whatever the display, an empty cell kept", () => {
+    const st = (d: string): [string, string, string] => [d, "visible", "1"];
+    // a display:grid table whose rows are display:contents: the TRs have no box, the cells are grid items
+    const cell = (parent: number, tag: string, x: number): N => ({
+      parent,
+      type: 1,
+      tag,
+      style: st("block"),
+      box: [x, 0, 80, 20],
+    });
+    const snap = snapOf([
+      doc,
+      { parent: 0, type: 1, tag: "TABLE", style: st("grid"), box: [0, 0, 240, 40] },
+      { parent: 1, type: 1, tag: "TR" },
+      cell(2, "TH", 0),
+      t("Name", [2, 2, 30, 16], 3),
+      cell(2, "TH", 80),
+      t("Mid", [82, 2, 30, 16], 5),
+      cell(2, "TH", 160),
+      t("Last", [162, 2, 30, 16], 7),
+      { parent: 1, type: 1, tag: "TR" },
+      cell(9, "TD", 0),
+      t("Alpha", [2, 22, 30, 16], 10),
+      cell(9, "TD", 80),
+      cell(9, "TD", 160),
+      t("Gamma", [162, 22, 30, 16], 13),
+    ]);
+    expect(cdp.snapshotLines(snap, { table: true })).toEqual([
+      "Name | Mid | Last",
+      "Alpha |  | Gamma",
+    ]);
+    expect(cdp.snapshotText(snap, { table: true }).rows).toEqual([
+      { table: "0:1", head: true },
+      { table: "0:1", head: false },
     ]);
   });
 
