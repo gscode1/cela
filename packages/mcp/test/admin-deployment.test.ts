@@ -124,6 +124,13 @@ describe("admin deployment tools", { timeout: 10_000 }, () => {
     await withClient(env(), async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name);
       expect(names).not.toContain("admin_probe_network");
+      for (const read of [
+        "admin_get_catalog",
+        "admin_get_status",
+        "admin_get_history",
+        "admin_list_sessions",
+      ])
+        expect(names).toContain(read);
     });
     await withClient(env({ PI_MCP_ADMIN_WRITES: "true" }), async (client) => {
       const result = await client.callTool({ name: "admin_probe_network", arguments: {} });
