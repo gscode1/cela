@@ -194,18 +194,18 @@ structured content, scrubbed of both tokens and labelled untrusted; writes take 
 | `admin_get_catalog` | `PI_MCP_ADMIN` | `GET /admin/models` (`allModels`), `/tools`, `/network-modes`, `/sandbox-flavours`, `/sandbox-sizes`, `/sandbox-runtimes` in one answer | planned (#511) |
 | `admin_get_status` | `PI_MCP_ADMIN` | `GET /admin/status` | planned (#511) |
 | `admin_get_history` | `PI_MCP_ADMIN` | `GET /admin/settings/history`, `/mcp-servers/history`, `/egress/history` (`kind`, `limit`, `name`, `ref`) | planned (#511) |
-| `admin_get_skill_version` | `PI_MCP_ADMIN` | `GET /admin/skills/{name}/versions/{v}` (`?content=true`) | planned (#511) |
+| `admin_get_skill_version` | `PI_MCP_ADMIN` | `GET /admin/skills/{name}/versions/{v}` (`?content=true`; text decoded, about 200 KB cap, `paths` filter) | 1.2.0 |
 | `admin_get_egress_status` | `PI_MCP_ADMIN` | `GET /admin/egress/status` | planned (#511) |
 | `admin_list_session_egress_rules` | `PI_MCP_ADMIN` | `GET /admin/egress/sessions/{id}/rules` | planned (#511) |
 | `admin_explain_egress` | `PI_MCP_ADMIN` | `POST /admin/egress/explain` (pure: a read) | planned (#511) |
 | `admin_list_sessions` | `PI_MCP_ADMIN` | `GET /admin/sessions` (all owners, metadata only; the route exists, the tool does not) | planned (#511) |
 | `admin_put_profile` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/profiles/{name}` | 1.0.0 |
 | `admin_delete_profile` | `PI_MCP_ADMIN_WRITES` | `DELETE /admin/profiles/{name}` | 1.0.0 |
-| `admin_publish_skill` | `PI_MCP_ADMIN_WRITES` | `POST /admin/skills/{name}/versions` (inline files only) | planned (#511) |
+| `admin_publish_skill` | `PI_MCP_ADMIN_WRITES` | `POST /admin/skills/{name}/versions` (inline files only, at most 128 files, body within ingest's limit, 120 s timeout) | 1.2.0 |
 | `admin_put_mcp_server` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/mcp-servers/{name}` | 1.2.0 |
 | `admin_probe_network` | `PI_MCP_ADMIN_WRITES` | `POST /admin/status/probe` | planned (#511) |
 | `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` | planned (#511) |
-| `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` | planned (#511) |
+| `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` (`expectedRevision` = the skill's current version) | 1.2.0 |
 | `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}?expectedRevision=N` | 1.2.0 |
 | `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST` (create) or `PUT /admin/egress/rule-sets/{name}` | planned (#511) |
 | `admin_delete_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rule-sets/{name}` | planned (#511) |
