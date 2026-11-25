@@ -41,6 +41,51 @@ export interface SessionSummary {
   events: { pending: number; submitted: number; failed: number };
 }
 
+/** One row of `GET /sessions`: metadata only, never a transcript. */
+export interface SessionListEntry {
+  id: string;
+  status: SessionStatus;
+  profile: { name: string; version: number };
+  model: { provider: string; model: string; reasoning?: string };
+  repo?: { repo: string; branch?: string };
+  createdAt: string;
+  lastActivityAt: string;
+}
+
+export interface SessionListPage {
+  sessions: SessionListEntry[];
+  /** Absent on the last page. */
+  nextCursor?: string;
+}
+
+export interface SessionListQuery {
+  status?: SessionStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+/** One row of `GET /events`. `data` can hold a session's failure text, which is untrusted. */
+export interface FeedEntry {
+  id: string;
+  type: string;
+  sessionId: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+  cursor: string;
+}
+
+export interface FeedPage {
+  events: FeedEntry[];
+  cursor: string;
+  hasMore: boolean;
+  truncated: boolean;
+}
+
+export interface FeedQuery {
+  cursor?: string;
+  limit?: number;
+}
+
 /** Ingest's answer to a delete: "deleting" while cleanup runs, "deleted" once it is done. */
 export interface DeletedSession {
   status: "deleting" | "deleted";
@@ -107,6 +152,22 @@ export class SessionApi {
 
   async getSession(sessionId: string, signal?: AbortSignal): Promise<SessionSummary> {
     return this.#json<SessionSummary>("GET", sessionPath(sessionId), 200, undefined, signal);
+  }
+
+  /** `GET /sessions`: the caller's own sessions, newest first. */
+  async listSessions(query: SessionListQuery = {}, signal?: AbortSignal): Promise<SessionListPage> {
+    return this.#json<SessionListPage>(
+      "GET",
+      withQuery("/sessions", query),
+      200,
+      undefined,
+      signal,
+    );
+  }
+
+  /** `GET /events`: one page of the caller's own feed, oldest first. */
+  async listEvents(query: FeedQuery = {}, signal?: AbortSignal): Promise<FeedPage> {
+    return this.#json<FeedPage>("GET", withQuery("/events", query), 200, undefined, signal);
   }
 
   async postEvent(
@@ -273,6 +334,16 @@ export class SessionApi {
     if (res.status !== expected) throw await this.errorFromResponse(res);
     return (await res.json()) as T;
   }
+}
+
+/** `path` with the defined fields of `query` as an encoded query string. */
+function withQuery(path: string, query: SessionListQuery | FeedQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query) as [string, string | number | undefined][]) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text === "" ? path : `${path}?${text}`;
 }
 
 /** Refuses anything but a UUID before it can reach a URL. */

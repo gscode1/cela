@@ -71,6 +71,8 @@ To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, 
 | `send_message { sessionId, text, idempotencyKey? }` | Queues a message and returns at once with `{ eventId, duplicate }`. The same key on the same session never runs the message twice. |
 | `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (integer, 1 to 50, default 45; out-of-range values are rejected) and returns `{ done, status, phase, tools?, elapsedSec?, cursor, text, truncated, runFailure?, failure?, failedSinceStart?, events }`. `cursor` is an integer of 1 or more, checked in the tool schema. |
 | `get_session { sessionId }` | `GET /sessions/{id}`: status, failure and event counts. |
+| `list_sessions { status?, limit?, cursor? }` | `GET /sessions`: your own sessions, newest first, as `{ sessions: [{ id, status, profile, model, repo?, createdAt, lastActivityAt }], nextCursor? }`. Metadata only, never a transcript. `status` is `active`, `failed`, `deleting` or `deleted` (absent: all but `deleted`), `limit` 1 to 200 (default 50); pass `nextCursor` as `cursor` for the next page. Read-only. It is how to find a `sessionId` you lost. |
+| `list_events { cursor?, limit? }` | `GET /events`: one page of your own feed, oldest first, as `{ events: [{ id, type, sessionId, timestamp, data, cursor }], cursor, hasMore, truncated }` (see [Owner feed](session-api.md#owner-feed)). `cursor` is the one of the previous page, or `latest` for the current head only; `limit` 1 to 500 (default 100). Read-only; `data.failure` is untrusted. |
 | `cancel { sessionId }` | Asks the running turn to stop. Asynchronous: follow with `wait`. |
 | `delete_session { sessionId }` | Deletes the session and its workspace. Returns `{ sessionId, status }` with ingest's status, `deleting` or `deleted`. Push your work first: unpushed changes are lost. |
 
@@ -145,7 +147,7 @@ reaches a sandbox with web egress.
 
 ## Limits
 
-- There is no `GET /sessions` list yet. A `sessionId` you lose leaves the session running until someone deletes it.
+- `list_sessions` finds a `sessionId` you lost; a session nobody deletes keeps running (and keeps its workspace) until someone does.
 - No MCP tasks mode yet. It waits for SDK support (ADR 0031); the per-event outcome it needs is on the session API
   (`GET /sessions/{id}/events/{eventId}`, ADR 0058).
 - No remote endpoint yet. The adapter runs where the coding agent runs and reaches ingest the way you do.

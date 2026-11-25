@@ -41,6 +41,14 @@
     { "name": "wait", "description": "Wait for the agent and return its text after a cursor." },
     { "name": "get_session", "description": "Show a session's status, failure and event counts." },
     {
+      "name": "list_sessions",
+      "description": "List your own sessions (metadata only), newest first."
+    },
+    {
+      "name": "list_events",
+      "description": "Read your own event feed: session and input changes."
+    },
+    {
       "name": "set_live_view",
       "description": "Turn the public view-only live view of a desktop session on or off."
     },
