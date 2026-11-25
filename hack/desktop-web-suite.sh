@@ -331,6 +331,7 @@ case_marks() {
   check "a hover that changes nothing shows the title as the tooltip" "$(ok '^tooltip: "21 November 2026, 14:05"$')"
 }
 
+# PORT + 4 has no listener: the connection is refused (port 1 is one Chrome blocks as unsafe).
 # The head of an answer: the url only when it changed, the title with entities decoded, and notices about the page.
 case_notices() {
   open notices
@@ -345,8 +346,16 @@ case_notices() {
   check "a redirect is said" "$(ok '^redirected from http.*/redirect\.html$')"
   open missing
   check "a short page with a status in its heading may be an error page" "$(ok '^may be an error page')"
-  web open "http://127.0.0.1:1/"
-  check "Chrome's error page is said" "$(ok '^Chrome error page')"
+  web open "http://127.0.0.1:$((PORT + 4))/"
+  check "Chrome's error page is said, with its code, and open exits 1" "$(ok '^Chrome error page \(net::ERR_CONNECTION_REFUSED\): the page did not load\. Do not retry' 1)"
+  web click 'Reload'
+  check "a click on Chrome's own error page is refused" "$(ok "Chrome's own error page: nothing on it is clicked" 1)"
+  web type 'x' 'y'
+  check "typing on it is refused" "$(ok "Chrome's own error page: nothing on it is typed" 1)"
+  web text 'ERR_CONNECTION'
+  check "a read of it still works" "$(ok 'ERR_CONNECTION_REFUSED' 0)"
+  chained=$(timeout "$WAIT" desktop-web open "http://127.0.0.1:$((PORT + 4))/" 2>&1 && echo next)
+  check "open ... && echo next stops at it: no next is printed" "$([[ $chained != *$'\nnext' ]]; echo $?)"
   open loading
   check "a frame that has drawn nothing is still loading" "$(ok 'frame is still loading \(127\.0\.0\.1:')"
   web text Checkout
@@ -568,6 +577,27 @@ case_table() {
   check "an ARIA grid's header row prints as cols" "$(ok '^cols: Day \| Rain \| Wind$')"
   check "its rows by role, an empty cell kept" "$(ok '^[0-9]+: Thursday \|  ?\| 3 m/s$')"
   check "and a full row" "$(ok '^[0-9]+: Friday \| 1.2 mm \| 5 m/s$')"
+  open table-grid
+  web text 'Alpha|Beta' --table
+  check "a restyled table (display:grid, tr display:contents) reads its TDs as row cells, an empty one kept" "$(ok '^[0-9]+: Alpha \|  ?\| Gamma$')"
+  check "and a TH row is its header" "$(ok '^cols: Name \| Mid \| Last$')"
+}
+
+# A certificate interstitial is a chrome-error: document like a refused connection: its notice names the code, open exits 1,
+# and "Advanced" is never clicked. The server is https with a self-signed certificate for another name.
+case_certerror() {
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/k.pem" -out "$WORK/c.pem" -subj /CN=other.example -days 2 >/dev/null 2>&1
+  (cd "$WORK" && python3 -c 'import http.server, ssl, sys
+s = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), http.server.SimpleHTTPRequestHandler)
+c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain("c.pem", "k.pem")
+s.socket = c.wrap_socket(s.socket, server_side=True); s.serve_forever()' "$((PORT + 3))" >/dev/null 2>&1) &
+  sleep 1
+  web open "https://127.0.0.1:$((PORT + 3))/"
+  check "a certificate error page says its code and open exits 1" "$(ok '^Chrome error page \(net::ERR_CERT_[A-Z_]+\): the page did not load' 1)"
+  web click 'Advanced'
+  check "Advanced is not clicked" "$(ok "Chrome's own error page: nothing on it is clicked" 1)"
+  web snap
+  check "reads still list it" "$(ok 'Back to safety')"
 }
 
 # Duplicate matches: an off-canvas twin, a modal's field against the header's, rows that still list, an exact text line.
@@ -947,7 +977,7 @@ case_help() {
   check "an unknown topic exits 64" "$(ok 'no help for' 64)"
 }
 
-ALL=(help infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field)
+ALL=(help infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field certerror)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

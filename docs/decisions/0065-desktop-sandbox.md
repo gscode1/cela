@@ -672,7 +672,13 @@ page script runs, and nothing is retried or dismissed for the agent.
 - **Tables.** `--table` also reads rows by `role=row`, with `cell`, `gridcell`, `columnheader` or `rowheader` cells, whatever
   their display. A row of column headers is a header row. Pure CSS grids are left out: yr.no's day rows have four tracks
   but three children, and their values sit in nested grids, so no clean split exists. Tables are never inferred from
-  geometry.
+  geometry. A `TD` or `TH` whose parent is a `TR` is a cell of that row whatever its display, and the table is the nearest
+  `TABLE` when none has `display: table` (a `display: grid` table with `tr { display: contents }`, as on MDN's
+  compatibility tables).
+- **Chrome error pages.** A `chrome-error:` document (a refused connection, a certificate interstitial) is noticed with
+  Chrome's code, read from its text (`net::ERR_CERT_COMMON_NAME_INVALID`), and told not to be retried or worked around.
+  `open` exits 1 on it, so an `&&` chain stops. `click` and `type` on it are refused (exit 1; "Advanced" is never clicked);
+  reads still work. No CDP domain is added for it.
 - **Overlays.** With no dialog in front, a refusal names the nearest `position:fixed` layer around the hit element that holds
   a control, and lists up to 8 of its controls with refs. ceneo's banner holds a fixed dimming layer without buttons, so the
   search goes on outward. `open` lists such a layer as `open overlay` only when the viewport's centre lands in it and it holds
