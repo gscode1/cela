@@ -8,6 +8,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_CHARS = 300;
 
+/** The methods of the admin API the adapter uses. */
+export type AdminMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+export interface AdminCallOptions {
+  /** Request timeout in milliseconds; absent: 30 s. */
+  timeoutMs?: number;
+}
+
 export type SessionStatus = "active" | "failed" | "deleting" | "deleted";
 
 export interface CreateSessionInput {
@@ -236,17 +244,23 @@ export class SessionApi {
   }
 
   /**
-   * One admin API call (ADR 0050): `path` must start with `/admin/` and be built from validated, encoded parts. Any 2xx
-   * answer is its JSON body; anything else is an `ApiError` with the server's text, scrubbed of this client's token.
+   * One admin API call (ADR 0050): `path` must start with `/admin/` and be built from validated, encoded parts. `payload`
+   * is sent as a JSON body (PUT and POST; none for GET and DELETE). `timeoutMs` replaces the 30 s default for this call
+   * only (a skill publish uploads files). Any 2xx answer is its JSON body; anything else is an `ApiError` with the
+   * server's text, scrubbed of this client's token.
    */
   async admin(
-    method: "GET" | "PUT" | "DELETE",
+    method: AdminMethod,
     path: string,
     payload?: unknown,
     signal?: AbortSignal,
+    options: AdminCallOptions = {},
   ): Promise<unknown> {
     if (!path.startsWith("/admin/")) throw new ApiError(0, "not an admin path");
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+      throw new ApiError(0, "timeoutMs must be a positive integer");
+    const timeout = AbortSignal.timeout(timeoutMs);
     const res = await this.#fetch(
       method,
       path,

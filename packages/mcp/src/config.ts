@@ -7,7 +7,11 @@ export interface McpConfig {
   token: string;
   /** Most sessions this process may create. */
   maxSessions: number;
-  admin?: { token: string; writes: boolean };
+  /**
+   * Admin tools (ADR 0050, 0070): `writes` adds the catalog writes that only affect new sessions, `dangerous` (which
+   * needs `writes`) adds deletes, settings and egress writes.
+   */
+  admin?: { token: string; writes: boolean; dangerous: boolean };
 }
 
 export class ConfigError extends Error {
@@ -68,7 +72,10 @@ export function parseConfig(env: Record<string, string | undefined>): McpConfig 
   };
   const enabled = flag("PI_MCP_ADMIN");
   const writes = flag("PI_MCP_ADMIN_WRITES");
+  const dangerous = flag("PI_MCP_ADMIN_DANGEROUS");
   if (writes && !enabled) throw new ConfigError("PI_MCP_ADMIN_WRITES requires PI_MCP_ADMIN");
+  if (dangerous && !writes)
+    throw new ConfigError("PI_MCP_ADMIN_DANGEROUS requires PI_MCP_ADMIN_WRITES");
   let admin: McpConfig["admin"];
   if (enabled) {
     const adminToken = env.PI_API_ADMIN_TOKEN?.trim();
@@ -79,7 +86,7 @@ export function parseConfig(env: Record<string, string | undefined>): McpConfig 
     // The point of a second token is that the session tools never hold admin rights (ADR 0050).
     if (adminToken === token)
       throw new ConfigError("PI_API_ADMIN_TOKEN must differ from PI_API_TOKEN");
-    admin = { token: adminToken, writes };
+    admin = { token: adminToken, writes, dangerous };
   }
   return {
     apiUrl,

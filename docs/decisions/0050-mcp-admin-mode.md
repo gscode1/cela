@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-20 (issue #321). Amends [0031](0031-mcp-adapter.md), which kept the adapter off `/admin/*`.
 
+Amended by [0070](0070-mcp-admin-parity.md) (2026-11-25): a third flag, `PI_MCP_ADMIN_DANGEROUS`, and admin tools for skills, MCP servers, egress, settings and the deployment as a whole; "two switches" and "no other admin write" no longer hold.
+
 ## Context
 
 Changing the deployment (a profile's instructions, its rule sets) needed the admin API by hand: an agent asked to

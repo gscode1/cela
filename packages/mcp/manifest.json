@@ -4,7 +4,7 @@
   "display_name": "cela",
   "version": "1.1.0",
   "description": "Run tasks in durable, sandboxed agent sessions on a cela deployment through its session API.",
-  "long_description": "A stdio MCP server for the cela session API. It starts a durable agent session with its own sandbox and workspace, sends it a task and returns the result. It only calls your cela ingest over HTTPS with your token: it has no database access and holds no model or GitHub credential. Read-only admin tools and profile writes are off unless you turn them on in the settings.",
+  "long_description": "A stdio MCP server for the cela session API. It starts a durable agent session with its own sandbox and workspace, sends it a task and returns the result. It only calls your cela ingest over HTTPS with your token: it has no database access and holds no model or GitHub credential. Read-only admin tools, catalog writes and dangerous admin tools are off unless you turn them on in the settings.",
   "author": {
     "name": "gscode1",
     "url": "https://github.com/gscode1"
@@ -30,6 +30,7 @@
         "PI_MCP_ADMIN": "${user_config.admin_enabled}",
         "PI_API_ADMIN_TOKEN": "${user_config.admin_token}",
         "PI_MCP_ADMIN_WRITES": "${user_config.admin_writes}",
+        "PI_MCP_ADMIN_DANGEROUS": "${user_config.admin_dangerous}",
         "PI_MCP_MAX_SESSIONS": "${user_config.max_sessions}"
       }
     }
@@ -91,8 +92,15 @@
     },
     "admin_writes": {
       "type": "boolean",
-      "title": "Enable profile writes",
-      "description": "Add tools that create, change and delete profiles. Needs admin tools enabled.",
+      "title": "Enable admin writes",
+      "description": "Add tools that create and change profiles, skills and MCP servers. Needs admin tools enabled.",
+      "default": false,
+      "required": false
+    },
+    "admin_dangerous": {
+      "type": "boolean",
+      "title": "Enable dangerous admin tools",
+      "description": "Add tools that delete catalog entries, change deployment settings and change egress rules. Needs profile writes enabled.",
       "default": false,
       "required": false
     },

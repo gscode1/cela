@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import { registerAdminTools } from "./admin.js";
+import { registerAdminTools } from "./admin/index.js";
 import { SessionApi } from "./api.js";
 import type { McpConfig } from "./config.js";
 import { registerTools, type ToolOptions } from "./tools.js";
