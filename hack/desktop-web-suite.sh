@@ -467,6 +467,77 @@ case_names() {
   check "type finds a field by its placeholder" "$(ok 'value now: "Lisbon"')"
   web text 'going'
   check "text with no matching line lists matching elements" "$(grep -q 'elements that match' "$OUT" && grep -q 'placeholder="Where are you going' "$OUT"; echo $?)"
+  web snap '^Enter destination$'
+  check "snap anchors match the name, not the printed line" "$(ok 'textbox "Enter destination"')"
+  web click 'Select town'
+  has_text 'focused: town'
+  check "a regex matches a control's description" $?
+  web type 'slider' 7
+  check "a regex matches the role word of an unnamed control" "$(ok 'value 2 -> 7')"
+  web click '^3$'
+  check "same-named options under different questions are listed" "$(ok 'elements match' 2)"
+  web click '^3$' --near 'experienced'
+  check "--near matches the heading above a control" "$(ok 'radio "3": checked false -> true')"
+  has_text 'radio exp: 3'
+  check "the option of that question was picked" $?
+}
+
+# Sortable column headers: listed with their group and sort state, clicked beside the link inside, never confused with a link.
+case_table() {
+  open table
+  web snap 'Population|Town|Remarks'
+  check "a sortable header is listed with its group and sort state" "$(ok 'columnheader "Population" in "Metro area" sort=none desc="Sort ascending"')"
+  check "its twin under the other group too" "$(ok 'columnheader "Population" in "Town proper" sort=none')"
+  check "a header that only labels its column is not listed" "$(no 'columnheader "Remarks"|columnheader "Metro area"')"
+  web click '^Population$'
+  check "a header and a link of the same name are listed, nothing clicked" "$([[ $RC == 2 ]] && grep -q 'columnheader "Population" in "Metro area"' "$OUT" && grep -q 'link "Population"' "$OUT"; echo $?)"
+  web click 'Town proper Population'
+  check "a click by group and name sorts and prints the new state" "$(ok 'columnheader "Population".*sort none -> ascending')"
+  has_text 'sorted: column 3 ascending, first Aš'
+  check "the page sorted that column" $?
+  web click '^Town\['
+  check "a header holding a link is clicked beside the link" "$(ok 'columnheader "Town\[1\]".*sort none -> ascending')"
+  check "and does not follow the link" "$(no '^url:')"
+  has_text 'sorted: column 0 ascending, first Aš'
+  check "the page sorted by town" $?
+}
+
+# Duplicate matches: an off-canvas twin, a modal's field against the header's, rows that still list, an exact text line.
+case_twins() {
+  open twins
+  web click 'Show all filters'
+  check "of identical twins the one in view is clicked, with a note" "$(ok 'used the one in view')"
+  has_text 'clicked: filters-main at'
+  check "not the off-canvas copy" $?
+  web click '^Add$'
+  check "same-named buttons in different rows still list" "$(ok 'elements match' 2)"
+  web drag 'A' 'B'
+  check "an exact text line beats elements that only contain it" "$(ok 'used the text')"
+  has_text 'swapped: B A'
+  check "the columns were swapped" $?
+  web click 'Open the filter dialog'
+  web type 'Search filters' 'usb'
+  check "the field in the open dialog wins" "$(ok 'used the one in the open dialog')"
+  has_text 'typed in modal-search: usb'
+  check "the page saw the dialog's field" $?
+  web click '^Close$'
+}
+
+# A search that finds nothing points to closed menus that may hold it, icon-only menus first; nothing is opened.
+case_menu() {
+  open menu
+  web snap 'Sort'
+  check "snap with no match points to closed menus" "$(ok 'closed menus that may hold it:')"
+  check "the icon-only menu comes first" "$(grep -A1 'closed menus' "$OUT" | grep -q 'button "More list controls" expanded=false'; echo $?)"
+  check "nothing was opened" "$(no 'Sort by newest')"
+  web click 'Sort'
+  check "a click with no match points there too" "$(ok 'closed menus that may hold it:' 1)"
+  web text 'Sort'
+  check "and text" "$(ok 'closed menus that may hold it:')"
+  web click 'More list controls'
+  web click 'newest'
+  has_text 'sorted: newest'
+  check "the item in the opened menu is clicked" $?
 }
 
 case_form() {
@@ -651,7 +722,7 @@ case_acting() {
   check "not an outline either" "$(no 'outline')"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

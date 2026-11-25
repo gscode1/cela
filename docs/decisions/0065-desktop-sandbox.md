@@ -562,6 +562,33 @@ The suite gained `errors`, `challenge` and `collapsed` cases (pages `timeout522.
 `collapsed.html`; `challenge.html` now draws a widget through `srcdoc` under the provider's `src`), and `notices` (pages
 `hidden-frame.html`, `blank.html`, `nonmodal.html`) and `spacing` cover the rest.
 
+### desktop-web: sortable headers, duplicate preference, wider matching, closed menus (issue #477)
+
+Round 3 of the hard local tests (a sortable wiki table, an issue tracker's overflow menu, a shop's duplicate controls, a
+practice form, a drag demo, a form's scale). `ALLOWED` is unchanged, input stays real X events, and nothing knows a site or a
+word list.
+
+- **State read.** `axEntries` reads `selected`, `pressed` and `hasPopup`; Chrome's accessibility tree has no sort property,
+  so `annotate` reads `aria-sort` from the layout snapshot. `selected`, `pressed` and `sort` are printed and diffed.
+- **Sortable headers.** Named column headers are read; one is kept only when it has `aria-sort`, is focusable, has a click
+  listener or a pointer cursor. Headers that share a name get the header above them whose span covers theirs:
+  `columnheader "Population" in "City proper" sort=none`, matched as "City proper Population". A control that holds other
+  listed controls (a footnote link in a header) is clicked at a point of its own box away from them, confirmed by
+  `DOM.getNodeForLocation`; otherwise at its centre.
+- **Duplicates** are settled in `chooseTarget`, in order, each automatic pick with a note: an exact name (or, with none, the
+  one text line that reads exactly so) over substring matches; matches in an open modal; for `type`, the field outside the
+  banner and navigation (moved here); twins (same role, name, group, row text, enclosing group names and heading before
+  them) by the one in the viewport, else the first in the main content. Anything else is listed (exit 2).
+- **Matching.** A regex also matches the description and, for an unnamed control, its role word; `snap` tests what a target
+  is matched by, so anchors work. `--near` also matches the names of group, radiogroup, row and listitem ancestors and the
+  last heading before the control, in the page's order.
+- **Closed menus.** A `snap`, `click` or `text` that finds nothing lists up to four controls with `aria-haspopup` or
+  `expanded=false` that may hold it, icon-only ones and menus first, with refs. Nothing is opened.
+
+Reorder detection, focus after keys, nearly empty pages, `text --table` and the modal Close timing are deferred to the next
+change. The suite gained `table`, `twins` and `menu` cases (pages `table.html`, `twins.html`, `menu.html`) and `names`
+grew (description, role word, scales under headings, anchored `snap`).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through

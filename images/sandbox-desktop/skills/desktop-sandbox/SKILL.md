@@ -51,10 +51,17 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   and name (the answer says so); otherwise run `snap` again.
   `desktop-web click "regex"` clicks the one match by name in one call; several matches are listed with each row's text and
   URL, and nothing is clicked. With no element of that name it clicks the one line of clickable text that matches (a filter
-  option drawn without a role); `snap "regex"` lists those as `clickable "text"`.
-- A regex matches an element's name and its placeholder. A control without a name shows the text beside it (`combobox ""
+  option drawn without a role); `snap "regex"` lists those as `clickable "text"`. Some duplicates are picked for you, and the
+  answer says which: an exact name or text line over ones that only contain it, the one in an open dialog, a field outside
+  the header, or of identical copies the one in view. When nothing matches, the answer lists `closed menus that may hold it`
+  (an overflow "..." button): open one by ref and look again.
+- Sortable table columns are listed as `columnheader "Population" in "City proper" sort=none`; click by name
+  (`desktop-web click "City proper Population"`) or ref to sort, and the answer shows `sort none -> ascending` when the page
+  says so.
+- A regex matches an element's name, placeholder and `desc`. A control without a name shows the text beside it (`combobox ""
   label "Sort by"`), its row (`combobox "" near "State Select state"`) or, last, words from its markup (`button ‹icon car›`),
-  and a regex matches those too. `disabled` controls are listed
+  and a regex matches those and its role word (`slider`) too; `--near` also matches the group or question heading above it.
+  `disabled` controls are listed
   but not clicked; `required`, `invalid` and `desc="error text"` mark a form's fields, and an answer where nothing else
   changed lists the invalid fields.
 - Chain steps that do not need the previous answer with `&&` in one bash call, by regex, not ref:

@@ -685,6 +685,35 @@ function readRefs() {
   }
 }
 const CHROME_LANDMARKS = new Set(["banner", "navigation"]);
+
+// Whether an element's box (from the read's layout snapshot, page coordinates) shows in the viewport now: of identical
+// matches, the one a person sees. An element of an out-of-process frame counts as not in view.
+async function viewTest(c, tree) {
+  let vp;
+  try {
+    vp = (await c.send("Page.getLayoutMetrics")).cssLayoutViewport;
+  } catch {
+    return undefined;
+  }
+  const root = tree.read.find((r) => !r.part.parent);
+  return (e) => {
+    if (!root || (e.frameTag ?? "") !== root.part.tag) return false;
+    const id = e.via ?? e.backendNodeId;
+    const b = cdp.boxesOf(root.snap, [id]).get(id);
+    if (!b) return false;
+    const w = Math.min(b.x + b.w, vp.pageX + vp.clientWidth) - Math.max(b.x, vp.pageX);
+    const h = Math.min(b.y + b.h, vp.pageY + vp.clientHeight) - Math.max(b.y, vp.pageY);
+    return w >= 2 && h >= 2;
+  };
+}
+
+// When nothing matches: closed menus and collapsed controls that may hold it (cdp.closedMenus), with refs. Nothing is opened.
+function menuLines(entries) {
+  const menus = cdp.closedMenus(entries);
+  if (menus.length === 0) return [];
+  rememberRefs(menus, { merge: true });
+  return ["closed menus that may hold it:", ...menus.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}${e.hasPopup && e.expanded === undefined ? ` haspopup=${e.hasPopup}` : ""}`)];
+}
 const escapeRe = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const isRef = (spec) => /^e\d+(@\w+)?$/.test(spec);
 
@@ -721,7 +750,16 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
       ? entries.filter((e) => e.select || ["combobox", "listbox"].includes(e.role))
       : entries;
   const re = regex(spec);
-  let r = cdp.chooseTarget(nodes, pool, re, { near: o.near ? regex(o.near) : undefined, nth: o.nth, role: o.role, showable: read.showable });
+  let r = cdp.chooseTarget(nodes, pool, re, {
+    near: o.near ? regex(o.near) : undefined,
+    nth: o.nth,
+    role: o.role,
+    showable: read.showable,
+    texts: text ? () => textEntries(tree, re, { any: anyText }) : undefined,
+    fields: fieldsOnly,
+    landmark: (e) => cdp.inLandmark(nodes, e, CHROME_LANDMARKS),
+    inView: await viewTest(c, tree),
+  });
   if (r.none && text && !r.near && !o.role) {
     // No element is named so: a line of text that takes clicks (a role-less option), if exactly one, or the exact one.
     const hits = textEntries(tree, re, { any: anyText });
@@ -731,13 +769,7 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     if (pick) return { entry: pick, nodes, note: `no element has that name; ${anyText ? "used" : "clicked"} the text` };
     if (hits.length > 1) r = { several: hits };
   }
-  if (r.pick) return { entry: r.pick, nodes };
-  if (fieldsOnly && r.several) {
-    // A site's search box in its header and the form's own field: the one outside the header and menus is meant.
-    const out = r.several.filter((e) => !cdp.inLandmark(nodes, e, CHROME_LANDMARKS));
-    if (out.length === 1)
-      return { entry: out[0], nodes, note: `${r.several.length} fields match ${JSON.stringify(spec)}; used the one outside the page's header and navigation (another: --near "row text" or its ref)` };
-  }
+  if (r.pick) return { entry: r.pick, nodes, note: r.note };
   if (r.none) {
     const d = cdp.dialogLines(cdp.dialogs(nodes));
     fail(
@@ -745,6 +777,7 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
         r.near
           ? `nothing matching ${JSON.stringify(spec)} near ${JSON.stringify(o.near)}`
           : `nothing ${read.showable ? "" : "clickable "}matches ${JSON.stringify(spec)}: try desktop-web snap "word"`,
+        ...(r.near ? [] : menuLines(entries)),
         ...d,
       ].join("\n"),
     );
@@ -850,7 +883,7 @@ async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], ta
 // Scrolls the element into view, checks nothing covers it (unless `cover` is false: a screenshot shows what covers it), and
 // returns where it is on the screen: { box: {x, y, w, h}, win }. An element of an out-of-process iframe is read through that
 // frame's connection and placed in the page by its iframe element's content box.
-async function placeNode(c, nodes, entry, { cover = true, scroll = true } = {}) {
+async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = false } = {}) {
   // A checkbox drawn by its label is clicked on the label, which a person sees and which toggles it.
   const backendNodeId = entry.via ?? entry.backendNodeId;
   const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
@@ -882,7 +915,10 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true } = {}) 
     reach = { x, y, w: Math.min(reach.x + reach.w, origin.x + own.clientWidth) - x, h: Math.min(reach.y + reach.h, origin.y + own.clientHeight) - y };
   }
   const pageQuad = cdp.shiftQuad(quad, origin.x, origin.y);
-  const center = cdp.quadCenter(pageQuad);
+  let center = cdp.quadCenter(pageQuad);
+  // A control that holds other listed controls (a column header with a footnote link) is clicked beside them, on itself.
+  const beside = aim && entry.inner?.length ? await clearPoint(part.send, backendNodeId, quad, entry.inner) : undefined;
+  if (beside) center = { x: beside.x + origin.x, y: beside.y + origin.y };
   if (center.x < reach.x || center.y < reach.y || center.x > reach.x + reach.w || center.y > reach.y + reach.h)
     fail(
       scroll
@@ -917,13 +953,42 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true } = {}) 
   const ys = [pageQuad[1], pageQuad[3], pageQuad[5], pageQuad[7]];
   const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), reach.x), y: Math.max(Math.min(...ys), reach.y) });
   const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), reach.x + reach.w), y: Math.min(Math.max(...ys), reach.y + reach.h) });
-  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win };
+  const point = beside ? cdp.screenPoint(geo, center) : undefined;
+  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win, point };
+}
+
+// A point of the element (its part's viewport coordinates) outside the controls inside it, confirmed by hit testing: the
+// element or its own text is there, none of those controls. Undefined when no such point is found (the centre is used).
+async function clearPoint(send, backendNodeId, quad, inner) {
+  const rect = (q) => ({ l: Math.min(q[0], q[6]), t: Math.min(q[1], q[3]), r: Math.max(q[2], q[4]), b: Math.max(q[5], q[7]) });
+  const kids = [];
+  const kidIds = new Set();
+  for (const id of inner) {
+    try {
+      kids.push(rect((await send("DOM.getBoxModel", { backendNodeId: id })).model.border));
+      for (const k of cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: id, depth: -1, pierce: true })).node)) kidIds.add(k);
+    } catch {
+      // gone or without a box: nothing to keep away from
+    }
+  }
+  if (kids.length === 0) return undefined;
+  try {
+    const own = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId, depth: -1, pierce: true })).node);
+    const lp = (await send("Page.getLayoutMetrics")).cssLayoutViewport;
+    for (const p of cdp.aimPoints(rect(quad), kids).slice(0, 8)) {
+      const hit = await send("DOM.getNodeForLocation", { x: Math.round(p.x + lp.pageX), y: Math.round(p.y + lp.pageY), includeUserAgentShadowDOM: true }).catch(() => undefined);
+      if (hit && own.has(hit.backendNodeId) && !kidIds.has(hit.backendNodeId)) return p;
+    }
+  } catch {
+    // the element changed: its centre is used
+  }
+  return undefined;
 }
 
 async function clickNode(c, nodes, entry) {
-  const { box, win } = await placeNode(c, nodes, entry);
+  const { box, win, point } = await placeNode(c, nodes, entry, { aim: true });
   activate(win);
-  return lib.humanClick(box);
+  return lib.humanClick(point ? { x: point.x - 1, y: point.y - 1, w: 3, h: 3 } : box);
 }
 
 // The pointer over the element without a press: menus and captions that appear on hover. A dwell for the page's own handlers.
@@ -1193,7 +1258,8 @@ async function main() {
       const hits = lib.grepLines(lines, o.indent ? { test: (l) => re.test(l.replace(/^>+ /, "")) } : re, { limit: o.limit ?? 25, context: o.context, width: WIDTH });
       if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) {
         const tree = await withPage((c) => axTree(c)).catch(() => undefined);
-        hits.push(...(await namedLike(re, async () => tree)), ...cutOffLines(re, tree));
+        const more = [...(await namedLike(re, async () => tree)), ...cutOffLines(re, tree)];
+        hits.push(...more, ...(more.length === 0 && tree ? menuLines(tree.entries) : []));
       }
       const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
@@ -1206,7 +1272,8 @@ async function main() {
         const { nodes, entries } = tree;
         rememberRefs(entries);
         const re = o.pos[0] ? regex(o.pos[0]) : undefined;
-        const lines = entries.map((e) => cdp.entryLine(e)).filter((l) => !re || re.test(l));
+        // a regex is tested against what a target is matched by (anchors then work: "^Ottawa$"), its role and its line
+        const lines = entries.filter((e) => !re || re.test(cdp.entryLine(e)) || re.test(e.role) || cdp.matchTexts(e).some((t) => re.test(t))).map((e) => cdp.entryLine(e));
         if (re) {
           // Text that takes clicks but is no element's name (role-less options): only when asked for by a regex.
           const named = new Set(entries.map((e) => e.name));
@@ -1217,7 +1284,7 @@ async function main() {
         const limit = o.limit ?? 40;
         const shown = lines.slice(0, limit);
         if (lines.length > limit) shown.push(`${lines.length - limit} more: narrow the regex`);
-        if (lines.length === 0) shown.push(`no element matches among ${entries.length}`);
+        if (lines.length === 0) shown.push(`no element matches among ${entries.length}`, ...menuLines(entries));
         const sel = entries.find((e) => e.select && !e.select.multiple && e.select.size <= 1 && lines.includes(cdp.entryLine(e)));
         const alt = sel?.options.find((x) => !x.selected && !x.disabled);
         if (sel && alt) shown.push(`(pick an option: desktop-web select ${sel.ref} "${alt.text}")`);
