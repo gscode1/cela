@@ -36,6 +36,7 @@
 //                                             something covers adds "note: covered by" and what is in front
 //   desktop-web wait "regex" [--gone]         wait until the text appears (or disappears); --timeout N seconds (at most 60)
 //   desktop-web url                           url and title
+//   desktop-web help [cmd]                    one line per command, or the detail of one (also: desktop-web <cmd> --help|-h)
 //   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›, named
 //                                             ones as ‹"Accepted"›, and text with a datetime or a title that says more as
 //                                             ‹datetime=…›, ‹title:"…"›
@@ -1413,8 +1414,155 @@ async function afterTyping(pre, after, typed, o) {
   return out;
 }
 
+// `desktop-web help [cmd]` and `desktop-web <cmd> --help|-h`: the rare detail the desktop-sandbox skill leaves out, so
+// a session pays for it only when it needs it (issue #493). One line per command in the list; the text per command below.
+const HELP_LIST = [
+  ["open", 'open <url> ["regex"]: open a page; url, title, notices, dialogs, matching lines or an outline'],
+  ["text", 'text "regex": read the current page (--lines A-B, --indent, --table, --marks, --from FILE)'],
+  ["snap", 'snap ["regex"]: dialogs, then clickable elements, fields and headings with refs'],
+  ["click", 'click <ref|"regex">: click it and see what changed (--near, --nth, --show, --double)'],
+  ["type", 'type <ref|"regex"> "text": replace a field\'s text, or set a slider (--enter, --append, --near)'],
+  ["select", 'select <ref|"regex"> "option": pick an option of a dropdown'],
+  ["upload", 'upload <ref|"regex"> /workspace/file: give a file to a file input'],
+  ["drag", "drag <src> <dst>: drag and drop, sortable lists, maps (or --by dx,dy)"],
+  ["hover", 'hover <ref|"regex">: pointer over an element (menus, captions)'],
+  ["wait", 'wait "regex" [--gone]: wait until text appears or goes (--timeout N)'],
+  ["key", "key <keys>: keys in the browser (End, Page_Down, alt+Left, Escape); answers browser dialogs"],
+  ["shot", 'shot <ref|"regex">: screenshot of one element\'s area (--pad N)'],
+  ["url", "url: the address and title"],
+  ["dialogs", "dialogs: browser JS dialogs, the file chooser and a busy page: how to answer them"],
+];
+const HELP = {
+  open: `desktop-web open <url> ["regex"]
+  Types the URL in the address bar and loads it. Prints title:, url: (only when the address changed), notices, open
+  dialogs, then the lines that match the regex, or the page's headings with their line numbers.
+  Notices: redirected from X (you landed elsewhere); Chrome error page (it did not load); may be an error page (a 404 or
+  5xx in its title, a heading or a line of its own); looks like a bot check (provider) and bot check again; a frame is
+  still loading (said once; read again in a moment); page shows almost no text (a few short lines and no field: often an
+  error or block page; look with desktop-shot before you go on).
+  A fixed layer without a dialog role that covers the middle of the page is listed as open overlay.
+  Only https:// URLs and file:///workspace/ files.`,
+  text: `desktop-web text "regex" [--lines A-B] [--indent] [--table] [--marks] [--from FILE] [--limit N] [--context N]
+  Reads the whole page (offscreen parts too, no scrolling); the full text is saved to a file and every answer says how to
+  read on. Give the words you need, not "." (an answer is capped at about 60 lines).
+  --lines A-B     a range of lines, from the outline's numbers or a match.
+  --from FILE     read the saved file again for another regex. Never cat, sed, head or tail it.
+  --indent        a ">" per level a line is indented (replies in a thread).
+  --table         a table row as its cells joined by " | " (empty cells kept), the header rows above as "cols: ...";
+                  line numbers are the table's own (--table --lines A-B). Reads <table> and ARIA grids (role=row).
+  --marks         marks meaning that is only an icon, a colour, an image or an attribute, inline: ‹class words› (a rating
+                  drawn by its class, a status dot), ‹"Accepted"› (a named picture), ‹datetime=2026-11-20T09:30Z› (a
+                  <time>), ‹title:"..."› (a tooltip). If that is not enough: desktop-web shot <ref> and read the image.
+  ~637 zł~ is struck through (an old price). 94 ‹Upvote› names a bare number by its element.
+  Text that a collapsed section cuts off is not there: when nothing matches, text says how many matches are in a cut-off
+  section and which control opens it. Click it, then read again.`,
+  snap: `desktop-web snap ["regex"]
+  Lists open dialogs, then links, buttons, fields, checkboxes, named pictures and headings, the page's main content first,
+  each as [e123] role "Name". A regex also lists text that takes clicks: [e124] clickable "4K".
+  A regex matches an element's name, placeholder, desc and role word. A control without a name shows the text beside it
+  (combobox "" label "Sort by"), its row (near "...") or words from its markup (button ‹icon car›).
+  disabled controls are listed but not clicked; required, invalid and desc="error text" mark a form's fields.
+  Sortable columns: columnheader "Population" in "City proper" sort=none.
+  A dropdown: combobox "Name" value="..." options: A | B | C. A slider: slider "Volume" value=25 min=0 max=100.
+  A handle drawn without a slider role: focusable ‹ui-slider-handle› near "Price range" (see: desktop-web help type).
+  A file input says (file input: desktop-web upload ...).
+  Dialogs that are part of the page (cookie consent, sign-up, region) come first with their buttons' refs; (not modal) means
+  the page stays usable around it. An overlay drawn without a dialog role is listed as open overlay.`,
+  click: `desktop-web click <ref|"regex"> [--near "row text"] [--nth N] [--role R] [--show "regex"] [--double]
+  A ref the page has replaced is found again when one element has its role and name (the answer says so); otherwise run snap.
+  A regex clicks the one match by name; several matches are listed with each row's text and URL and nothing is clicked.
+  With no element of that name it clicks the one line of clickable text that matches, else the one line of any visible text
+  (it says so). Some duplicates are picked for you and the answer says which: an exact name over ones that only contain it,
+  the one in an open dialog, a field outside the header, of identical copies the one in view.
+  --near "text"   rows that share a title (offers, flights, variants): click the one in the row with that text, or a ref.
+  --double        a double click (edit a label), on any visible text.
+  A link's URL is listed by click or snap; do not click a link just to learn where it goes.
+  Sort a column: click "City proper Population"; the answer shows sort none -> ascending.
+  Nothing matches: the answer lists closed menus that may hold it (an overflow "..." button): open one by ref, look again.
+  A click that a dialog covers is refused with its buttons: answer it with one click on the button you mean, then run the
+  rest of the chain again. disabled controls are not clicked. Exit 1 when refused, 2 when ambiguous.
+  Answers: the new state (checked false -> true), the new page's outline, or what changed (lines that appeared or went,
+  order changed (lines A-B), now: after a sort or a drag, a closed dialog, an alert, selected false -> true, a filter's
+  results, an autocomplete's options, the page drew it again). Controls an action added: appeared: [e12] ...
+  nothing happened: the page did not react; fix the required or invalid fields it lists, or look with desktop-web shot.
+  this control does nothing here: stop clicking it. result may come later: desktop-web wait "text".`,
+  type: `desktop-web type <ref|"regex"> "text" [--enter] [--append] [--near "row text"]
+  Replaces a field's text ("" clears it) and prints its value and what appeared. Exit 1 when the field kept its value
+  (read-only: use the control that sets it). Of several matching fields it takes the one outside the page's header and
+  menus and says so. --near picks one of several fields. A form without a button says no submit button: send it with --enter.
+  Slider: desktop-web type <ref|"regex"> 75 presses it at that point, steps with the arrow keys and reads it back
+  (value 25 -> 75); a value between its steps ends on the nearest one and says so. Exit 1 when it did not move.
+  A handle drawn without a slider role is listed as focusable ‹ui-slider-handle› near "Price range"; type refuses it:
+  desktop-web click <ref>, then desktop-web key Right (or Left, Page_Up) and read the value it prints, or
+  desktop-web drag <ref> --by 40,0.
+  A file input takes a file, not text: desktop-web help upload.`,
+  select: `desktop-web select <ref|"regex"> "option" [--near "row text"]
+  Picks an option of a dropdown, native or in-page, and prints what it holds. snap shows
+  combobox "Name" value="..." options: A | B | C. The option is matched by exact text, else ignoring case, else as a regex;
+  an ambiguous one is listed. Several dropdowns of one name (one per row): select "Quantity" "2" --near "<text of that row>".
+  An in-page dropdown offers only its own options (or the lines that appear as it opens); a failed select closes it again.
+  A disabled option is refused. Do not click a dropdown open and step through it by hand.`,
+  upload: `desktop-web upload <ref|"regex"> /workspace/file
+  The file must be in /workspace. Gives it to a file input, or to the button that opens one (a styled "Choose file"
+  button works too), and prints file input now holds: "name". snap marks a file input (file input: desktop-web upload).
+  type refuses a file input. When the browser's file chooser is open (a click opened it) every command says so and
+  actions are refused until desktop-web key Escape cancels it.`,
+  drag: `desktop-web drag <src> <dst>  |  desktop-web drag <src> --by dx,dy
+  Presses on src, moves at a person's pace and releases over dst (or moves by dx,dy px). src and dst are refs, element
+  names or any visible text: desktop-web drag "Drag me" "Drop here". For sortable lists, a map or a canvas. Prints what
+  changed (order changed (lines A-B), now: ...). Never raw xdotool mousedown.`,
+  hover: `desktop-web hover <ref|"regex"> [--nth N]
+  Puts the pointer over an element or any visible text (menus, captions) and prints what appeared. Several same-named
+  pictures: their refs from snap, or --nth N. A hover that changes nothing prints the element's title as tooltip: "...".
+  Not raw xdotool mousemove.`,
+  wait: `desktop-web wait "regex" [--gone] [--timeout N]
+  Waits until the text appears (or disappears with --gone); at most 60 seconds. For content that appears later (a request,
+  a countdown, a spinner). Never sleep on a web page. the page is busy (no dialog) is a heavy page still loading: read
+  again with wait "regex".`,
+  key: `desktop-web key <keys...> [--text "answer"] [--show "regex"]
+  Keys in the browser window (End, Page_Down, alt+Left, Escape, Return); prints what changed, the element that took the
+  focus (focus: [e12] textbox "Email") and how far the page scrolled. A list that loads more as you scroll: key End, then
+  read the new lines it prints. --text "answer" types text first (a prompt dialog). Browser dialogs: desktop-web help dialogs.`,
+  shot: `desktop-web shot <ref|"regex"> [--pad N]
+  Screenshot of that element's or text's area; prints the file, then open it with the read tool. --pad N takes N more px
+  around it. A narrow target comes with its row; note: covered by says what is in front. For icons, colours and images.
+  Do not zoom the page or take full screenshots to find them.`,
+  url: `desktop-web url
+  Prints the address and title.`,
+  dialogs: `Browser dialogs, the file chooser and a busy page
+  The browser's own dialogs (JS alert, confirm, prompt, leave-page) are not part of the page and are not listed with refs.
+  While one is open the page does not answer; every desktop-web command says so and prints the dialog's message and buttons.
+    desktop-web key Return                      accepts
+    desktop-web key Escape                      cancels
+    desktop-web key --text "answer" Return      answers a prompt
+  The next answer says "dialog closed" and what changed. Do not wait it out: it never closes by itself.
+  the page is busy (no dialog) is a heavy page still loading: desktop-web wait "regex"; no key is needed.
+  An open file chooser: actions are refused until desktop-web key Escape cancels it.
+  Dialogs that are part of the page (cookie consent) are listed by open and snap with refs: desktop-web help snap.`,
+};
+
+function helpText(topic) {
+  if (!topic) {
+    return [
+      "desktop-web <command> ...  (desktop-web help <command> prints the detail)",
+      ...HELP_LIST.map(([, line]) => `  ${line}`),
+    ].join("\n");
+  }
+  const text = HELP[topic];
+  if (!text) fail(`no help for ${JSON.stringify(topic)}: desktop-web help lists the commands`, 64);
+  return text;
+}
+
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  // --help and -h print the help of the command, never read as a target (hover --help once clicked "--help").
+  const flag = argv[1] === "--help" || argv[1] === "-h";
+  if (argv[0] === "help" || flag) {
+    const topic = flag ? argv[0] : argv[1];
+    console.log(helpText(topic));
+    return;
+  }
+  const [cmd, ...rest] = argv;
   const o = parseArgs(rest);
   switch (cmd) {
     case "open": {
@@ -1942,7 +2090,7 @@ async function main() {
       return;
     }
     default:
-      fail("usage: desktop-web open|text|snap|click|type|upload|drag|key|select|hover|shot|wait|url (see the header of this file)", 64);
+      fail("usage: desktop-web open|text|snap|click|type|upload|drag|key|select|hover|shot|wait|url|help (desktop-web help lists them)", 64);
   }
 }
 
