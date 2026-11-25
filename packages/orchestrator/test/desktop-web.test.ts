@@ -108,7 +108,8 @@ interface CdpLib {
   ): { entry?: Entry; redrawn?: boolean; several?: boolean } | undefined;
   dialogs(
     nodes: AxNode[],
-  ): { role: string; name: string; backendNodeId?: number; entries: Entry[] }[];
+    o?: { max?: number },
+  ): { role: string; name: string; backendNodeId?: number; entries: Entry[]; more: number }[];
   dialogLines(ds: { role: string; name: string; modal?: boolean; entries: Entry[] }[]): string[];
   outline(
     nodes: AxNode[],
@@ -1295,6 +1296,44 @@ describe("desktop-web's CDP reader", () => {
     // a dialog that does not hold the page back (a <dialog open>) says so
     const open = nodes.map((n) => (n.nodeId === "2" ? { ...n, properties: [] } : n));
     expect(cdp.dialogLines(cdp.dialogs(open))[0]).toBe('open dialog "Prywatność" (not modal):');
+  });
+
+  it("lists a dialog's buttons first when its controls pass the cap", () => {
+    const kids = ["3", "4", "5", "6", "7", "8"];
+    const nodes: AxNode[] = [
+      { nodeId: "1", role: { value: "RootWebArea" }, name: { value: "Page" }, childIds: ["2"] },
+      {
+        nodeId: "2",
+        role: { value: "dialog" },
+        name: { value: "Cookies" },
+        parentId: "1",
+        childIds: kids,
+        properties: [{ name: "modal", value: { value: true } }],
+      },
+      ...kids.map((id, i): AxNode => {
+        const button = i >= 4;
+        return {
+          nodeId: id,
+          role: { value: button ? "button" : "link" },
+          name: { value: button ? `Choice ${String(i)}` : `Link ${String(i)}` },
+          parentId: "2",
+          backendDOMNodeId: Number(id) + 100,
+          ...(button ? {} : { properties: [{ name: "url", value: { value: `/l${String(i)}` } }] }),
+        };
+      }),
+    ];
+    const [d] = cdp.dialogs(nodes, { max: 3 });
+    expect(d?.entries.map((e) => e.name)).toEqual(["Choice 4", "Choice 5", "Link 0"]);
+    expect(d?.more).toBe(3);
+    // under the cap nothing moves
+    expect(cdp.dialogs(nodes, { max: 8 })[0]?.entries.map((e) => e.name)).toEqual([
+      "Link 0",
+      "Link 1",
+      "Link 2",
+      "Link 3",
+      "Choice 4",
+      "Choice 5",
+    ]);
   });
 
   it("outlines headings with the text line they start at", () => {

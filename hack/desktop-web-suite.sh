@@ -420,6 +420,29 @@ case_shot() {
   check "and lists the banner's buttons" "$(ok 'button "Reject all"')"
 }
 
+# A dialog with more controls than the listing holds: the buttons come first, so a decision is never behind "... N more".
+case_dialog_cap() {
+  open dialog-cap
+  check "open lists the first button past twelve links" "$(ok 'button "Allow"')"
+  check "open lists the second button too" "$(ok 'button "Refuse"')"
+  check "the links that did not fit are counted" "$(ok '\.\.\. [0-9]+ more')"
+}
+
+# A modal's field wins over a same-named one behind it, also when the page's is named exactly so and the modal's only contains it.
+case_modal_field() {
+  open modal-field
+  web click 'Open filters'
+  web type 'Search' 'foo'
+  check "type fills the modal's field" "$(ok 'used the one in the open dialog')"
+  has_text 'typed in modal-search: foo'
+  check "the page saw the modal's field" $?
+  web type 'Find' 'bar'
+  has_text 'typed in modal-find: bar'
+  check "the modal's field wins over the page's exact name" $?
+  has_text 'typed in'
+  check "nothing was typed behind the modal" "$(no 'typed in page-')"
+}
+
 # A consent layer drawn as a fixed div without a dialog role: open lists it, a click behind it is refused with its buttons.
 case_overlay() {
   open overlay
@@ -896,7 +919,7 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
