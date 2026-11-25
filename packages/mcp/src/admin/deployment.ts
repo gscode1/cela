@@ -53,7 +53,10 @@ const HISTORY_FILTERS = {
 
 const sessionsInput = z.object({
   owner: z.string().min(1).max(200).optional().describe("Only this owner's sessions (exact name)."),
-  status: z.enum(["active", "deleting", "deleted", "failed"]).optional(),
+  status: z
+    .enum(["active", "deleting", "deleted", "failed"])
+    .optional()
+    .describe("Only sessions in this status. Absent: every status except deleted."),
   limit: z.number().int().min(1).max(200).optional().describe("Default 50."),
   cursor: z.string().min(1).max(2000).optional().describe("nextCursor of the previous page."),
 });

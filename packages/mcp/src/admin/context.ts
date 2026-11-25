@@ -30,8 +30,8 @@ export interface AdminContext {
   readonly server: McpServer;
   readonly tiers: AdminTiers;
   /**
-   * One admin API call, answered as a tool result: the scrubbed JSON body, or `{ error, status }` with `isError` for an
-   * `ApiError`. `payload` is the JSON body of a PUT or POST; `options.timeoutMs` replaces the 30 s default.
+   * One admin API call, answered as a tool result: the scrubbed JSON body, or `{ error, status, details? }` with `isError` for an
+   * `ApiError` (`details`: the other fields of the error body, such as a delete's `blockedBy`). `payload` is the JSON body of a PUT or POST; `options.timeoutMs` replaces the 30 s default.
    */
   call(
     method: AdminMethod,
@@ -87,7 +87,11 @@ export function createAdminContext(server: McpServer, config: McpConfig): AdminC
           : { data };
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
-      result = { error: scrubText(error.message), status: error.status };
+      result = {
+        error: scrubText(error.message),
+        status: error.status,
+        ...(error.details === undefined ? {} : { details: scrub(error.details) }),
+      };
       isError = true;
     }
     return reply(result, isError);

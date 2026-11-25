@@ -348,6 +348,28 @@ describe("admin egress tools", { timeout: 10_000 }, () => {
       });
     });
   });
+
+  it("passes the blockedBy of a refused rule set delete through as details", async () => {
+    fake.onAdmin("DELETE", "/admin/egress/rule-sets/demo", {
+      status: 409,
+      body: {
+        error: "rule set is named by a profile",
+        blockedBy: { profiles: [{ name: "coding", version: 3 }] },
+      },
+    });
+    await withClient(envOf(dangerousEnv), async (client) => {
+      const result = await client.callTool({
+        name: "admin_delete_egress_rule_set",
+        arguments: { name: "demo", expectedRevision: 1 },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        error: "rule set is named by a profile",
+        status: 409,
+        details: { blockedBy: { profiles: [{ name: "coding", version: 3 }] } },
+      });
+    });
+  });
 });
 
 describe("egress input shapes match session-core", () => {

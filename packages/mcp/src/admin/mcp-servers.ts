@@ -94,7 +94,7 @@ export function registerMcpServerTools(ctx: AdminContext): void {
   ctx.server.registerTool(
     "admin_delete_mcp_server",
     {
-      description: `Delete an MCP catalog server at its current revision. Removes the row for real (to keep it, put enabled false); 409 while a profile's current version names it, and the name cannot be created again. ${untrusted}`,
+      description: `Delete an MCP catalog server at its current revision. Removes the row for real (to keep it, put enabled false); 409 while a profile's current version names it (details.blockedBy.profiles lists them), and the name cannot be created again. ${untrusted}`,
       inputSchema: z.object({
         name: mcpServerName,
         expectedRevision: z
