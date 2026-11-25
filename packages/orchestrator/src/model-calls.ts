@@ -23,9 +23,9 @@ export interface CallUsage {
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
-/** Undefined for a message without usage (a legacy entry); missing numbers read as 0. */
+/** Undefined for a message without usage (a legacy entry, or null); missing numbers read as 0. */
 export function callUsage(usage: Partial<Usage> | undefined): CallUsage | undefined {
-  if (typeof usage !== "object") return undefined;
+  if (usage == null || typeof usage !== "object") return undefined;
   return {
     input: count(usage.input),
     output: count(usage.output),
