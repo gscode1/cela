@@ -1276,21 +1276,26 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
           const at = nodeAttrs(snap, doc, i);
           const named = squash(at["aria-label"] || at.alt);
           if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
-            // Its name, else its own words, else those of its first descendant that has any.
-            let tokens = named ? [`"${clip(named, 80)}"`] : markTokens(snap, doc, i);
-            const below = (j) => {
-              for (let k = j + 1; k < doc.nodes.parentIndex.length && tokens.length === 0; k++) {
-                let inside = false;
-                for (let p = k; p >= 0; p = doc.nodes.parentIndex[p]) if (p === i) inside = true;
-                if (!inside) break;
-                if (doc.nodes.nodeType[k] === 1) tokens = markTokens(snap, doc, k);
-              }
+            // Its name, else that of a picture inside it (a logo's link), else its own words, else those of its first
+            // descendant that has any.
+            const inside = (k) => {
+              for (let p = k; p >= 0; p = doc.nodes.parentIndex[p]) if (p === i) return true;
+              return false;
             };
-            below(i);
+            let label = named;
+            for (let k = i + 1; !label && k < doc.nodes.parentIndex.length && inside(k); k++) {
+              if (doc.nodes.nodeType[k] !== 1) continue;
+              const ak = nodeAttrs(snap, doc, k);
+              label = squash(ak["aria-label"] || ak.alt);
+            }
+            let tokens = label ? [`"${clip(label, 80)}"`] : markTokens(snap, doc, i);
+            for (let k = i + 1; tokens.length === 0 && k < doc.nodes.parentIndex.length && inside(k); k++) {
+              if (doc.nodes.nodeType[k] === 1) tokens = markTokens(snap, doc, k);
+            }
             covered.add(i);
             if (tokens.length > 0) {
               marked++;
-              const text = named ? `‹${tokens[0]}›` : `‹${clip(tokens.join(" "), 60)}›`;
+              const text = label ? `‹${tokens[0]}›` : `‹${clip(tokens.join(" "), 60)}›`;
               const own = /^(block|flex|grid|list-item|table|flow-root)$/.test(v.style(i)?.[0] ?? "inline");
               const g = group(own ? i : blockOf(i));
               if (g.text !== "" && !/\s$/.test(g.text)) g.text += " ";

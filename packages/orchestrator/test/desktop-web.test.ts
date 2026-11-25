@@ -1565,16 +1565,39 @@ describe("desktop-web's CDP reader", () => {
         attrs: { title: "Gross domestic product" },
       }, // 14
       t("GDP", [50, 60, 40, 16], 14), // 15
+      // a shop's logo: a link with no name of its own around a named picture
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 90, 400, 40] }, // 16
+      {
+        parent: 16,
+        type: 1,
+        tag: "A",
+        style: BLOCKSTYLE,
+        box: [0, 90, 100, 40],
+        attrs: { class: "store-logo go-to-shop" },
+      }, // 17
+      {
+        parent: 17,
+        type: 1,
+        tag: "IMG",
+        style: inline,
+        box: [0, 90, 100, 40],
+        attrs: { alt: "shop.example" },
+      }, // 18
+      t("959,00 zł", [200, 90, 60, 16], 16), // 19
     ];
     expect(cdp.snapshotLines(snapOf(nodes))).toEqual([
       "813",
       "posted 4 hours ago by Ann",
       "Home GDP",
+      "959,00 zł",
     ]);
     expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
       '813 ‹"Accepted"›',
       "posted 4 hours ago ‹datetime=2026-11-25T08:14:00.000Z› by Ann",
       'Home GDP ‹title:"Gross domestic product"›',
+      // a block of its own, a line of its own
+      '‹"shop.example"›',
+      "959,00 zł",
     ]);
     // the tooltip a hover waits for: the element's title or that of one around it that holds little more
     expect(cdp.titleAround(snapOf(nodes), 1015)).toBe("Gross domestic product");
