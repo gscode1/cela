@@ -888,6 +888,21 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     }
   }
   if (r.pick) return { entry: r.pick, nodes, note: r.note };
+  if (r.none && r.near && r.matches) {
+    // The name is on the page; the --near text is not by any of its copies: show them, so the next call can name one.
+    rememberRefs(r.matches.slice(0, 8), { merge: true });
+    const lines = r.matches.slice(0, 8).map((e) => {
+      const row = e.row?.startsWith(e.name) ? e.row.slice(e.name.length).trim() : e.row;
+      return `${cdp.entryLine(e, { nameMax: 70 })}${row ? `  | ${lib.clip(row, 120)}` : ""}`;
+    });
+    fail(
+      [
+        `${r.matches.length} elements match ${JSON.stringify(spec)}, none near ${JSON.stringify(o.near)} (--near reads the row, its group and the heading above):`,
+        ...lines,
+        ...(r.matches.length > 8 ? [`... ${r.matches.length - 8} more: desktop-web snap ${JSON.stringify(spec)}`] : []),
+      ].join("\n"),
+    );
+  }
   if (r.none) {
     const d = cdp.dialogLines(cdp.dialogs(nodes));
     fail(
@@ -1408,6 +1423,24 @@ async function afterTyping(pre, after, typed, o) {
   }
   const added = cdp.newLines(pre.lines, after.lines).filter((l) => l !== squash(typed));
   const gone = after.lines.length > 0 ? cdp.newLines(after.lines, pre.lines).length : 0;
+  // Buttons or links that appeared (suggestions drawn as buttons) are what can be clicked next: print them with refs.
+  const appeared = now && pre.nodes.length > 0 ? cdp.appearedControls(pre.entries, now.entries).filter((e) => !OPTION_ROLES.has(e.role)) : [];
+  if (appeared.length > 0) {
+    if (appeared.length > APPEARED_MAX) out.push(`appeared: ${appeared.length} controls (desktop-web snap)`);
+    else {
+      rememberRefs(appeared, { merge: true });
+      out.push(...appeared.slice(0, APPEARED).map((e) => `appeared: ${cdp.entryLine(e, { nameMax: 70 })}`));
+      if (appeared.length > APPEARED) out.push(`appeared: ... ${appeared.length - APPEARED} more (desktop-web snap)`);
+    }
+    if (gone > 0) out.push(`(${gone} lines gone)`);
+    return out;
+  }
+  // Many short new lines are a list drawn without roles (a div autocomplete, a date's days): one line, not a page of them.
+  if (added.length > 3 && added.every((l) => l.length <= 24)) {
+    out.push(`changed (${added.length} new lines): ${lib.clip(added.join(" | "), 160)}`);
+    if (gone > 0) out.push(`(${gone} lines gone)`);
+    return out;
+  }
   if (added.length > 0) out.push(`changed (${added.length} new lines):`, ...added.slice(0, 5));
   if (added.length > 5) out.push(`... ${added.length - 5} more: desktop-web text "regex"`);
   if (gone > 0) out.push(`(${gone} lines gone)`);
@@ -1475,6 +1508,7 @@ const HELP = {
   (it says so). Some duplicates are picked for you and the answer says which: an exact name over ones that only contain it,
   the one in an open dialog, a field outside the header, of identical copies the one in view.
   --near "text"   rows that share a title (offers, flights, variants): click the one in the row with that text, or a ref.
+                  When no copy of the name is near that text, the copies are listed with their rows and refs (exit 1, nothing clicked).
   --double        a double click (edit a label), on any visible text.
   A link's URL is listed by click or snap; do not click a link just to learn where it goes.
   Sort a column: click "City proper Population"; the answer shows sort none -> ascending.
@@ -1483,11 +1517,12 @@ const HELP = {
   rest of the chain again. disabled controls are not clicked. Exit 1 when refused, 2 when ambiguous.
   Answers: the new state (checked false -> true), the new page's outline, or what changed (lines that appeared or went,
   order changed (lines A-B), now: after a sort or a drag, a closed dialog, an alert, selected false -> true, a filter's
-  results, an autocomplete's options, the page drew it again). Controls an action added: appeared: [e12] ...
+  results, an autocomplete's options, the page drew it again when the address stayed). Controls an action added: appeared: [e12] ...
   nothing happened: the page did not react; fix the required or invalid fields it lists, or look with desktop-web shot.
   this control does nothing here: stop clicking it. result may come later: desktop-web wait "text".`,
   type: `desktop-web type <ref|"regex"> "text" [--enter] [--append] [--near "row text"]
-  Replaces a field's text ("" clears it) and prints its value and what appeared. Exit 1 when the field kept its value
+  Replaces a field's text ("" clears it) and prints its value and what appeared: options, controls (appeared: [e12] ...), or
+  many short new lines folded into one (changed (30 new lines): a | b | ...). Exit 1 when the field kept its value
   (read-only: use the control that sets it). Of several matching fields it takes the one outside the page's header and
   menus and says so. --near picks one of several fields. A form without a button says no submit button: send it with --enter.
   Slider: desktop-web type <ref|"regex"> 75 presses it at that point, steps with the arrow keys and reads it back
@@ -1773,7 +1808,8 @@ async function main() {
       const redraw = [];
       if (again?.redrawn) {
         rememberRefs([self], { merge: true });
-        redraw.push(`the page drew it again: now ${cdp.entryLine(self, { nameMax: 80 })}`);
+        // a click that moved to a new page (a wizard's Continue) draws everything again: not worth a line
+        if (after.target.url === before.url) redraw.push(`the page drew it again: now ${cdp.entryLine(self, { nameMax: 80 })}`);
       } else if (now && element && !again && after.target.url === before.url) redraw.push("it is gone from the page now");
       console.log([...head, first, ...redraw, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 || redraw.length > 0, focus: true }))].join("\n"));
       return;

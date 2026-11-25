@@ -697,6 +697,13 @@ need (`(file input: desktop-web upload ...)`, `(pick an option: desktop-web sele
 starting ... run the same desktop-web command again", the dialog's own answer instructions), and each of those hints has a
 suite check; the suite's `help` case covers the command itself.
 
+- **Action answers (issue #495).** After `type` the answer holds, in this order: the options that appeared; the controls that
+  appeared, with refs (`appeared:`, at most 5, only a count above 8); more than 3 new lines of at most 24 characters each folded
+  into one `changed (N new lines): a | b | ...` clipped to 160 (a div autocomplete or a date's days); else as before. A click
+  says "the page drew it again" only when the address stayed (a wizard's "Continue" draws the next page and the ref is
+  remembered silently). A `--near` that no copy of the name is near lists the copies with their rows and refs (exit 1,
+  nothing clicked) instead of "nothing matching". The suite case `answers` covers all three.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
