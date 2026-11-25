@@ -500,6 +500,12 @@ case_table() {
   check "and does not follow the link" "$(no '^url:')"
   has_text 'sorted: column 0 ascending, first Aš'
   check "the page sorted by town" $?
+  web text 'Brno|Zlín' --table
+  check "text --table prints the header rows once as cols" "$(grep -c '^cols: ' "$OUT" | grep -qx 2 && grep -q '^cols: Population | Area | Population | Area$' "$OUT"; echo $?)"
+  check "a row's cells are joined by |" "$(ok '^[0-9]+: Brno \| 700 \| 800 \| 390 \| 230 \| fairs$')"
+  check "an empty cell is kept" "$(ok '^[0-9]+: Zlín \| 300 \| 400 \| 75 \| 103 \| ?$')"
+  web text 'Brno'
+  check "plain text stays one line per row without |" "$(ok '^[0-9]+: Brno 700 800 390 230 fairs$')"
 }
 
 # Duplicate matches: an off-canvas twin, a modal's field against the header's, rows that still list, an exact text line.
@@ -521,6 +527,50 @@ case_twins() {
   has_text 'typed in modal-search: usb'
   check "the page saw the dialog's field" $?
   web click '^Close$'
+}
+
+# Changes that keep the page's text: a drag that swaps two columns, a sort, an option marked selected (in place, and in a list
+# drawn again), and the focus a key moves. None may say "nothing happened".
+case_reorder() {
+  open reorder
+  web drag '^Alpha$' '^Beta$'
+  check "a drag that swaps two columns is a change" "$(ok 'order changed \(lines [0-9]+-[0-9]+\), now:')"
+  check "the range shows Beta first now" "$(grep -A2 'order changed' "$OUT" | sed -n 2p | grep -q 'Beta'; echo $?)"
+  check "not nothing happened" "$(no 'nothing happened')"
+  web click 'Sort the fruit'
+  check "a sort is a change" "$(ok 'order changed \(lines [0-9]+-[0-9]+\), now:')"
+  check "the range reads in its new order" "$(grep -A4 'order changed' "$OUT" | tr '\n' ' ' | grep -Eq 'Apple.*Cherry.*Mango.*Plum'; echo $?)"
+  check "not nothing happened" "$(no 'nothing happened')"
+  web click '^bug$'
+  check "an option marked selected in place prints its state" "$(ok 'option "bug": selected false -> true')"
+  check "not nothing happened" "$(no 'nothing happened')"
+  web click '^docs$'
+  check "an option in a list drawn again is found by role and name" "$(ok 'option "docs": selected false -> true')"
+  check "and the answer says the page drew it again" "$(ok 'the page drew it again: now \[e[0-9]+\] option "docs" selected')"
+  check "not nothing happened" "$(no 'nothing happened')"
+  web click 'First name'
+  web key Tab
+  check "key prints the element that took the focus" "$(ok '^focus: \[e[0-9]+\] textbox "Last name"')"
+  check "not nothing happened" "$(no 'nothing happened')"
+}
+
+# A page of a line or two and no field may be an error or block page; a short page with a search box is a page to use.
+case_empty() {
+  open empty
+  check "a nearly empty page is flagged" "$(ok '^page shows almost no text \(1 line, no form field\): an error or block page, or a picture-only one; look with desktop-shot$')"
+  open onebox
+  check "a one-line page with a search box stays clean" "$(no 'almost no text')"
+}
+
+# A dialog that slides in after it shows: its Close button is clicked where it ends up, in a chain right after the opening.
+case_slide() {
+  open slide
+  timeout "$WAIT" bash -c "desktop-web click 'Open the panel' && desktop-web click '^Close\$'" >"$OUT" 2>&1
+  RC=$?
+  sed 's/^/    | /' "$OUT"
+  check "the chain ran" "$([[ $RC == 0 ]]; echo $?)"
+  has_text 'clicked: close at'
+  check "the Close button took the click while the dialog slid" $?
 }
 
 # A search that finds nothing points to closed menus that may hold it, icon-only menus first; nothing is opened.
@@ -722,7 +772,7 @@ case_acting() {
   check "not an outline either" "$(no 'outline')"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>slide</title>
+<style>
+  body { font: 16px sans-serif; }
+  #panel { position: fixed; left: 80px; top: 120px; width: 360px; padding: 20px; background: #fff; border: 2px solid #333; display: none; }
+  /* the panel shows at once (its text does not change) and slides 260 px down a while later, the way a dialog eases in */
+  #panel.open { display: block; animation: slide 1.4s linear 2.2s both; }
+  @keyframes slide { from { transform: translateY(0); } to { transform: translateY(260px); } }
+</style>
+<body>
+<h1>A dialog that slides in</h1>
+<p>Your order of three items is ready.</p>
+<p>Shipping takes two days.</p>
+<p>The panel below holds its details.</p>
+<button id="open">Open the panel</button>
+<div id="panel" role="dialog" aria-modal="true" aria-label="Details">
+  <p>Details of the order.</p>
+  <button id="close">Close</button>
+</div>
+<pre id="log" style="position:absolute; top:560px"></pre>
+<script src="log.js"></script>
+<script>
+  document.getElementById("open").addEventListener("click", () => document.getElementById("panel").classList.add("open"));
+  document.getElementById("close").addEventListener("click", () => document.getElementById("panel").classList.remove("open"));
+</script>
