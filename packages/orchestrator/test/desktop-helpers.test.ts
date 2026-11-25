@@ -175,7 +175,7 @@ describe("desktop image settings", () => {
     expect(launch).not.toMatch(/firefox/i);
     const web = readFileSync(join(files, "desktop-web"), "utf8");
     expect(web).toContain('"--class", "[Gg]oogle-chrome"');
-    expect(web).toContain('["chrome"]');
+    expect(web).toContain("desktop-launch chrome");
   });
 
   it(

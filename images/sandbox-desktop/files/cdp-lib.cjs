@@ -2063,18 +2063,21 @@ function pageNotices(parts, { lines = [], title = "", sighting = () => 1 } = {})
         : `bot check again (${hit}, ${ORDINAL(n)} time on ${host}): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.`,
     );
   }
-  // A page of a few short lines and no field to fill: a site's error or block page that names no status ("Sorry, something
+  // A page of a few short lines and no field to fill or heading with a control: a site's error or block page that names no status ("Sorry, something
   // went wrong"), in any language, or a page drawn as a picture. A page with nothing drawn yet is not one (no lines).
-  const fields = parts.some(({ snap, hidden }) =>
-    (snap.documents ?? []).some((doc) => {
-      const v = docView(snap, doc);
-      return [...v.layoutOf.keys()].some((i) => {
-        if (doc.nodes.nodeType[i] !== 1 || !/^(INPUT|TEXTAREA|SELECT)$/i.test(v.str(doc.nodes.nodeName[i]))) return false;
-        const b = v.bounds(i);
-        return b && !v.tiny(b) && !v.offscreen(b) && !hidden?.has(doc.nodes.backendNodeId[i]);
-      });
-    }),
-  );
+  const shown = (tags) =>
+    parts.some(({ snap, hidden }) =>
+      (snap.documents ?? []).some((doc) => {
+        const v = docView(snap, doc);
+        return [...v.layoutOf.keys()].some((i) => {
+          if (doc.nodes.nodeType[i] !== 1 || !tags.test(v.str(doc.nodes.nodeName[i]))) return false;
+          const b = v.bounds(i);
+          return b && !v.tiny(b) && !v.offscreen(b) && !hidden?.has(doc.nodes.backendNodeId[i]);
+        });
+      }),
+    );
+  // A heading and a button make a page to use ("Welcome" and a Start button), not a blank one.
+  const fields = shown(/^(INPUT|TEXTAREA|SELECT)$/i) || (shown(/^H[1-6]$/i) && shown(/^BUTTON$/i));
   const web = /^https?:/.test(str(parts[0]?.snap, main?.documentURL ?? -1));
   const chars = lines.reduce((n, l) => n + l.length, 0);
   if (out.length === 0 && !hit && web && lines.length >= 1 && lines.length <= NEARLY_EMPTY && chars <= 200 && !fields)

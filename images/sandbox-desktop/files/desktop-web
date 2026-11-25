@@ -69,7 +69,7 @@
 "use strict";
 const fs = process.getBuiltinModule("node:fs");
 const path = process.getBuiltinModule("node:path");
-const { execFileSync } = process.getBuiltinModule("node:child_process");
+const { execFileSync, spawn } = process.getBuiltinModule("node:child_process");
 const req = process.getBuiltinModule("node:module").createRequire(fs.realpathSync(process.argv[1]));
 const lib = req("./desktop-lib.cjs");
 const cdp = req("./cdp-lib.cjs");
@@ -239,23 +239,68 @@ function activate(win) {
   }
 }
 
-async function ensureBrowser() {
-  if (await target()) return;
+// A cold launch (X apps, a fresh profile, gVisor) can outlast the agent's own tool timeout, which kills this process. So
+// desktop-launch runs detached, with its pid and exit status kept in the state directory: a later call finds the launch in
+// progress and waits for it instead of starting a second Chrome on top of it (desktop-launch wipes the profile).
+const LAUNCH = {
+  lock: () => path.join(STATE, "launch.pid"),
+  exit: () => path.join(STATE, "launch.exit"),
+  log: () => path.join(STATE, "launch.log"),
+};
+const LAUNCH_WAIT_MS = Number(process.env.PI_DESKTOP_OPEN_WAIT_MS ?? 45000);
+const readLaunch = (f) => {
   try {
-    execFileSync("desktop-launch", ["chrome"], { stdio: ["ignore", "ignore", "pipe"] });
-  } catch (e) {
-    fail(`Chrome did not start: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
+    return fs.readFileSync(f, "utf8").trim();
+  } catch {
+    return undefined;
   }
-  for (let i = 0; i < 60; i++) {
-    if (await target()) return;
+};
+function launching() {
+  const pid = Number(readLaunch(LAUNCH.lock()));
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const notRunning = () =>
+  launching() ? "Chrome is still starting: run desktop-web open <url> again" : "Chrome is not running: start with desktop-web open <url>";
+
+function startLaunch() {
+  fs.mkdirSync(STATE, { recursive: true, mode: 0o700 });
+  fs.rmSync(LAUNCH.exit(), { force: true });
+  const child = spawn("sh", ["-c", 'desktop-launch chrome 2>"$1"; echo $? >"$2"', "sh", LAUNCH.log(), LAUNCH.exit()], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  fs.writeFileSync(LAUNCH.lock(), String(child.pid));
+}
+
+async function ensureBrowser() {
+  if (!launching() && (await target())) return;
+  // no launch under way (none yet, or one that finished and whose Chrome is gone): start one
+  if (!launching()) startLaunch();
+  const until = Date.now() + LAUNCH_WAIT_MS;
+  while (Date.now() < until) {
+    const status = readLaunch(LAUNCH.exit());
+    if (status === "0" && (await target())) return;
+    if (status !== undefined && status !== "0") {
+      const why = (readLaunch(LAUNCH.log()) ?? "").split("\n")[0];
+      fs.rmSync(LAUNCH.lock(), { force: true });
+      fail(`Chrome did not start: ${why || `desktop-launch exited ${status}`}`);
+    }
+    if (status === undefined && !launching()) fail("Chrome did not start: the launch ended without a status; run the same command again");
     lib.pause(500);
   }
-  fail("Chrome did not answer on its debugging port");
+  fail("Chrome is still starting (the sandbox is slow right now): run the same desktop-web command again", 75);
 }
 
 async function withPage(fn, { timeoutMs } = {}) {
   const t = await target();
-  if (!t) fail("Chrome is not running: start with desktop-web open <url>");
+  if (!t) fail(notRunning());
   const c = await cdp.connect(t.webSocketDebuggerUrl, { timeoutMs });
   c.target = t;
   c.extra = [];
@@ -1496,7 +1541,7 @@ async function main() {
         fail(`usage: desktop-web ${cmd} <ref|"regex">${cmd === "type" ? ' "text"' : ""}`, 64);
       await guard();
       const before = await target();
-      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      if (!before) fail(notRunning());
       const { entry, note, pre, slider } = await withPage(async (c) => {
         const tree = await axTree(c);
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", anyText: cmd === "click" && o.double, tree });
@@ -1589,7 +1634,7 @@ async function main() {
       if (o.pos.length === 0 && o.text === undefined) fail('usage: desktop-web key <keys...> [--text "answer"] [--show "regex"]', 64);
       const state = await probe();
       const win = chromeWindow();
-      if (state.state === "none" || !win) fail("Chrome is not running: start with desktop-web open <url>");
+      if (state.state === "none" || !win) fail(notRunning());
       const before = state.target;
       // a page that only misses the probe (a heavy load) is read as usual; one held by Chrome's dialog is not
       const why = state.state === "blocked" ? await stuck() : undefined;
@@ -1636,7 +1681,7 @@ async function main() {
       if (!spec || want === undefined) fail('usage: desktop-web select <ref|"regex"> "option text"', 64);
       await guard();
       const before = await target();
-      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      if (!before) fail(notRunning());
       const { pre, entry, how, shown } = await withPage(async (c) => {
         const tree = await axTree(c, { options: true });
         const pre = stateOf(tree);
@@ -1730,7 +1775,7 @@ async function main() {
       if (!spec) fail(`usage: desktop-web ${cmd} <ref|"regex">`, 64);
       await guard();
       const before = await target();
-      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      if (!before) fail(notRunning());
       const r = await withPage(async (c) => {
         const tree = await axTree(c, { showable: true });
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
@@ -1812,7 +1857,7 @@ async function main() {
       if (!st.isFile()) fail(`${file} is not a file`, 64);
       await guard();
       const before = await target();
-      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      if (!before) fail(notRunning());
       const { entry, note, pre, inputs } = await withPage(async (c) => {
         const tree = await axTree(c);
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { text: true, tree });
@@ -1863,7 +1908,7 @@ async function main() {
       if (!spec || (to === undefined) === (o.by === undefined)) fail('usage: desktop-web drag <ref|"regex"> <ref|"regex">, or drag <ref|"regex"> --by dx,dy', 64);
       await guard();
       const before = await target();
-      if (!before) fail("Chrome is not running: start with desktop-web open <url>");
+      if (!before) fail(notRunning());
       const r = await withPage(async (c) => {
         const tree = await axTree(c, { showable: true });
         const src = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
@@ -1891,7 +1936,7 @@ async function main() {
     }
     case "url": {
       const t = await target();
-      if (!t) fail("Chrome is not running");
+      if (!t) fail(notRunning());
       const d = chooserWindow();
       console.log([...header(t, [], { full: true }), ...(d ? chooserLines(d) : [])].join("\n"));
       return;

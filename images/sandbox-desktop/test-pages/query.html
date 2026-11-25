@@ -1,0 +1,7 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Query</title>
+<!-- Prints the query string it was loaded with, as the browser holds it (an encoded space must still be %20). -->
+<body style="font:16px sans-serif">
+<p>Loaded with <span id="s"></span></p>
+<script>document.getElementById("s").textContent = "search=" + location.search;</script>
