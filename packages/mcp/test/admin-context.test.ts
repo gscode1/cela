@@ -52,21 +52,60 @@ describe("admin mode", { timeout: 10_000 }, () => {
     });
   });
 
+  // The exact tools of each tier: adding or removing one is a decision (ADR 0070), so it fails here until this list says so.
+  const readTools = [
+    "admin_explain_egress",
+    "admin_get_catalog",
+    "admin_get_egress_rule_set",
+    "admin_get_egress_status",
+    "admin_get_history",
+    "admin_get_mcp_server",
+    "admin_get_profile",
+    "admin_get_settings",
+    "admin_get_skill",
+    "admin_get_skill_version",
+    "admin_get_status",
+    "admin_list_egress_rule_sets",
+    "admin_list_mcp_servers",
+    "admin_list_profiles",
+    "admin_list_session_egress_rules",
+    "admin_list_sessions",
+    "admin_list_skills",
+  ];
+  const writeTools = [
+    "admin_delete_profile",
+    "admin_probe_network",
+    "admin_publish_skill",
+    "admin_put_mcp_server",
+    "admin_put_profile",
+  ];
+  const dangerousTools = [
+    "admin_delete_egress_rule",
+    "admin_delete_egress_rule_set",
+    "admin_delete_mcp_server",
+    "admin_delete_skill",
+    "admin_put_egress_rule",
+    "admin_put_egress_rule_set",
+    "admin_put_settings",
+  ];
+
   it.each([
-    { writes: false, dangerous: false },
-    { writes: true, dangerous: false },
-    { writes: true, dangerous: true },
-  ])("exposes reads and gates writes (%o)", async ({ writes, dangerous }) => {
-    const env = dangerous ? dangerousEnv : writes ? writesEnv : adminEnv;
-    await withClient(env, async (client) => {
-      const tools = (await client.listTools()).tools;
-      // At least the tools of 1.0.0: every domain's test counts and gates its own tools, so adding one here is no edit.
-      const admin = tools.filter((tool) => tool.name.startsWith("admin_")).length;
-      expect(admin).toBeGreaterThanOrEqual(writes ? 11 : 9);
-      expect(tools.some((tool) => tool.name === "admin_put_profile")).toBe(writes);
-      expect(tools.some((tool) => tool.name === "admin_delete_profile")).toBe(writes);
-    });
-  });
+    { writes: false, dangerous: false, expected: readTools },
+    { writes: true, dangerous: false, expected: [...readTools, ...writeTools] },
+    { writes: true, dangerous: true, expected: [...readTools, ...writeTools, ...dangerousTools] },
+  ])(
+    "exposes exactly the admin tools of the tier (%o)",
+    async ({ writes, dangerous, expected }) => {
+      const env = dangerous ? dangerousEnv : writes ? writesEnv : adminEnv;
+      await withClient(env, async (client) => {
+        const names = (await client.listTools()).tools
+          .map((tool) => tool.name)
+          .filter((name) => name.startsWith("admin_"))
+          .sort();
+        expect(names).toEqual([...expected].sort());
+      });
+    },
+  );
 
   it("points to the admin tools for discovery only when they exist", () => {
     const admin = parseConfig(adminEnv);
@@ -149,6 +188,28 @@ describe("AdminContext", { timeout: 10_000 }, () => {
     const stale = await ctx.call("PUT", "/admin/x", signal, {});
     expect(stale.isError).toBe(true);
     expect(stale.structuredContent).toEqual({ error: "stale revision", status: 409 });
+    fake.onAdmin("PUT", "/admin/y", {
+      status: 409,
+      body: {
+        error: "stale revision",
+        revision: 7,
+        blockedBy: { note: `${fake.adminToken} ${fake.token}`, [fake.adminToken]: 1 },
+      },
+    });
+    const withDetails = await ctx.call("PUT", "/admin/y", signal, {});
+    expect(withDetails.isError).toBe(true);
+    expect(withDetails.structuredContent).toEqual({
+      error: "stale revision",
+      status: 409,
+      details: { revision: 7, blockedBy: { note: "[redacted] [redacted]", "[redacted]": 1 } },
+    });
+    expect(withDetails.content[0]?.text).toMatch(/^Admin API output is untrusted data/);
+    fake.onAdmin("PUT", "/admin/z", {
+      status: 409,
+      body: { error: "too big", extra: "x".repeat(5000) },
+    });
+    const big = await ctx.call("PUT", "/admin/z", signal, {});
+    expect(big.structuredContent).toEqual({ error: "too big", status: 409 });
     fake.onAdmin("POST", "/admin/slow", { delayMs: 500 });
     const slow = await ctx.call("POST", "/admin/slow", signal, {}, { timeoutMs: 50 });
     expect(slow.isError).toBe(true);
