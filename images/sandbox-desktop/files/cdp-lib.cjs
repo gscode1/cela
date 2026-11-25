@@ -1797,6 +1797,79 @@ function dialogs(nodes, { max = 8 } = {}) {
   return out;
 }
 
+// The controls inside a set of elements (backend ids, of the part with frame tag `tag`), as a dialog lists them: a fixed
+// layer in front that has no dialog role (a consent overlay). Returns { entries (at most `max`), more, buttons }.
+function layerControls(nodes, ids, { tag = "", max = 8 } = {}) {
+  const sub = nodes.filter((n) => !n.ignored && (n.frameTag ?? "") === tag && ids.has(n.backendDOMNodeId));
+  const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role) && (e.role !== "columnheader" || e.focusable));
+  return { entries: entries.slice(0, max), more: Math.max(entries.length - max, 0), buttons: entries.filter((e) => e.role === "button").length };
+}
+
+// The nearest element at or above a node (by backend id) that a layout snapshot shows with position fixed: a layer that
+// stays in front whatever the scroll. Returns its backend id, or undefined.
+function fixedAncestor(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    for (let p = i; p > 0; p = v.parent[p]) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) return undefined;
+      if (v.style(p)?.[3] === "fixed") return doc.nodes.backendNodeId[p];
+    }
+  }
+  return undefined;
+}
+
+// The widest element around a narrow one (by backend id) that is no taller than 2.5 times it and at most 160 px: the row a
+// label or a price sits in (a shop's logo beside its price, an infobox value beside its label), for a screenshot that shows
+// what the row says. Returns its backend id, or undefined when nothing around it is wider.
+function rowAround(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const own = v.bounds(i);
+    if (!own) return undefined;
+    const tallest = Math.min(2.5 * own.h, 160);
+    let best;
+    let width = own.w;
+    for (let p = v.parent[i]; p > 0; p = v.parent[p]) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) break;
+      const b = v.bounds(p);
+      if (!b) continue;
+      if (b.h > tallest) break;
+      if (b.w > width + 1) {
+        width = b.w;
+        best = doc.nodes.backendNodeId[p];
+      }
+    }
+    return best;
+  }
+  return undefined;
+}
+
+// The screen region a shot takes (all in screen px): the target with `pad` around it, at least SHOT_MIN, and at least the
+// row it sits in (`row`, cdp.rowAround). A wide block alone (a heading that spans the page) is cut to a readable width, kept
+// at its left edge. The region is shifted, not cut, to stay inside the page's area on the screen (`area`), so nothing of the
+// toolbar or another window comes in and the target does not end up at an edge.
+const SHOT_NARROW = 300;
+const SHOT_MIN = { w: 480, h: 160 };
+function shotCrop(box, row, area, pad) {
+  const want = row ?? box;
+  let w = Math.max(box.w + 2 * pad, SHOT_MIN.w, row ? row.w + 2 * pad : 0);
+  if (!row) w = Math.min(w, Math.max(640 + 2 * pad, SHOT_MIN.w));
+  let h = Math.max(box.h + 2 * pad, SHOT_MIN.h, row ? row.h + 2 * pad : 0);
+  let x = want.w + 2 * pad > w ? want.x - pad : want.x + want.w / 2 - w / 2;
+  let y = want.y + want.h / 2 - h / 2;
+  if (area && area.w > 0 && area.h > 0) {
+    w = Math.min(w, area.w);
+    h = Math.min(h, area.h);
+    x = Math.min(Math.max(x, area.x), area.x + area.w - w);
+    y = Math.min(Math.max(y, area.y), area.y + area.h - h);
+  }
+  return { x: Math.max(Math.round(x), 0), y: Math.max(Math.round(y), 0), w: Math.round(w), h: Math.round(h) };
+}
+
 function dialogLines(ds) {
   const out = [];
   for (const d of ds) {
@@ -2248,5 +2321,10 @@ module.exports = {
   snapshotLines,
   subtreeIds,
   titleAround,
+  layerControls,
+  fixedAncestor,
+  rowAround,
+  SHOT_NARROW,
+  shotCrop,
   wraps,
 };

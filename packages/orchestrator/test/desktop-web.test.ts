@@ -38,6 +38,12 @@ interface Entry {
   inner?: number[];
   iconOnly?: boolean;
 }
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 interface Box {
   l: number;
   t: number;
@@ -69,6 +75,14 @@ interface CdpLib {
   matchTexts(e: Entry): string[];
   snapshotLines(snap: unknown, o?: { marks?: boolean; table?: boolean }): string[];
   titleAround(snap: unknown, backendNodeId: number): string | undefined;
+  rowAround(snap: unknown, backendNodeId: number): number | undefined;
+  fixedAncestor(snap: unknown, backendNodeId: number): number | undefined;
+  layerControls(
+    nodes: AxNode[],
+    ids: Set<number>,
+    o?: { tag?: string; max?: number },
+  ): { entries: Entry[]; more: number; buttons: number };
+  shotCrop(box: Rect, row: Rect | undefined, area: Rect | undefined, pad: number): Rect;
   screenPoint(
     g: {
       win: { x: number; y: number; height: number };
@@ -1148,6 +1162,86 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.wraps(box(98, 98, 302, 130), link)).toBe(true);
     expect(cdp.wraps(box(150, 105, 200, 115), link)).toBe(false); // smaller text under the point: covered
     expect(cdp.wraps(box(0, 0, 1280, 800), link)).toBe(false); // a full-page layer
+  });
+
+  it("finds the row around a narrow target and the fixed layer around an element", () => {
+    const st = (d: string, pos = "static") =>
+      [d, "visible", "1", pos, "visible", "visible", "auto", "auto"] as unknown as [
+        string,
+        string,
+        string,
+      ];
+    const snap = snapOf([
+      doc, // 0
+      { parent: 0, type: 1, tag: "BODY", style: st("block"), box: [0, 0, 1000, 2000] }, // 1
+      { parent: 1, type: 1, tag: "TABLE", style: st("block"), box: [0, 0, 800, 400] }, // 2 too tall to be the row
+      { parent: 2, type: 1, tag: "DIV", style: st("flex"), box: [0, 40, 800, 30] }, // 3 the row
+      { parent: 3, type: 1, tag: "SPAN", style: st("block"), box: [0, 40, 300, 30] }, // 4 a cell
+      { parent: 4, type: 1, tag: "B", style: st("inline"), box: [0, 44, 60, 18] }, // 5 the label
+      t("Area", [0, 44, 60, 18], 5), // 6
+      { parent: 1, type: 1, tag: "DIV", style: st("block", "fixed"), box: [0, 600, 1000, 120] }, // 7 a fixed banner
+      { parent: 7, type: 1, tag: "P", style: st("block"), box: [10, 610, 400, 20] }, // 8
+      t("We use cookies", [10, 610, 100, 18], 8), // 9
+    ]);
+    expect(cdp.rowAround(snap, 1005)).toBe(1003);
+    expect(cdp.rowAround(snap, 1003)).toBeUndefined();
+    expect(cdp.fixedAncestor(snap, 1008)).toBe(1007);
+    expect(cdp.fixedAncestor(snap, 1005)).toBeUndefined();
+  });
+
+  it("crops a shot to at least 480x160 and the row, shifted to stay inside the page area", () => {
+    const area = { x: 0, y: 100, w: 1280, h: 700 };
+    // a small icon in the middle: the minimum, centred on it
+    expect(cdp.shotCrop({ x: 600, y: 400, w: 20, h: 20 }, undefined, area, 14)).toEqual({
+      x: 370,
+      y: 330,
+      w: 480,
+      h: 160,
+    });
+    // a label at the page's top left: shifted, not cut, and as wide as its row
+    expect(
+      cdp.shotCrop({ x: 2, y: 104, w: 60, h: 20 }, { x: 2, y: 100, w: 900, h: 28 }, area, 14),
+    ).toEqual({
+      x: 0,
+      y: 100,
+      w: 928,
+      h: 160,
+    });
+    // a wide heading alone: cut to a readable width at its left edge
+    expect(cdp.shotCrop({ x: 10, y: 300, w: 1200, h: 40 }, undefined, area, 14)).toEqual({
+      x: 0,
+      y: 240,
+      w: 668,
+      h: 160,
+    });
+  });
+
+  it("lists the controls of a fixed layer and counts its buttons", () => {
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      extra: Partial<AxNode> = {},
+    ): AxNode => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      backendDOMNodeId: Number(nodeId) + 100,
+      ...extra,
+    });
+    const nodes = [
+      ax("1", "RootWebArea", "Shop", { childIds: ["2", "3", "4"] }),
+      ax("2", "link", "Behind", { parentId: "1" }),
+      ax("3", "button", "Reject all", { parentId: "1" }),
+      ax("4", "link", "Privacy policy", { parentId: "1" }),
+    ];
+    const layer = cdp.layerControls(nodes, new Set([103, 104]));
+    expect(layer.entries.map((e) => cdp.entryLine(e))).toEqual([
+      '[e103] button "Reject all"',
+      '[e104] link "Privacy policy"',
+    ]);
+    expect(layer.buttons).toBe(1);
+    expect(cdp.layerControls(nodes, new Set([102])).buttons).toBe(0);
   });
 
   it("reports an open dialog with the elements in it, in any language", () => {

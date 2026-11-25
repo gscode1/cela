@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>overlay</title>
+<body style="font:16px sans-serif">
+<h1>Shop</h1>
+<p><a href="#behind" id="behind">Behind the layer</a></p>
+<pre id="log"></pre>
+<!-- a consent layer drawn as a fixed div: no dialog role, no aria-modal -->
+<div id="layer" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center">
+  <div style="background:#fff;padding:24px;width:420px">
+    <p>We and our partners use cookies.</p>
+    <button id="reject">Reject all</button> <button id="accept">Accept all</button> <button id="settings">Settings</button>
+  </div>
+</div>
+<script>
+  const log = document.getElementById("log");
+  const answer = (t) => () => {
+    document.getElementById("layer").remove();
+    log.textContent = `consent: ${t}`;
+  };
+  document.getElementById("reject").onclick = answer("rejected");
+  document.getElementById("accept").onclick = answer("accepted");
+  document.getElementById("settings").onclick = answer("settings");
+</script>

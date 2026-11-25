@@ -908,10 +908,12 @@ async function refuseChallenge(read, entry, what) {
   if (hit) fail(`${cdp.entryLine(entry, { nameMax: 60 })}: that is the bot check's own widget (${hit}). It is never clicked, typed into, dragged or solved; nothing ${what}`);
 }
 
-// Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it.
+// Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it:
+// { by (the element hit, tag.class), what (what is in front), lines (the dialog or layer with its controls) }.
 // getNodeForLocation takes document coordinates: the viewport point plus the scroll offset. `own` are elements that are part
 // of the control (its <label>, its own box: cdp.annotate): their decoration (a drawn check box, a ::before) takes the same
-// click. `tag` is the part's frame tag, to find a dialog in front among `nodes`.
+// click. `tag` is the part's frame tag, to find a dialog in front among `nodes`. With no dialog in front, the fixed layer the
+// hit element sits in (a consent overlay without a dialog role) is named instead, with its controls.
 async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], tag = "" } = {}) {
   const lp = (await send("Page.getLayoutMetrics")).cssLayoutViewport;
   const hit = await send("DOM.getNodeForLocation", {
@@ -939,15 +941,55 @@ async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], ta
       break;
     }
   }
-  const what = front ? `the ${front.role}${front.name ? ` "${lib.clip(front.name, 60)}"` : ""} is in front` : "something is in front";
-  return [
-    `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): ${what}. Close or answer it first, then run the rest of the chain again`,
-    ...cdp.dialogLines(shown),
-  ].join("\n");
+  const by = `${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}`;
+  if (front || shown.length > 0) {
+    return { by, what: front ? `the ${front.role}${front.name ? ` "${lib.clip(front.name, 60)}"` : ""} is in front` : "something is in front", lines: cdp.dialogLines(shown) };
+  }
+  const layer = await fixedLayer(send, hit.backendNodeId, nodes, tag).catch(() => undefined);
+  if (layer) return { by, what: "a fixed layer is in front", lines: layer.lines };
+  return { by, what: "something is in front", lines: [] };
 }
 
-// Scrolls the element into view, checks nothing covers it (unless `cover` is false: a screenshot shows what covers it), and
-// returns where it is on the screen: { box: {x, y, w, h}, win }. An element of an out-of-process iframe is read through that
+// The fixed layer (fixedLayer) under the centre of the page's viewport when it holds a button: an overlay that a person
+// must answer first. Undefined for none, or for a layer of links alone (a docked menu).
+async function centreOverlay(c, nodes) {
+  const vp = (await c.send("Page.getLayoutMetrics")).cssLayoutViewport;
+  const hit = await c.send("DOM.getNodeForLocation", {
+    x: Math.round(vp.pageX + vp.clientWidth / 2),
+    y: Math.round(vp.pageY + vp.clientHeight / 2),
+    includeUserAgentShadowDOM: true,
+  });
+  const layer = await fixedLayer(c.send, hit.backendNodeId, nodes);
+  return layer && layer.buttons > 0 ? layer.lines : undefined;
+}
+
+// A refusal for a covered element (coveredBy): what is in front and what to do.
+const coverText = (k) =>
+  [`another element covers it (${k.by}): ${k.what}. Close or answer it first, then run the rest of the chain again`, ...k.lines].join("\n");
+
+// The fixed layer (position fixed) an element sits in, with up to 8 of its controls, refs remembered: an overlay in front
+// that has no dialog role. Undefined when the element is in no such layer or the layer holds no control.
+async function fixedLayer(send, backendNodeId, nodes, tag = "") {
+  const snap = await send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
+  const layer = cdp.fixedAncestor(snap, backendNodeId);
+  if (layer === undefined) return undefined;
+  const ids = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: layer, depth: -1, pierce: true })).node);
+  const c = cdp.layerControls(nodes, ids, { tag });
+  if (c.entries.length === 0) return undefined;
+  rememberRefs(c.entries, { merge: true });
+  return {
+    buttons: c.buttons,
+    lines: [
+      "open overlay (a fixed layer without a dialog role; act on it first):",
+      ...c.entries.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`),
+      ...(c.more ? [`  ... ${c.more} more: desktop-web snap`] : []),
+    ],
+  };
+}
+
+// Scrolls the element into view, checks nothing covers it (unless `cover` is false; "note": what covers it is returned as
+// `covered`, for a screenshot that says so), and returns where it is on the screen: { box: {x, y, w, h}, win, area (the
+// page's visible area on the screen), covered }. An element of an out-of-process iframe is read through that
 // frame's connection and placed in the page by its iframe element's content box.
 async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = false } = {}) {
   // A checkbox drawn by its label is clicked on the label, which a person sees and which toggles it.
@@ -1011,9 +1053,18 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = f
   }
   const own = [entry.labelEl, entry.boxEl].filter((x) => x !== undefined && x !== backendNodeId);
   checks.push({ send: part.send, id: backendNodeId, quad, point: { x: center.x - origin.x, y: center.y - origin.y }, tag: part.tag, own });
+  let covered;
   for (const k of cover ? checks : []) {
-    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes, { own: k.own, tag: k.tag });
-    if (why) fail(why);
+    // a screenshot is taken whatever the hit test says
+    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes, { own: k.own, tag: k.tag }).catch((e) => {
+      if (cover === "note") return undefined;
+      throw e;
+    });
+    if (why && cover === "note") {
+      covered = why;
+      break;
+    }
+    if (why) fail(coverText(why));
   }
   const win = chromeWindow();
   if (!win) fail("no Chrome window on the screen");
@@ -1029,7 +1080,10 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = f
   const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), reach.x), y: Math.max(Math.min(...ys), reach.y) });
   const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), reach.x + reach.w), y: Math.min(Math.max(...ys), reach.y + reach.h) });
   const point = beside ? cdp.screenPoint(geo, center) : undefined;
-  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win, point };
+  const a0 = cdp.screenPoint(geo, { x: reach.x, y: reach.y });
+  const a1 = cdp.screenPoint(geo, { x: reach.x + reach.w, y: reach.y + reach.h });
+  const area = { x: a0.x, y: a0.y, w: a1.x - a0.x, h: a1.y - a0.y };
+  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win, point, area, covered };
 }
 
 // A point of the element (its part's viewport coordinates) outside the controls inside it, confirmed by hit testing: the
@@ -1336,8 +1390,11 @@ async function main() {
         return;
       }
       const nodes = await withPage(axNodes);
+      // no dialog: a fixed layer at the centre of the page that holds a button (a consent overlay without a dialog role)
+      const overlay = cdp.dialogs(nodes).length === 0 ? await withPage((c) => centreOverlay(c, nodes)).catch(() => undefined) : undefined;
       const out = [
         ...header(after.target, [...moved, ...after.notes]),
+        ...(overlay ?? []),
         ...(await describe(after.lines, nodes, o.pos[1], o, () => withPage((c) => axTree(c)), after.lineOf)),
       ];
       if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
@@ -1672,28 +1729,31 @@ async function main() {
           await hoverNode(c, nodes, entry);
           return { pre: stateOf(tree), entry, note, tooltip: await titleOf(c, entry) };
         }
-        const { box } = await placeNode(c, nodes, entry, { cover: false });
-        return { entry, box, note };
+        const placed = await placeNode(c, nodes, entry, { cover: "note" });
+        // A narrow target (a label, a price) is shown with the row it sits in.
+        let row;
+        if (placed.box.w < cdp.SHOT_NARROW) {
+          const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
+          const snap = part ? await capture(part).catch(() => undefined) : undefined;
+          const id = snap ? cdp.rowAround(snap, entry.via ?? entry.backendNodeId) : undefined;
+          if (id !== undefined) row = (await placeNode(c, nodes, { backendNodeId: id, frameTag: entry.frameTag }, { cover: false, scroll: false }).catch(() => undefined))?.box;
+        }
+        return { entry, box: placed.box, area: placed.area, covered: placed.covered, row, note };
       });
       if (cmd === "hover") {
         const after = await settle(before, { quietMs: 700 });
         console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry, tooltip: r.tooltip }))].join("\n"));
         return;
       }
-      // A little room around the element, and never a sliver: small icons are easier to read with their surroundings.
-      const pad = o.pad ?? 14;
-      // A wide block (a heading that spans the page) is cut to a readable width, kept at its left edge.
-      const w = Math.min(Math.max(r.box.w + 2 * pad, 160), 640 + 2 * pad);
-      const h = Math.max(r.box.h + 2 * pad, 90);
-      const x = Math.max(Math.round(r.box.w + 2 * pad > w ? r.box.x - pad : r.box.x + r.box.w / 2 - w / 2), 0);
-      const y = Math.max(Math.round(r.box.y + r.box.h / 2 - h / 2), 0);
+      const { x, y, w, h } = cdp.shotCrop(r.box, r.row, r.area, o.pad ?? 14);
       let shot;
       try {
         shot = execFileSync("desktop-shot", ["--region", `${x},${y},${Math.round(w)},${Math.round(h)}`, "--width", "900"], { encoding: "utf8" }).trim();
       } catch (e) {
         fail(`screenshot failed: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
       }
-      console.log([...(r.note ? [r.note] : []), `shot of ${cdp.entryLine(r.entry)}`, `${shot} (read this image with the read tool)`].join("\n"));
+      const covered = r.covered ? [`note: covered by ${r.covered.by}: ${r.covered.what}; close or answer it first for a clear view`, ...r.covered.lines] : [];
+      console.log([...(r.note ? [r.note] : []), `shot of ${cdp.entryLine(r.entry)}${r.row ? " with its row" : ""} (${w}x${h} px)`, `${shot} (read this image with the read tool)`, ...covered].join("\n"));
       return;
     }
     case "wait": {

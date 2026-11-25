@@ -408,6 +408,29 @@ case_shot() {
   local f
   f=$(grep -o '/workspace[^ ]*\.jpg' "$OUT" | head -1)
   check "shot saves an image of the element's area" "$([[ -n $f && -s $f ]]; echo $?)"
+  open shot
+  web shot '^Area$'
+  check "a narrow label is shot with its row" "$(ok 'shot of .*"Area".* with its row \([0-9]+x[0-9]+ px\)')"
+  local w
+  w=$(grep -oE 'with its row \([0-9]+x' "$OUT" | grep -oE '[0-9]+')
+  check "the crop is at least the row's width" "$([[ ${w:-0} -ge 720 ]]; echo $?)"
+  check "an uncovered target has no note" "$(no 'covered by')"
+  web shot '^Elevation$'
+  check "a target under a fixed banner says so" "$(ok '^note: covered by .*: a fixed layer is in front')"
+  check "and lists the banner's buttons" "$(ok 'button "Reject all"')"
+}
+
+# A consent layer drawn as a fixed div without a dialog role: open lists it, a click behind it is refused with its buttons.
+case_overlay() {
+  open overlay
+  check "open lists a fixed layer at the centre as an overlay" "$(ok '^open overlay \(a fixed layer without a dialog role')"
+  check "with its buttons" "$([[ $(ok 'button "Reject all"') == 0 && $(ok 'button "Settings"') == 0 ]]; echo $?)"
+  web click 'Behind the layer'
+  check "a click behind it is refused, naming the layer" "$(ok 'a fixed layer is in front' 1)"
+  check "and its buttons" "$(ok 'button "Reject all"' 1)"
+  web click 'Reject all'
+  has_text 'consent: rejected'
+  check "its button answers it" $?
 }
 
 # Exit status of the last web call and whether its output matches: ok <regex> [rc].
@@ -844,7 +867,7 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
