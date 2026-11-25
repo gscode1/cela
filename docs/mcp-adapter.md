@@ -204,7 +204,7 @@ structured content, scrubbed of both tokens and labelled untrusted; writes take 
 | `admin_publish_skill` | `PI_MCP_ADMIN_WRITES` | `POST /admin/skills/{name}/versions` (inline files only, at most 128 files, body within ingest's limit, 120 s timeout) | 1.2.0 |
 | `admin_put_mcp_server` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/mcp-servers/{name}` | 1.2.0 |
 | `admin_probe_network` | `PI_MCP_ADMIN_WRITES` | `POST /admin/status/probe` | planned (#511) |
-| `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` | planned (#511) |
+| `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` (a patch with `expectedRevision`: omitted fields keep their value, a list sent replaces the stored one) | 1.2.0 |
 | `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` (`expectedRevision` = the skill's current version) | 1.2.0 |
 | `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}?expectedRevision=N` | 1.2.0 |
 | `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST /admin/egress/rule-sets` (`create: true`) or `PUT /admin/egress/rule-sets/{name}`; `description`, `appliesToAll`. `expectedRevision` is the egress revision, one number for all sets and rules (0 only while empty) | 1.2.0 |
