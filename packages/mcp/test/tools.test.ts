@@ -160,7 +160,7 @@ describe("tools", () => {
     },
   );
 
-  it("lists exactly the 8 tools with annotations", { timeout: TIMEOUT }, async () => {
+  it("lists exactly the 10 tools with annotations", { timeout: TIMEOUT }, async () => {
     const { tools } = await client.listTools();
     const by = new Map(tools.map((t) => [t.name, t]));
     expect([...by.keys()].sort()).toEqual(
@@ -168,6 +168,8 @@ describe("tools", () => {
         "cancel",
         "delete_session",
         "get_session",
+        "list_events",
+        "list_sessions",
         "run_task",
         "send_message",
         "set_live_view",
@@ -176,6 +178,10 @@ describe("tools", () => {
       ].sort(),
     );
     expect(by.get("get_session")?.annotations?.readOnlyHint).toBe(true);
+    for (const n of ["list_sessions", "list_events"]) {
+      expect(by.get(n)?.annotations?.readOnlyHint, n).toBe(true);
+      expect(by.get(n)?.annotations?.destructiveHint ?? false, n).toBe(false);
+    }
     expect(by.get("wait")?.annotations?.readOnlyHint).toBe(true);
     expect(by.get("delete_session")?.annotations?.destructiveHint).toBe(true);
     for (const n of ["run_task", "send_message", "start_session"]) {

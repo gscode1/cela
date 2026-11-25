@@ -20,6 +20,9 @@
  *  - `DELETE /sessions/{id}`: 202, the session becomes `deleted`, open streams get `event: deleted` and end.
  *  - `GET /sessions/{id}/stream`: SSE. Replays entries after `Last-Event-ID`, then the last live event, then whatever
  *    the test pushes. `failNextStream` makes the next connections answer an error (503 + Retry-After, 410, ...).
+ *  - `GET /sessions?status=&limit=&cursor=`: the sessions as metadata only (no entries), newest added first, `deleted` ones
+ *    only for `status=deleted`; `nextCursor` is `c<offset>`. `GET /events?cursor=&limit=`: pages `api.feed` (the test sets
+ *    it); a cursor is the `cursor` of a row. A bad `limit` or `status` is 400.
  *  - Every request is recorded in `api.requests`.
  *  - `api.redirectTo = "<url>"` answers every request with a 307 to that URL.
  */
@@ -67,6 +70,15 @@ export interface FakeSession {
   entries: { id: number; kind: string; messages: EntryMessage[] }[];
 }
 
+export interface FeedRow {
+  id: string;
+  type: string;
+  sessionId: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+  cursor: string;
+}
+
 export interface StreamFailure {
   status: number;
   retryAfter?: number;
@@ -99,6 +111,8 @@ export class FakeApi {
   createResponseDelayMs = 0;
   /** Delay the delete response after committing deletion. */
   deleteResponseDelayMs = 0;
+  /** The rows `GET /events` pages through, oldest first. */
+  feed: FeedRow[] = [];
   readonly #sessions = new Map<string, Internal>();
   readonly #sourceEvents = new Map<string, { sessionId: string; eventId: string }>();
   readonly #server: Server;
@@ -261,6 +275,16 @@ export class FakeApi {
       return;
     }
     const parts = path.split("?")[0]?.split("/").filter(Boolean) ?? [];
+    if (
+      method === "GET" &&
+      parts.length === 1 &&
+      (parts[0] === "sessions" || parts[0] === "events")
+    ) {
+      const query = new URL(path, "http://fake").searchParams;
+      if (parts[0] === "sessions") this.#list(res, query);
+      else this.#feedPage(res, query);
+      return;
+    }
     if (parts[0] !== "sessions") {
       json(res, 404, { error: "not found" });
       return;
@@ -299,6 +323,55 @@ export class FakeApi {
       return;
     }
     json(res, 404, { error: "not found" });
+  }
+
+  #list(res: ServerResponse, query: URLSearchParams): void {
+    const status = query.get("status");
+    const limit = Number(query.get("limit") ?? 50);
+    const cursor = query.get("cursor");
+    const offset = cursor === null ? 0 : Number(/^c([0-9]+)$/.exec(cursor)?.[1] ?? Number.NaN);
+    if (
+      (status !== null && !["active", "failed", "deleting", "deleted"].includes(status)) ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 200 ||
+      Number.isNaN(offset)
+    ) {
+      json(res, 400, { error: "bad query" });
+      return;
+    }
+    const rows = [...this.#sessions.values()]
+      .reverse()
+      .filter((s) => (status === null ? s.status !== "deleted" : s.status === status));
+    const page = rows.slice(offset, offset + limit);
+    json(res, 200, {
+      sessions: page.map((s) => ({
+        id: s.id,
+        status: s.status,
+        profile: { name: "coding", version: 1 },
+        model: { provider: "fake", model: "fake-model" },
+        createdAt: s.createdAt ?? "2026-01-01T00:00:00.000Z",
+        lastActivityAt: "2026-01-01T00:00:00.000Z",
+      })),
+      ...(offset + limit < rows.length ? { nextCursor: `c${String(offset + limit)}` } : {}),
+    });
+  }
+
+  #feedPage(res: ServerResponse, query: URLSearchParams): void {
+    const limit = Number(query.get("limit") ?? 100);
+    const cursor = query.get("cursor");
+    const at = cursor === null ? -1 : this.feed.findIndex((row) => row.cursor === cursor);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500 || (cursor !== null && at < 0)) {
+      json(res, 400, { error: "bad query" });
+      return;
+    }
+    const events = this.feed.slice(at + 1, at + 1 + limit);
+    json(res, 200, {
+      events,
+      cursor: events.at(-1)?.cursor ?? cursor ?? "0-0",
+      hasMore: at + 1 + limit < this.feed.length,
+      truncated: false,
+    });
   }
 
   async #create(res: ServerResponse, body: unknown): Promise<void> {

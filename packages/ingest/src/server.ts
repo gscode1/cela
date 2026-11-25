@@ -101,6 +101,7 @@ import type {
   StoredSettings,
 } from "@cela/session-core";
 import { eventView, parseEventBody, parseEventId } from "./events.js";
+import { getSessionList } from "./session-list-routes.js";
 import { getFeed, streamFeed } from "./feed-routes.js";
 import { handleLiveUpgrade, isLivePath, liveViewUrl, serveLive } from "./live-view.js";
 import { log } from "./log.js";
@@ -232,6 +233,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: IngestDep
   }
   if (method === "POST" && url.pathname === "/sessions") {
     await postSession(req, res, deps, principal);
+    return;
+  }
+  if (method === "GET" && url.pathname === "/sessions") {
+    await getSessionList(res, deps.pool, () => deps.settings.policy().default, url, {
+      ownerSubject: principal.subject,
+    });
     return;
   }
   // The caller's own feed (ADR 0058): keyed by the subject, like the owner check of every session route.
@@ -440,6 +447,16 @@ async function handleAdminRoutes(
     return;
   }
   const method = req.method ?? "GET";
+  if (parts[1] === "sessions" && parts.length === 2) {
+    if (method !== "GET") {
+      sendJson(res, 405, { error: "method not allowed" });
+      return;
+    }
+    await getSessionList(res, deps.pool, () => deps.settings.policy().default, url, {
+      admin: true,
+    });
+    return;
+  }
   if (parts[1] === "status" && parts.length === 2) {
     if (method !== "GET") {
       sendJson(res, 405, { error: "method not allowed" });
