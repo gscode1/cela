@@ -195,9 +195,9 @@ structured content, scrubbed of both tokens and labelled untrusted; writes take 
 | `admin_get_status` | `PI_MCP_ADMIN` | `GET /admin/status` | planned (#511) |
 | `admin_get_history` | `PI_MCP_ADMIN` | `GET /admin/settings/history`, `/mcp-servers/history`, `/egress/history` (`kind`, `limit`, `name`, `ref`) | planned (#511) |
 | `admin_get_skill_version` | `PI_MCP_ADMIN` | `GET /admin/skills/{name}/versions/{v}` (`?content=true`; text decoded, about 200 KB cap, `paths` filter) | 1.2.0 |
-| `admin_get_egress_status` | `PI_MCP_ADMIN` | `GET /admin/egress/status` | planned (#511) |
-| `admin_list_session_egress_rules` | `PI_MCP_ADMIN` | `GET /admin/egress/sessions/{id}/rules` | planned (#511) |
-| `admin_explain_egress` | `PI_MCP_ADMIN` | `POST /admin/egress/explain` (pure: a read) | planned (#511) |
+| `admin_get_egress_status` | `PI_MCP_ADMIN` | `GET /admin/egress/status` | 1.2.0 |
+| `admin_list_session_egress_rules` | `PI_MCP_ADMIN` | `GET /admin/egress/sessions/{id}/rules` | 1.2.0 |
+| `admin_explain_egress` | `PI_MCP_ADMIN` | `POST /admin/egress/explain` (`host`, `port`, `sessionId`, `profile`, `addresses`; pure: a read; without `addresses` a private-address resolution is not judged, `addressesChecked` false) | 1.2.0 |
 | `admin_list_sessions` | `PI_MCP_ADMIN` | `GET /admin/sessions` (all owners, metadata only; the route exists, the tool does not) | planned (#511) |
 | `admin_put_profile` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/profiles/{name}` | 1.0.0 |
 | `admin_delete_profile` | `PI_MCP_ADMIN_WRITES` | `DELETE /admin/profiles/{name}` | 1.0.0 |
@@ -207,10 +207,10 @@ structured content, scrubbed of both tokens and labelled untrusted; writes take 
 | `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` | planned (#511) |
 | `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` (`expectedRevision` = the skill's current version) | 1.2.0 |
 | `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}?expectedRevision=N` | 1.2.0 |
-| `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST` (create) or `PUT /admin/egress/rule-sets/{name}` | planned (#511) |
-| `admin_delete_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rule-sets/{name}` | planned (#511) |
-| `admin_put_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `POST /admin/egress/rules` or `/admin/egress/sessions/{id}/rules`, `PUT /admin/egress/rules/{id}` | planned (#511) |
-| `admin_delete_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rules/{id}` | planned (#511) |
+| `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST /admin/egress/rule-sets` (`create: true`) or `PUT /admin/egress/rule-sets/{name}`; `description`, `appliesToAll`. `expectedRevision` is the egress revision, one number for all sets and rules (0 only while empty) | 1.2.0 |
+| `admin_delete_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rule-sets/{name}?expectedRevision=N` | 1.2.0 |
+| `admin_put_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | With `id`: `PUT /admin/egress/rules/{id}` (partial). Without: `POST /admin/egress/rule-sets/{name}/rules` (`ruleSet`) or `POST /admin/egress/sessions/{id}/rules` (`sessionId`), exactly one of them, and `effect` and `host` | 1.2.0 |
+| `admin_delete_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rules/{id}?expectedRevision=N` | 1.2.0 |
 | `list_sessions` | session token | `GET /sessions` (the owner's sessions, metadata only) | 1.2.0 |
 | `list_events` | session token | `GET /events` (the owner's feed) | 1.2.0 |
 
