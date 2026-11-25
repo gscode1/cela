@@ -242,7 +242,7 @@ case_select() {
   open selects
   web snap
   check "snap shows a select's options" "$(grep -q 'combobox "Dropdown".*options: Please select an option | Option 1 | Option 2 (off) (disabled) | Option 3' "$OUT"; echo $?)"
-  check "snap hints how to pick" "$(grep -q 'desktop-web select e[0-9]* ' "$OUT"; echo $?)"
+  check "snap hints how to pick" "$(grep -q '(pick an option: desktop-web select e[0-9]* "' "$OUT"; echo $?)"
   web select Dropdown 'Option 3'
   check "select picks an option and reads it back" "$(grep -q 'value now: "Option 3"' "$OUT"; echo $?)"
   has_text 'changed: Option 3'
@@ -643,6 +643,7 @@ case_coldstart() {
   cold
   PI_DESKTOP_OPEN_WAIT_MS=1500 web open "$BASE/onebox.html?n=$RANDOM"
   check "a slow launch exits 75" "$(ok 'still starting' 75)"
+  check "and says to run the same command again" "$(ok 'run the same desktop-web command again' 75)"
   web open "$BASE/onebox.html?n=$RANDOM"
   check "run again: waits for the launch in progress and loads the page" "$(ok '^url: .*onebox')"
   cold
@@ -919,7 +920,34 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field)
+# help [cmd] and <cmd> --help|-h print the detail the skill leaves out; none of them is read as a target (issue #493).
+case_help() {
+  web help
+  check "help lists a line per command" "$(ok '^  open <url>' 0)"
+  check "the list names every command" "$([[ $(grep -cE '^  (open|text|snap|click|type|select|upload|drag|hover|wait|key|shot|url|dialogs)\b' "$OUT") == 14 ]]; echo $?)"
+  web help hover
+  check "help <cmd> prints that command" "$(ok '^desktop-web hover .*--nth N' 0)"
+  local first
+  first=$(cat "$OUT")
+  web hover --help
+  check "<cmd> --help prints the same" "$([[ "$(cat "$OUT")" == "$first" && $RC == 0 ]]; echo $?)"
+  check "and does not look for a target" "$(no 'nothing clickable|no match')"
+  web click -h
+  check "-h prints the help too" "$(ok '^desktop-web click ' 0)"
+  web help type
+  check "type's help holds the slider detail" "$(ok 'value 25 -> 75' 0)"
+  web help text
+  check "text's help holds --table and --marks" "$(ok '--table +a table row' 0)"
+  check "and the marks syntax" "$(ok 'datetime=' 0)"
+  web help upload
+  check "upload's help says the file chooser rule" "$(ok 'file chooser' 0)"
+  web help dialogs
+  check "dialogs help says how to answer" "$(ok 'key --text "answer" Return' 0)"
+  web help nosuchcmd
+  check "an unknown topic exits 64" "$(ok 'no help for' 64)"
+}
+
+ALL=(help infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
