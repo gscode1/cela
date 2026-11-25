@@ -606,8 +606,13 @@ key is pressed on the agent's behalf.
   accessibility node's role and name); that is a change too.
 - **Nearly empty pages.** `pageNotices` says `page shows almost no text (N lines, no form field): an error or block page, or
   a picture-only one; look with desktop-shot` for an http(s) page of 1 to 3 lines and at most 200 characters with no input,
-  textarea or select that shows a box, when no other notice (Chrome's error page, a status, a bot check) already names it.
+  textarea or select that shows a box and no heading together with a button, when no other notice (Chrome's error page, a status, a bot check) already names it.
   It knows no words. It points to `desktop-shot`, the whole window, not `desktop-web shot`, which needs a target.
+- **Cold start.** The first `open` starts Chrome (about 5 s on a local container, longer under gVisor). `desktop-launch` runs
+  detached, its pid and exit status in `$PI_DESKTOP_STATE/launch.pid` and `launch.exit`, so a call the agent's harness
+  killed does not stop the launch, and the next call waits for it instead of starting a second Chrome (the launch wipes the
+  profile). `open` waits at most 45 s (`PI_DESKTOP_OPEN_WAIT_MS`), then exits 75 with "Chrome is still starting ... run the
+  same desktop-web command again"; other commands say "Chrome is still starting" instead of "Chrome is not running".
 - **`text --table`** (opt-in; the default text is unchanged): a table row reads as its cells joined by ` | `, empty cells
   kept and spans not resolved, and the header rows (all `th`, or in a `thead`) of the tables the matches are in are printed
   once above them as `cols: ...`. Its line numbers are its own (`--table --lines A-B` pages on); the saved text stays plain.

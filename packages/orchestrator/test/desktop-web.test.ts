@@ -966,6 +966,13 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.pageNotices([{ snap: page("https://a.test/s", [unboxed]) }], sorry)).toEqual([
       say(1),
     ]);
+    // a heading with a button is a small real page; a heading alone, or a button alone, is still nearly empty
+    const at = (tag: string, y: number): N => ({ parent: 1, type: 1, tag, box: [0, y, 100, 24] });
+    const h1 = at("H1", 0);
+    const btn = at("BUTTON", 40);
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s", [h1, btn]) }], sorry)).toEqual([]);
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s", [h1]) }], sorry)).toEqual([say(1)]);
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s", [btn]) }], sorry)).toEqual([say(1)]);
     // a page a status already names is said once, by that
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/s") }], { lines: ["Not found"], title: "404" }),

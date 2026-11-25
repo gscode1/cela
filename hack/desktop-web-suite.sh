@@ -622,6 +622,35 @@ case_empty() {
   check "a nearly empty page is flagged" "$(ok '^page shows almost no text \(1 line, no form field\): an error or block page, or a picture-only one; look with desktop-shot$')"
   open onebox
   check "a one-line page with a search box stays clean" "$(no 'almost no text')"
+  open heading-button
+  check "a page of a heading and a button stays clean" "$(no 'almost no text')"
+}
+
+# open hands the URL to the address bar by paste: an encoded space must come back as %20, not %2B or a space.
+case_urlencode() {
+  web open "$BASE/query.html?q=a%20b"
+  check "open loads the page" "$(ok 'search=\?q=a%20b')"
+  web url
+  check "url keeps %20" "$(ok 'q=a%20b')"
+  check "url has no %2B or +" "$(no 'q=a(%2B|\+)b')"
+}
+
+# A first open that outlasts the caller's timeout (the harness kills the CLI) must not strand the launch: the next call waits for
+# it, and an open that cannot finish in time says so and exits non-zero (75) with the launch still going.
+case_coldstart() {
+  local st=${PI_DESKTOP_STATE:-/tmp/pi-desktop}
+  cold() { pkill -f chrome-profile 2>/dev/null; sleep 2; rm -f "$st"/cdp-port "$st"/launch.pid "$st"/launch.exit; }
+  cold
+  PI_DESKTOP_OPEN_WAIT_MS=1500 web open "$BASE/onebox.html?n=$RANDOM"
+  check "a slow launch exits 75" "$(ok 'still starting' 75)"
+  web open "$BASE/onebox.html?n=$RANDOM"
+  check "run again: waits for the launch in progress and loads the page" "$(ok '^url: .*onebox')"
+  cold
+  timeout 4 desktop-web open "$BASE/onebox.html?n=$RANDOM" >"$OUT" 2>&1
+  check "the caller's timeout killed the CLI" "$([[ $? == 124 ]]; echo $?)"
+  web open "$BASE/onebox.html?n=$RANDOM"
+  check "after a killed open the next open resumes" "$(ok '^url: .*onebox')"
+  check "one Chrome, not two" "$([[ $(pgrep -af 'chrome.*chrome-profile' | grep -o 'remote-debugging-port=[0-9]*' | sort -u | wc -l) == 1 ]]; echo $?)"
 }
 
 # A dialog that slides in after it shows: its Close button is clicked where it ends up, in a chain right after the opening.
@@ -890,7 +919,7 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay dialog_cap modal_field)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
