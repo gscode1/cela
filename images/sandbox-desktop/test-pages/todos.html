@@ -1,0 +1,63 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>todos</title>
+<style>
+  body { font: 16px sans-serif; }
+  .todo-list { list-style: none; padding: 0; width: 420px; }
+  .todo-list li { position: relative; border-bottom: 1px solid #ddd; }
+  /* the real checkbox sits at opacity 0 over the row's start; the label draws the circle */
+  .todo-list li .toggle { position: absolute; top: 0; bottom: 0; margin: auto 0; width: 40px; height: 40px; opacity: 0; appearance: none; border: 0; }
+  .todo-list li label { display: block; padding: 15px 15px 15px 60px; line-height: 1.2;
+    background: radial-gradient(circle at 20px 50%, #fff 9px, #999 10px, #fff 11px) no-repeat left center; }
+  .todo-list li .toggle:checked + label { text-decoration: line-through; color: #999; }
+  .todo-list li .destroy { display: none; position: absolute; right: 10px; top: 12px; width: 24px; height: 24px; }
+  .todo-list li:hover .destroy { display: block; }
+  .todo-list li .edit { display: block; width: 340px; margin-left: 43px; padding: 12px 16px; font: inherit; }
+  .todo-list li.editing .view { display: none; }
+</style>
+<body>
+<!-- TodoMVC-style rows: an opacity-0 checkbox per row that no label wraps or names by for=, and a label edited on double
+     click. Every listener sits on the list's container, as a framework puts them: the text shows no sign of taking clicks. -->
+<h1>todos</h1>
+<div id="app">
+  <input class="new-todo" placeholder="What needs to be done?">
+  <ul class="todo-list"></ul>
+</div>
+<pre id="log"></pre>
+<script>
+  const todos = ["buy milk", "write report", "call mom"].map((t) => ({ t, done: false }));
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const list = document.querySelector(".todo-list");
+  const app = document.getElementById("app");
+  function draw() {
+    list.innerHTML = todos
+      .map((x, i) => `<li data-i="${i}"><div class="view"><input class="toggle" type="checkbox" aria-label="Toggle Todo"${x.done ? " checked" : ""}><label>${x.t}</label><button class="destroy" aria-label="Delete"></button></div></li>`)
+      .join("");
+  }
+  app.addEventListener("change", (e) => {
+    if (!e.target.matches(".toggle")) return;
+    const x = todos[e.target.closest("li").dataset.i];
+    x.done = e.target.checked;
+    add(`toggled: ${x.t} ${x.done}`);
+  });
+  app.addEventListener("dblclick", (e) => {
+    if (!e.target.matches("label")) return;
+    const li = e.target.closest("li");
+    li.classList.add("editing");
+    const input = document.createElement("input");
+    input.className = "edit";
+    input.value = todos[li.dataset.i].t;
+    li.appendChild(input);
+    input.focus();
+    add(`editing: ${input.value}`);
+  });
+  app.addEventListener("keydown", (e) => {
+    if (!e.target.matches(".edit") || e.key !== "Enter") return;
+    const x = todos[e.target.closest("li").dataset.i];
+    add(`renamed: ${x.t} -> ${e.target.value}`);
+    x.t = e.target.value;
+    draw();
+  });
+  draw();
+</script>

@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>handle</title>
+<style>
+  body { font: 16px sans-serif; }
+  .ui-slider { position: relative; width: 300px; height: 10px; background: #ddd; margin: 20px 10px; }
+  .ui-slider-range { position: absolute; top: 0; height: 100%; background: #69c; }
+  .ui-slider-handle { position: absolute; top: -5px; width: 18px; height: 18px; margin-left: -9px; background: #258; }
+  .scroller { overflow: auto; height: 60px; width: 300px; border: 1px solid #ccc; }
+</style>
+<body>
+<!-- A range slider in the style of a jQuery plugin: two role-less spans with tabindex=0 that move with the arrow keys. Beside
+     it, focusable elements that are no controls: tabindex=-1, a scroller and a card that holds a link. -->
+<h1>Price</h1>
+<p><label for="amount">Price range:</label> <input type="text" id="amount" readonly></p>
+<div class="ui-slider" id="range"><div class="ui-slider-range"></div><span tabindex="0" class="ui-slider-handle ui-corner-all"></span><span tabindex="0" class="ui-slider-handle ui-corner-all"></span></div>
+<div tabindex="-1" class="panel-minus">Only script focuses this panel</div>
+<div tabindex="0" class="scroller">A long text that scrolls inside its box. A long text that scrolls inside its box. A long text that scrolls inside its box. A long text that scrolls inside its box. A long text that scrolls inside its box.</div>
+<div tabindex="0" class="card-box">A card with <a href="#card" id="card">its own link</a></div>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  const vals = [75, 300];
+  const handles = document.querySelectorAll(".ui-slider-handle");
+  const range = document.querySelector(".ui-slider-range");
+  const amount = document.getElementById("amount");
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const draw = () => {
+    handles.forEach((h, i) => (h.style.left = `${vals[i] / 5}%`));
+    range.style.left = `${vals[0] / 5}%`;
+    range.style.width = `${(vals[1] - vals[0]) / 5}%`;
+    amount.value = `$${vals[0]} - $${vals[1]}`;
+  };
+  handles.forEach((h, i) =>
+    h.addEventListener("keydown", (e) => {
+      const step = { ArrowRight: 5, ArrowUp: 5, ArrowLeft: -5, ArrowDown: -5, PageUp: 100, PageDown: -100 }[e.key];
+      if (step === undefined) return;
+      e.preventDefault();
+      const lo = i === 0 ? 0 : vals[0];
+      const hi = i === 0 ? vals[1] : 500;
+      vals[i] = Math.min(Math.max(vals[i] + step, lo), hi);
+      draw();
+      add(`price: $${vals[0]} - $${vals[1]}`);
+    }),
+  );
+  draw();
+</script>

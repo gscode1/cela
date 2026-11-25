@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>chips</title>
+<style>
+  body { font: 16px sans-serif; }
+  .select { border: 1px solid #999; width: 320px; padding: 6px; margin: 8px 0 20px; }
+  .values { display: flex; flex-direction: column; align-items: flex-start; }
+  .chip { display: flex; align-items: center; background: #e6e6e6; border-radius: 2px; margin: 3px 0; }
+  .chip .label { padding: 3px 6px; }
+  .chip .x { display: flex; padding: 0 4px; }
+  .select input { border: 0; outline: 0; width: 300px; margin-top: 4px; }
+  [role=listbox] { border: 1px solid #ccc; margin-top: 4px; }
+  [role=option] { padding: 4px 8px; }
+  .spacer { height: 3000px; }
+</style>
+<body>
+<!-- Two multi-selects in the style of a React library: chips with an icon-only remove button, options in a listbox that the
+     combobox opens. Both hold "Red", so a pick adds a line that was already on the page. Listeners sit on the document. -->
+<h1>Colours</h1>
+<h2>Multi</h2>
+<div class="select" data-name="Multi">
+  <div class="values"></div>
+  <input role="combobox" aria-label="Multi" aria-expanded="false" aria-autocomplete="list" placeholder="Select...">
+</div>
+<h2>Multi Select</h2>
+<div class="select" data-name="Multi Select">
+  <div class="values"></div>
+  <input role="combobox" aria-label="Multi Select" aria-expanded="false" aria-autocomplete="list" placeholder="Select...">
+</div>
+<pre id="log"></pre>
+<div class="spacer"></div>
+<p>Bottom of the page</p>
+<script>
+  const ALL = ["Ocean", "Blue", "Purple", "Red", "Orange", "Yellow"];
+  const picked = new Map([["Multi", ["Purple", "Red"]], ["Multi Select", ["Ocean", "Blue"]]]);
+  const log = document.getElementById("log");
+  const add = (t) => (log.textContent += `${log.textContent ? "\n" : ""}${t}`);
+  const icon = '<svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4L16 16M16 4L4 16" stroke="#333" stroke-width="2"/></svg>';
+  function draw(box) {
+    const name = box.dataset.name;
+    box.querySelector(".values").innerHTML = picked
+      .get(name)
+      .map((v) => `<div class="chip"><div class="label">${v}</div><div class="x" role="button" aria-label="Remove ${v}" data-remove="${v}">${icon}</div></div>`)
+      .join("");
+  }
+  function openList(box) {
+    closeLists();
+    const name = box.dataset.name;
+    const id = `list-${name.replace(/\W/g, "")}`;
+    const list = document.createElement("div");
+    list.setAttribute("role", "listbox");
+    list.id = id;
+    list.innerHTML = ALL.filter((v) => !picked.get(name).includes(v)).map((v) => `<div role="option" data-pick="${v}">${v}</div>`).join("");
+    box.appendChild(list);
+    const input = box.querySelector("input");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", id);
+  }
+  function closeLists() {
+    for (const l of document.querySelectorAll("[role=listbox]")) {
+      const input = l.parentElement.querySelector("input");
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-controls");
+      l.remove();
+    }
+  }
+  document.addEventListener("mousedown", (e) => {
+    const box = e.target.closest(".select");
+    const opt = e.target.closest("[data-pick]");
+    const rm = e.target.closest("[data-remove]");
+    if (opt) {
+      const name = box.dataset.name;
+      picked.get(name).push(opt.dataset.pick);
+      add(`picked: ${opt.dataset.pick} in ${name}`);
+      draw(box);
+      openList(box); // the menu stays open, as a multi-select's does
+      e.preventDefault();
+    } else if (rm) {
+      const name = box.dataset.name;
+      picked.set(name, picked.get(name).filter((v) => v !== rm.dataset.remove));
+      add(`removed: ${rm.dataset.remove} from ${name}`);
+      draw(box);
+      e.preventDefault();
+    } else if (box && e.target.tagName === "INPUT") openList(box);
+    else closeLists();
+  });
+  for (const box of document.querySelectorAll(".select")) draw(box);
+</script>
