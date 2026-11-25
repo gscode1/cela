@@ -25,7 +25,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
     desktop-web drag <src> <dst>                drag with the mouse and drop on dst (or --by dx,dy px); src, dst: refs or visible text
     desktop-web hover <e123|"regex">            pointer over it or any visible text (menus, captions); prints what appeared
     desktop-web wait "regex" [--gone]           wait until the text appears (or disappears), --timeout N (at most 60 s)
-    desktop-web key End|Page_Down|alt+Left      keys in the browser (load more, go back, Escape); prints what changed
+    desktop-web key End|Page_Down|alt+Left      keys in the browser (load more, go back, Escape); prints what changed and the
+                                                element that took the focus (focus: [e12] textbox "Email")
     desktop-web shot <e123|"regex">             screenshot of that element's or text's area (--pad N for more); prints the file
 
 - Open every page with `desktop-web open`. A URL pattern you have seen on this site (its search, sort order or page number in an
@@ -37,13 +38,18 @@ the real mouse at a person's pace, and reads the page without anything a site ca
 - Answers start with `title:`, and `url:` only when the address changed. Notices under them say what the page is: `redirected
   from X` (you landed elsewhere), `Chrome error page` (it did not load), `may be an error page` (a 404 or 5xx in its title, a
   heading or a line of its own), `looks like a bot check (provider)` and `bot check again` (see Rules), `a frame is still
-  loading` (said once; read again in a moment). In text, `~637 zł~` is struck through (an old price) and `94 ‹Upvote›` names a
-  bare number by its element. `text --indent` marks each line with `>` per level it is indented (replies in a thread).
+  loading` (said once; read again in a moment), `page shows almost no text` (a few short lines and no field: often a site's
+  error or block page; look with `desktop-shot` before you go on). In text, `~637 zł~` is struck through (an old price) and
+  `94 ‹Upvote›` names a bare number by its element. `text --indent` marks each line with `>` per level it is indented (replies
+  in a thread). `text "regex" --table` reads a table row as its cells joined by ` | ` (empty cells kept) with the table's
+  header rows above as `cols: ...`; its line numbers are its own (`--table --lines A-B`).
 - Text a collapsed section cuts off is not in `text`. When nothing matches, `text` says how many matches are in a cut-off
   section and which control opens it: click it, then read again.
 - After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
-  new page's outline, or what changed on this one (lines that appeared or went, a dialog that closed, an alert, other controls'
-  state, a filter's results, an autocomplete's options). Read more only when that is not enough. `type` exits 1 when the field
+  new page's outline, or what changed on this one (lines that appeared or went, lines that kept their text but moved: `order
+  changed (lines A-B), now:` after a sort or a drag, a dialog that closed, an alert, other controls' state such as `selected
+  false -> true`, a filter's results, an autocomplete's options, `the page drew it again` for a control the page redrew).
+  Read more only when that is not enough. `type` exits 1 when the field
   kept its value (read-only: use the control that sets it). Of several fields that match, `type` takes the one outside the
   page's header and menus and says so. A form without a button says `no submit button`: send it with `--enter`.
 - Act by ref: `desktop-web snap "regex"` lists matching links, buttons, fields, checkboxes, named pictures and headings with refs, the page's
@@ -95,7 +101,7 @@ the real mouse at a person's pace, and reads the page without anything a site ca
 - Meaning that is only an icon, a colour or an image (a rating drawn by its class, a status dot): `desktop-web text "regex" --marks`
   prints such elements inline as `‹class words›` taken from the page's markup; if that is not enough, `desktop-web shot <ref>
   --pad 40` and read the image. Do not zoom the page or take full screenshots to find it.
-- Screenshots of the whole window (`desktop-shot`) only to check layout or as a deliverable (`desktop-shot --out /workspace/<name>.jpg`).
+- Screenshots of the whole window (`desktop-shot`) only to check layout, a page that shows almost no text, or as a deliverable (`desktop-shot --out /workspace/<name>.jpg`).
 - `desktop-web url` prints the address. `jq` and `python` exist.
 
 ## Rules

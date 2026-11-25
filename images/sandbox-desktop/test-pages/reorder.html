@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>reorder</title>
+<style>
+  body { font: 16px sans-serif; }
+  .col { width: 160px; height: 90px; border: 2px solid #555; display: inline-block; margin: 8px; text-align: center; cursor: move; }
+  .col header { margin-top: 30px; font-weight: bold; }
+  [role=option] { padding: 4px 10px; cursor: pointer; }
+  [role=option][aria-selected=true] { background: #9cf; }
+</style>
+<body>
+<h1>Changes that keep the text</h1>
+<!-- Nothing on this page writes a log line: each action only moves text or changes state, so an answer that says "nothing
+     happened" is wrong. Two columns swap their contents on an HTML5 drop; a button sorts a list; a listbox marks its options
+     aria-selected (one option redraws the whole list); two fields take the focus in turn. -->
+<div id="columns">
+  <div class="col" id="col-a" draggable="true"><header>Alpha</header></div>
+  <div class="col" id="col-b" draggable="true"><header>Beta</header></div>
+</div>
+<p><button id="sort">Sort the fruit</button></p>
+<ul id="fruit"><li>Plum</li><li>Apple</li><li>Mango</li><li>Cherry</li></ul>
+<div role="listbox" aria-label="Labels" aria-multiselectable="true" id="labels"></div>
+<p><label>First name <input id="first"></label> <label>Last name <input id="last"></label></p>
+<script>
+  let from;
+  for (const c of document.querySelectorAll(".col")) {
+    c.addEventListener("dragstart", (e) => { from = c; e.dataTransfer.setData("text/plain", c.id); });
+    c.addEventListener("dragover", (e) => e.preventDefault());
+    c.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (!from || from === c) return;
+      const h = from.innerHTML;
+      from.innerHTML = c.innerHTML;
+      c.innerHTML = h;
+    });
+  }
+  document.getElementById("sort").onclick = () => {
+    const ul = document.getElementById("fruit");
+    for (const li of [...ul.children].sort((a, b) => a.textContent.localeCompare(b.textContent))) ul.appendChild(li);
+  };
+  const picked = new Set();
+  const draw = () => {
+    document.getElementById("labels").innerHTML = ["bug", "docs", "help wanted"]
+      .map((l) => `<div role="option" aria-selected="${picked.has(l)}" data-l="${l}">${l}</div>`)
+      .join("");
+  };
+  draw();
+  document.getElementById("labels").addEventListener("click", (e) => {
+    const o = e.target.closest("[role=option]");
+    if (!o) return;
+    const l = o.dataset.l;
+    if (picked.has(l)) picked.delete(l);
+    else picked.add(l);
+    // "bug" changes in place; "docs" redraws the list, as a list a framework renders again
+    if (l === "bug") o.setAttribute("aria-selected", String(picked.has(l)));
+    else draw();
+  });
+</script>

@@ -1114,17 +1114,20 @@ function markTokens(snap, doc, i) {
 // Layout snapshot -> lines. With `marks`, a rendered element that has a box a person can see but no text and no accessible
 // name of its own (an icon, a rating drawn from a class, an image without alt) is written into the line where it sits as
 // `‹class words title data src›`, taken from its markup: meaning that is only a picture, as a last resort before a screenshot.
-function snapshotLines(snap, { marks = false } = {}) {
-  return snapshotGroups(snap, { marks }).map((g) => g.text);
+function snapshotLines(snap, { marks = false, table = false } = {}) {
+  return snapshotGroups(snap, { marks, table }).map((g) => g.text);
 }
 
 // The lines of snapshotLines with where they come from: { text, doc, v (docView), block (node index), texts (text node
-// indexes) }.
-function snapshotGroups(snap, { marks = false } = {}) {
+// indexes) }. With `table` a table row is one line of its cells joined by " | ", empty cells kept (spans are not resolved),
+// and carries `table` (its table, "document:node") and `head` (a header row: all its cells are th, or it sits in a thead).
+function snapshotGroups(snap, { marks = false, table = false } = {}) {
   const lines = [];
   let marked = 0;
-  for (const doc of snap.documents ?? []) {
+  for (const [di, doc] of (snap.documents ?? []).entries()) {
     const v = docView(snap, doc);
+    // in a table, each cell is a block of its own: the row is put together from them below
+    const isBlock = (p) => BLOCK.test(v.display(p)) || (table && v.display(p) === "table-cell");
     // Elements whose subtree holds text or a control: not nameless pictures.
     const content = new Set();
     const covered = new Set();
@@ -1139,7 +1142,7 @@ function snapshotGroups(snap, { marks = false } = {}) {
     const { joined, spaced } = joinInline(doc, v);
     const blockOf = (i) => {
       let p = v.parent[i];
-      while (p > 0 && (!BLOCK.test(v.display(p)) || joined.has(p))) p = v.parent[p];
+      while (p > 0 && (!isBlock(p) || joined.has(p))) p = v.parent[p];
       return p;
     };
     // the flex item (joinInline's `spaced`) a text node sits in, within its block: -1 for none
@@ -1221,16 +1224,76 @@ function snapshotGroups(snap, { marks = false } = {}) {
       g.x = Math.min(g.x, b.x);
       g.texts.push(i);
     }
+    const done = [];
     for (const g of groups.values()) {
       let t = squash(g.struck ? g.text.replace(/\s*$/, "~") : g.text);
       if (t && !LETTER.test(t) && g.texts.length > 0) {
         const label = labelAround(snap, doc, v, g.texts[0]);
         if (label) t += ` ‹${clip(label, 40)}›`;
       }
-      if (t) lines.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
+      if (t) done.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
     }
+    lines.push(...(table ? tableRows(done, doc, v, di) : done));
   }
   return lines;
+}
+
+// The lines of one document (snapshotGroups) with the lines of each table row's cells joined into one line at the row's
+// first: "Tokyo | Japan | 37,400,068". A cell's text is all the lines inside it; a cell without text stays, empty.
+function tableRows(done, doc, v, di) {
+  const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
+  const cellOf = (i) => {
+    for (let p = i; p >= 0; p = v.parent[p]) {
+      const d = v.display(p);
+      if (d === "table-cell") return v.display(v.parent[p]) === "table-row" ? p : -1;
+      if (/^(table|table-row|table-row-group|table-header-group|table-footer-group)$/.test(d)) return -1;
+    }
+    return -1;
+  };
+  const cells = new Map();
+  for (const [i] of v.layoutOf) {
+    const row = v.parent[i];
+    if (row >= 0 && v.display(i) === "table-cell" && v.display(row) === "table-row") {
+      if (!cells.has(row)) cells.set(row, []);
+      cells.get(row).push(i);
+    }
+  }
+  for (const list of cells.values()) list.sort((a, b) => a - b);
+  const inCell = new Map();
+  for (const l of done) {
+    const c = cellOf(l.block);
+    if (c < 0) continue;
+    if (!inCell.has(c)) inCell.set(c, []);
+    inCell.get(c).push(l);
+  }
+  const out = [];
+  const emitted = new Set();
+  for (const l of done) {
+    const c = cellOf(l.block);
+    if (c < 0) {
+      out.push(l);
+      continue;
+    }
+    const row = v.parent[c];
+    if (emitted.has(row)) continue;
+    emitted.add(row);
+    const own = (cells.get(row) ?? [c]).map((k) => inCell.get(k) ?? []);
+    let tab = row;
+    while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
+    let head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
+    for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
+    out.push({
+      text: own.map((ls) => ls.map((x) => x.text).join(" ")).join(" | "),
+      doc,
+      v,
+      block: row,
+      texts: own.flat().flatMap((x) => x.texts),
+      x: Math.min(...own.flat().map((x) => x.x)),
+      table: `${di}:${tab}`,
+      head,
+    });
+  }
+  return out;
 }
 
 // Text a box with overflow hidden cuts away entirely (a collapsed spec table, a "show more" section): how many of its blocks
@@ -1299,20 +1362,23 @@ function labelAround(snap, doc, v, i) {
 
 // snapshotLines wrapped to `width`, with where each line is: `xs` (its left edge, px) and `at` (backend node id -> index of
 // the first line holding the element's text), so a heading maps to its line by node, not by its words.
-function snapshotText(snap, { marks = false, width = 200 } = {}) {
+// With `table` (snapshotGroups) `rows` holds, per line, the { table, head } of a table row's line.
+function snapshotText(snap, { marks = false, width = 200, table = false } = {}) {
   const lines = [];
   const xs = [];
   const at = new Map();
-  for (const g of snapshotGroups(snap, { marks })) {
+  const rows = [];
+  for (const g of snapshotGroups(snap, { marks, table })) {
     const first = lines.length;
     for (const l of wrapLines([g.text], width)) {
+      rows[lines.length] = g.table === undefined ? undefined : { table: g.table, head: g.head };
       lines.push(l);
       xs.push(g.x);
     }
     const ids = g.doc.nodes.backendNodeId;
     for (const t of g.texts) for (let p = g.v.parent[t]; p >= 0 && !at.has(ids[p]); p = g.v.parent[p]) at.set(ids[p], first);
   }
-  return { lines, xs, at };
+  return { lines, xs, at, rows };
 }
 
 // Nesting levels from the lines' left edges: how many left edges that several lines share lie left of a line's. A thread's
@@ -1443,6 +1509,55 @@ function newLines(before, after) {
     out.push(l);
   }
   return out;
+}
+
+// Whether the lines both reads hold kept their order (a sort, a drag that swaps two items, a list that put the picked one
+// first). Lines that show more than once in either read are left out: which copy moved cannot be told. Returns the range
+// of `after` (1-based line numbers) from the first line out of place to the last, or undefined when the order held.
+function orderChange(before, after) {
+  const count = (ls) => {
+    const m = new Map();
+    for (const l of ls) m.set(l, (m.get(l) ?? 0) + 1);
+    return m;
+  };
+  const a = count(before);
+  const b = count(after);
+  const kept = (l) => a.get(l) === 1 && b.get(l) === 1;
+  const was = before.filter(kept);
+  const now = [];
+  const at = [];
+  after.forEach((l, i) => {
+    if (kept(l)) {
+      now.push(l);
+      at.push(i);
+    }
+  });
+  let i = 0;
+  while (i < now.length && was[i] === now[i]) i++;
+  if (i === now.length) return undefined;
+  let j = now.length - 1;
+  while (j > i && was[j] === now[j]) j--;
+  return { from: at[i] + 1, to: at[j] + 1 };
+}
+
+// The element that has focus: its entry when it is one (with a ref), else its accessibility node's role and name; the
+// page itself (no element focused) is undefined. { key (frame and backend id), entry?, line }.
+function focusOf(nodes, entries) {
+  const n = nodes.find((m) => !m.ignored && m.backendDOMNodeId && !/^(RootWebArea|WebArea)$/.test(value(m.role)) && (m.properties ?? []).some((p) => p.name === "focused" && value(p.value) === true));
+  if (!n) return undefined;
+  const key = `${n.frameTag ?? ""}:${n.backendDOMNodeId}`;
+  const entry = entries.find((e) => `${e.frameTag ?? ""}:${e.backendNodeId}` === key);
+  return { key, entry, line: entry ? entryLine(entry, { nameMax: 80 }) : `${value(n.role)} "${clip(squash(value(n.name)), 80)}"` };
+}
+
+// The acted-on element in a later read: by its ref, else (the page drew it again) the one element of its role and name in
+// its frame. { entry, redrawn } or undefined when it is gone or several could be it (`several`).
+function findAgain(entries, entry) {
+  const same = entries.find((e) => e.ref === entry.ref);
+  if (same) return { entry: same, redrawn: false };
+  const like = entries.filter((e) => e.role === entry.role && e.name === entry.name && (e.frameTag ?? "") === (entry.frameTag ?? ""));
+  if (like.length === 1) return { entry: like[0], redrawn: true };
+  return like.length > 1 ? { several: true } : undefined;
 }
 
 // Open dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in them, so a
@@ -1578,6 +1693,8 @@ function challengeOf(url) {
 // A bot check says little: a page this short (in lines) can be one; a longer one is a page with content. A site's error page
 // keeps the site's menus and footer around its message, so it may be longer.
 const SHORT_PAGE = 40;
+// At most this many lines (and 200 characters), and no field: a page that says almost nothing.
+const NEARLY_EMPTY = 3;
 const ERROR_PAGE = 150;
 // An HTTP error status at the start or the end of a title's part or a heading: "404 - Shop", "Error 404", "x | 522: Connection
 // timed out" (Cloudflare's own error pages run from 520 to 530). A number inside one ("SSD 500 GB") is a product's.
@@ -1663,6 +1780,24 @@ function pageNotices(parts, { lines = [], title = "", sighting = () => 1 } = {})
         : `bot check again (${hit}, ${ORDINAL(n)} time on ${host}): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.`,
     );
   }
+  // A page of a few short lines and no field to fill: a site's error or block page that names no status ("Sorry, something
+  // went wrong"), in any language, or a page drawn as a picture. A page with nothing drawn yet is not one (no lines).
+  const fields = parts.some(({ snap, hidden }) =>
+    (snap.documents ?? []).some((doc) => {
+      const v = docView(snap, doc);
+      return [...v.layoutOf.keys()].some((i) => {
+        if (doc.nodes.nodeType[i] !== 1 || !/^(INPUT|TEXTAREA|SELECT)$/i.test(v.str(doc.nodes.nodeName[i]))) return false;
+        const b = v.bounds(i);
+        return b && !v.tiny(b) && !v.offscreen(b) && !hidden?.has(doc.nodes.backendNodeId[i]);
+      });
+    }),
+  );
+  const web = /^https?:/.test(str(parts[0]?.snap, main?.documentURL ?? -1));
+  const chars = lines.reduce((n, l) => n + l.length, 0);
+  if (out.length === 0 && !hit && web && lines.length >= 1 && lines.length <= NEARLY_EMPTY && chars <= 200 && !fields)
+    out.push(
+      `page shows almost no text (${lines.length} line${lines.length === 1 ? "" : "s"}, no form field): an error or block page, or a picture-only one; look with desktop-shot`,
+    );
   if (loading.length > 0) {
     const host = (u) => {
       try {
@@ -1874,6 +2009,9 @@ module.exports = {
   frameTag,
   iframeTargets,
   newLines,
+  orderChange,
+  focusOf,
+  findAgain,
   outline,
   decodeEntities,
   pageNotices,
