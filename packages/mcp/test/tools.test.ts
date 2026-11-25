@@ -160,7 +160,7 @@ describe("tools", () => {
     },
   );
 
-  it("lists exactly the 7 tools with annotations", { timeout: TIMEOUT }, async () => {
+  it("lists exactly the 8 tools with annotations", { timeout: TIMEOUT }, async () => {
     const { tools } = await client.listTools();
     const by = new Map(tools.map((t) => [t.name, t]));
     expect([...by.keys()].sort()).toEqual(
@@ -170,6 +170,7 @@ describe("tools", () => {
         "get_session",
         "run_task",
         "send_message",
+        "set_live_view",
         "start_session",
         "wait",
       ].sort(),
@@ -646,5 +647,76 @@ describe("tools", () => {
     expect(fake.requestsTo("DELETE", `/sessions/${id}`)).toHaveLength(1);
     const g = await call("get_session", { sessionId: id });
     expect(g.structuredContent?.status).toBe("deleted");
+  });
+
+  describe("live view", () => {
+    it("start_session passes liveView and returns liveViewUrl", { timeout: TIMEOUT }, async () => {
+      const r = await call("start_session", { profile: "desktop", liveView: true });
+      expect(fake.requestsTo("POST", "/sessions")[0]?.body).toEqual({
+        profile: "desktop",
+        liveView: true,
+      });
+      expect(r.structuredContent?.liveViewUrl).toMatch(/^https:\/\/live\.example\.test\//);
+      const plain = await call("start_session", {});
+      expect(fake.requestsTo("POST", "/sessions")[1]?.body).toEqual({});
+      expect(plain.structuredContent).not.toHaveProperty("liveViewUrl");
+    });
+
+    it("run_task passes liveView and returns liveViewUrl", { timeout: TIMEOUT }, async () => {
+      const answered = answerWhenPosted("done");
+      const r = await call("run_task", { text: "go", liveView: true, timeoutSec: 10 });
+      await answered;
+      expect(fake.requestsTo("POST", "/sessions")[0]?.body).toEqual({ liveView: true });
+      expect(r.structuredContent?.liveViewUrl).toMatch(/^https:\/\/live\.example\.test\//);
+    });
+
+    it("set_live_view enables with PUT and rotates the URL", { timeout: TIMEOUT }, async () => {
+      const s = fake.addSession();
+      const a = await call("set_live_view", { sessionId: s.id, enabled: true });
+      const b = await call("set_live_view", { sessionId: s.id, enabled: true });
+      expect(fake.requestsTo("PUT", `/sessions/${s.id}/live-view`)).toHaveLength(2);
+      expect(a.structuredContent?.liveViewUrl).toMatch(/^https:/);
+      expect(b.structuredContent?.liveViewUrl).not.toBe(a.structuredContent?.liveViewUrl);
+    });
+
+    it("set_live_view disables with DELETE", { timeout: TIMEOUT }, async () => {
+      const s = fake.addSession();
+      const r = await call("set_live_view", { sessionId: s.id, enabled: false });
+      expect(r.isError).toBeUndefined();
+      expect(r.structuredContent).toEqual({ sessionId: s.id, liveView: false });
+      expect(fake.requestsTo("DELETE", `/sessions/${s.id}/live-view`)).toHaveLength(1);
+    });
+
+    it(
+      "set_live_view maps 400, 409 and 410 and refuses a bad id",
+      { timeout: TIMEOUT },
+      async () => {
+        const s = fake.addSession();
+        fake.failNextLiveView = { status: 400, error: "live view needs a desktop session" };
+        const bad = await call("set_live_view", { sessionId: s.id, enabled: true });
+        expect(bad.isError).toBe(true);
+        expect(bad.structuredContent?.status).toBe(400);
+        expect(bad.structuredContent?.error).toContain("desktop");
+        const failed = fake.addSession({ status: "failed" });
+        const c = await call("set_live_view", { sessionId: failed.id, enabled: true });
+        expect(c.structuredContent).toMatchObject({ status: 409 });
+        const gone = fake.addSession({ status: "deleted" });
+        const d = await call("set_live_view", { sessionId: gone.id, enabled: false });
+        expect(d.structuredContent?.status).toBe(410);
+        const before = fake.requests.length;
+        const e = await call("set_live_view", { sessionId: "nope", enabled: true });
+        expect(e.isError).toBe(true);
+        expect(fake.requests).toHaveLength(before);
+      },
+    );
+
+    it("tell the model to treat the URL as a secret", { timeout: TIMEOUT }, async () => {
+      const { tools } = await client.listTools();
+      const t = tools.find((x) => x.name === "set_live_view");
+      for (const phrase of ["no login", "password", "rotates"]) {
+        expect(t?.description, phrase).toContain(phrase);
+      }
+      expect(JSON.stringify(tools.find((x) => x.name === "start_session"))).toContain("password");
+    });
   });
 });

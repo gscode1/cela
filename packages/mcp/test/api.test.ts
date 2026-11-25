@@ -160,4 +160,43 @@ describe("SessionApi", { timeout: 15_000 }, () => {
     const gone = await api.openStream(s.id, undefined, new AbortController().signal);
     expect((await api.errorFromResponse(gone)).status).toBe(410);
   });
+
+  it("passes liveView on create and returns liveViewUrl", async () => {
+    const created = await api.createSession({ profile: "desktop", liveView: true });
+    expect(fake.requests[0]?.body).toEqual({ profile: "desktop", liveView: true });
+    expect(created.liveViewUrl).toMatch(/^https:\/\//);
+  });
+
+  it("enableLiveView PUTs and returns a new URL each time; disableLiveView DELETEs", async () => {
+    const s = fake.addSession();
+    const a = await api.enableLiveView(s.id);
+    const b = await api.enableLiveView(s.id);
+    expect(a).not.toBe(b);
+    expect(fake.requests[0]).toMatchObject({
+      method: "PUT",
+      path: `/sessions/${s.id}/live-view`,
+      body: undefined,
+    });
+    await api.disableLiveView(s.id);
+    await api.disableLiveView(s.id);
+    expect(fake.requestsTo("DELETE", "/live-view")).toHaveLength(2);
+    for (const r of fake.requests) expect(r.headers.authorization).toBe(`Bearer ${fake.token}`);
+  });
+
+  it("maps live view errors 400, 409 and 410, and refuses a bad id", async () => {
+    const s = fake.addSession();
+    fake.failNextLiveView = { status: 400, error: "not a desktop session" };
+    expect(await rejection(api.enableLiveView(s.id))).toMatchObject({
+      status: 400,
+      message: "not a desktop session",
+    });
+    const failed = fake.addSession({ status: "failed" });
+    expect((await rejection(api.enableLiveView(failed.id))).status).toBe(409);
+    const gone = fake.addSession({ status: "deleted" });
+    expect((await rejection(api.disableLiveView(gone.id))).status).toBe(410);
+    const before = fake.requests.length;
+    await rejection(api.enableLiveView("nope"));
+    await rejection(api.disableLiveView("nope"));
+    expect(fake.requests).toHaveLength(before);
+  });
 });
