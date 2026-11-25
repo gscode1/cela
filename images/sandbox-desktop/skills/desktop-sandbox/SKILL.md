@@ -39,6 +39,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   heading or a line of its own), `looks like a bot check (provider)` and `bot check again` (see Rules), `a frame is still
   loading` (said once; read again in a moment). In text, `~637 zł~` is struck through (an old price) and `94 ‹Upvote›` names a
   bare number by its element. `text --indent` marks each line with `>` per level it is indented (replies in a thread).
+- Text a collapsed section cuts off is not in `text`. When nothing matches, `text` says how many matches are in a cut-off
+  section and which control opens it: click it, then read again.
 - After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
   new page's outline, or what changed on this one (lines that appeared or went, a dialog that closed, an alert, other controls'
   state, a filter's results, an autocomplete's options). Read more only when that is not enough. `type` exits 1 when the field

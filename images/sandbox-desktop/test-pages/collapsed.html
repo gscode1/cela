@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>collapsed</title>
+<body style="font:16px sans-serif">
+<button aria-expanded="false" style="padding:6px 12px">Menu</button>
+<h1>Monitor Alpha 27</h1>
+<h2>Specification</h2>
+<div id="spec" style="max-height:60px;overflow:hidden;border:1px solid #888;width:500px">
+  <table>
+    <tr><td>Screen</td><td>27 in</td></tr>
+    <tr><td>Resolution</td><td>3840 x 2160</td></tr>
+    <tr><td>Panel</td><td>IPS</td></tr>
+    <tr><td>Ports</td><td>USB-C, HDMI, DisplayPort</td></tr>
+    <tr><td>Stand</td><td>Height adjustable</td></tr>
+  </table>
+</div>
+<button id="more" style="padding:6px 12px">Show the full specification</button>
+<p>Price: 1 149 zł</p>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  document.getElementById("more").addEventListener("click", () => (document.getElementById("spec").style.maxHeight = "none"));
+</script>

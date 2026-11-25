@@ -36,8 +36,10 @@
 //   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
 //
 // Answers start with the page's url (only when it changed since the last answer, cut to 120 characters) and title, then
-// notices: redirected from the typed URL, Chrome's error page, a likely error page or bot check, a frame still loading.
-// Struck-through text reads ~637 zł~.
+// notices: redirected from the typed URL, Chrome's error page, a likely error page, a bot check (the first sight on a host
+// allows one ordinary revisit, the second says stop), a frame still loading (once per page). Struck-through text reads
+// ~637 zł~. A `text` regex that matches nothing says how many matches a collapsed (overflow-cut) section holds and which
+// control opens it, never their text. click, type and drag refuse a bot check's own widget.
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
 // the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
@@ -604,6 +606,46 @@ async function namedLike(re, tree) {
   return ["elements that match (no text line does):", ...els.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`)];
 }
 
+// When no line matches: how many blocks of text a box with overflow hidden cuts away match (cdp.cutOff), never their text,
+// and the control that opens that box: a collapsed one (expanded=false) in or just below it, else the button or link just
+// below it.
+function cutOffLines(re, tree) {
+  if (!tree) return [];
+  let count = 0;
+  let pick;
+  for (const r of tree.read) {
+    const cut = cdp.cutOff(r.snap, re);
+    if (cut.count === 0) continue;
+    count += cut.count;
+    if (pick) continue;
+    const own = tree.entries.filter((e) => (e.frameTag ?? "") === (r.part.tag ?? "") && !r.hidden.has(e.backendNodeId));
+    const at = cdp.boxesOf(r.snap, own.map((e) => e.backendNodeId));
+    // how far below a cutting box an element starts (inside it counts as 0), or undefined when it is not in or under it
+    const below = (e) => {
+      const b = at.get(e.backendNodeId);
+      if (!b) return undefined;
+      let best;
+      for (const c of cut.boxes) {
+        if (b.x > c.x + c.w || b.x + b.w < c.x || b.y < c.y - 10 || b.y > c.y + c.h + 150) continue;
+        const d = Math.max(b.y - (c.y + c.h), 0);
+        best = best === undefined ? d : Math.min(best, d);
+      }
+      return best;
+    };
+    const near = (list) =>
+      list
+        .map((e) => ({ e, d: below(e) }))
+        .filter((x) => x.d !== undefined)
+        .sort((a, b) => a.d - b.d)[0]?.e;
+    pick = near(own.filter((e) => e.expanded === "false" || e.expanded === false)) ?? near(own.filter((e) => ["button", "link"].includes(e.role) && e.expanded === undefined));
+  }
+  if (count === 0) return [];
+  const what = `${count === 1 ? "1 match is" : `${count} matches are`} in a cut-off section (text not shown)`;
+  if (!pick) return [`${what}: open it first (a "more" control near it: desktop-web snap)`];
+  rememberRefs([pick], { merge: true });
+  return [`${what}: open it first with ${cdp.entryLine(pick, { nameMax: 60 })} (desktop-web click ${pick.ref})`];
+}
+
 // What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings. `lineOf`
 // maps a heading to its line (readText).
 async function describe(lines, nodes, pattern, o, tree, lineOf) {
@@ -1149,7 +1191,10 @@ async function main() {
       if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
       const re = regex(pattern);
       const hits = lib.grepLines(lines, o.indent ? { test: (l) => re.test(l.replace(/^>+ /, "")) } : re, { limit: o.limit ?? 25, context: o.context, width: WIDTH });
-      if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) hits.push(...(await namedLike(regex(pattern), () => withPage((c) => axTree(c)))));
+      if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) {
+        const tree = await withPage((c) => axTree(c)).catch(() => undefined);
+        hits.push(...(await namedLike(re, async () => tree)), ...cutOffLines(re, tree));
+      }
       const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;

@@ -371,6 +371,23 @@ case_challenge() {
   check "the second time on the host: stop" "$(ok '^bot check again \(Cloudflare challenge, 2nd time on 127\.0\.0\.1:[0-9]+\): stop and report it')"
 }
 
+# Text a box with overflow hidden cuts away: said to exist, never printed, with the control that opens it.
+case_collapsed() {
+  open collapsed
+  web text 'USB-C'
+  check "a match in a cut-off section is counted" "$(ok '^1 match is in a cut-off section \(text not shown\): open it first with \[e[0-9]+\] button "Show the full specification"')"
+  check "its text is not printed" "$(no 'HDMI|DisplayPort')"
+  check "the menu above is not offered" "$(no '"Menu"')"
+  local ref
+  ref=$(grep -o 'desktop-web click e[0-9]*' "$OUT" | awk '{print $3}')
+  web click "${ref:-none}"
+  has_text 'USB-C, HDMI'
+  check "once opened it is text" $?
+  open honeypot
+  web text 'Screen reader trap'
+  check "screen-reader-only text is no cut-off section" "$(no 'cut-off')"
+}
+
 case_shot() {
   open marks
   web shot 'Alpha book' --pad 50
@@ -632,7 +649,7 @@ case_acting() {
   check "not an outline either" "$(no 'outline')"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge shot custom state names form stale slider upload drag decor dropdown acting)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

@@ -73,6 +73,10 @@ interface CdpLib {
     o: { lines: string[]; title: string; sighting?: (host: string) => number },
   ): string[];
   challengeOf(url: string): string | undefined;
+  cutOff(
+    snap: unknown,
+    re: RegExp,
+  ): { count: number; boxes: { x: number; y: number; w: number; h: number }[] };
   showsBox(snap: unknown, backendNodeId: number): boolean;
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
   ownedNodes(nodes: AxNode[], entry: Entry): Set<string>;
@@ -531,6 +535,41 @@ describe("desktop-web's CDP reader", () => {
       "Left words",
       "Right",
     ]);
+  });
+
+  it("counts matches in text a box with overflow hidden cuts away, without the text", () => {
+    const st = (overflow: string): string[] => [
+      "block",
+      "visible",
+      "1",
+      "static",
+      overflow,
+      overflow,
+      "auto",
+    ];
+    const el = (parent: number, style: string[], box: [number, number, number, number]): N => ({
+      parent,
+      type: 1,
+      tag: "DIV",
+      style: style as unknown as [string, string, string],
+      box,
+    });
+    const snap = snapOf([
+      doc, // 0
+      el(0, st("visible"), [0, 0, 600, 400]), // 1 page
+      el(1, st("hidden"), [0, 0, 500, 60]), // 2 a spec table cut at 60 px
+      el(2, st("visible"), [0, 0, 500, 20]), // 3
+      t("Screen 27 in", [0, 0, 90, 16], 3),
+      el(2, st("visible"), [0, 100, 500, 20]), // 5
+      t("Ports USB-C, HDMI", [0, 100, 130, 16], 5),
+      el(2, st("visible"), [0, 120, 500, 20]), // 7
+      t("Cable USB-C", [0, 120, 90, 16], 7),
+      el(1, st("hidden"), [0, 300, 1, 1]), // 9 a screen-reader-only box
+      t("USB-C hidden", [0, 300, 90, 16], 9),
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["Screen 27 in"]);
+    expect(cdp.cutOff(snap, /USB-C/)).toEqual({ count: 2, boxes: [{ x: 0, y: 0, w: 500, h: 60 }] });
+    expect(cdp.cutOff(snap, /Screen/)).toEqual({ count: 0, boxes: [] });
   });
 
   it("marks struck-through text and labels a line without letters by the element around it", () => {

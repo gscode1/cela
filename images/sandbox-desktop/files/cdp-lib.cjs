@@ -711,9 +711,11 @@ function docView(snap, doc) {
   // The part of node i's box a person can see: what is left after the overflow-hidden boxes it sits in (until a fixed
   // position leaves them; an absolute one leaves those before its containing block) and its own `clip: rect(...)`.
   // Scrollable boxes (auto, scroll) do not cut: their content is one scroll away. body and html clip nothing.
-  const visible = (i) => {
+  // `cut` (cutBy) learns the overflow box that cut i's box away entirely, when one did.
+  const cutBy = (i) => {
     let box = bounds(i);
     if (!box) return undefined;
+    let cut = -1;
     let escaping = false;
     for (let cur = i, a = parent[i]; a >= 0; cur = a, a = parent[a]) {
       const cs = style(cur);
@@ -734,12 +736,17 @@ function docView(snap, doc) {
       }
       const tag = str(nodeName[a]).toUpperCase();
       if (tag === "BODY" || tag === "HTML") continue;
-      if (/^(hidden|clip)$/.test(as[4]) || /^(hidden|clip)$/.test(as[5])) box = meet(box, ab);
+      if (/^(hidden|clip)$/.test(as[4]) || /^(hidden|clip)$/.test(as[5])) {
+        const was = tiny(box);
+        box = meet(box, ab);
+        if (!was && tiny(box) && cut < 0) cut = a;
+      }
     }
-    return box;
+    return { box, cut };
   };
+  const visible = (i) => cutBy(i)?.box;
   const display = (i) => style(i)?.[0] ?? "inline";
-  return { str, style, display, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
+  return { str, style, display, bounds, visible, cutBy, parent, layoutOf, seeThrough, offscreen, tiny };
 }
 
 // The inline boxes (inline-block, inline-flex and the items of an inline flex or grid) of a document whose text reads as part
@@ -945,6 +952,55 @@ function snapshotGroups(snap, { marks = false } = {}) {
     }
   }
   return lines;
+}
+
+// Text a box with overflow hidden cuts away entirely (a collapsed spec table, a "show more" section): how many of its blocks
+// match `re`, and the boxes that cut them, so an answer can say that it exists and what opens it without printing it. Only
+// text a person would see once the box opens counts: a box that itself shows (at least 20 px each way) cuts it, not a
+// screen-reader-only one of 1 px, and nothing hidden in any other way. Returns { count, boxes: [{x, y, w, h}] }.
+function cutOff(snap, re) {
+  let count = 0;
+  const boxes = [];
+  for (const doc of snap.documents ?? []) {
+    const v = docView(snap, doc);
+    const blocks = new Map(); // block -> { text, cut }
+    for (const [i] of v.layoutOf) {
+      if (doc.nodes.nodeType[i] !== 3) continue;
+      const raw = v.str(doc.nodes.nodeValue[i]);
+      const b = v.bounds(i);
+      if (raw.trim() === "" || !b || v.tiny(b) || v.style(i)?.[1] === "hidden" || v.seeThrough(i)) continue;
+      const r = v.cutBy(i);
+      if (!r || r.cut < 0 || !v.tiny(r.box)) continue;
+      const shown = v.visible(r.cut);
+      if (!shown || shown.w < 20 || shown.h < 20 || v.style(r.cut)?.[1] === "hidden" || v.seeThrough(r.cut)) continue;
+      let block = v.parent[i];
+      while (block > 0 && !BLOCK.test(v.display(block))) block = v.parent[block];
+      const g = blocks.get(block) ?? { text: "", cut: r.cut };
+      g.text += ` ${raw}`;
+      blocks.set(block, g);
+    }
+    for (const g of blocks.values()) {
+      if (!re.test(squash(g.text))) continue;
+      count++;
+      const box = v.visible(g.cut);
+      if (!boxes.some((x) => x.x === box.x && x.y === box.y && x.w === box.w && x.h === box.h)) boxes.push(box);
+    }
+  }
+  return { count, boxes };
+}
+
+// The boxes of elements by backend id, as a layout snapshot has them (page coordinates).
+function boxesOf(snap, ids) {
+  const want = new Set(ids);
+  const out = new Map();
+  for (const doc of snap.documents ?? []) {
+    const v = docView(snap, doc);
+    for (const [i] of v.layoutOf) {
+      const id = doc.nodes.backendNodeId[i];
+      if (want.has(id) && v.bounds(i)) out.set(id, v.bounds(i));
+    }
+  }
+  return out;
 }
 
 // The aria-label or title (in letters) of the nearest element around text node i that holds little more than the text: what
@@ -1542,6 +1598,8 @@ module.exports = {
   outline,
   decodeEntities,
   pageNotices,
+  cutOff,
+  boxesOf,
   snapshotText,
   indentLevels,
   wrapLines,
