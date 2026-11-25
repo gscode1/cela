@@ -159,7 +159,12 @@ const CLICKABLE = new Set([
   "listbox",
   // a table's header cell: annotate keeps one only when it shows it sorts or takes clicks (a sortable column)
   "columnheader",
+  // not an accessibility role: an element of another role that a person reaches with Tab (a slider's handle drawn as a
+  // span), named so by axEntries and kept by annotate only for tabindex>=0 in its markup
+  "focusable",
 ]);
+// Nodes that are focusable but never a target: the page and its frames.
+const NOT_TARGETS = new Set(["RootWebArea", "WebArea", "Iframe", "IframePresentational"]);
 const IMAGES = new Set(["image", "img", "figure"]);
 const FIELDS = new Set(["textbox", "searchbox", "combobox", "spinbutton", "listbox"]);
 const value = (p) => (p && p.value !== undefined ? p.value : undefined);
@@ -184,7 +189,7 @@ function axEntries(nodes, { extraRoles } = {}) {
   const out = [];
   for (const n of live) {
     if (!n.backendDOMNodeId) continue;
-    const role = value(n.role);
+    let role = value(n.role);
     const name = squash(value(n.name));
     const props = Object.fromEntries((n.properties ?? []).map((p) => [p.name, value(p.value)]));
     if (role === "heading") {
@@ -195,7 +200,11 @@ function axEntries(nodes, { extraRoles } = {}) {
       if (!name) continue;
     } else if (role === "columnheader") {
       if (!name) continue;
-    } else if (!CLICKABLE.has(role)) continue;
+    } else if (!CLICKABLE.has(role)) {
+      // a role-less element a person reaches with Tab: listed as "focusable" (annotate checks its tabindex)
+      if (props.focusable !== true || NOT_TARGETS.has(role) || inControl(n)) continue;
+      role = "focusable";
+    }
     const description = squash(value(n.description));
     out.push({
       ref: `e${n.backendDOMNodeId}${n.frameTag ? `@${n.frameTag}` : ""}`,
@@ -286,7 +295,14 @@ function snapIndex(snap) {
     if (!views.has(doc)) views.set(doc, docView(snap, doc));
     return views.get(doc);
   };
-  return { find: (id) => at.get(id), attrs: ({ doc, i }) => nodeAttrs(snap, doc, i), labelOf, tokens, tag, view };
+  // Hidden only by opacity 0: a box of at least 8 px a person can click, not cut away, not visibility:hidden, on the page.
+  const clearBox = ({ doc, i }) => {
+    const v = view(doc);
+    const b = v.bounds(i);
+    const seen = v.visible(i);
+    return !!b && !!seen && v.seeThrough(i) && v.style(i)?.[1] !== "hidden" && !v.offscreen(b) && seen.w >= 8 && seen.h >= 8;
+  };
+  return { find: (id) => at.get(id), attrs: ({ doc, i }) => nodeAttrs(snap, doc, i), labelOf, tokens, tag, view, clearBox };
 }
 
 // The text a person reads as a field's label: text ending just left of the field on its height (words of the line before it,
@@ -350,11 +366,23 @@ function annotate(entries, snap, hidden) {
     if (hidden.has(e.backendNodeId)) {
       if (!TOGGLES.has(e.role) || !at) continue;
       const label = ix.labelOf(at, hidden);
-      if (label === undefined) continue;
-      e = { ...e, via: label };
+      // without a label: a toggle hidden only by opacity 0 over a box a person can click (the row draws its check box) is
+      // clicked on its own box; a hit test still refuses it when something covers it
+      if (label === undefined && !ix.clearBox(at)) continue;
+      if (label !== undefined) e = { ...e, via: label };
     }
+    if (e.role === "focusable" && (!at || !tabStop(ix, at))) continue;
     kept.push({ e, at });
   }
+  // A focusable element that holds a listed control is a container (a panel, a row): its controls are the targets.
+  const around = new Map();
+  for (const { e, at } of kept) {
+    if (!at || e.role === "focusable" || !CLICKABLE.has(e.role)) continue;
+    const m = around.get(at.doc) ?? new Set();
+    around.set(at.doc, m);
+    for (let p = at.doc.nodes.parentIndex[at.i]; p >= 0; p = at.doc.nodes.parentIndex[p]) m.add(p);
+  }
+  kept = kept.filter(({ e, at }) => e.role !== "focusable" || !around.get(at.doc)?.has(at.i));
   const headers = kept.filter(({ e, at }) => e.role === "columnheader" && at);
   kept = kept.filter(({ e, at }) => e.role !== "columnheader" || (at && sortable(ix, at, e)));
   // How many listed controls each element holds, by node, itself included: a box holds only its own.
@@ -433,6 +461,15 @@ function annotate(entries, snap, hidden) {
   return groupHeaders(out, headers, ix);
 }
 
+// An element in the page's Tab order by its own markup (tabindex 0 or more; -1 only takes focus from script) that does not
+// scroll (a scroller with tabindex is a region to read, not a control).
+function tabStop(ix, at) {
+  const t = ix.attrs(at).tabindex;
+  if (t === undefined || !/^\s*\d+\s*$/.test(t)) return false;
+  const st = ix.view(at.doc).style(at.i);
+  return !/^(auto|scroll)$/.test(st?.[4] ?? "") && !/^(auto|scroll)$/.test(st?.[5] ?? "");
+}
+
 // A column header that sorts or takes clicks: aria-sort, focusable, a click listener or a pointer cursor. Others are labels.
 function sortable(ix, at, e) {
   if (e.focusable || ix.attrs(at)["aria-sort"] !== undefined) return true;
@@ -486,28 +523,55 @@ function groupHeaders(out, headers, ix) {
 
 // A control without a name in letters and without a placeholder is told apart by the text of its row (`near`, as --near
 // would match it). One that has neither markup words nor row text says nothing a person could use: it is dropped, as before,
-// unless it is a field or a checkbox (those are typed into or ticked by ref).
+// unless it is a field or a checkbox (those are typed into or ticked by ref). A focusable element whose row has no text (two
+// handles of one slider) takes the text of the nearest element around it that has some. Controls that share a role and a
+// name (a "Toggle" per row of a list) show their row's text too, cut to 40 characters, without the name it starts with.
 function nameUnnamed(nodes, entries) {
   const unnamed = (e) => CLICKABLE.has(e.role) && !LETTER.test(e.name) && !e.placeholder;
-  const want = new Set(entries.filter(unnamed));
+  const key = (e) => `${e.frameTag ?? ""}\u0000${e.role}\u0000${e.name}`;
+  const count = new Map();
+  for (const e of entries) if (CLICKABLE.has(e.role) && LETTER.test(e.name)) count.set(key(e), (count.get(key(e)) ?? 0) + 1);
+  const twin = (e) => CLICKABLE.has(e.role) && LETTER.test(e.name) && (count.get(key(e)) ?? 0) > 1;
+  const want = new Set(entries.filter((e) => unnamed(e) || twin(e)));
   if (want.size === 0) return entries;
   const rows = rowTexts(nodes, entries, { max: 50, only: want });
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const words = /[\p{L}\p{N}]/u;
+  // the text of the nearest ancestor that has any (the label beside a slider's track)
+  const around = (e) => {
+    for (let n = byId.get(byId.get(e.nodeId)?.parentId); n; n = byId.get(n.parentId)) {
+      const t = axText(byId, n.nodeId, 40);
+      if (words.test(t)) return t;
+    }
+    return "";
+  };
   return entries
-    .map((e, i) => (want.has(e) && /[\p{L}\p{N}]/u.test(rows[i] ?? "") ? { ...e, near: rows[i] } : e))
+    .map((e, i) => {
+      if (!want.has(e)) return e;
+      if (unnamed(e)) {
+        const row = words.test(rows[i] ?? "") ? rows[i] : e.role === "focusable" ? around(e) : "";
+        return row ? { ...e, near: row } : e;
+      }
+      const row = rows[i].toLowerCase().startsWith(e.name.toLowerCase()) ? rows[i].slice(e.name.length).trim() : rows[i];
+      return words.test(row) ? { ...e, near: clip(row, 40) } : e;
+    })
     .filter((e) => !unnamed(e) || e.name || e.mark || e.label || e.near || FIELDS.has(e.role) || e.role === "checkbox");
 }
 
 // What a name regex is tested against: the name and placeholder, the description (a label that moved there once a value was
 // picked), a column header's group and name ("City proper Population"), and for a control without a name the text beside it,
-// its markup words, its row and its role word ("slider").
-const matchTexts = (e) =>
-  [e.name, e.placeholder, e.label, e.mark, e.near, e.description, e.group && `${e.group} ${e.name}`, LETTER.test(e.name ?? "") ? undefined : e.role].filter(Boolean);
+// its markup words, its row and its role word ("slider"). A named control's row (`near` of a twin) is not its name.
+const matchTexts = (e) => {
+  const named = LETTER.test(e.name ?? "");
+  return [e.name, e.placeholder, e.label, e.mark, named ? undefined : e.near, e.description, e.group && `${e.group} ${e.name}`, named ? undefined : e.role].filter(Boolean);
+};
 
-// Markup words are a last resort: a control with a label or a row text a person reads is shown by those.
-const showMark = (e) => e.mark && !e.label && !e.near;
+// Markup words are a last resort: a control with a label or a row text a person reads is shown by those. A focusable element
+// has no role word that says what it is: its markup words always show.
+const showMark = (e) => e.mark && (e.role === "focusable" ? !e.name : !e.label && !e.near);
 
 function entryLine(e, { nameMax = 120 } = {}) {
-  let line = `[${e.ref}] ${e.role}${e.name || !showMark(e) ? ` "${clip(e.name, nameMax)}"` : ""}`;
+  let line = `[${e.ref}] ${e.role}${e.name || (!showMark(e) && e.role !== "focusable") ? ` "${clip(e.name, nameMax)}"` : ""}`;
   if (e.group) line += ` in "${clip(e.group, 60)}"`;
   if (showMark(e)) line += ` ‹${e.mark}›`;
   if (e.placeholder) line += ` placeholder="${clip(e.placeholder, 60)}"`;
@@ -593,25 +657,7 @@ function rowTexts(nodes, candidates, { max = 200, only } = {}) {
   const chains = candidates.map((c) => chain(c.nodeId));
   const count = new Map();
   for (const ch of chains) for (const a of new Set(ch)) count.set(a, (count.get(a) ?? 0) + 1);
-  const textOf = (id) => {
-    const parts = [];
-    let size = 0;
-    const walk = (nid) => {
-      const n = byId.get(nid);
-      if (!n || size > max * 2) return;
-      const role = value(n.role);
-      if (!n.ignored && (role === "StaticText" || role === "staticText")) {
-        const t = squash(value(n.name));
-        if (t) {
-          parts.push(t);
-          size += t.length + 1;
-        }
-      }
-      for (const c of n.childIds ?? []) walk(c);
-    };
-    walk(id);
-    return clip(parts.join(" "), max);
-  };
+  const textOf = (id) => axText(byId, id, max);
   return candidates.map((c, i) => {
     if (only && !only.has(c)) return "";
     let row = c.nodeId;
@@ -621,6 +667,27 @@ function rowTexts(nodes, candidates, { max = 200, only } = {}) {
     }
     return textOf(row);
   });
+}
+
+// The visible text (StaticText) of an accessibility node's subtree, cut to `max` characters.
+function axText(byId, id, max) {
+  const parts = [];
+  let size = 0;
+  const walk = (nid) => {
+    const n = byId.get(nid);
+    if (!n || size > max * 2) return;
+    const role = value(n.role);
+    if (!n.ignored && (role === "StaticText" || role === "staticText")) {
+      const t = squash(value(n.name));
+      if (t) {
+        parts.push(t);
+        size += t.length + 1;
+      }
+    }
+    for (const c of n.childIds ?? []) walk(c);
+  };
+  walk(id);
+  return clip(parts.join(" "), max);
 }
 
 // Where an element sits for a person, beyond its row: the names of the groups around it (a radio group, a fieldset, a table
@@ -713,7 +780,7 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false, t
   let withRows = matches.map((e, i) => ({ ...e, row: rows[i] }));
   if (near) {
     const nearRe = near instanceof RegExp ? near : new RegExp(near, "i");
-    withRows = withRows.filter((e) => [e.row, e.name, e.group, ...ctx(e)].some((t) => t && nearRe.test(t)));
+    withRows = withRows.filter((e) => [e.row, e.near, e.name, e.group, ...ctx(e)].some((t) => t && nearRe.test(t)));
     if (withRows.length === 0) return { none: true, near: true };
   }
   const distinct = [];
@@ -1498,17 +1565,58 @@ function wrapLines(lines, width = 200) {
   return out;
 }
 
-// Lines of `after` that `before` did not have, in order, once each: what an action changed on the page.
+// Lines of `after` that `before` did not have, in order, once each: what an action changed on the page. Lines are counted, so
+// a line that `before` held elsewhere ("Red" picked in a second list) is new when `after` holds it more often.
 function newLines(before, after) {
-  const had = new Set(before);
+  const left = new Map();
+  for (const l of before) left.set(l, (left.get(l) ?? 0) + 1);
   const out = [];
   const seen = new Set();
   for (const l of after) {
-    if (had.has(l) || seen.has(l)) continue;
+    const n = left.get(l) ?? 0;
+    if (n > 0) {
+      left.set(l, n - 1);
+      continue;
+    }
+    if (seen.has(l)) continue;
     seen.add(l);
     out.push(l);
   }
   return out;
+}
+
+// Controls an action added (a chip's "Remove Red" button, a field that opened for editing): per frame, role and name, those
+// `after` holds more of than `before`. Of those that could be the new one, first one with a ref `before` did not list, and of
+// those first one whose row (`near`) is new too (a list drawn again gives every row a new ref). In the page's order.
+function appearedControls(before, after) {
+  const key = (e) => `${e.frameTag ?? ""}\u0000${e.role}\u0000${e.name}`;
+  const sig = (e) => `${key(e)}\u0000${e.near ?? ""}`;
+  const count = (es, f) => {
+    const m = new Map();
+    for (const e of es) if (CLICKABLE.has(e.role)) m.set(f(e), (m.get(f(e)) ?? 0) + 1);
+    return m;
+  };
+  const was = count(before, key);
+  const now = count(after, key);
+  const rowWas = count(before, sig);
+  const known = new Set(before.map((e) => e.ref));
+  const picked = new Set();
+  for (const [k, n] of now) {
+    const grew = n - (was.get(k) ?? 0);
+    if (grew <= 0) continue;
+    const same = after.filter((e) => CLICKABLE.has(e.role) && key(e) === k);
+    const rows = new Map(rowWas);
+    const newRow = (e) => {
+      const left = rows.get(sig(e)) ?? 0;
+      rows.set(sig(e), left - 1);
+      return left <= 0;
+    };
+    const fresh = same.filter(newRow);
+    const rest = same.filter((e) => !fresh.includes(e));
+    const order = [...fresh.filter((x) => !known.has(x.ref)), ...rest.filter((x) => !known.has(x.ref)), ...fresh.filter((x) => known.has(x.ref)), ...rest.filter((x) => known.has(x.ref))];
+    for (const e of order.slice(0, grew)) picked.add(e);
+  }
+  return after.filter((e) => picked.has(e));
 }
 
 // Whether the lines both reads hold kept their order (a sort, a drag that swaps two items, a list that put the picked one
@@ -2009,6 +2117,7 @@ module.exports = {
   frameTag,
   iframeTargets,
   newLines,
+  appearedControls,
   orderChange,
   focusOf,
   findAgain,

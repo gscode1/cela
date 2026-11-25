@@ -11,13 +11,15 @@
 //                                             with a regex also text that takes clicks: [e124] clickable "4K"
 //   desktop-web click <ref|"regex">           click it with the mouse and print its new state and what changed; --near "row
 //                                             text", --nth N, --role R, --show "regex". No element by that name: a line of
-//                                             clickable text. Exit 1 when refused (disabled, covered), 2 when ambiguous.
+//                                             clickable text, else the one line of any visible text (said so). --double:
+//                                             two presses (edit a label), any visible text. Exit 1 when refused (disabled,
+//                                             covered), 2 when ambiguous.
 //   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value and what appeared; --enter,
 //                                             --append, --near "row text"; "" clears it. Of several matching fields the one
 //                                             outside the header and navigation. Exit 1 when the field kept its value
-//   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes and
-//                                             the element that took the focus; --text "answer" types text first (a prompt
-//                                             dialog), --show "regex"
+//   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes,
+//                                             the element that took the focus and how far the page scrolled; --text "answer"
+//                                             types text first (a prompt dialog), --show "regex"
 //   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page: the options it owns, else
 //                                             those that appear as it opens) and print what it holds
 //   desktop-web type <slider> 75              set a slider: a press at its proportional point, then arrow keys to the value;
@@ -39,7 +41,9 @@
 //                                             header rows above the matches as "cols: ..."
 //
 // What an action changed counts lines that kept their text but moved (a sort, a drag swap: "order changed (lines A-B)"),
-// a control's selected, pressed and sort state, and the clicked control drawn again by the page.
+// a control's selected, pressed and sort state, the clicked control drawn again by the page, and controls that appeared
+// ("appeared: [e5] button "Remove Red"", at most 5, a count only above 8). An element a person reaches with Tab but that has
+// no control role (a slider's handle drawn as a span) is listed as `focusable ‹class words› near "row"`: click it, then keys.
 //
 // Answers start with the page's url (only when it changed since the last answer, cut to 120 characters) and title, then
 // notices: redirected from the typed URL, Chrome's error page, a likely error page, a page of a few short lines and no
@@ -120,6 +124,7 @@ function parseArgs(argv) {
     else if (a === "--table") o.table = true;
     else if (a === "--enter") o.enter = true;
     else if (a === "--append") o.append = true;
+    else if (a === "--double") o.double = true;
     else o.pos.push(a);
   }
   return o;
@@ -742,10 +747,13 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
   if (isRef(spec)) {
     const was = readRefs()[spec];
     let now = entries.find((e) => e.ref === spec);
-    if (!now && was?.role === "clickable") now = textEntries(tree, new RegExp(`^${escapeRe(was.name.replace(/…$/, ""))}`)).find((e) => e.ref === spec);
+    // a line of text (clickable, or any text a listing showed) is found again among the lines that start like it
+    const isText = was?.role === "clickable" || was?.role === "text";
+    const lines = () => textEntries(tree, new RegExp(`^${escapeRe(was.name.replace(/…$/, ""))}`), { any: was.role === "text" });
+    if (!now && isText) now = lines().find((e) => e.ref === spec);
     let note;
     if (!now && was) {
-      const pool = was.role === "clickable" ? textEntries(tree, new RegExp(`^${escapeRe(was.name.replace(/…$/, ""))}`)) : entries;
+      const pool = isText ? lines() : entries;
       const same = pool.filter((e) => e.role === was.role && e.name === was.name);
       if (same.length === 1) {
         now = same[0];
@@ -782,6 +790,14 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     const pick = o.nth !== undefined ? hits[o.nth - 1] : hits.length === 1 ? hits[0] : exact.length === 1 ? exact[0] : undefined;
     if (pick) return { entry: pick, nodes, note: `no element has that name; ${anyText ? "used" : "clicked"} the text` };
     if (hits.length > 1) r = { several: hits };
+    else if (!anyText) {
+      // Last, any visible line (a page that listens on the whole list, as frameworks do, shows no sign on the text): only the
+      // one line that matches, or reads exactly so.
+      const plain = textEntries(tree, re, { any: true });
+      const one = plain.length === 1 ? plain[0] : plain.filter((e) => whole.test(e.name)).length === 1 ? plain.find((e) => whole.test(e.name)) : undefined;
+      if (one) return { entry: one, nodes, note: "no element or clickable text has that name; clicked the plain text (it shows no sign of taking clicks)" };
+      if (plain.length > 1) r = { several: plain };
+    }
   }
   if (r.pick) return { entry: r.pick, nodes, note: r.note };
   if (r.none) {
@@ -1008,10 +1024,10 @@ async function clearPoint(send, backendNodeId, quad, inner) {
   return undefined;
 }
 
-async function clickNode(c, nodes, entry) {
+async function clickNode(c, nodes, entry, { double = false } = {}) {
   const { box, win, point } = await placeNode(c, nodes, entry, { aim: true });
   activate(win);
-  return lib.humanClick(point ? { x: point.x - 1, y: point.y - 1, w: 3, h: 3 } : box);
+  return (double ? lib.humanDoubleClick : lib.humanClick)(point ? { x: point.x - 1, y: point.y - 1, w: 3, h: 3 } : box);
 }
 
 // The pointer over the element without a press: menus and captions that appear on hover. A dwell for the page's own handlers.
@@ -1094,12 +1110,16 @@ const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemch
 // A new address that keeps the path or most of the page's lines (a filter or sort in the query) shows what changed, not an
 // outline.
 // Lines that kept their text but not their order (a sort, a drag that swapped two items) are a change too: the range is
-// printed as it reads now, its first ORDER_LINES lines. With `focus` (a key) the element that took the focus is printed
-// when it is another one.
+// printed as it reads now, its first ORDER_LINES lines. With `focus` (a key, a click) the element that took the focus is
+// printed when it is another one than before and than the one acted on. Controls that appeared are printed with refs
+// (appearedControls): at most APPEARED, only their count when more than APPEARED_MAX. `scrolled` (a key) is a line that says
+// how far the page moved, a change too.
 // When nothing changed at all: "result may come later" if the page shows it is busy, else "nothing happened" with the fields
 // that block a form and how to look; the same no-op twice in a row says to stop.
 const ORDER_LINES = 8;
-async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false } = {}) {
+const APPEARED = 5;
+const APPEARED_MAX = 8;
+async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false, scrolled } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
   const out = header(after.target, after.notes);
@@ -1130,12 +1150,30 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     const known = new Set(pre.entries.map((e) => e.ref));
     const opts = (now?.entries ?? []).filter((e) => OPTION_ROLES.has(e.role) && !known.has(e.ref));
     const order = after.lines.length > 0 ? cdp.orderChange(pre.lines, after.lines) : undefined;
+    // options are printed as such, and an open dialog's controls with the dialog
+    const inDialog = cdp.dialogLines(shown).join("\n");
+    const appeared = now
+      ? cdp.appearedControls(pre.entries, now.entries).filter((e) => !OPTION_ROLES.has(e.role) && !(e.role === "listbox" && opts.length > 0) && !inDialog.includes(`[${e.ref}]`))
+      : [];
     const focusWas = focus ? cdp.focusOf(pre.nodes, pre.entries) : undefined;
     const is = focus && now ? cdp.focusOf(now.nodes, now.entries) : undefined;
-    const moved = is && is.key !== focusWas?.key ? is : undefined;
+    // the clicked control itself taking the focus, or one printed under appeared, says nothing new
+    const selfKeys = self ? [self.backendNodeId, self.via].filter((x) => x !== undefined).map((id) => `${self.frameTag ?? ""}:${id}`) : [];
+    const mine = (x) => selfKeys.includes(x.key) || (x.entry && self && x.entry.role === self.role && x.entry.name === self.name) || appeared.includes(x.entry);
+    const moved = is && is.key !== focusWas?.key && !mine(is) ? is : undefined;
+    // a handle drawn without a role does nothing on a click but take the focus, for the keys that move it
+    const keysNext = self?.role === "focusable" && is && is.key !== focusWas?.key && selfKeys.includes(is.key);
     lib.savePage(after.lines, pageFile(o));
     if (moved?.entry) rememberRefs([moved.entry], { merge: true });
+    if (scrolled) out.push(scrolled);
     if (moved) out.push(`focus: ${moved.line}`);
+    if (keysNext) out.push("it has the focus: move it with desktop-web key Right, Left, Page_Up or Page_Down");
+    if (appeared.length > APPEARED_MAX) out.push(`appeared: ${appeared.length} controls (desktop-web snap)`);
+    else if (appeared.length > 0) {
+      rememberRefs(appeared, { merge: true });
+      out.push(...appeared.slice(0, APPEARED).map((e) => `appeared: ${cdp.entryLine(e, { nameMax: 70 })}`));
+      if (appeared.length > APPEARED) out.push(`appeared: ... ${appeared.length - APPEARED} more (desktop-web snap)`);
+    }
     out.push(...closed.map((d) => `closed ${d}`), ...alerts.slice(0, 3));
     if (opts.length > 0) {
       rememberRefs(opts, { merge: true });
@@ -1151,7 +1189,7 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     }
     out.push(...diffs.slice(0, 5));
     if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
-    nothing = !navigated && !added.length && !gone.length && !order && !moved && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    nothing = !navigated && !added.length && !gone.length && !order && !moved && !keysNext && !scrolled && !appeared.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
     if (nothing && !busy && !o.noHint && !chooser) out.push(...nothingHappened(now, self, after.target.url));
     else if (!added.length && !gone.length && !order) out.push("page text unchanged");
     if (self?.role === "link" && !navigated && !o.noHint) out.push("note: the address did not change");
@@ -1350,13 +1388,16 @@ async function main() {
       if (!before) fail("Chrome is not running: start with desktop-web open <url>");
       const { entry, note, pre, slider } = await withPage(async (c) => {
         const tree = await axTree(c);
-        const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", tree });
+        const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", anyText: cmd === "click" && o.double, tree });
         await refuseChallenge(tree.read, entry, cmd === "type" ? "typed" : "clicked");
         if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled, the page does not take it yet (something it needs is missing); nothing clicked`);
+        // a handle drawn without a slider role says no range or value: no number maps to a point on it
+        if (cmd === "type" && entry.role === "focusable")
+          fail(`${cdp.entryLine(entry)} is no field or slider: click it, then desktop-web key Right|Left|Page_Up, or desktop-web drag ${entry.ref} --by dx,0; nothing typed`, 64);
         if (cmd === "type" && entry.file)
           fail(`${cdp.entryLine(entry)} takes a file, not text: desktop-web upload ${entry.ref} /workspace/file; nothing clicked`, 64);
         if (cmd === "type" && entry.role === "slider") return { entry, note, pre: stateOf(tree), slider: await pressSlider(c, tree, entry, o.pos[1]) };
-        await clickNode(c, nodes, entry);
+        await clickNode(c, nodes, entry, { double: cmd === "click" && o.double });
         return { entry, note, pre: stateOf(tree) };
       });
       const head = note ? [note] : [];
@@ -1423,13 +1464,14 @@ async function main() {
       const again = now && element ? cdp.findAgain(now.entries, entry) : undefined;
       const self = again?.entry;
       const diff = cdp.stateDiff(entry, self);
-      const first = diff.length > 0 ? `clicked [${entry.ref}] ${entry.role} ${cdp.shortName(entry, 80)}: ${diff.join(", ")}` : `clicked ${cdp.entryLine(self ?? entry)}`;
+      const verb = o.double ? "double-clicked" : "clicked";
+      const first = diff.length > 0 ? `${verb} [${entry.ref}] ${entry.role} ${cdp.shortName(entry, 80)}: ${diff.join(", ")}` : `${verb} ${cdp.entryLine(self ?? entry)}`;
       const redraw = [];
       if (again?.redrawn) {
         rememberRefs([self], { merge: true });
         redraw.push(`the page drew it again: now ${cdp.entryLine(self, { nameMax: 80 })}`);
       } else if (now && element && !again && after.target.url === before.url) redraw.push("it is gone from the page now");
-      console.log([...head, first, ...redraw, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 || redraw.length > 0 }))].join("\n"));
+      console.log([...head, first, ...redraw, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 || redraw.length > 0, focus: true }))].join("\n"));
       return;
     }
     case "key": {
@@ -1450,6 +1492,9 @@ async function main() {
         }
         pre = { lines, entries: [], nodes: [] };
       } else pre = stateOf(await withPage((c) => axTree(c)));
+      // where the page is scrolled: a key that moves it (End on a list that loads nothing new) has done something
+      const scrollOf = () => withPage((c) => c.send("Page.getLayoutMetrics")).then((m) => ({ y: Math.round(m.cssLayoutViewport.pageY), h: Math.round(m.cssContentSize.height) }), () => undefined);
+      const y0 = wasBlocked ? undefined : await scrollOf();
       // An open file chooser takes the keys (Escape cancels it), not the browser window behind it.
       const chooser = chooserWindow();
       activate(chooser ?? win);
@@ -1467,7 +1512,9 @@ async function main() {
         return;
       }
       const closed = chooser && !chooserWindow() ? ["file chooser closed"] : [];
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true }))].join("\n"));
+      const y1 = y0 && after.target.url === before.url ? await scrollOf() : undefined;
+      const scrolled = y1 && Math.abs(y1.y - y0.y) >= 1 ? `scrolled ${y0.y} -> ${y1.y} of ${y1.h} px` : undefined;
+      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true, scrolled }))].join("\n"));
       return;
     }
     case "select": {
