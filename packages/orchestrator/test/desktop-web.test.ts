@@ -26,6 +26,23 @@ interface Entry {
   boxEl?: number;
   label?: string;
   noSubmit?: boolean;
+  description?: string;
+  expanded?: unknown;
+  selected?: unknown;
+  pressed?: unknown;
+  hasPopup?: string;
+  focusable?: boolean;
+  disabled?: boolean;
+  sort?: string;
+  group?: string;
+  inner?: number[];
+  iconOnly?: boolean;
+}
+interface Box {
+  l: number;
+  t: number;
+  r: number;
+  b: number;
 }
 interface CdpLib {
   ALLOWED: Set<string>;
@@ -37,8 +54,19 @@ interface CdpLib {
     nodes: AxNode[],
     entries: Entry[],
     re: RegExp,
-    o?: { near?: RegExp; nth?: number; showable?: boolean },
-  ): { pick?: Entry; several?: Entry[]; none?: boolean };
+    o?: {
+      near?: RegExp;
+      nth?: number;
+      showable?: boolean;
+      texts?: () => Entry[];
+      fields?: boolean;
+      landmark?: (e: Entry) => boolean;
+      inView?: (e: Entry) => boolean;
+    },
+  ): { pick?: Entry; note?: string; several?: Entry[]; none?: boolean };
+  closedMenus(entries: Entry[]): Entry[];
+  aimPoints(own: Box, inner: Box[]): { x: number; y: number }[];
+  matchTexts(e: Entry): string[];
   snapshotLines(snap: unknown, o?: { marks?: boolean }): string[];
   screenPoint(
     g: {
@@ -1575,6 +1603,230 @@ describe("desktop-web's CDP reader", () => {
       { backendNodeId: 1001, value: "" },
       { backendNodeId: 1002, value: "C:\\fakepath\\x.txt" },
     ]);
+  });
+
+  it("reads selected, pressed and haspopup, and lists only named column headers", () => {
+    const prop = (name: string, v: unknown) => ({ name, value: { value: v } });
+    const node = (
+      id: number,
+      role: string,
+      name: string,
+      props: [string, unknown][] = [],
+    ): AxNode => ({
+      nodeId: String(id),
+      role: { value: role },
+      name: { value: name },
+      backendDOMNodeId: id,
+      properties: props.map(([k, v]) => prop(k, v)),
+    });
+    const entries = cdp.axEntries([
+      node(1, "tab", "Prices", [["selected", true]]),
+      node(2, "tab", "Specs", [["selected", false]]),
+      node(3, "button", "Bold", [["pressed", "true"]]),
+      node(4, "button", "More", [
+        ["hasPopup", "menu"],
+        ["expanded", false],
+      ]),
+      node(5, "columnheader", "Population", [["focusable", true]]),
+      node(6, "columnheader", ""),
+    ]);
+    expect(entries.map((e) => cdp.entryLine(e))).toEqual([
+      '[e1] tab "Prices" selected',
+      '[e2] tab "Specs"',
+      '[e3] button "Bold" pressed=true',
+      '[e4] button "More" expanded=false',
+      '[e5] columnheader "Population" sort=none',
+    ]);
+    expect(entries[3]?.hasPopup).toBe("menu");
+    expect(cdp.stateDiff({ selected: false }, { selected: true })).toEqual([
+      "selected false -> true",
+    ]);
+    expect(
+      cdp.stateDiff({ role: "columnheader" }, { role: "columnheader", sort: "ascending" }),
+    ).toEqual(["sort none -> ascending"]);
+  });
+
+  it("keeps sortable column headers, names twins by the group above, and records links inside", () => {
+    const snap = snapOf([
+      doc, // 0
+      el(0, "TABLE", sty("table"), [0, 0, 600, 80]), // 1
+      el(1, "TH", sty("table-cell"), [0, 0, 300, 20]), // 2 group: Metro
+      el(1, "TH", sty("table-cell"), [300, 0, 300, 20]), // 3 group: Proper
+      el(1, "TH", sty("table-cell"), [0, 20, 150, 20], { "aria-sort": "ascending" }), // 4 Population (Metro)
+      el(1, "TH", sty("table-cell", "1", "pointer"), [300, 20, 150, 20]), // 5 Population (Proper)
+      el(5, "A", sty("inline"), [420, 22, 20, 14], { href: "x" }), // 6 a footnote link in it
+      el(1, "TH", sty("table-cell"), [450, 20, 150, 20]), // 7 Remarks: a label only
+    ]);
+    const h = (id: number, name: string, extra: Partial<Entry> = {}): Entry => ({
+      ref: `e${String(id)}`,
+      backendNodeId: id,
+      nodeId: String(id),
+      role: "columnheader",
+      name,
+      ...extra,
+    });
+    const out = cdp.annotate(
+      [
+        h(1002, "Metro"),
+        h(1003, "Proper"),
+        h(1004, "Population"),
+        h(1005, "Population"),
+        { ref: "e1006", backendNodeId: 1006, nodeId: "1006", role: "link", name: "[1]" },
+        h(1007, "Remarks"),
+      ],
+      snap,
+      new Set(),
+    );
+    expect(out.map((e) => cdp.entryLine(e))).toEqual([
+      '[e1004] columnheader "Population" in "Metro" sort=ascending',
+      '[e1005] columnheader "Population" in "Proper" sort=none',
+      '[e1006] link "[1]"',
+    ]);
+    expect(out[1]?.inner).toEqual([1006]);
+    // the group and name are matched together, and exactly
+    expect(cdp.chooseTarget([], out, /Proper Population/i).pick?.ref).toBe("e1005");
+    expect(cdp.chooseTarget([], out, /^Population$/i).several?.length).toBe(2);
+  });
+
+  it("matches a description, a column's group and the role word of an unnamed control", () => {
+    const e = (extra: Partial<Entry>): Entry => ({
+      ref: "e1",
+      backendNodeId: 1,
+      nodeId: "1",
+      role: "combobox",
+      name: "",
+      ...extra,
+    });
+    expect(cdp.matchTexts(e({ description: "Select City", label: "NCR" }))).toEqual([
+      "NCR",
+      "Select City",
+      "combobox",
+    ]);
+    expect(cdp.matchTexts(e({ role: "slider", name: "Volume" }))).toEqual(["Volume"]);
+  });
+
+  it("prefers an exact match, then the open modal, then a field outside the header, then a twin in view", () => {
+    const e = (ref: string, role: string, name: string, nodeId: string): Entry => ({
+      ref,
+      backendNodeId: Number(ref.slice(1)),
+      nodeId,
+      role,
+      name,
+    });
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      parentId?: string,
+      kids?: string[],
+      extra: Partial<AxNode> = {},
+    ): AxNode => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+      ...extra,
+    });
+    // one exact line of text beats elements that only contain the pattern (drag "A")
+    const els = [e("e1", "button", "Add", "1"), e("e2", "link", "About", "2")];
+    const line: Entry = { ref: "e9", backendNodeId: 9, nodeId: "", role: "text", name: "A" };
+    const r1 = cdp.chooseTarget([], els, /A/i, {
+      texts: () => [line, { ...line, ref: "e8", name: "Alpha" }],
+    });
+    expect(r1.pick?.ref).toBe("e9");
+    expect(r1.note).toMatch(/only contain/);
+    // a field in an open modal dialog beats the header's
+    const nodes: AxNode[] = [
+      ax("r", "RootWebArea", "", undefined, ["b", "d"]),
+      ax("b", "banner", "", "r", ["f1"]),
+      ax("f1", "textbox", "Search", "b"),
+      ax("d", "dialog", "Filters", "r", ["f2"], {
+        properties: [{ name: "modal", value: { value: true } }],
+      }),
+      ax("f2", "textbox", "Search", "d"),
+    ];
+    const fields = [e("e11", "textbox", "Search", "f1"), e("e12", "textbox", "Search", "f2")];
+    const r2 = cdp.chooseTarget(nodes, fields, /Search/i, { fields: true });
+    expect(r2.pick?.ref).toBe("e12");
+    expect(r2.note).toMatch(/open dialog/);
+    // without the dialog, the field outside the header and navigation
+    const open: AxNode[] = nodes.map((n) =>
+      n.nodeId === "d" ? { ...n, role: { value: "generic" }, properties: [] } : n,
+    );
+    const r3 = cdp.chooseTarget(open, fields, /Search/i, {
+      fields: true,
+      landmark: (x) => x.nodeId === "f1",
+    });
+    expect(r3.pick?.ref).toBe("e12");
+    expect(r3.note).toMatch(/outside the page's header/);
+    // twins (same role, name, row and place): the one in view; buttons in different rows still list
+    const twins = [e("e21", "button", "Filters", "t1"), e("e22", "button", "Filters", "t2")];
+    const flat: AxNode[] = [
+      ax("r", "RootWebArea", "", undefined, ["t1", "t2"]),
+      ax("t1", "button", "Filters", "r"),
+      ax("t2", "button", "Filters", "r"),
+    ];
+    const r4 = cdp.chooseTarget(flat, twins, /Filters/i, { inView: (x) => x.ref === "e22" });
+    expect(r4.pick?.ref).toBe("e22");
+    expect(r4.note).toMatch(/one in view/);
+    expect(cdp.chooseTarget(flat, twins, /Filters/i).pick?.ref).toBe("e21");
+    expect(cdp.chooseTarget(tree(), cdp.axEntries(tree()), /honey/i).several?.length).toBe(2);
+  });
+
+  it("lets --near match the group around a control or the heading before it, and keeps such twins apart", () => {
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      parentId?: string,
+      kids?: string[],
+    ): AxNode => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      ...(/^\d+$/.test(nodeId) ? { backendDOMNodeId: Number(nodeId) } : {}),
+      ...(parentId ? { parentId } : {}),
+      ...(kids ? { childIds: kids } : {}),
+    });
+    // listed out of document order, as Chrome sends them
+    const nodes: AxNode[] = [
+      ax("r", "RootWebArea", "", undefined, ["h1", "g1", "h2", "g2"]),
+      ax("g2", "radiogroup", "", "r", ["12"]),
+      ax("12", "radio", "3", "g2"),
+      ax("g1", "radiogroup", "Experience", "r", ["11"]),
+      ax("11", "radio", "3", "g1"),
+      ax("h1", "heading", "How experienced are you?", "r"),
+      ax("h2", "heading", "How satisfied are you?", "r"),
+    ];
+    const entries = cdp.axEntries(nodes).filter((x) => x.role === "radio");
+    expect(cdp.chooseTarget(nodes, entries, /^3$/).several?.length).toBe(2);
+    expect(cdp.chooseTarget(nodes, entries, /^3$/, { near: /satisfied/i }).pick?.ref).toBe("e12");
+    expect(cdp.chooseTarget(nodes, entries, /^3$/, { near: /^Experience$/ }).pick?.ref).toBe("e11");
+  });
+
+  it("points to closed menus, icon-only and menu ones first, and aims beside the controls inside one", () => {
+    const e = (ref: string, name: string, extra: Partial<Entry>): Entry => ({
+      ref,
+      backendNodeId: 1,
+      nodeId: ref,
+      role: "button",
+      name,
+      ...extra,
+    });
+    const menus = cdp.closedMenus([
+      e("e1", "Author", { hasPopup: "dialog", expanded: false }),
+      e("e2", "Search", { role: "searchbox", hasPopup: "listbox" }),
+      e("e3", "Open", { expanded: true }),
+      e("e4", "More list controls", { hasPopup: "menu", expanded: false, iconOnly: true }),
+      e("e5", "Labels", { hasPopup: "menu", expanded: false }),
+      e("e6", "Section", { expanded: false }),
+      e("e7", "Other", { expanded: false }),
+    ]);
+    expect(menus.map((m) => m.ref)).toEqual(["e4", "e5", "e1", "e6"]);
+    const pts = cdp.aimPoints({ l: 0, t: 0, r: 100, b: 20 }, [{ l: 40, t: 0, r: 60, b: 20 }]);
+    expect(pts.length).toBeGreaterThan(0);
+    for (const p of pts) expect(p.x < 37 || p.x > 63).toBe(true);
   });
 
   it("drops a button that repeats a matching link's name, but lists a different button", () => {

@@ -157,6 +157,8 @@ const CLICKABLE = new Set([
   "spinbutton",
   "slider",
   "listbox",
+  // a table's header cell: annotate keeps one only when it shows it sorts or takes clicks (a sortable column)
+  "columnheader",
 ]);
 const IMAGES = new Set(["image", "img", "figure"]);
 const FIELDS = new Set(["textbox", "searchbox", "combobox", "spinbutton", "listbox"]);
@@ -169,7 +171,8 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 // Named pictures are listed too (hover and shot aim at them, a ref can click one), unless a link or button holds them or
 // they repeat a link's name: then the link is the target already. Controls without a name are kept here (annotate and
 // nameUnnamed give them words from their markup or row, or drop them); disabled ones are kept and marked, so a person sees
-// the button that is not ready yet, and a click refuses it.
+// the button that is not ready yet, and a click refuses it. Every named column header is kept here; annotate drops those
+// that do not sort or take clicks, and names a duplicate by the header above it.
 function axEntries(nodes, { extraRoles } = {}) {
   const live = nodes.filter((n) => !n.ignored);
   const linkNames = new Set(live.filter((n) => value(n.role) === "link").map((n) => squash(value(n.name))));
@@ -190,6 +193,8 @@ function axEntries(nodes, { extraRoles } = {}) {
       if (!name || linkNames.has(name) || inControl(n)) continue;
     } else if (extraRoles?.has(role)) {
       if (!name) continue;
+    } else if (role === "columnheader") {
+      if (!name) continue;
     } else if (!CLICKABLE.has(role)) continue;
     const description = squash(value(n.description));
     out.push({
@@ -202,6 +207,12 @@ function axEntries(nodes, { extraRoles } = {}) {
       value: squash(value(n.value)),
       checked: props.checked,
       expanded: props.expanded,
+      // a tab, an option or a row picked (aria-selected), a toggle button's state (aria-pressed: true, false or mixed)
+      selected: props.selected,
+      pressed: props.pressed,
+      // what a click opens (aria-haspopup: menu, listbox, dialog...): a closed menu may hold what a search did not find
+      hasPopup: props.hasPopup !== undefined && props.hasPopup !== false && props.hasPopup !== "false" ? String(props.hasPopup) : undefined,
+      focusable: role === "columnheader" && props.focusable === true ? true : undefined,
       focused: props.focused === true,
       disabled: props.disabled === true || undefined,
       required: props.required === true || undefined,
@@ -333,7 +344,7 @@ function labelLines(snap) {
 // the text a person reads as its label (`label`), and a field in a form that shows no button to send it is marked (`noSubmit`).
 function annotate(entries, snap, hidden) {
   const ix = snapIndex(snap);
-  const kept = [];
+  let kept = [];
   for (let e of entries) {
     const at = ix.find(e.backendNodeId);
     if (hidden.has(e.backendNodeId)) {
@@ -344,13 +355,25 @@ function annotate(entries, snap, hidden) {
     }
     kept.push({ e, at });
   }
-  // How many listed controls each element holds, by node: a box holds only its own.
+  const headers = kept.filter(({ e, at }) => e.role === "columnheader" && at);
+  kept = kept.filter(({ e, at }) => e.role !== "columnheader" || (at && sortable(ix, at, e)));
+  // How many listed controls each element holds, by node, itself included: a box holds only its own.
   const holds = new Map();
   for (const { e, at } of kept) {
     if (!at || !CLICKABLE.has(e.role)) continue;
     const m = holds.get(at.doc) ?? new Map();
     holds.set(at.doc, m);
-    for (let p = at.doc.nodes.parentIndex[at.i]; p >= 0; p = at.doc.nodes.parentIndex[p]) m.set(p, (m.get(p) ?? 0) + 1);
+    for (let p = at.i; p >= 0; p = at.doc.nodes.parentIndex[p]) m.set(p, (m.get(p) ?? 0) + 1);
+  }
+  // The listed controls inside each control (a footnote link in a column header): a click on it aims beside them.
+  const inner = new Map();
+  const listed = new Set(kept.filter(({ e, at }) => at && CLICKABLE.has(e.role)).map(({ e }) => e.backendNodeId));
+  for (const { e, at } of kept) {
+    if (!at || !CLICKABLE.has(e.role)) continue;
+    for (let p = at.doc.nodes.parentIndex[at.i]; p >= 0; p = at.doc.nodes.parentIndex[p]) {
+      const holder = at.doc.nodes.backendNodeId[p];
+      if (listed.has(holder)) inner.set(holder, [...(inner.get(holder) ?? []), e.via ?? e.backendNodeId]);
+    }
   }
   const formOf = ({ doc, i }) => {
     for (let p = doc.nodes.parentIndex[i]; p >= 0; p = doc.nodes.parentIndex[p]) if (ix.tag(doc, p) === "FORM") return `${p}`;
@@ -371,6 +394,7 @@ function annotate(entries, snap, hidden) {
       const label = e.via ?? ix.labelOf(at, hidden);
       if (label !== undefined) e = { ...e, labelEl: label };
       const m = holds.get(at.doc);
+      if (inner.has(e.backendNodeId)) e = { ...e, inner: inner.get(e.backendNodeId) };
       let box;
       for (let p = at.doc.nodes.parentIndex[at.i], k = 0; p >= 0 && k < 3; p = at.doc.nodes.parentIndex[p], k++) {
         if ((m?.get(p) ?? 0) > 1 || /^(BODY|HTML)$/.test(ix.tag(at.doc, p))) break;
@@ -382,6 +406,9 @@ function annotate(entries, snap, hidden) {
         if (f !== undefined && !buttoned.has(f)) e = { ...e, noSubmit: true };
       }
       const a = ix.attrs(at);
+      // aria-sort (ascending, descending, other): the accessibility tree Chrome sends leaves it out
+      if (a["aria-sort"] !== undefined) e = { ...e, sort: a["aria-sort"] || "none" };
+      if ((e.hasPopup || e.expanded === false) && !FIELDS.has(e.role) && !showsText(ix, at)) e = { ...e, iconOnly: true };
       const ph = squash(a.placeholder);
       if (ph && ph !== e.name) e = { ...e, placeholder: clip(ph, 80) };
       if (a.type === "password") e = { ...e, secret: true };
@@ -403,7 +430,58 @@ function annotate(entries, snap, hidden) {
     }
     out.push(e);
   }
-  return out;
+  return groupHeaders(out, headers, ix);
+}
+
+// A column header that sorts or takes clicks: aria-sort, focusable, a click listener or a pointer cursor. Others are labels.
+function sortable(ix, at, e) {
+  if (e.focusable || ix.attrs(at)["aria-sort"] !== undefined) return true;
+  if ((at.doc.nodes.isClickable?.index ?? []).includes(at.i)) return true;
+  return /^(pointer)$/.test(ix.view(at.doc).style(at.i)?.[7] ?? "");
+}
+
+// Whether an element shows text of its own (a person reads its name), or only an icon.
+function showsText(ix, { doc, i }) {
+  const v = ix.view(doc);
+  const pi = doc.nodes.parentIndex;
+  for (let k = i + 1; k < pi.length; k++) {
+    let p = pi[k];
+    while (p > i) p = pi[p];
+    if (p !== i) break;
+    if (doc.nodes.nodeType[k] !== 3 || v.str(doc.nodes.nodeValue[k]).trim() === "") continue;
+    const b = v.bounds(k);
+    if (b && !v.tiny(b)) return true;
+  }
+  return false;
+}
+
+// Column headers that share a name (Population under two groups) get the header above them whose span covers theirs, in
+// the same table: `group`, printed as `in "City proper"`. `headers` are every named header, the group cells included.
+function groupHeaders(out, headers, ix) {
+  const kept = out.filter((e) => e.role === "columnheader");
+  if (kept.length < 2) return out;
+  const count = new Map();
+  for (const e of kept) count.set(e.name, (count.get(e.name) ?? 0) + 1);
+  if (![...count.values()].some((n) => n > 1)) return out;
+  const tableOf = ({ doc, i }) => {
+    for (let p = doc.nodes.parentIndex[i]; p >= 0; p = doc.nodes.parentIndex[p]) if (ix.tag(doc, p) === "TABLE") return p;
+    return -1;
+  };
+  const cells = headers.map(({ e, at }) => ({ e, at, box: ix.view(at.doc).bounds(at.i), table: tableOf(at) })).filter((c) => c.box);
+  const group = new Map();
+  for (const c of cells) {
+    if ((count.get(c.e.name) ?? 0) < 2 || !kept.some((e) => e.backendNodeId === c.e.backendNodeId)) continue;
+    const b = c.box;
+    let best;
+    for (const g of cells) {
+      if (g === c || g.at.doc !== c.at.doc || g.table !== c.table) continue;
+      const a = g.box;
+      if (a.y + a.h > b.y + 2 || a.x > b.x + 2 || a.x + a.w < b.x + b.w - 2) continue;
+      if (!best || a.y > best.box.y) best = g;
+    }
+    if (best) group.set(c.e.backendNodeId, best.e.name);
+  }
+  return out.map((e) => (e.role === "columnheader" && group.has(e.backendNodeId) ? { ...e, group: group.get(e.backendNodeId) } : e));
 }
 
 // A control without a name in letters and without a placeholder is told apart by the text of its row (`near`, as --near
@@ -419,15 +497,18 @@ function nameUnnamed(nodes, entries) {
     .filter((e) => !unnamed(e) || e.name || e.mark || e.label || e.near || FIELDS.has(e.role) || e.role === "checkbox");
 }
 
-// What a name regex is tested against: the name and placeholder, and for a control without a name the text beside it, its
-// markup words and its row.
-const matchTexts = (e) => [e.name, e.placeholder, e.label, e.mark, e.near].filter(Boolean);
+// What a name regex is tested against: the name and placeholder, the description (a label that moved there once a value was
+// picked), a column header's group and name ("City proper Population"), and for a control without a name the text beside it,
+// its markup words, its row and its role word ("slider").
+const matchTexts = (e) =>
+  [e.name, e.placeholder, e.label, e.mark, e.near, e.description, e.group && `${e.group} ${e.name}`, LETTER.test(e.name ?? "") ? undefined : e.role].filter(Boolean);
 
 // Markup words are a last resort: a control with a label or a row text a person reads is shown by those.
 const showMark = (e) => e.mark && !e.label && !e.near;
 
 function entryLine(e, { nameMax = 120 } = {}) {
   let line = `[${e.ref}] ${e.role}${e.name || !showMark(e) ? ` "${clip(e.name, nameMax)}"` : ""}`;
+  if (e.group) line += ` in "${clip(e.group, 60)}"`;
   if (showMark(e)) line += ` ‹${e.mark}›`;
   if (e.placeholder) line += ` placeholder="${clip(e.placeholder, 60)}"`;
   // a row text that already starts with the label says it
@@ -443,6 +524,9 @@ function entryLine(e, { nameMax = 120 } = {}) {
   } else if (e.value) line += ` value="${clip(e.value, 60)}"`;
   if (e.checked !== undefined) line += ` checked=${e.checked}`;
   if (e.expanded !== undefined) line += ` expanded=${e.expanded}`;
+  if (e.selected === true) line += " selected";
+  if (e.pressed !== undefined) line += ` pressed=${e.pressed}`;
+  if (e.sort !== undefined || e.role === "columnheader") line += ` sort=${e.sort ?? "none"}`;
   if (e.focused) line += " focused";
   if (e.required) line += " required";
   if (e.invalid) line += " invalid";
@@ -459,12 +543,14 @@ const shortName = (e, n = 60) =>
   e.name ? `"${clip(e.name, n)}"` : e.label ? `label "${clip(e.label, n)}"` : e.near ? `near "${clip(e.near, n)}"` : e.mark ? `‹${e.mark}›` : '""';
 
 // How an element's state differs between two reads: `checked false -> true`, `value "a" -> "b"`.
-const STATE = ["checked", "expanded", "value", "name"];
+const STATE = ["checked", "expanded", "selected", "pressed", "sort", "value", "name"];
 function stateDiff(a, b) {
   if (!a || !b) return [];
-  // checked and expanded are tokens (true, false, mixed); value and name are text
+  // checked, expanded, selected, pressed and sort are tokens (true, false, mixed; ascending); value and name are text
   const show = (k, v) => (k === "value" || k === "name" ? JSON.stringify(clip(String(v ?? ""), 40)) : String(v ?? "none"));
-  return STATE.filter((k) => String(a[k] ?? "") !== String(b[k] ?? "")).map((k) => `${k} ${show(k, a[k])} -> ${show(k, b[k])}`);
+  // a header without aria-sort is unsorted, like one with aria-sort="none"
+  const get = (x, k) => (k === "sort" && x.role === "columnheader" ? (x[k] ?? "none") : x[k]);
+  return STATE.filter((k) => String(get(a, k) ?? "") !== String(get(b, k) ?? "")).map((k) => `${k} ${show(k, get(a, k))} -> ${show(k, get(b, k))}`);
 }
 
 // Controls on both reads whose state changed (another radio of the group, a panel's toggle), skipping `skip` (the one acted
@@ -537,28 +623,97 @@ function rowTexts(nodes, candidates, { max = 200, only } = {}) {
   });
 }
 
-// Picks what a click by name means. Returns { pick } or { several } (entries with their row text) or { none }.
-// Matches with one URL count as one (an image link and a title link to the same product); --near picks by row text.
-// An element named exactly like the pattern wins ("Accept" over "Do not accept"); a button whose name contains a matching
-// link's name loses to that link; --role narrows to one role.
-function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } = {}) {
+// Where an element sits for a person, beyond its row: the names of the groups around it (a radio group, a fieldset, a table
+// row, a list item) and the last heading before it in the page (a question's title above a scale). `nodes` in any order: the
+// page's order is walked from the roots. Returns entry -> [texts], computed once per page.
+const CONTEXT = new Set(["group", "radiogroup", "row", "listitem"]);
+function contextOf(nodes) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  let order;
+  let heads;
+  return (e) => {
+    if (e.nodeId === undefined || !byId.has(e.nodeId)) return [];
+    if (!order) {
+      order = new Map();
+      heads = [];
+      const walk = (id) => {
+        const n = byId.get(id);
+        if (!n || order.has(id)) return;
+        order.set(id, order.size);
+        if (!n.ignored && value(n.role) === "heading" && squash(value(n.name))) heads.push(n);
+        for (const c of n.childIds ?? []) walk(c);
+      };
+      for (const n of nodes) if (n.parentId === undefined || !byId.has(n.parentId)) walk(n.nodeId);
+    }
+    const out = [];
+    for (let n = byId.get(byId.get(e.nodeId).parentId); n; n = byId.get(n.parentId)) {
+      const name = squash(value(n.name));
+      if (!n.ignored && CONTEXT.has(value(n.role)) && name) out.push(name);
+    }
+    const at = order.get(e.nodeId) ?? -1;
+    let head;
+    for (const h of heads) if (order.get(h.nodeId) < at) head = h;
+    if (head) out.push(squash(value(head.name)));
+    return out;
+  };
+}
+
+// The node ids inside a modal dialog (aria-modal, an alert dialog): what a person can act on while it is open.
+function modalIds(nodes) {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+  const out = new Set();
+  const walk = (id) => {
+    const n = byId.get(id);
+    if (!n || out.has(id)) return;
+    out.add(id);
+    for (const c of n.childIds ?? []) walk(c);
+  };
+  for (const n of nodes) {
+    if (n.ignored) continue;
+    const modal = (n.properties ?? []).some((p) => p.name === "modal" && value(p.value) === true);
+    if (modal || value(n.role) === "alertdialog") walk(n.nodeId);
+  }
+  return out;
+}
+
+// Picks what a click by name means. Returns { pick, note } or { several } (entries with their row text) or { none }.
+// Matches with one URL count as one (an image link and a title link to the same product); --near picks by row text, the
+// groups around an element or the heading above it. A button whose name contains a matching link's name loses to that link;
+// --role narrows to one role. Of several, in order (each automatic pick says so in `note`):
+//   1. an element named exactly like the pattern ("Accept" over "Do not accept"); with none, the one line of text (`texts`,
+//      read when needed) that reads exactly so beats elements that only contain it (`drag "A"`);
+//   2. those inside an open modal dialog;
+//   3. with `fields`, a field outside the page's header and navigation (a site's search box against the form's own);
+//   4. twins (one role, name, row and context: --near cannot tell them apart, a copy in an off-canvas menu): the one in the
+//      viewport (`inView`), else the first in the main content.
+// Matches in different rows are listed, never chosen.
+function chooseTarget(nodes, entries, re, { near, nth, role, showable = false, texts, fields = false, inView, landmark } = {}) {
   let matches = entries.filter((e) => (CLICKABLE.has(e.role) || showable) && matchTexts(e).some((t) => re.test(t)) && (!role || e.role === role));
   if (matches.length === 0) return { none: true };
   const whole = new RegExp(`^(?:${re.source})$`, re.flags);
-  const exact = matches.filter((e) => [e.name, e.placeholder, e.label].some((t) => t !== undefined && whole.test(t)));
-  if (exact.length > 0) matches = exact;
-  else if (!role) {
-    // A button whose name repeats a matching link's ("Add <product> to cart" next to the "<product>" link) is the
-    // link's companion: drop it. Any other button stays, so a real choice is listed, never decided silently.
-    const linkNames = matches.filter((e) => e.role === "link" && e.name).map((e) => e.name.toLowerCase());
-    if (linkNames.length > 0)
-      matches = matches.filter((e) => e.role !== "button" || !linkNames.some((n) => e.name.toLowerCase().includes(n)));
+  const exact = matches.filter((e) => [e.name, e.placeholder, e.label, e.group && `${e.group} ${e.name}`].some((t) => t && whole.test(t)));
+  const notes = [];
+  if (exact.length > 0) {
+    if (exact.length < matches.length) notes.push(`${matches.length} elements match; used the one named exactly so`);
+    matches = exact;
+  } else {
+    const lines = texts && !role ? texts().filter((t) => whole.test(t.name)) : [];
+    if (lines.length === 1 && nth === undefined)
+      return { pick: lines[0], note: `${matches.length} element${matches.length === 1 ? "" : "s"} only contain${matches.length === 1 ? "s" : ""} ${JSON.stringify(re.source)}; used the text that reads exactly so` };
+    if (!role) {
+      // A button whose name repeats a matching link's ("Add <product> to cart" next to the "<product>" link) is the
+      // link's companion: drop it. Any other button stays, so a real choice is listed, never decided silently.
+      const linkNames = matches.filter((e) => e.role === "link" && e.name).map((e) => e.name.toLowerCase());
+      if (linkNames.length > 0)
+        matches = matches.filter((e) => e.role !== "button" || !linkNames.some((n) => e.name.toLowerCase().includes(n)));
+    }
   }
+  const ctx = contextOf(nodes);
   const rows = rowTexts(nodes, matches);
   let withRows = matches.map((e, i) => ({ ...e, row: rows[i] }));
   if (near) {
     const nearRe = near instanceof RegExp ? near : new RegExp(near, "i");
-    withRows = withRows.filter((e) => nearRe.test(e.row) || nearRe.test(e.name));
+    withRows = withRows.filter((e) => [e.row, e.name, e.group, ...ctx(e)].some((t) => t && nearRe.test(t)));
     if (withRows.length === 0) return { none: true, near: true };
   }
   const distinct = [];
@@ -571,9 +726,60 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false } 
     distinct.push(e);
   }
   if (nth !== undefined) return distinct[nth - 1] ? { pick: distinct[nth - 1] } : { none: true };
-  if (distinct.length === 1) return { pick: distinct[0] };
-  matches = distinct;
-  return { several: matches };
+  const done = (pick, note) => ({ pick, note: [...notes, note].filter(Boolean).join("; ") || undefined });
+  if (distinct.length === 1) return done(distinct[0]);
+  let left = distinct;
+  const inModal = modalIds(nodes);
+  const modal = left.filter((e) => inModal.has(e.nodeId));
+  if (modal.length > 0 && modal.length < left.length) {
+    if (modal.length === 1) return done(modal[0], `${left.length} elements match; used the one in the open dialog (another: its ref)`);
+    left = modal;
+  }
+  if (fields && landmark) {
+    const out = left.filter((e) => !landmark(e));
+    if (out.length === 1) return done(out[0], `${left.length} fields match; used the one outside the page's header and navigation (another: --near "row text" or its ref)`);
+  }
+  // pictures in a gallery share a name (alt) though a person tells them apart: twins are controls only
+  const key = (e) => [e.role, e.name, e.group ?? "", e.row, ...ctx(e)].join("\u0000");
+  if (left.every((e) => CLICKABLE.has(e.role) && key(e) === key(left[0]))) {
+    const seenNow = inView ? left.find((e) => inView(e)) : undefined;
+    return done(
+      seenNow ?? left[0],
+      `${left.length} identical elements match (same name, row and place); used the ${seenNow ? "one in view" : "first in the main content"} (another: its ref)`,
+    );
+  }
+  return { several: left };
+}
+
+// Closed menus and collapsed controls a missing element may sit in (an overflow "..." button that hides "Sort"): controls
+// with aria-haspopup or expanded=false, icon-only and unnamed ones first, then menus before dialogs, in the page's order
+// (the main content first). Nothing is opened.
+function closedMenus(entries, { max = 4 } = {}) {
+  const pick = entries.filter(
+    (e) => CLICKABLE.has(e.role) && !["textbox", "searchbox"].includes(e.role) && !e.disabled && (e.hasPopup || e.expanded === false || e.expanded === "false"),
+  );
+  const rank = (e) => (e.iconOnly || !LETTER.test(e.name ?? "") ? 0 : 2) + (e.hasPopup && e.hasPopup !== "dialog" ? 0 : 1);
+  return pick
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => rank(a.e) - rank(b.e) || a.i - b.i)
+    .slice(0, max)
+    .map((x) => x.e);
+}
+
+// Points to click a control that holds other listed controls (a column header with a footnote link) on itself: inside its
+// box `own` ({l, t, r, b}), at least 3 px from the boxes of those inside it, nearest its centre first.
+function aimPoints(own, inner) {
+  const cx = (own.l + own.r) / 2;
+  const cy = (own.t + own.b) / 2;
+  const out = [];
+  for (const fy of [0.5, 0.3, 0.7, 0.15, 0.85])
+    for (const fx of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9]) {
+      const x = own.l + 3 + fx * Math.max(own.r - own.l - 6, 0);
+      const y = own.t + 3 + fy * Math.max(own.b - own.t - 6, 0);
+      if (inner.some((k) => x >= k.l - 3 && x <= k.r + 3 && y >= k.t - 3 && y <= k.b + 3)) continue;
+      out.push({ x, y });
+    }
+  return out.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
 }
 
 // Attributes of a DOMSnapshot node as a name -> value map.
@@ -1259,7 +1465,7 @@ function dialogs(nodes, { max = 8 } = {}) {
       for (const c of m.childIds ?? []) walk(c);
     };
     for (const c of n.childIds ?? []) walk(c);
-    const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role));
+    const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role) && (e.role !== "columnheader" || e.focusable));
     out.push({
       role,
       modal: modal || role === "alertdialog",
@@ -1679,6 +1885,8 @@ module.exports = {
   assertAllowed,
   axEntries,
   chooseTarget,
+  closedMenus,
+  aimPoints,
   connect,
   entryLine,
   pageTarget,
