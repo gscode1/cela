@@ -525,6 +525,43 @@ Reading stays passive and input stays real X events; nothing here knows a site, 
 
 The suite gained `decor`, `dropdown` and `acting` cases (pages `custom.html`, `dropdown.html`, `acting.html`).
 
+### desktop-web: bot-check revisit, notices, collapsed text, flex prices (issue #474)
+
+Round 2 of the hard local tests again (a forum's bot check, a payment demo, a shop's product page). Reading stays passive:
+`ALLOWED` is unchanged, nothing runs in the page, and nothing here knows a site, a language or an ad or tracker host.
+
+- **Bot check.** A bot check can be a one-off (the forum's cleared on a later visit), but working around one is not ours to
+  do. `open` counts bot checks per host in the session directory (`web-bot-checks.json`). The first sight reads
+  `looks like a bot check (<provider>): never click or solve it. It can be a one-off: open one ordinary page of the site (its
+  home or section page), then this page once more.`; any later one on that host reads `bot check again (<provider>, 2nd time
+  on <host>): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.` `click`, `type` and `drag`
+  refuse an element inside a frame whose URL, or whose iframe element's `src`, is a challenge provider's (the list of #469),
+  and exit 1 with "that is the bot check's own widget". The skill's rule: no alternate hosts, JSON endpoints or caches; one
+  ordinary revisit through the site's own pages, then report and stop.
+- **Frame still loading.** An out-of-process frame counts only when its iframe element shows a box (laid out, not
+  `visibility: hidden`) and its document has a root box of at least 100x50 px; a document with no layout at all no longer
+  counts. The payment demo's hidden fraud frames said "still loading" in every answer. The notice is said once per page URL
+  (`web-loading-said`).
+- **Non-modal dialogs.** A dialog without `aria-modal` (a `<dialog open>`, a panel with the role) reads `open dialog "X" (not
+  modal):`; an alert dialog or a modal one still says "act on it first". The covered-by check is unchanged.
+- **Error pages.** The status set is 400 to 408, 410, 429, 451 and 500 to 530 (Cloudflare's 52x). It is matched at the edge of
+  each part of the title (split at `|`, `:` and a dash between spaces: "x | 522: Connection timed out"), of each visible h1 to
+  h3, and as a line among the first 40 that is only the status or one word and the status ("Error 404"). A price line ("404
+  zł") is not one. A dash inside a word does not split ("Wi-Fi 500 Mbps").
+- **Collapsed text.** Text a box with `overflow: hidden` cuts away entirely is still left out of `text`. When a regex matches
+  no line, `text` counts the blocks of cut text that match and says `N matches are in a cut-off section (text not shown)`,
+  with the control that opens it: a collapsed one (`expanded=false`) in or just below the cutting box, else the button or link
+  just below it. Only a box that itself shows (at least 20 px each way) counts, so screen-reader-only text is never reported,
+  and the cut text is never printed.
+- **Flex prices.** The items of a flex row (which compute to `block`) join the line when an item's text stands within 0.6 of
+  a line's height of the next item's text, all on one visual line. They are always joined with a space ("699 00 zł", never
+  "69900"), except before a piece that starts with a comma or a point ("145,95"). The gap is measured between the texts, so
+  padded tabs stay apart, and a link, button or field never joins (a "50 zł off" badge beside a price is a button).
+
+The suite gained `errors`, `challenge` and `collapsed` cases (pages `timeout522.html`, `body404.html`, `listing.html`,
+`collapsed.html`; `challenge.html` now draws a widget through `srcdoc` under the provider's `src`), and `notices` (pages
+`hidden-frame.html`, `blank.html`, `nonmodal.html`) and `spacing` cover the rest.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
