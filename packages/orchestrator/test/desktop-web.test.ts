@@ -76,7 +76,7 @@ interface CdpLib {
   snapshotLines(snap: unknown, o?: { marks?: boolean; table?: boolean }): string[];
   titleAround(snap: unknown, backendNodeId: number): string | undefined;
   rowAround(snap: unknown, backendNodeId: number): number | undefined;
-  fixedAncestor(snap: unknown, backendNodeId: number): number | undefined;
+  fixedAncestors(snap: unknown, backendNodeId: number): number[];
   layerControls(
     nodes: AxNode[],
     ids: Set<number>,
@@ -1182,11 +1182,13 @@ describe("desktop-web's CDP reader", () => {
       { parent: 1, type: 1, tag: "DIV", style: st("block", "fixed"), box: [0, 600, 1000, 120] }, // 7 a fixed banner
       { parent: 7, type: 1, tag: "P", style: st("block"), box: [10, 610, 400, 20] }, // 8
       t("We use cookies", [10, 610, 100, 18], 8), // 9
+      { parent: 7, type: 1, tag: "DIV", style: st("block", "fixed"), box: [0, 0, 1000, 720] }, // 10 its dimming layer
     ]);
     expect(cdp.rowAround(snap, 1005)).toBe(1003);
     expect(cdp.rowAround(snap, 1003)).toBeUndefined();
-    expect(cdp.fixedAncestor(snap, 1008)).toBe(1007);
-    expect(cdp.fixedAncestor(snap, 1005)).toBeUndefined();
+    expect(cdp.fixedAncestors(snap, 1010)).toEqual([1010, 1007]);
+    expect(cdp.fixedAncestors(snap, 1008)).toEqual([1007]);
+    expect(cdp.fixedAncestors(snap, 1005)).toEqual([]);
   });
 
   it("crops a shot to at least 480x160 and the row, shifted to stay inside the page area", () => {

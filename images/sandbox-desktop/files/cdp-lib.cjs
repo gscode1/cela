@@ -1805,19 +1805,21 @@ function layerControls(nodes, ids, { tag = "", max = 8 } = {}) {
   return { entries: entries.slice(0, max), more: Math.max(entries.length - max, 0), buttons: entries.filter((e) => e.role === "button").length };
 }
 
-// The nearest element at or above a node (by backend id) that a layout snapshot shows with position fixed: a layer that
-// stays in front whatever the scroll. Returns its backend id, or undefined.
-function fixedAncestor(snap, backendNodeId) {
+// The elements at or above a node (by backend id) that a layout snapshot shows with position fixed, nearest first: layers
+// that stay in front whatever the scroll (a consent banner, and the dimming layer it may hold). Returns their backend ids.
+function fixedAncestors(snap, backendNodeId) {
   for (const doc of snap.documents ?? []) {
     const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
     if (i < 0) continue;
     const v = docView(snap, doc);
+    const out = [];
     for (let p = i; p > 0; p = v.parent[p]) {
-      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) return undefined;
-      if (v.style(p)?.[3] === "fixed") return doc.nodes.backendNodeId[p];
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) break;
+      if (v.style(p)?.[3] === "fixed") out.push(doc.nodes.backendNodeId[p]);
     }
+    return out;
   }
-  return undefined;
+  return [];
 }
 
 // The widest element around a narrow one (by backend id) that is no taller than 2.5 times it and at most 160 px: the row a
@@ -2322,7 +2324,7 @@ module.exports = {
   subtreeIds,
   titleAround,
   layerControls,
-  fixedAncestor,
+  fixedAncestors,
   rowAround,
   SHOT_NARROW,
   shotCrop,

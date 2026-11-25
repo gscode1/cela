@@ -968,14 +968,17 @@ const coverText = (k) =>
   [`another element covers it (${k.by}): ${k.what}. Close or answer it first, then run the rest of the chain again`, ...k.lines].join("\n");
 
 // The fixed layer (position fixed) an element sits in, with up to 8 of its controls, refs remembered: an overlay in front
-// that has no dialog role. Undefined when the element is in no such layer or the layer holds no control.
+// that has no dialog role. The nearest such layer that holds a control: a consent banner's dimming layer holds none, the
+// banner around it does. Undefined when the element is in no such layer.
 async function fixedLayer(send, backendNodeId, nodes, tag = "") {
   const snap = await send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
-  const layer = cdp.fixedAncestor(snap, backendNodeId);
-  if (layer === undefined) return undefined;
-  const ids = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: layer, depth: -1, pierce: true })).node);
-  const c = cdp.layerControls(nodes, ids, { tag });
-  if (c.entries.length === 0) return undefined;
+  let c;
+  for (const layer of cdp.fixedAncestors(snap, backendNodeId)) {
+    const ids = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: layer, depth: -1, pierce: true })).node);
+    c = cdp.layerControls(nodes, ids, { tag });
+    if (c.entries.length > 0) break;
+  }
+  if (!c || c.entries.length === 0) return undefined;
   rememberRefs(c.entries, { merge: true });
   return {
     buttons: c.buttons,
