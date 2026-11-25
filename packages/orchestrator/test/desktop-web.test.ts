@@ -67,7 +67,7 @@ interface CdpLib {
   closedMenus(entries: Entry[]): Entry[];
   aimPoints(own: Box, inner: Box[]): { x: number; y: number }[];
   matchTexts(e: Entry): string[];
-  snapshotLines(snap: unknown, o?: { marks?: boolean }): string[];
+  snapshotLines(snap: unknown, o?: { marks?: boolean; table?: boolean }): string[];
   screenPoint(
     g: {
       win: { x: number; y: number; height: number };
@@ -81,6 +81,15 @@ interface CdpLib {
   hiddenElements(snap: unknown): Set<number>;
   wrapLines(lines: string[], width?: number): string[];
   newLines(before: string[], after: string[]): string[];
+  orderChange(before: string[], after: string[]): { from: number; to: number } | undefined;
+  focusOf(
+    nodes: AxNode[],
+    entries: Entry[],
+  ): { key: string; entry?: Entry; line: string } | undefined;
+  findAgain(
+    entries: Entry[],
+    entry: Entry,
+  ): { entry?: Entry; redrawn?: boolean; several?: boolean } | undefined;
   dialogs(
     nodes: AxNode[],
   ): { role: string; name: string; backendNodeId?: number; entries: Entry[] }[];
@@ -92,8 +101,13 @@ interface CdpLib {
   ): string[];
   snapshotText(
     snap: unknown,
-    o?: { width?: number },
-  ): { lines: string[]; xs: number[]; at: Map<number, number> };
+    o?: { width?: number; table?: boolean },
+  ): {
+    lines: string[];
+    xs: number[];
+    at: Map<number, number>;
+    rows: ({ table: string; head: boolean } | undefined)[];
+  };
   indentLevels(xs: number[]): number[];
   decodeEntities(s: string): string;
   pageNotices(
@@ -775,7 +789,7 @@ describe("desktop-web's CDP reader", () => {
     ).toEqual([]);
     // a number inside a title is a product's, not a status
     expect(
-      cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: ["x"], title: "SSD 500 GB" }),
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { ...long, title: "SSD 500 GB" }),
     ).toEqual([]);
     const error = [
       "may be an error page: a status number in the title, a heading or a line of its own",
@@ -791,7 +805,7 @@ describe("desktop-web's CDP reader", () => {
     expect(
       at("Monitors - Shop", ["Monitor Alpha", "404 zł", "1 404,00 zł", "Top 500 models"]),
     ).toEqual([]);
-    expect(at("Wi-Fi 500 Mbps router", ["x"])).toEqual([]);
+    expect(at("Wi-Fi 500 Mbps router", long.lines)).toEqual([]);
     const challenge = page("https://a.test/", [
       frame("https://challenges.cloudflare.com/turnstile"),
     ]);
@@ -805,11 +819,16 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.challengeOf("https://www.google.com/recaptcha/api2/anchor?k=1")).toBe("reCAPTCHA");
     expect(cdp.challengeOf("https://www.google.com/search?q=recaptcha")).toBeUndefined();
     expect(cdp.pageNotices([{ snap: challenge }], long)).toEqual([]);
-    expect(cdp.pageNotices([{ snap: challenge, hidden: new Set([1003]) }], short)).toEqual([]);
+    // a page of one short line says almost nothing: no bot check there, but maybe an error or block page
+    const nearlyEmpty =
+      "page shows almost no text (1 line, no form field): an error or block page, or a picture-only one; look with desktop-shot";
+    expect(cdp.pageNotices([{ snap: challenge, hidden: new Set([1003]) }], short)).toEqual([
+      nearlyEmpty,
+    ]);
     const badge = page("https://a.test/", [
       frame("https://www.google.com/recaptcha/api2/anchor?k=1&size=invisible"),
     ]);
-    expect(cdp.pageNotices([{ snap: badge }], short)).toEqual([]);
+    expect(cdp.pageNotices([{ snap: badge }], short)).toEqual([nearlyEmpty]);
     // out-of-process frames come as parts with their target URL: one drew a challenge, one has drawn nothing yet
     const hc = {
       snap: page("https://newassets.hcaptcha.com/c"),
@@ -821,7 +840,9 @@ describe("desktop-web's CDP reader", () => {
     };
     // a frame that has laid out nothing (a tracker's, its iframe not shown) is not loading
     const unlaid = { snap: snapOf([doc]), url: "https://m.test/frame" };
-    expect(cdp.pageNotices([{ snap: page("https://a.test/") }, unlaid], short)).toEqual([]);
+    expect(cdp.pageNotices([{ snap: page("https://a.test/") }, unlaid], short)).toEqual([
+      nearlyEmpty,
+    ]);
     expect(cdp.pageNotices([{ snap: page("https://a.test/") }, hc, blank], short)).toEqual([
       "looks like a bot check (hCaptcha): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.",
       "a frame is still loading (pay.test): read again in a moment",
@@ -875,6 +896,179 @@ describe("desktop-web's CDP reader", () => {
     expect(await cdp.scrollbarThickness(reaches(637), 637)).toBe(0);
     expect(await cdp.scrollbarThickness(reaches(522), 520.5)).toBeCloseTo(1.5, 5);
     expect(await cdp.scrollbarThickness(() => Promise.resolve(false), 637)).toBe(0);
+  });
+
+  it("says a page of a few short lines and no field may be an error or block page", () => {
+    interface Snap {
+      strings: string[];
+      documents: [{ documentURL?: number }];
+    }
+    const page = (url: string, extra: N[] = []) => {
+      const s = snapOf([doc, div, t("x", [0, 0, 10, 16]), ...extra]) as unknown as Snap;
+      s.documents[0].documentURL = s.strings.push(url) - 1;
+      return s;
+    };
+    const say = (n: number) =>
+      `page shows almost no text (${String(n)} line${n === 1 ? "" : "s"}, no form field): an error or block page, or a picture-only one; look with desktop-shot`;
+    const sorry = { lines: ["Sorry, something went wrong."], title: "Shop" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s") }], sorry)).toEqual([say(1)]);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/s") }], {
+        lines: ["a", "b", "c"],
+        title: "Shop",
+      }),
+    ).toEqual([say(3)]);
+    // more lines, long lines, no lines yet (nothing drawn) or a page that is not a site's: nothing said
+    const four = { lines: ["a", "b", "c", "d"], title: "Shop" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s") }], four)).toEqual([]);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/s") }], {
+        lines: ["w".repeat(201)],
+        title: "Shop",
+      }),
+    ).toEqual([]);
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/s") }], { lines: [], title: "Shop" }),
+    ).toEqual([]);
+    expect(cdp.pageNotices([{ snap: page("file:///workspace/a.html") }], sorry)).toEqual([]);
+    // a field with a box makes it a page to use (a search start page); a hidden one does not
+    const field = (tag: string): N => ({ parent: 1, type: 1, tag, box: [0, 20, 200, 24] });
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s", [field("INPUT")]) }], sorry)).toEqual(
+      [],
+    );
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/s", [field("TEXTAREA")]) }], sorry),
+    ).toEqual([]);
+    expect(
+      cdp.pageNotices(
+        [{ snap: page("https://a.test/s", [field("INPUT")]), hidden: new Set([1003]) }],
+        sorry,
+      ),
+    ).toEqual([say(1)]);
+    const unboxed: N = { parent: 1, type: 1, tag: "SELECT" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/s", [unboxed]) }], sorry)).toEqual([
+      say(1),
+    ]);
+    // a page a status already names is said once, by that
+    expect(
+      cdp.pageNotices([{ snap: page("https://a.test/s") }], { lines: ["Not found"], title: "404" }),
+    ).toEqual([
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ]);
+  });
+
+  it("says when kept lines changed their order, and where they are now", () => {
+    expect(cdp.orderChange(["h", "A", "B", "f"], ["h", "B", "A", "f"])).toEqual({ from: 2, to: 3 });
+    expect(
+      cdp.orderChange(["t", "Plum", "Apple", "Mango", "x"], ["t", "Apple", "Mango", "Plum", "x"]),
+    ).toEqual({ from: 2, to: 4 });
+    // lines that appeared or went between kept ones are no reorder; a range is of the lines as they read now
+    expect(cdp.orderChange(["a", "b", "c"], ["a", "new", "b", "c"])).toBeUndefined();
+    expect(cdp.orderChange(["a", "b", "c"], ["a", "c"])).toBeUndefined();
+    expect(cdp.orderChange(["a", "b", "c", "d"], ["new", "a", "d", "x", "c", "b"])).toEqual({
+      from: 3,
+      to: 6,
+    });
+    // a line shown twice (a repeated "Edit" link) cannot say which copy moved: left out
+    expect(cdp.orderChange(["Edit", "a", "Edit", "b"], ["Edit", "Edit", "a", "b"])).toBeUndefined();
+    expect(cdp.orderChange([], ["a"])).toBeUndefined();
+  });
+
+  it("finds the element that has focus, and the acted-on one again when the page drew it anew", () => {
+    const focused = { properties: [{ name: "focused", value: { value: true } }] };
+    const nodes: AxNode[] = [
+      { nodeId: "1", role: { value: "RootWebArea" }, backendDOMNodeId: 101, ...focused },
+      {
+        nodeId: "2",
+        parentId: "1",
+        role: { value: "textbox" },
+        name: { value: "Last name" },
+        backendDOMNodeId: 102,
+        ...focused,
+      },
+      {
+        nodeId: "3",
+        parentId: "1",
+        role: { value: "generic" },
+        name: { value: "" },
+        backendDOMNodeId: 103,
+      },
+    ];
+    const entries = cdp.axEntries(nodes);
+    expect(cdp.focusOf(nodes, entries)).toMatchObject({
+      key: ":102",
+      line: '[e102] textbox "Last name" focused',
+    });
+    // a focused element that is no entry is named by its role; the page itself is no focus
+    expect(cdp.focusOf(nodes, [])?.line).toBe('textbox "Last name"');
+    expect(cdp.focusOf(nodes.slice(0, 1), [])).toBeUndefined();
+    const option = (ref: string, name: string, selected: boolean): Entry => ({
+      ref,
+      backendNodeId: Number(ref.slice(1)),
+      nodeId: ref,
+      role: "option",
+      name,
+      selected,
+    });
+    const was = option("e5", "docs", false);
+    expect(cdp.findAgain([option("e5", "docs", true)], was)).toMatchObject({ redrawn: false });
+    expect(
+      cdp.findAgain([option("e9", "bug", false), option("e8", "docs", true)], was),
+    ).toMatchObject({
+      entry: { ref: "e8" },
+      redrawn: true,
+    });
+    expect(cdp.findAgain([option("e8", "docs", true), option("e9", "docs", false)], was)).toEqual({
+      several: true,
+    });
+    expect(cdp.findAgain([option("e9", "bug", false)], was)).toBeUndefined();
+  });
+
+  it("joins a table row's cells with | only when asked, keeps empty cells and marks header rows", () => {
+    const st = (d: string): [string, string, string] => [d, "visible", "1"];
+    const cell = (parent: number, tag: string, x: number, y: number): N => ({
+      parent,
+      type: 1,
+      tag,
+      style: st("table-cell"),
+      box: [x, y, 80, 20],
+    });
+    const snap = snapOf([
+      doc,
+      { parent: 0, type: 1, tag: "TABLE", style: st("table"), box: [0, 0, 240, 60] },
+      { parent: 1, type: 1, tag: "THEAD", style: st("table-header-group"), box: [0, 0, 240, 20] },
+      { parent: 2, type: 1, tag: "TR", style: st("table-row"), box: [0, 0, 240, 20] },
+      cell(3, "TH", 0, 0),
+      t("City", [2, 2, 30, 16], 4),
+      cell(3, "TH", 80, 0),
+      t("Population", [82, 2, 70, 16], 6),
+      cell(3, "TH", 160, 0),
+      t("Note", [162, 2, 30, 16], 8),
+      { parent: 1, type: 1, tag: "TBODY", style: st("table-row-group"), box: [0, 20, 240, 40] },
+      { parent: 10, type: 1, tag: "TR", style: st("table-row"), box: [0, 20, 240, 20] },
+      cell(11, "TD", 0, 20),
+      t("Oslo", [2, 22, 30, 16], 12),
+      cell(11, "TD", 80, 20),
+      t("700", [82, 22, 30, 16], 14),
+      cell(11, "TD", 160, 20),
+      { parent: 0, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 70, 240, 20] },
+      t("After the table", [0, 70, 100, 16], 17),
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual([
+      "City Population Note",
+      "Oslo 700",
+      "After the table",
+    ]);
+    expect(cdp.snapshotLines(snap, { table: true })).toEqual([
+      "City | Population | Note",
+      "Oslo | 700 | ",
+      "After the table",
+    ]);
+    expect(cdp.snapshotText(snap, { table: true }).rows).toEqual([
+      { table: "0:1", head: true },
+      { table: "0:1", head: false },
+      undefined,
+    ]);
   });
 
   it("wraps long blocks into lines and reports only what an action added", () => {

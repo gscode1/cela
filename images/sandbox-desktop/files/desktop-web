@@ -15,8 +15,9 @@
 //   desktop-web type <ref|"regex"> "text"     click a field, replace its text, print its value and what appeared; --enter,
 //                                             --append, --near "row text"; "" clears it. Of several matching fields the one
 //                                             outside the header and navigation. Exit 1 when the field kept its value
-//   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes;
-//                                             --text "answer" types text first (a prompt dialog), --show "regex"
+//   desktop-web key <keys...>                 keys in the browser window (End, Page_Down, alt+Left, Escape); prints changes and
+//                                             the element that took the focus; --text "answer" types text first (a prompt
+//                                             dialog), --show "regex"
 //   desktop-web select <ref|"regex"> "option" pick an option of a dropdown (native or in-page: the options it owns, else
 //                                             those that appear as it opens) and print what it holds
 //   desktop-web type <slider> 75              set a slider: a press at its proportional point, then arrow keys to the value;
@@ -34,9 +35,15 @@
 //   desktop-web url                           url and title
 //   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›
 //   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
+//   desktop-web text "regex" --table          a table row as its cells joined by " | " (empty cells kept), with the table's
+//                                             header rows above the matches as "cols: ..."
+//
+// What an action changed counts lines that kept their text but moved (a sort, a drag swap: "order changed (lines A-B)"),
+// a control's selected, pressed and sort state, and the clicked control drawn again by the page.
 //
 // Answers start with the page's url (only when it changed since the last answer, cut to 120 characters) and title, then
-// notices: redirected from the typed URL, Chrome's error page, a likely error page, a bot check (the first sight on a host
+// notices: redirected from the typed URL, Chrome's error page, a likely error page, a page of a few short lines and no
+// field (an error or block page that names no status), a bot check (the first sight on a host
 // allows one ordinary revisit, the second says stop), a frame still loading (once per page). Struck-through text reads
 // ~637 zł~. A `text` regex that matches nothing says how many matches a collapsed (overflow-cut) section holds and which
 // control opens it, never their text. click, type and drag refuse a bot check's own widget.
@@ -63,6 +70,7 @@ const FRAME = Number(process.env.PI_DESKTOP_FRAME ?? 4);
 const BUDGET_LINES = 60;
 const BUDGET_CHARS = 4000;
 const PROBE_MS = 2500;
+const SETTLE_BOX_MS = 1000;
 const WIDTH = 200;
 const REFS = () => path.join(lib.sessionDir(), "web-refs.json");
 const LAST_URL = () => path.join(lib.sessionDir(), "web-url");
@@ -109,6 +117,7 @@ function parseArgs(argv) {
     else if (a === "--gone") o.gone = true;
     else if (a === "--marks") o.marks = true;
     else if (a === "--indent") o.indent = true;
+    else if (a === "--table") o.table = true;
     else if (a === "--enter") o.enter = true;
     else if (a === "--append") o.append = true;
     else o.pos.push(a);
@@ -341,14 +350,19 @@ async function readParts(c, { ax = false } = {}) {
 }
 
 // The text of a read (readParts), the page's first: { lines, xs (left edges), lineOf (accessibility node -> line index, by
-// its element), notes (cdp.pageNotices) }. `t` is the page's target, for its title.
-function readText(read, t, { marks = false } = {}) {
+// its element), notes (cdp.pageNotices), rows (with `table`: per line, the table row's { table, head }) }. `t` is the
+// page's target, for its title.
+function readText(read, t, { marks = false, table = false } = {}) {
   const lines = [];
   const xs = [];
   const at = new Map();
+  const rows = [];
   for (const r of read) {
-    const s = cdp.snapshotText(r.snap, { marks, width: WIDTH });
+    const s = cdp.snapshotText(r.snap, { marks, width: WIDTH, table });
     for (const [id, k] of s.at) at.set(`${r.part.tag}:${id}`, lines.length + k);
+    s.rows.forEach((x, k) => {
+      if (x) rows[lines.length + k] = { table: `${r.part.tag}/${x.table}`, head: x.head };
+    });
     lines.push(...s.lines);
     xs.push(...s.xs);
   }
@@ -356,7 +370,7 @@ function readText(read, t, { marks = false } = {}) {
     read.map((r) => ({ snap: r.snap, hidden: r.hidden, url: r.part.url })),
     { lines, title: cdp.decodeEntities(t?.title), sighting: (host) => Math.max((botChecks()[host] ?? 0) + (opening ? 1 : 0), 1) },
   );
-  return { lines, xs, lineOf: (n) => at.get(`${n.frameTag ?? ""}:${n.backendDOMNodeId}`), notes };
+  return { lines, xs, lineOf: (n) => at.get(`${n.frameTag ?? ""}:${n.backendDOMNodeId}`), notes, rows };
 }
 
 // Bot checks met per host this session, counted by open: the first may be a one-off, the second is the site's answer
@@ -901,6 +915,15 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = f
     quad = q.quads[0];
   }
   if (!quad) fail("the element has no box on the page (hidden or removed): run desktop-web snap again");
+  // A box still moving (a dialog sliding in, a panel that opens) would take the click where it was: read it again until it
+  // holds still, for at most a second.
+  const boxOf = () => part.send("DOM.getBoxModel", { backendNodeId }).then((b) => b.model.border, () => undefined);
+  for (const start = Date.now(); Date.now() - start < SETTLE_BOX_MS; ) {
+    lib.pause(150);
+    const next = await boxOf();
+    if (!next || next.every((v, i) => Math.abs(v - quad[i]) < 1)) break;
+    quad = next;
+  }
   const lm = await c.send("Page.getLayoutMetrics");
   const vp = lm.cssLayoutViewport;
   const zoom = lm.cssVisualViewport.zoom ?? 1;
@@ -1070,9 +1093,13 @@ const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemch
 // action (read here when not given); `self` is the element acted on, whose own change the caller reports (`selfChanged`).
 // A new address that keeps the path or most of the page's lines (a filter or sort in the query) shows what changed, not an
 // outline.
+// Lines that kept their text but not their order (a sort, a drag that swapped two items) are a change too: the range is
+// printed as it reads now, its first ORDER_LINES lines. With `focus` (a key) the element that took the focus is printed
+// when it is another one.
 // When nothing changed at all: "result may come later" if the page shows it is busy, else "nothing happened" with the fields
 // that block a form and how to look; the same no-op twice in a row says to stop.
-async function changes(pre, before, after, o, { now, self, selfChanged = false } = {}) {
+const ORDER_LINES = 8;
+async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
   const out = header(after.target, after.notes);
@@ -1102,7 +1129,13 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
     const diffs = now ? cdp.controlDiffs(pre.entries, now.entries, { skip: self?.ref }) : [];
     const known = new Set(pre.entries.map((e) => e.ref));
     const opts = (now?.entries ?? []).filter((e) => OPTION_ROLES.has(e.role) && !known.has(e.ref));
+    const order = after.lines.length > 0 ? cdp.orderChange(pre.lines, after.lines) : undefined;
+    const focusWas = focus ? cdp.focusOf(pre.nodes, pre.entries) : undefined;
+    const is = focus && now ? cdp.focusOf(now.nodes, now.entries) : undefined;
+    const moved = is && is.key !== focusWas?.key ? is : undefined;
     lib.savePage(after.lines, pageFile(o));
+    if (moved?.entry) rememberRefs([moved.entry], { merge: true });
+    if (moved) out.push(`focus: ${moved.line}`);
     out.push(...closed.map((d) => `closed ${d}`), ...alerts.slice(0, 3));
     if (opts.length > 0) {
       rememberRefs(opts, { merge: true });
@@ -1112,11 +1145,15 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false }
     if (added.length > 0) out.push(`changed (${added.length} new lines):`, ...added.slice(0, 20));
     if (added.length > 20) out.push(`... ${added.length - 20} more: desktop-web text "regex"`);
     if (gone.length > 0) out.push(`gone (${gone.length} lines): ${gone.slice(0, 3).map((l) => lib.clip(l, 60)).join(" | ")}${gone.length > 3 ? " | ..." : ""}`);
+    if (order) {
+      out.push(`order changed (lines ${order.from}-${order.to}), now:`);
+      for (let k = order.from; k <= Math.min(order.to, order.from + ORDER_LINES - 1); k++) out.push(`${k}: ${lib.clip(after.lines[k - 1], 160)}`);
+    }
     out.push(...diffs.slice(0, 5));
     if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
-    nothing = !navigated && !added.length && !gone.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    nothing = !navigated && !added.length && !gone.length && !order && !moved && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
     if (nothing && !busy && !o.noHint && !chooser) out.push(...nothingHappened(now, self, after.target.url));
-    else if (!added.length && !gone.length) out.push("page text unchanged");
+    else if (!added.length && !gone.length && !order) out.push("page text unchanged");
     if (self?.role === "link" && !navigated && !o.noHint) out.push("note: the address did not change");
   }
   if (!nothing) forgetNoop();
@@ -1226,16 +1263,19 @@ async function main() {
     }
     case "text": {
       let lines;
+      let rows = [];
       let head = [];
       if (o.from) lines = fs.readFileSync(o.from, "utf8").replace(/\n$/, "").split("\n");
       else {
         await guard({ read: true });
-        const r = await withPage(async (c, t) => ({ ...(await pageText(c, { marks: o.marks })), t }));
+        const r = await withPage(async (c, t) => ({ ...(await pageText(c, { marks: o.marks, table: o.table })), t }));
         lines = r.lines;
+        rows = r.rows;
         head = header(r.t, r.notes);
         // The saved text stays the plain page: its line numbers are what outlines and --lines refer to.
-        if (!o.marks) lib.savePage(lines, pageFile(o));
-        else head.push("(marks ‹…› come from the page's markup, and line numbers differ from the saved text)");
+        if (!o.marks && !o.table) lib.savePage(lines, pageFile(o));
+        else if (o.marks) head.push("(marks ‹…› come from the page's markup, and line numbers differ from the saved text)");
+        if (o.table) head.push('(table rows as cells joined by " | "; line numbers are of this --table reading: page on with --table --lines A-B)');
         if (o.indent) {
           // a regex is matched against the page's own words, without the marks (below)
           const levels = cdp.indentLevels(r.xs);
@@ -1256,12 +1296,19 @@ async function main() {
       if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
       const re = regex(pattern);
       const hits = lib.grepLines(lines, o.indent ? { test: (l) => re.test(l.replace(/^>+ /, "")) } : re, { limit: o.limit ?? 25, context: o.context, width: WIDTH });
+      // --table: the header rows of the tables the matching rows are in, once each, above the matches
+      const cols = [];
+      if (o.table) {
+        const tables = [];
+        for (const [i, l] of lines.entries()) if (rows[i] && !rows[i].head && re.test(l) && !tables.includes(rows[i].table)) tables.push(rows[i].table);
+        for (const tb of tables.slice(0, 3)) cols.push(...lines.flatMap((l, i) => (rows[i]?.table === tb && rows[i].head ? [`cols: ${lib.clip(l, WIDTH)}`] : [])).slice(0, 3));
+      }
       if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) {
         const tree = await withPage((c) => axTree(c)).catch(() => undefined);
         const more = [...(await namedLike(re, async () => tree)), ...cutOffLines(re, tree)];
         hits.push(...more, ...(more.length === 0 && tree ? menuLines(tree.entries) : []));
       }
-      const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
+      const out = [...head, ...cols, ...hits, `(${lines.length} lines${o.from || o.marks || o.table ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;
     }
@@ -1369,11 +1416,20 @@ async function main() {
         return;
       }
       // Read the element again: its state after the click (checked, expanded, value) is the answer, not the one before.
+      // A page that draws the control again (a list re-rendered by a filter) gives it a new ref: found by its role and name.
+      // Drawn again or gone, it is a change the page made.
       const now = await withPage((c) => axTree(c)).catch(() => undefined);
-      const self = now?.entries.find((e) => e.ref === entry.ref);
+      const element = !["clickable", "text"].includes(entry.role);
+      const again = now && element ? cdp.findAgain(now.entries, entry) : undefined;
+      const self = again?.entry;
       const diff = cdp.stateDiff(entry, self);
       const first = diff.length > 0 ? `clicked [${entry.ref}] ${entry.role} ${cdp.shortName(entry, 80)}: ${diff.join(", ")}` : `clicked ${cdp.entryLine(self ?? entry)}`;
-      console.log([...head, first, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 }))].join("\n"));
+      const redraw = [];
+      if (again?.redrawn) {
+        rememberRefs([self], { merge: true });
+        redraw.push(`the page drew it again: now ${cdp.entryLine(self, { nameMax: 80 })}`);
+      } else if (now && element && !again && after.target.url === before.url) redraw.push("it is gone from the page now");
+      console.log([...head, first, ...redraw, ...(await changes(pre, before, after, o, { now, self: entry, selfChanged: diff.length > 0 || redraw.length > 0 }))].join("\n"));
       return;
     }
     case "key": {
@@ -1411,7 +1467,7 @@ async function main() {
         return;
       }
       const closed = chooser && !chooserWindow() ? ["file chooser closed"] : [];
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o))].join("\n"));
+      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true }))].join("\n"));
       return;
     }
     case "select": {
@@ -1485,8 +1541,15 @@ async function main() {
         console.log(blockedLines().join("\n"));
         return;
       }
-      // Read the select back: what the page holds is the result, not what was sent.
-      const now = await withPage(async (c) => (await axTree(c, { options: true })).entries.find((e) => e.backendNodeId === entry.backendNodeId && (e.frameTag ?? "") === (entry.frameTag ?? "")));
+      // Read the select back: what the page holds is the result, not what was sent. A page that draws the select again as it
+      // takes the change (a re-render) may show the old value for a moment: a mismatch is read once more before it is said.
+      const readBack = () => withPage(async (c) => cdp.findAgain((await axTree(c, { options: true })).entries, entry)?.entry);
+      let now = await readBack();
+      const holds = (x) => x?.options?.find((y) => y.selected)?.text;
+      if (how === "native" && now?.options && holds(now) !== shown) {
+        lib.pause(700);
+        now = (await readBack()) ?? now;
+      }
       let state = "";
       if (now?.options) {
         const picked = now.options.filter((x) => x.selected).map((x) => x.text);
