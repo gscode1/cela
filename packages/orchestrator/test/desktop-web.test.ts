@@ -537,6 +537,41 @@ describe("desktop-web's CDP reader", () => {
     ]);
   });
 
+  it("joins the items of a flex row that stand close, with a space, and keeps padded tabs apart", () => {
+    const flex: [string, string, string] = ["flex", "visible", "1"];
+    const nodes: N[] = [
+      doc, // 0
+      { ...div, box: [0, 0, 600, 200] }, // 1
+      // a price drawn as three items side by side: "699" "00" "zł"
+      { parent: 1, type: 1, tag: "DIV", style: flex, box: [0, 0, 600, 24] }, // 2
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [0, 0, 36, 24] }, // 3
+      t("699", [0, 0, 36, 24], 3), // 4
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [36, 4, 14, 12] }, // 5
+      t("00", [36, 4, 14, 12], 5), // 6
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [53, 4, 16, 18] }, // 7
+      t("zł", [53, 4, 16, 18], 7), // 8
+      // tabs padded 12 px each side: the boxes touch, the texts stand 24 px apart (links are controls and never join)
+      { parent: 1, type: 1, tag: "NAV", style: flex, box: [0, 40, 600, 18] }, // 9
+      { parent: 9, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [0, 40, 64, 18] }, // 10
+      t("News", [12, 40, 40, 18], 10), // 11
+      { parent: 9, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [64, 40, 64, 18] }, // 12
+      t("Sport", [76, 40, 40, 18], 12), // 13
+      // a column of items: one under the other
+      { parent: 1, type: 1, tag: "DIV", style: flex, box: [0, 80, 600, 40] }, // 14
+      { parent: 14, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 80, 600, 18] }, // 15
+      t("upper", [0, 80, 40, 18], 15), // 16
+      { parent: 14, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 100, 600, 18] }, // 17
+      t("lower", [0, 100, 40, 18], 17), // 18
+    ];
+    expect(cdp.snapshotLines(snapOf(nodes))).toEqual([
+      "699 00 zł",
+      "News",
+      "Sport",
+      "upper",
+      "lower",
+    ]);
+  });
+
   it("counts matches in text a box with overflow hidden cuts away, without the text", () => {
     const st = (overflow: string): string[] => [
       "block",

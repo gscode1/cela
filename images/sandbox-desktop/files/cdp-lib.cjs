@@ -752,21 +752,70 @@ function docView(snap, doc) {
 // The inline boxes (inline-block, inline-flex and the items of an inline flex or grid) of a document whose text reads as part
 // of the line around them: "Distance: <output>13km</output>." is one line. Decided from layout alone: all of the box's text
 // sits on one visual line (no fragment of it wraps, and it holds no block of its own), and that line overlaps text of the
-// same block outside the box. A card or a column built of inline-blocks spans several lines and stays apart.
+// same block outside the box. A card or a column built of inline-blocks spans several lines and stays apart. The items of a
+// flex row (which compute to block) count too when one's text stands within 0.6 of a line's height of the next's: a price drawn as
+// "699" "00" "zł" side by side. Returns { joined, spaced }: `spaced` are those flex items, whose words are always kept apart
+// by a space ("699 00 zł", never "69900"), as a flex row draws them apart. A menu's links are controls and stay lines.
+// A link, button or field is a target of its own: as a flex item it stays apart from the text beside it ("50 zł taniej").
+const CONTROL_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL)$/i;
 function joinInline(doc, v) {
   const n = doc.nodes.parentIndex.length;
   const cand = new Uint8Array(n);
+  const spaced = new Set();
   let any = false;
+  const kids = new Map(); // flex container -> its items with a box
   for (let i = 0; i < n; i++) {
     if (doc.nodes.nodeType[i] !== 1 || !v.layoutOf.has(i)) continue;
     const p = v.parent[i];
     if (INLINE_BOX.test(v.display(i)) || (p >= 0 && cand[p] && /^inline-(flex|grid)$/.test(v.display(p)))) {
       cand[i] = 1;
       any = true;
+    } else if (p >= 0 && /^(inline-)?flex$/.test(v.display(p)) && v.bounds(i) && !CONTROL_TAGS.test(v.str(doc.nodes.nodeName[i]))) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(i);
+    }
+  }
+  // where each item's text is drawn (a padded menu link stands apart by its padding though the boxes touch) and the height
+  // of its tallest piece of text, a line's
+  const ext = new Map();
+  if (kids.size > 0) {
+    const items = new Set([...kids.values()].flat());
+    for (let t = 0; t < n; t++) {
+      if (doc.nodes.nodeType[t] !== 3 || v.str(doc.nodes.nodeValue[t]).trim() === "") continue;
+      const b = v.bounds(t);
+      if (!b || v.tiny(b)) continue;
+      for (let p = v.parent[t]; p > 0; p = v.parent[p]) {
+        if (!items.has(p)) continue;
+        const e = ext.get(p);
+        if (!e) ext.set(p, { ...b, line: b.h });
+        else {
+          const x = Math.min(e.x, b.x);
+          const y = Math.min(e.y, b.y);
+          ext.set(p, { x, y, w: Math.max(e.x + e.w, b.x + b.w) - x, h: Math.max(e.y + e.h, b.y + b.h) - y, line: Math.max(e.line, b.h) });
+        }
+      }
+    }
+  }
+  for (const items of kids.values()) {
+    for (let k = 0; k + 1 < items.length; k++) {
+      const a = ext.get(items[k]);
+      const b = ext.get(items[k + 1]);
+      if (!a || !b) continue;
+      // both within one line of the row: "00" over "zł" in small print beside a large "699" still is
+      const row = Math.max(a.line, b.line);
+      const h = Math.min(a.line, b.line);
+      const overlap = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      const gap = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
+      if (h <= 0 || a.h > 1.5 * row || b.h > 1.5 * row || overlap < 0.5 * Math.min(a.h, b.h) || gap > 0.6 * h) continue;
+      for (const i of [items[k], items[k + 1]]) {
+        cand[i] = 1;
+        spaced.add(i);
+      }
+      any = true;
     }
   }
   const out = new Set();
-  if (!any) return out;
+  if (!any) return { joined: out, spaced: new Set() };
   // Text nodes whose fragments (one per line it takes) start at different heights: text that wraps.
   const wrapped = new Set();
   const tb = doc.textBoxes;
@@ -805,13 +854,28 @@ function joinInline(doc, v) {
   }
   for (const [a, s] of bands) {
     const h = s.bottom - s.top;
+    // a flex item is placed by its row (above): blocks inside it (the "00" and "zł" stacked) read as part of the line
+    if (spaced.has(a)) {
+      out.add(a);
+      continue;
+    }
     if (s.bad || h > 1.5 * s.h) continue;
     const meets = (flows.get(flowOf.get(a)) ?? []).some(
       (q) => Math.min(q.bottom, s.bottom) - Math.max(q.top, s.top) >= 0.5 * Math.min(q.bottom - q.top, h) && !q.inside.includes(a),
     );
     if (meets) out.add(a);
   }
-  return out;
+  if (spaced.size > 0) {
+    for (let i = 0; i < n; i++) {
+      if (doc.nodes.nodeType[i] !== 1 || out.has(i) || !BLOCK.test(v.display(i))) continue;
+      for (let p = v.parent[i]; p > 0; p = v.parent[p]) {
+        if (!spaced.has(p)) continue;
+        out.add(i);
+        break;
+      }
+    }
+  }
+  return { joined: out, spaced };
 }
 
 // Elements that stand for themselves or carry a name of their own: never marked as a nameless picture.
@@ -866,11 +930,16 @@ function snapshotGroups(snap, { marks = false } = {}) {
       }
     }
     const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
-    const joined = joinInline(doc, v);
+    const { joined, spaced } = joinInline(doc, v);
     const blockOf = (i) => {
       let p = v.parent[i];
       while (p > 0 && (!BLOCK.test(v.display(p)) || joined.has(p))) p = v.parent[p];
       return p;
+    };
+    // the flex item (joinInline's `spaced`) a text node sits in, within its block: -1 for none
+    const itemOf = (i, block) => {
+      for (let p = v.parent[i]; p > 0 && p !== block; p = v.parent[p]) if (spaced.has(p)) return p;
+      return -1;
     };
     // text-decoration is drawn through the descendants of the element that sets it, though no descendant computes it
     const struckAt = new Map();
@@ -881,7 +950,7 @@ function snapshotGroups(snap, { marks = false } = {}) {
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1 });
       return groups.get(g);
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
@@ -933,12 +1002,16 @@ function snapshotGroups(snap, { marks = false } = {}) {
       }
       const g = group(blockOf(i));
       const s = struck(i);
+      const item = spaced.size > 0 ? itemOf(i, g.block) : -1;
+      // another flex item: apart, unless it starts with a decimal mark or a comma ("145" ",95")
+      const nextItem = item !== g.item && (item >= 0 || g.item >= 0) && !/^[,.]/.test(raw);
       if (g.struck && !s) g.text = g.text.replace(/\s*$/, (m) => `~${m}`);
-      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || apart(g.box, b) || s !== g.struck)) g.text += " ";
+      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || nextItem || apart(g.box, b) || s !== g.struck)) g.text += " ";
       g.text += s && !g.struck ? raw.replace(/^\s*/, (m) => `${m}~`) : raw;
       g.struck = s;
       g.box = b;
       g.brk = false;
+      g.item = item;
       g.x = Math.min(g.x, b.x);
       g.texts.push(i);
     }

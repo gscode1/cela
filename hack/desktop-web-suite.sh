@@ -191,8 +191,10 @@ case_spacing() {
   sed 's/^/    | /' "$OUT"
   # inline-blocks on one line join it (eta theta, the values of Distance and Time, an inline-flex number); cards and columns
   # built of inline-blocks span several lines and stay apart
+  # a flex row's items close together read as one line, a space between them (a price); a menu's links stay apart
   for line in '145,95 zł' 'alphabeta' 'gamma delta' 'epsilon zeta' 'boldfaceitalic' 'eta theta' 'Distance: 13km\. Time: 0:22\.' \
-    'Rating 4\.5 of 5' 'Card lambda' '10 zł' 'Card mu' '20 zł' 'Left column words that wrap' 'Right nu'; do
+    'Rating 4\.5 of 5' 'Card lambda' '10 zł' 'Card mu' '20 zł' 'Left column words that wrap' 'Right nu' '699 00 zł' 'Price 145,95' \
+    'Home xi' 'Offers xi' 'News omicron' 'Sport omicron'; do
     check "line \"$line\"" "$(grep -qE "^[0-9]+: $line\$" "$OUT"; echo $?)"
   done
   check "block elements stay separate lines" "$([[ $(grep -cE '^[0-9]+: (iota|kappa)$' "$OUT") == 2 ]]; echo $?)"
