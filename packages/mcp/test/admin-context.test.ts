@@ -60,8 +60,8 @@ describe("admin mode", { timeout: 10_000 }, () => {
     const env = dangerous ? dangerousEnv : writes ? writesEnv : adminEnv;
     await withClient(env, async (client) => {
       const tools = (await client.listTools()).tools;
-      // Nothing registers under the dangerous flag yet.
-      expect(tools.filter((tool) => tool.name.startsWith("admin_")).length).toBe(writes ? 11 : 9);
+      const count = tools.filter((tool) => tool.name.startsWith("admin_")).length;
+      expect(count).toBe(dangerous ? 13 : writes ? 12 : 9);
       expect(tools.some((tool) => tool.name === "admin_put_profile")).toBe(writes);
       expect(tools.some((tool) => tool.name === "admin_delete_profile")).toBe(writes);
     });

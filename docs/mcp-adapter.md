@@ -202,11 +202,11 @@ structured content, scrubbed of both tokens and labelled untrusted; writes take 
 | `admin_put_profile` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/profiles/{name}` | 1.0.0 |
 | `admin_delete_profile` | `PI_MCP_ADMIN_WRITES` | `DELETE /admin/profiles/{name}` | 1.0.0 |
 | `admin_publish_skill` | `PI_MCP_ADMIN_WRITES` | `POST /admin/skills/{name}/versions` (inline files only) | planned (#511) |
-| `admin_put_mcp_server` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/mcp-servers/{name}` | planned (#511) |
+| `admin_put_mcp_server` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/mcp-servers/{name}` | 1.2.0 |
 | `admin_probe_network` | `PI_MCP_ADMIN_WRITES` | `POST /admin/status/probe` | planned (#511) |
 | `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` | planned (#511) |
 | `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` | planned (#511) |
-| `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}` | planned (#511) |
+| `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}?expectedRevision=N` | 1.2.0 |
 | `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST` (create) or `PUT /admin/egress/rule-sets/{name}` | planned (#511) |
 | `admin_delete_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rule-sets/{name}` | planned (#511) |
 | `admin_put_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `POST /admin/egress/rules` or `/admin/egress/sessions/{id}/rules`, `PUT /admin/egress/rules/{id}` | planned (#511) |
