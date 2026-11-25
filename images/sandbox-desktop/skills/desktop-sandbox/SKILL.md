@@ -16,7 +16,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
     desktop-web text "regex"                    read the current page: matching text lines (full text saved to a file)
     desktop-web text --lines 120-170            read a range of lines (from the outline's line numbers or a match); --indent shows nesting
     desktop-web snap ["regex"]                  open dialogs, then clickable elements, named pictures and headings with refs: [e123] link "Name"
-    desktop-web click <e123|"regex">            click it, see its new state and what changed; --near "row text", --show "regex"
+    desktop-web click <e123|"regex">            click it, see its new state and what changed; --near "row text", --show "regex";
+                                                --double for a double click (edit a label), on any visible text
     desktop-web type <e123|"regex"> "text"      replace a field's text ("" clears it), see its value and what appeared; --enter
                                                 presses Return, --near "row text" picks one of several fields
     desktop-web select <e123|"regex"> "option"  pick an option of a dropdown (native or in-page); snap lists the options
@@ -57,10 +58,10 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   and name (the answer says so); otherwise run `snap` again.
   `desktop-web click "regex"` clicks the one match by name in one call; several matches are listed with each row's text and
   URL, and nothing is clicked. With no element of that name it clicks the one line of clickable text that matches (a filter
-  option drawn without a role); `snap "regex"` lists those as `clickable "text"`. Some duplicates are picked for you, and the
+  option drawn without a role), else the one line of any visible text (it says so); `snap "regex"` lists those as `clickable "text"`. Some duplicates are picked for you, and the
   answer says which: an exact name or text line over ones that only contain it, the one in an open dialog, a field outside
   the header, or of identical copies the one in view. When nothing matches, the answer lists `closed menus that may hold it`
-  (an overflow "..." button): open one by ref and look again.
+  (an overflow "..." button): open one by ref and look again. Controls an action added are printed as `appeared: [e12] ...`.
 - Sortable table columns are listed as `columnheader "Population" in "City proper" sort=none`; click by name
   (`desktop-web click "City proper Population"`) or ref to sort, and the answer shows `sort none -> ascending` when the page
   says so.
@@ -84,7 +85,9 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   `desktop-web key Return` accepts, `desktop-web key Escape` cancels, a prompt takes `desktop-web key --text "answer" Return`.
   The next answer says "dialog closed" and what changed. Do not wait it out: it never closes by itself.
 - A slider: `desktop-web type <ref|"regex"> 75` presses it at that point, then steps with the arrow keys and reads it back; a value
-  between its steps ends on the nearest one and says so. Exit 1 when it did not move.
+  between its steps ends on the nearest one and says so. Exit 1 when it did not move. A handle drawn without a slider role is
+  listed as `focusable ‹ui-slider-handle› near "Price range"`: `desktop-web click <ref>`, then `desktop-web key Right` (or Left,
+  Page_Up) and read the value it prints, or `desktop-web drag <ref> --by 40,0`; `type` refuses it.
 - A file to upload (it must be in `/workspace`): `desktop-web upload <ref|"regex"> /workspace/file`. snap marks a file input
   `(file input: desktop-web upload)`; a styled "Choose file" button works too. `type` refuses a file input. When the browser's
   file chooser is open (a click opened it) every command says so: actions are refused until `desktop-web key Escape` cancels it.

@@ -619,6 +619,31 @@ The suite gained `reorder` (a drag swap, a sort button, an `aria-selected` optio
 focus), `empty` (a one-line page flagged, a one-line page with a search box clean) and `slide` (a Close button in a dialog
 that slides in, clicked in a chain right after the opening), and `table` checks `text --table`.
 
+### desktop-web: double click, plain-text clicks, hidden toggles, focusable handles, appeared controls, scroll (issue #481)
+
+From round 4, on sites the tool had not met (a TodoMVC, jQuery UI demos, react-select, a shop's virtualized list). `ALLOWED`
+is unchanged, input stays real X events, and nothing is retried.
+
+- **Diffs.** `newLines()` counts lines, so a line already shown elsewhere ("Red" in a second multi-select) is new when it
+  shows more often. `changes()` prints `appeared: [e..] <control>` for controls whose role and name count grew (a new ref
+  first, then a new row), at most 5, only a count above 8; options and an open dialog's controls are printed as before. A
+  click reports the focus when another element than the clicked one took it. `key` prints `scrolled Y1 -> Y2 of H px` from
+  `Page.getLayoutMetrics`, and that is a change.
+- **Listing.** A checkbox, radio or switch hidden only by opacity 0, without a label a person sees but with a box of at least
+  8 px, is kept and clicked on its own box (TodoMVC's toggles); the hit test still refuses one that is covered, and a 1 px
+  honeypot stays out. An element of another role with a `tabindex` of 0 or more in its markup, that does not scroll and holds
+  no listed control, is listed as `focusable ‹class words› near "row"` (a jQuery slider handle); its row is the nearest
+  text around it when its own has none. `tabindex=-1` elements and scrollers are never listed. Controls that share a role and
+  name show their row as `near` (40 characters), which `--near` matches and a name regex does not. `type` refuses a
+  focusable handle: the skill says to click it and use keys or `drag --by`; no step is guessed.
+- **Click.** `click --double` presses twice 60-120 ms apart and takes any visible text. A plain `click` that matches no
+  element and no clickable text takes the one visible line that matches (or reads exactly so) and says so; several are listed
+  by ref. A ref of a text line is found again by its text, like a clickable one.
+
+The suite gained `chips` (a pick that repeats a line and adds a second "Remove Red", `key End` scrolled), `todos` (opacity-0
+row toggles by `--near`, a plain-text click, a label renamed after `--double`) and `handle` (two role-less handles listed,
+moved with an arrow key; `tabindex=-1`, a scroller and a card with a link left out).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
