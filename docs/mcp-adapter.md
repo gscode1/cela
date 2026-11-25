@@ -3,7 +3,7 @@
 `packages/mcp` is a stdio MCP server that lets a coding agent (Claude Code, Codex, OpenCode, Cursor, ...) start a durable,
 sandboxed session, give it a task and collect the result. It is only a client of the [session API](session-api.md): it
 calls ingest over HTTP with your token, like any other client. It has no database access, holds no model or GitHub
-credential. It calls `/admin/*` only when explicitly enabled. Design and trade-offs: [ADR 0031](decisions/0031-mcp-adapter.md) and [ADR 0050](decisions/0050-mcp-admin-mode.md).
+credential. It calls `/admin/*` only when explicitly enabled. Design and trade-offs: [ADR 0031](decisions/0031-mcp-adapter.md), [ADR 0050](decisions/0050-mcp-admin-mode.md) and [ADR 0070](decisions/0070-mcp-admin-parity.md).
 
 ## Configuration
 
@@ -13,7 +13,8 @@ credential. It calls `/admin/*` only when explicitly enabled. Design and trade-o
 | `PI_API_TOKEN` | yes | Your session API token (one of `PI_API_TOKENS`). It is never logged or returned. |
 | `PI_MCP_ADMIN` | no | Set to `true` to enable read-only admin tools (default `false`). |
 | `PI_API_ADMIN_TOKEN` | in admin mode | Separate admin bearer token, authorized by ingest. Never logged or returned. |
-| `PI_MCP_ADMIN_WRITES` | no | Set to `true` to enable profile writes; requires admin mode (default `false`). |
+| `PI_MCP_ADMIN_WRITES` | no | Set to `true` to enable the admin writes that only affect new sessions (profiles, skill publish, MCP server put, status probe); requires admin mode (default `false`). |
+| `PI_MCP_ADMIN_DANGEROUS` | no | Set to `true` to enable the dangerous admin tools (deletes other than a profile's, the settings put, all egress writes); requires `PI_MCP_ADMIN_WRITES` (default `false`). |
 | `PI_MCP_MAX_SESSIONS` | no | Most sessions this process may hold at once (default 20), so a looping agent cannot start sandboxes without end. A slot is freed when `delete_session` reports `deleted`, or, for `deleting`, when the session is later seen `deleted` or gone (re-read when the cap is hit). Only sessions this process created count. |
 
 In the Claude Desktop bundle these are settings (`user_config`) that the manifest maps to the variables above. Every optional
@@ -42,8 +43,8 @@ claude mcp add cela -e PI_API_URL=https://cela.example.com -e PI_API_TOKEN=<toke
 Pin the version in the URL; `npx` caches it. Other clients take the same command, arguments and environment in their MCP
 server config. Logs go to stderr; stdout is the MCP transport.
 
-**Claude Desktop**: download `cela-mcp-X.Y.Z.mcpb`, double-click it and fill in the settings: Session API URL and token are required; admin tools, the admin token, profile writes
-and the session limit are optional. Both tokens are marked sensitive: Claude Desktop keeps them in the OS keychain
+**Claude Desktop**: download `cela-mcp-X.Y.Z.mcpb`, double-click it and fill in the settings: Session API URL and token are required; admin tools, the admin token, admin writes,
+dangerous admin tools and the session limit are optional. Both tokens are marked sensitive: Claude Desktop keeps them in the OS keychain
 instead of `claude_desktop_config.json`. The bundle is unsigned, so Claude Desktop warns before installing it. Updating
 means installing the newer `.mcpb`.
 
@@ -169,8 +170,52 @@ and ingest, the validator, answers `400`. It **replaces the whole definition**: 
 the next version, with no merge, so fields you omit revert to their defaults and a read-modify-write starts from
 `admin_get_profile`. An identical definition writes nothing; without `definition` only `enabledForNew` changes. `admin_delete_profile` requires `name` and the current
 `expectedRevision`. Read the profile first; a 409 means reload before retrying. Delete requires the profile to be
-disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. No other admin writes
-are exposed. Only enable this mode for trusted clients: a shell-capable agent can read its environment.
+disabled and not the default profile ([ADR 0027](decisions/0027-admin-delete.md)); running sessions keep their snapshot. Ingest returns its delete receipt (lastVersion), not a new revision. The other tools of the table below are planned (issue #511). Only enable this mode for trusted clients: a shell-capable agent can read its environment.
+
+### Tools by flag
+
+Three flags, each needing the one before ([ADR 0070](decisions/0070-mcp-admin-parity.md)): `PI_MCP_ADMIN` (reads),
+`PI_MCP_ADMIN_WRITES` (writes that only affect sessions created afterwards) and `PI_MCP_ADMIN_DANGEROUS` (everything that
+can cut off or widen what running and future sessions reach). "Since" is the first adapter version with the tool;
+"planned (#511)" tools are not built yet and this table is their contract. Every tool answers the ingest JSON as
+structured content, scrubbed of both tokens and labelled untrusted; writes take `expectedRevision`.
+
+| Tool | Flag | What it calls | Since |
+|---|---|---|---|
+| `admin_list_profiles` | `PI_MCP_ADMIN` | `GET /admin/profiles` | 1.0.0 |
+| `admin_get_profile` | `PI_MCP_ADMIN` | `GET /admin/profiles/{name}` | 1.0.0 |
+| `admin_list_skills` | `PI_MCP_ADMIN` | `GET /admin/skills` | 1.0.0 |
+| `admin_get_skill` | `PI_MCP_ADMIN` | `GET /admin/skills/{name}` | 1.0.0 |
+| `admin_list_mcp_servers` | `PI_MCP_ADMIN` | `GET /admin/mcp-servers` | 1.0.0 |
+| `admin_get_mcp_server` | `PI_MCP_ADMIN` | `GET /admin/mcp-servers/{name}` | 1.0.0 |
+| `admin_list_egress_rule_sets` | `PI_MCP_ADMIN` | `GET /admin/egress/rule-sets` | 1.0.0 |
+| `admin_get_egress_rule_set` | `PI_MCP_ADMIN` | `GET /admin/egress/rule-sets/{name}` | 1.0.0 |
+| `admin_get_settings` | `PI_MCP_ADMIN` | `GET /admin/settings` | 1.0.0 |
+| `admin_get_catalog` | `PI_MCP_ADMIN` | `GET /admin/models` (`allModels`), `/tools`, `/network-modes`, `/sandbox-flavours`, `/sandbox-sizes`, `/sandbox-runtimes` in one answer | planned (#511) |
+| `admin_get_status` | `PI_MCP_ADMIN` | `GET /admin/status` | planned (#511) |
+| `admin_get_history` | `PI_MCP_ADMIN` | `GET /admin/settings/history`, `/mcp-servers/history`, `/egress/history` (`kind`, `limit`, `name`, `ref`) | planned (#511) |
+| `admin_get_skill_version` | `PI_MCP_ADMIN` | `GET /admin/skills/{name}/versions/{v}` (`?content=true`) | planned (#511) |
+| `admin_get_egress_status` | `PI_MCP_ADMIN` | `GET /admin/egress/status` | planned (#511) |
+| `admin_list_session_egress_rules` | `PI_MCP_ADMIN` | `GET /admin/egress/sessions/{id}/rules` | planned (#511) |
+| `admin_explain_egress` | `PI_MCP_ADMIN` | `POST /admin/egress/explain` (pure: a read) | planned (#511) |
+| `admin_list_sessions` | `PI_MCP_ADMIN` | `GET /admin/sessions` (all owners, metadata only; the route exists, the tool does not) | planned (#511) |
+| `admin_put_profile` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/profiles/{name}` | 1.0.0 |
+| `admin_delete_profile` | `PI_MCP_ADMIN_WRITES` | `DELETE /admin/profiles/{name}` | 1.0.0 |
+| `admin_publish_skill` | `PI_MCP_ADMIN_WRITES` | `POST /admin/skills/{name}/versions` (inline files only) | planned (#511) |
+| `admin_put_mcp_server` | `PI_MCP_ADMIN_WRITES` | `PUT /admin/mcp-servers/{name}` | planned (#511) |
+| `admin_probe_network` | `PI_MCP_ADMIN_WRITES` | `POST /admin/status/probe` | planned (#511) |
+| `admin_put_settings` | `PI_MCP_ADMIN_DANGEROUS` | `PUT /admin/settings` | planned (#511) |
+| `admin_delete_skill` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/skills/{name}` | planned (#511) |
+| `admin_delete_mcp_server` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/mcp-servers/{name}` | planned (#511) |
+| `admin_put_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `POST` (create) or `PUT /admin/egress/rule-sets/{name}` | planned (#511) |
+| `admin_delete_egress_rule_set` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rule-sets/{name}` | planned (#511) |
+| `admin_put_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `POST /admin/egress/rules` or `/admin/egress/sessions/{id}/rules`, `PUT /admin/egress/rules/{id}` | planned (#511) |
+| `admin_delete_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rules/{id}` | planned (#511) |
+| `list_sessions` | session token | `GET /sessions` (the owner's sessions, metadata only) | 1.2.0 |
+| `list_events` | session token | `GET /events` (the owner's feed) | 1.2.0 |
+
+The dangerous tools carry `destructiveHint`. Not exposed, on purpose: API tokens, OneCLI secret values and grants, Helm
+configuration, and `/admin/skills/{name}/versions/{v}/zip` (see the ADR).
 
 ## Troubleshooting
 
