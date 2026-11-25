@@ -23,6 +23,7 @@ import {
   sessionContextTrim,
   TRIM_CONTEXT_DEFAULTS,
   trimMessages,
+  trimRequest,
 } from "../src/trim-context.ts";
 
 const O = TRIM_CONTEXT_DEFAULTS;
@@ -293,6 +294,26 @@ describe("the gate (docs/decisions/0067-trim-context.md)", () => {
     expect(imageCount(out)).toBe(14);
     expect(textOf(resultAt(out, 17))).toBe("[img]");
     expect(textOf(resultAt(out, 18))).toBe("[img]");
+  });
+
+  it("reports a move only at the request whose boundary jumped", { timeout: 5_000 }, () => {
+    const gate = { ...R, minPrompt: 20_000, minRatio: 0.5 };
+    const messages = history(
+      30,
+      () => [IMG],
+      (i) => (i < 20 ? 2_000 : 24_000),
+    );
+    // The request carrying `k` assistant messages: the user message and `k` (call, result) pairs.
+    const request = (k: number): readonly Message[] => messages.slice(0, 1 + 2 * k);
+    const moved = (k: number): boolean => trimRequest(request(k), "images", gate).moved;
+    expect(moved(20)).toBe(false);
+    expect(moved(21)).toBe(true); // the first request that sees the 24k prompt of turn 20
+    expect(moved(22)).toBe(false); // same boundary: the trimmed prefix is the same bytes again
+    expect(moved(30)).toBe(false);
+    expect(trimRequest(request(21), "off", gate).moved).toBe(false);
+    expect(trimRequest(request(21), "images", gate).messages).toEqual(
+      trimMessages(request(21), "images", gate),
+    );
   });
 
   it("sums input, cacheRead and cacheWrite as the prompt", { timeout: 5_000 }, () => {

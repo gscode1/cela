@@ -24,6 +24,8 @@ import type { OrchestratorConfig } from "./config.js";
 import { errorMessage, log } from "./log.js";
 import { lazyImageProcessor } from "./images.js";
 import { createCurrentDateExtension } from "./current-date.js";
+import { callUsage, ModelCalls } from "./model-calls.js";
+import type { CallUsage } from "./model-calls.js";
 import { createTrimContextExtension } from "./trim-context.js";
 import type { ContextTrimOf } from "./trim-context.js";
 import { composeInstructions } from "./repo-context.js";
@@ -47,6 +49,8 @@ export interface SessionEvent {
   calls?: string[];
   /** Tool results only. */
   isError?: boolean;
+  /** Assistant messages only: the tokens and cost of the request that produced it (issue #497, docs/metrics.md). */
+  usage?: CallUsage;
 }
 
 export interface SessionStatus {
@@ -78,6 +82,8 @@ export function toEvent(message: Message): SessionEvent {
       block.type === "toolCall" ? [`${block.name}(${JSON.stringify(block.arguments)})`] : [],
     );
     if (calls.length > 0) event.calls = calls;
+    const usage = callUsage(message.usage);
+    if (usage !== undefined) event.usage = usage;
   }
   if (message.role === "toolResult") event.isError = message.isError;
   return event;
@@ -282,16 +288,26 @@ export class Host {
     registry.install(fitImages);
     const currentDate = createCurrentDateExtension();
     registry.install(currentDate);
+    // One `model-call` log line per provider response (docs/metrics.md); trim-context tells it when a request moved
+    // the trim boundary.
+    const modelCalls = new ModelCalls({ sessionOf: sessionKeyOf, storage });
+    registry.install(modelCalls.extension);
     // Request-time trimming of old screenshots and large tool output (docs/decisions/0067-trim-context.md); off with
     // `PI_TRIM_CONTEXT=0`, then it is neither installed nor in the default.
     const trimContext = config.trimContext.enabled
-      ? createTrimContextExtension(config.trimContext.options, options.contextTrimOf)
+      ? createTrimContextExtension(
+          config.trimContext.options,
+          options.contextTrimOf,
+          (taskId, moved) => {
+            modelCalls.trimmed(taskId, moved);
+          },
+        )
       : undefined;
     if (trimContext !== undefined) registry.install(trimContext);
     // Remote MCP (docs/decisions/0007-native-remote-mcp.md, 0009-mcp-catalog-in-postgres.md). Pi Durable selects EVERY
     // installed extension for a conversation whose `pi.agent` stores none (selectExtensions in Pi Durable
     // harness/agent.js), so installing MCP extensions would hand MCP to every existing conversation at the next start.
-    // The host default is therefore always pinned to `coding`, `fit-images`, `current-date` and `trim-context` (which have no tools,
+    // The host default is therefore always pinned to `coding`, `fit-images`, `current-date`, `trim-context` and `model-calls` (which have no tools,
     // so nothing offered changes, and are read from these settings at every start, so conversations that already exist
     // get them too, ADR 0055, 0061 and 0067), whatever the catalog holds, and only conversations created from a profile with MCP servers add `tool_search` and those servers' extensions (`Host.#agentFor`).
     const mcpTransport = options.mcpTransport ?? httpTransportFactory(lazyGatewayFetch(config));
@@ -327,6 +343,7 @@ export class Host {
             fitImages,
             currentDate,
             ...(trimContext === undefined ? [] : [trimContext]),
+            modelCalls.extension,
           ],
           afterFailedRun: "withdraw",
         },

@@ -89,7 +89,7 @@ MCP server catalog at runtime through the admin API; they live in Postgres, not 
 - [Repository workspaces](docs/repo-workspace.md)
 - [The default sandbox image and its tools](docs/sandbox-image.md)
 - [Scaling: one orchestrator per schema shard](docs/scaling.md)
-- [Timing and memory metrics](docs/metrics.md)
+- [Timing, model and memory metrics](docs/metrics.md)
 - [End-to-end suites, one namespace per run](docs/e2e.md)
 - [Pod Security: the restricted level](docs/decisions/0019-restricted-pod-security.md)
 - [Network policy](docs/network-policy.md) and [OneCLI host rules](docs/onecli-host-rules.md)
