@@ -4,4 +4,7 @@
 <body style="font:16px sans-serif">
 <h1>Checking your browser</h1>
 <p>This takes a moment.</p>
-<iframe src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile" width="300" height="65"></iframe>
+<!-- A provider's widget: the frame keeps the provider's src, and srcdoc draws a widget in its place, as nothing here can
+     serve the provider's host. desktop-web must name the bot check and refuse to click, type into or drag the widget. -->
+<iframe src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile" width="300" height="80"
+  srcdoc="<body style='font:16px sans-serif'><label><input type=checkbox id=human> Verify you are human</label> <input aria-label='Answer' style='width:60px'></body>"></iframe>

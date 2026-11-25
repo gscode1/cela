@@ -30,7 +30,8 @@ trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$WORK"' EXIT
 cp -r "$PAGES"/. "$WORK/"
 sed -i "s#__CROSS__#http://$CROSS_HOST:$CPORT#" "$WORK/frames.html"
 SPORT=$((PORT + 2))
-sed -i "s#__SLOW__#http://127.0.0.1:$SPORT#" "$WORK/loading.html"
+sed -i "s#__SLOW__#http://127.0.0.1:$SPORT#" "$WORK/loading.html" "$WORK/hidden-frame.html"
+sed -i "s#__CROSS__#http://$CROSS_HOST:$CPORT#" "$WORK/hidden-frame.html"
 (cd "$WORK" && python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
 (cd "$WORK" && python3 -m http.server "$CPORT" --bind "$CROSS_HOST" >/dev/null 2>&1) &
 # a server that takes connections and never answers: a frame from it stays loading
@@ -190,8 +191,10 @@ case_spacing() {
   sed 's/^/    | /' "$OUT"
   # inline-blocks on one line join it (eta theta, the values of Distance and Time, an inline-flex number); cards and columns
   # built of inline-blocks span several lines and stay apart
+  # a flex row's items close together read as one line, a space between them (a price); a menu's links stay apart
   for line in '145,95 zł' 'alphabeta' 'gamma delta' 'epsilon zeta' 'boldfaceitalic' 'eta theta' 'Distance: 13km\. Time: 0:22\.' \
-    'Rating 4\.5 of 5' 'Card lambda' '10 zł' 'Card mu' '20 zł' 'Left column words that wrap' 'Right nu'; do
+    'Rating 4\.5 of 5' 'Card lambda' '10 zł' 'Card mu' '20 zł' 'Left column words that wrap' 'Right nu' '699 00 zł' 'Price 145,95' \
+    'Home xi' 'Offers xi' 'News omicron' 'Sport omicron'; do
     check "line \"$line\"" "$(grep -qE "^[0-9]+: $line\$" "$OUT"; echo $?)"
   done
   check "block elements stay separate lines" "$([[ $(grep -cE '^[0-9]+: (iota|kappa)$' "$OUT") == 2 ]]; echo $?)"
@@ -332,10 +335,59 @@ case_notices() {
   check "a short page with a status in its heading may be an error page" "$(ok '^may be an error page')"
   web open "http://127.0.0.1:1/"
   check "Chrome's error page is said" "$(ok '^Chrome error page')"
-  open challenge
-  check "a challenge provider's frame on a short page looks like a bot check" "$(ok '^looks like a bot check \(Cloudflare challenge\)')"
   open loading
   check "a frame that has drawn nothing is still loading" "$(ok 'frame is still loading \(127\.0\.0\.1:')"
+  web text Checkout
+  check "it is said once per page" "$(no 'still loading')"
+  open hidden-frame
+  check "frames with no visible box (display:none, visibility:hidden) are not loading" "$(no 'still loading')"
+  open nonmodal
+  check "a dialog that is not modal says so" "$(ok '^open dialog "View demo" \(not modal\):')"
+  clicks '^Go on$' go
+}
+
+# Error pages: a status in a title's part, a heading or a line of its own; a price that is a status number is not one.
+case_errors() {
+  open timeout522
+  check "a 522 in the middle of the title" "$(ok '^may be an error page')"
+  open body404
+  check "an \"Error 404\" line in the body" "$(ok '^may be an error page')"
+  open listing
+  check "a listing with a 404 zł price stays clean" "$(no 'error page')"
+}
+
+# A bot check: named on sight with one ordinary revisit allowed, then a stop; its widget is never clicked or typed into.
+case_challenge() {
+  open challenge
+  check "a challenge provider's frame on a short page looks like a bot check" "$(ok '^looks like a bot check \(Cloudflare challenge\): never click or solve it\. It can be a one-off: open one ordinary page')"
+  web snap
+  check "snap lists the widget" "$(grep -q 'Verify you are human' "$OUT"; echo $?)"
+  web click 'Verify you are human'
+  check "a click on the widget is refused" "$(ok "bot check's own widget \(Cloudflare challenge\).*nothing clicked" 1)"
+  web type 'Answer' 'abc'
+  check "typing into it is refused" "$(ok "bot check's own widget.*nothing typed" 1)"
+  web drag 'Verify you are human' --by 40,0
+  check "dragging it is refused" "$(ok "bot check's own widget.*nothing dragged" 1)"
+  open notices
+  open challenge
+  check "the second time on the host: stop" "$(ok '^bot check again \(Cloudflare challenge, 2nd time on 127\.0\.0\.1:[0-9]+\): stop and report it')"
+}
+
+# Text a box with overflow hidden cuts away: said to exist, never printed, with the control that opens it.
+case_collapsed() {
+  open collapsed
+  web text 'USB-C'
+  check "a match in a cut-off section is counted" "$(ok '^1 match is in a cut-off section \(text not shown\): open it first with \[e[0-9]+\] button "Show the full specification"')"
+  check "its text is not printed" "$(no 'HDMI|DisplayPort')"
+  check "the menu above is not offered" "$(no '"Menu"')"
+  local ref
+  ref=$(grep -o 'desktop-web click e[0-9]*' "$OUT" | awk '{print $3}')
+  web click "${ref:-none}"
+  has_text 'USB-C, HDMI'
+  check "once opened it is text" $?
+  open honeypot
+  web text 'Screen reader trap'
+  check "screen-reader-only text is no cut-off section" "$(no 'cut-off')"
 }
 
 case_shot() {
@@ -599,7 +651,7 @@ case_acting() {
   check "not an outline either" "$(no 'outline')"
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices shot custom state names form stale slider upload drag decor dropdown acting)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

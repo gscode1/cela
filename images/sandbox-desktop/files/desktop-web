@@ -36,8 +36,10 @@
 //   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
 //
 // Answers start with the page's url (only when it changed since the last answer, cut to 120 characters) and title, then
-// notices: redirected from the typed URL, Chrome's error page, a likely error page or bot check, a frame still loading.
-// Struck-through text reads ~637 zł~.
+// notices: redirected from the typed URL, Chrome's error page, a likely error page, a bot check (the first sight on a host
+// allows one ordinary revisit, the second says stop), a frame still loading (once per page). Struck-through text reads
+// ~637 zł~. A `text` regex that matches nothing says how many matches a collapsed (overflow-cut) section holds and which
+// control opens it, never their text. click, type and drag refuse a bot check's own widget.
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
 // the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
@@ -247,7 +249,7 @@ async function withPage(fn, { timeoutMs } = {}) {
 
 // The page and the iframes that run in their own process (another site), each read through its own connection. A frame of
 // the same process is part of its page: its documents come with the snapshot, its accessibility tree with its frame id.
-// An iframe whose element a person cannot see (hidden, 0 px) is left out, like any other hidden element.
+// An iframe whose element a person cannot see (display:none, visibility:hidden, 0 px) is left out, like any other hidden element.
 async function frameParts(c) {
   if (c.parts) return c.parts;
   c.parts = (async () => {
@@ -327,7 +329,7 @@ async function readParts(c, { ax = false } = {}) {
       if (!shown.has(r.part.parent)) continue;
       try {
         const owner = await up.part.send("DOM.getFrameOwner", { frameId: r.part.target });
-        if (up.hidden.has(owner.backendNodeId)) continue;
+        if (up.hidden.has(owner.backendNodeId) || !cdp.showsBox(up.snap, owner.backendNodeId)) continue;
       } catch {
         continue;
       }
@@ -352,10 +354,39 @@ function readText(read, t, { marks = false } = {}) {
   }
   const notes = cdp.pageNotices(
     read.map((r) => ({ snap: r.snap, hidden: r.hidden, url: r.part.url })),
-    { lines, title: cdp.decodeEntities(t?.title) },
+    { lines, title: cdp.decodeEntities(t?.title), sighting: (host) => Math.max((botChecks()[host] ?? 0) + (opening ? 1 : 0), 1) },
   );
   return { lines, xs, lineOf: (n) => at.get(`${n.frameTag ?? ""}:${n.backendDOMNodeId}`), notes };
 }
+
+// Bot checks met per host this session, counted by open: the first may be a one-off, the second is the site's answer
+// (cdp.pageNotices words them). `opening` is set while open reads the page it typed: what it finds is one more.
+const BOT_CHECKS = () => path.join(lib.sessionDir(), "web-bot-checks.json");
+let opening = false;
+function botChecks() {
+  try {
+    return JSON.parse(fs.readFileSync(BOT_CHECKS(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function countBotCheck(url) {
+  let host;
+  try {
+    host = new URL(url).host;
+  } catch {
+    return;
+  }
+  const seen = botChecks();
+  seen[host] = (seen[host] ?? 0) + 1;
+  try {
+    fs.mkdirSync(path.dirname(BOT_CHECKS()), { recursive: true });
+    fs.writeFileSync(BOT_CHECKS(), JSON.stringify(seen));
+  } catch {
+    // the next sighting reads as a first one
+  }
+}
+const BOT_NOTE = /^(looks like a bot check|bot check again) \(/;
 
 const pageText = async (c, o) => readText(await readParts(c), c.target, o);
 const pageLines = async (c, o) => (await pageText(c, o)).lines;
@@ -468,13 +499,32 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
   return { ...text, target: (await target()) ?? t };
 }
 
-// The head of an answer: the url when it changed since the last answer (`full`: always, uncut), the title, and notices.
+// The head of an answer: the url when it changed since the last answer (`full`: always, uncut), the title, and notices. A
+// frame still loading is said once per page URL: a tracker's frame that never draws would say it in every answer.
+const LOADING_SAID = () => path.join(lib.sessionDir(), "web-loading-said");
 function header(t, notes = [], { full = false } = {}) {
   let last;
   try {
     last = fs.readFileSync(LAST_URL(), "utf8");
   } catch {
     last = undefined;
+  }
+  if (notes.some((n) => / still loading \(/.test(n))) {
+    let said;
+    try {
+      said = fs.readFileSync(LOADING_SAID(), "utf8").split("\n");
+    } catch {
+      said = [];
+    }
+    if (said.includes(t.url)) notes = notes.filter((n) => !/ still loading \(/.test(n));
+    else {
+      try {
+        fs.mkdirSync(path.dirname(LOADING_SAID()), { recursive: true });
+        fs.writeFileSync(LOADING_SAID(), [...said.slice(-49), t.url].join("\n"));
+      } catch {
+        // said again next time
+      }
+    }
   }
   const out = full || last !== t.url ? [`url: ${full ? t.url : lib.clip(t.url, 120)}`] : [];
   try {
@@ -554,6 +604,46 @@ async function namedLike(re, tree) {
   if (els.length === 0) return [];
   rememberRefs(els, { merge: true });
   return ["elements that match (no text line does):", ...els.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`)];
+}
+
+// When no line matches: how many blocks of text a box with overflow hidden cuts away match (cdp.cutOff), never their text,
+// and the control that opens that box: a collapsed one (expanded=false) in or just below it, else the button or link just
+// below it.
+function cutOffLines(re, tree) {
+  if (!tree) return [];
+  let count = 0;
+  let pick;
+  for (const r of tree.read) {
+    const cut = cdp.cutOff(r.snap, re);
+    if (cut.count === 0) continue;
+    count += cut.count;
+    if (pick) continue;
+    const own = tree.entries.filter((e) => (e.frameTag ?? "") === (r.part.tag ?? "") && !r.hidden.has(e.backendNodeId));
+    const at = cdp.boxesOf(r.snap, own.map((e) => e.backendNodeId));
+    // how far below a cutting box an element starts (inside it counts as 0), or undefined when it is not in or under it
+    const below = (e) => {
+      const b = at.get(e.backendNodeId);
+      if (!b) return undefined;
+      let best;
+      for (const c of cut.boxes) {
+        if (b.x > c.x + c.w || b.x + b.w < c.x || b.y < c.y - 10 || b.y > c.y + c.h + 150) continue;
+        const d = Math.max(b.y - (c.y + c.h), 0);
+        best = best === undefined ? d : Math.min(best, d);
+      }
+      return best;
+    };
+    const near = (list) =>
+      list
+        .map((e) => ({ e, d: below(e) }))
+        .filter((x) => x.d !== undefined)
+        .sort((a, b) => a.d - b.d)[0]?.e;
+    pick = near(own.filter((e) => e.expanded === "false" || e.expanded === false)) ?? near(own.filter((e) => ["button", "link"].includes(e.role) && e.expanded === undefined));
+  }
+  if (count === 0) return [];
+  const what = `${count === 1 ? "1 match is" : `${count} matches are`} in a cut-off section (text not shown)`;
+  if (!pick) return [`${what}: open it first (a "more" control near it: desktop-web snap)`];
+  rememberRefs([pick], { merge: true });
+  return [`${what}: open it first with ${cdp.entryLine(pick, { nameMax: 60 })} (desktop-web click ${pick.ref})`];
 }
 
 // What a page shows first: open dialogs, then the matching lines, or without a regex an outline of its headings. `lineOf`
@@ -670,6 +760,53 @@ async function resolveTarget(c, spec, o, { fieldsOnly = false, selectsOnly = fal
     `${r.several.length} elements match ${JSON.stringify(spec)}; nothing clicked. Click one by ref (desktop-web click e123), or add --near "text from its row":\n${lines.join("\n")}\n`,
   );
   process.exit(2);
+}
+
+// The challenge provider (cdp.challengeOf) of the frame an element sits in, or of a frame around it, by the frame's URL or
+// its iframe element's src: a bot check's own widget, which nothing here clicks, types into or drags. A frame that shows a
+// srcdoc or has not loaded keeps the src it was given. `read` is the read (readParts) the element was found in: its layout
+// snapshot says which frame's document holds the element.
+async function challengeAround(read, entry) {
+  const r = read.find((x) => x.part.tag === (entry.frameTag ?? ""));
+  if (!r) return undefined;
+  const { part, snap } = r;
+  const doc = (snap.documents ?? []).find((d) => d.nodes.backendNodeId?.includes(entry.backendNodeId));
+  const frameId = doc && doc.frameId >= 0 ? snap.strings[doc.frameId] : undefined;
+  const srcOf = async (send, id) => {
+    try {
+      const { backendNodeId } = await send("DOM.getFrameOwner", { frameId: id });
+      const attrs = (await send("DOM.describeNode", { backendNodeId })).node.attributes ?? [];
+      return attrs.reduce((s, v, i, a) => (i % 2 === 1 && a[i - 1] === "src" ? v : s), "");
+    } catch {
+      return "";
+    }
+  };
+  const urls = [];
+  // the frames of this part's process from the element's up to (not including) the part's own root
+  const parent = new Map();
+  const url = new Map();
+  const walk = (n, up) => {
+    parent.set(n.frame.id, up);
+    url.set(n.frame.id, [n.frame.url, n.frame.unreachableUrl]);
+    for (const ch of n.childFrames ?? []) walk(ch, n.frame.id);
+  };
+  try {
+    walk((await part.send("Page.getFrameTree")).frameTree);
+  } catch {
+    // no tree: the part's own frames below still count
+  }
+  for (let f = frameId; f && parent.get(f) !== undefined; f = parent.get(f)) urls.push(...url.get(f), await srcOf(part.send, f));
+  for (let p = part; p.parent; p = p.parent) urls.push(p.url, await srcOf(p.parent.send, p.target));
+  for (const u of urls) {
+    if (!u) continue;
+    const hit = cdp.challengeOf(u) ?? (/^\/\//.test(u) ? cdp.challengeOf(`https:${u}`) : undefined);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+async function refuseChallenge(read, entry, what) {
+  const hit = await challengeAround(read, entry);
+  if (hit) fail(`${cdp.entryLine(entry, { nameMax: 60 })}: that is the bot check's own widget (${hit}). It is never clicked, typed into, dragged or solved; nothing ${what}`);
 }
 
 // Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it.
@@ -1004,7 +1141,10 @@ async function main() {
       lib.key("Delete"); // drops an inline completion the address bar may have added
       lib.pause(120);
       lib.key("Return");
+      opening = true;
       const after = await settle(before, { quietMs: 8000, capMs: 25000, want: o.pos[1] ? regex(o.pos[1]) : undefined });
+      opening = false;
+      if ((after.notes ?? []).some((n) => BOT_NOTE.test(n))) countBotCheck(after.target.url);
       const moved = redirected(url, after.target.url) ? [`redirected from ${lib.clip(url, 120)}`] : [];
       if (after.blocked) {
         console.log([...header(after.target, moved), ...blockedLines()].join("\n"));
@@ -1051,7 +1191,10 @@ async function main() {
       if (!pattern) fail('give a regex of the words you need, or --lines A-B', 64);
       const re = regex(pattern);
       const hits = lib.grepLines(lines, o.indent ? { test: (l) => re.test(l.replace(/^>+ /, "")) } : re, { limit: o.limit ?? 25, context: o.context, width: WIDTH });
-      if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) hits.push(...(await namedLike(regex(pattern), () => withPage((c) => axTree(c)))));
+      if (!o.from && hits.length === 1 && hits[0].startsWith("no match")) {
+        const tree = await withPage((c) => axTree(c)).catch(() => undefined);
+        hits.push(...(await namedLike(re, async () => tree)), ...cutOffLines(re, tree));
+      }
       const out = [...head, ...hits, `(${lines.length} lines${o.from || o.marks ? "" : ` in ${pageFile(o)}`})`];
       console.log(budget(out, PAGE_HINT).join("\n"));
       return;
@@ -1094,6 +1237,7 @@ async function main() {
       const { entry, note, pre, slider } = await withPage(async (c) => {
         const tree = await axTree(c);
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { fieldsOnly: cmd === "type" && !isRef(spec), text: cmd === "click", tree });
+        await refuseChallenge(tree.read, entry, cmd === "type" ? "typed" : "clicked");
         if (entry.disabled) fail(`${cdp.entryLine(entry)}: it is disabled, the page does not take it yet (something it needs is missing); nothing clicked`);
         if (cmd === "type" && entry.file)
           fail(`${cdp.entryLine(entry)} takes a file, not text: desktop-web upload ${entry.ref} /workspace/file; nothing clicked`, 64);
@@ -1430,6 +1574,7 @@ async function main() {
         const src = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
         if (src.entry.disabled) fail(`${cdp.entryLine(src.entry)}: it is disabled; nothing dragged`);
         const dst = to === undefined ? undefined : await resolveTarget(c, to, {}, { showable: true, text: true, anyText: true, tree });
+        for (const x of [src, dst]) if (x) await refuseChallenge(tree.read, x.entry, "dragged");
         const from = await placeNode(c, tree.nodes, src.entry);
         let point;
         if (dst) {

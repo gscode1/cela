@@ -56,7 +56,7 @@ interface CdpLib {
   dialogs(
     nodes: AxNode[],
   ): { role: string; name: string; backendNodeId?: number; entries: Entry[] }[];
-  dialogLines(ds: { role: string; name: string; entries: Entry[] }[]): string[];
+  dialogLines(ds: { role: string; name: string; modal?: boolean; entries: Entry[] }[]): string[];
   outline(
     nodes: AxNode[],
     lines: string[],
@@ -70,8 +70,14 @@ interface CdpLib {
   decodeEntities(s: string): string;
   pageNotices(
     parts: { snap: unknown; hidden?: Set<number>; url?: string }[],
-    o: { lines: string[]; title: string },
+    o: { lines: string[]; title: string; sighting?: (host: string) => number },
   ): string[];
+  challengeOf(url: string): string | undefined;
+  cutOff(
+    snap: unknown,
+    re: RegExp,
+  ): { count: number; boxes: { x: number; y: number; w: number; h: number }[] };
+  showsBox(snap: unknown, backendNodeId: number): boolean;
   mainFirst(nodes: AxNode[], entries: Entry[]): Entry[];
   ownedNodes(nodes: AxNode[], entry: Entry): Set<string>;
   inLandmark(nodes: AxNode[], entry: Entry, roles: Set<string>): boolean;
@@ -531,6 +537,76 @@ describe("desktop-web's CDP reader", () => {
     ]);
   });
 
+  it("joins the items of a flex row that stand close, with a space, and keeps padded tabs apart", () => {
+    const flex: [string, string, string] = ["flex", "visible", "1"];
+    const nodes: N[] = [
+      doc, // 0
+      { ...div, box: [0, 0, 600, 200] }, // 1
+      // a price drawn as three items side by side: "699" "00" "zł"
+      { parent: 1, type: 1, tag: "DIV", style: flex, box: [0, 0, 600, 24] }, // 2
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [0, 0, 36, 24] }, // 3
+      t("699", [0, 0, 36, 24], 3), // 4
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [36, 4, 14, 12] }, // 5
+      t("00", [36, 4, 14, 12], 5), // 6
+      { parent: 2, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [53, 4, 16, 18] }, // 7
+      t("zł", [53, 4, 16, 18], 7), // 8
+      // tabs padded 12 px each side: the boxes touch, the texts stand 24 px apart (links are controls and never join)
+      { parent: 1, type: 1, tag: "NAV", style: flex, box: [0, 40, 600, 18] }, // 9
+      { parent: 9, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [0, 40, 64, 18] }, // 10
+      t("News", [12, 40, 40, 18], 10), // 11
+      { parent: 9, type: 1, tag: "SPAN", style: BLOCKSTYLE, box: [64, 40, 64, 18] }, // 12
+      t("Sport", [76, 40, 40, 18], 12), // 13
+      // a column of items: one under the other
+      { parent: 1, type: 1, tag: "DIV", style: flex, box: [0, 80, 600, 40] }, // 14
+      { parent: 14, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 80, 600, 18] }, // 15
+      t("upper", [0, 80, 40, 18], 15), // 16
+      { parent: 14, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 100, 600, 18] }, // 17
+      t("lower", [0, 100, 40, 18], 17), // 18
+    ];
+    expect(cdp.snapshotLines(snapOf(nodes))).toEqual([
+      "699 00 zł",
+      "News",
+      "Sport",
+      "upper",
+      "lower",
+    ]);
+  });
+
+  it("counts matches in text a box with overflow hidden cuts away, without the text", () => {
+    const st = (overflow: string): string[] => [
+      "block",
+      "visible",
+      "1",
+      "static",
+      overflow,
+      overflow,
+      "auto",
+    ];
+    const el = (parent: number, style: string[], box: [number, number, number, number]): N => ({
+      parent,
+      type: 1,
+      tag: "DIV",
+      style: style as unknown as [string, string, string],
+      box,
+    });
+    const snap = snapOf([
+      doc, // 0
+      el(0, st("visible"), [0, 0, 600, 400]), // 1 page
+      el(1, st("hidden"), [0, 0, 500, 60]), // 2 a spec table cut at 60 px
+      el(2, st("visible"), [0, 0, 500, 20]), // 3
+      t("Screen 27 in", [0, 0, 90, 16], 3),
+      el(2, st("visible"), [0, 100, 500, 20]), // 5
+      t("Ports USB-C, HDMI", [0, 100, 130, 16], 5),
+      el(2, st("visible"), [0, 120, 500, 20]), // 7
+      t("Cable USB-C", [0, 120, 90, 16], 7),
+      el(1, st("hidden"), [0, 300, 1, 1]), // 9 a screen-reader-only box
+      t("USB-C hidden", [0, 300, 90, 16], 9),
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["Screen 27 in"]);
+    expect(cdp.cutOff(snap, /USB-C/)).toEqual({ count: 2, boxes: [{ x: 0, y: 0, w: 500, h: 60 }] });
+    expect(cdp.cutOff(snap, /Screen/)).toEqual({ count: 0, boxes: [] });
+  });
+
   it("marks struck-through text and labels a line without letters by the element around it", () => {
     const s9 = (display: string, deco = "none") =>
       [
@@ -657,10 +733,14 @@ describe("desktop-web's CDP reader", () => {
         lines: ["Oops"],
         title: "404 Not Found",
       }),
-    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    ).toEqual([
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ]);
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { ...long, title: "404 - Shop" }),
-    ).toEqual(["may be an error page: a status number in the title or heading"]);
+    ).toEqual([
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ]);
     const longer = Array.from({ length: 151 }, (_, i) => `line ${String(i)}`);
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: longer, title: "Error 404" }),
@@ -669,12 +749,33 @@ describe("desktop-web's CDP reader", () => {
     expect(
       cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines: ["x"], title: "SSD 500 GB" }),
     ).toEqual([]);
+    const error = [
+      "may be an error page: a status number in the title, a heading or a line of its own",
+    ];
+    // a status at the edge of one of the title's parts, a line that is only a word and the status
+    const at = (title: string, lines: string[]) =>
+      cdp.pageNotices([{ snap: page("https://a.test/x") }], { lines, title });
+    expect(at("a.test | 522: Connection timed out", ["x"])).toEqual(error);
+    expect(at("Shop - 503", ["x"])).toEqual(error);
+    expect(at("a.test/c/1634", ["Home", "Error 404", "Oops"])).toEqual(error);
+    expect(at("a.test/c/1634", ["Home", "404"])).toEqual(error);
+    // a price, a hyphenated name and a number inside a line are no status
+    expect(
+      at("Monitors - Shop", ["Monitor Alpha", "404 zł", "1 404,00 zł", "Top 500 models"]),
+    ).toEqual([]);
+    expect(at("Wi-Fi 500 Mbps router", ["x"])).toEqual([]);
     const challenge = page("https://a.test/", [
       frame("https://challenges.cloudflare.com/turnstile"),
     ]);
     expect(cdp.pageNotices([{ snap: challenge }], short)).toEqual([
-      "looks like a bot check (Cloudflare challenge): report it, do not retry",
+      "looks like a bot check (Cloudflare challenge): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.",
     ]);
+    // the second time on the host: the site's answer
+    expect(cdp.pageNotices([{ snap: challenge }], { ...short, sighting: () => 2 })).toEqual([
+      "bot check again (Cloudflare challenge, 2nd time on a.test): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.",
+    ]);
+    expect(cdp.challengeOf("https://www.google.com/recaptcha/api2/anchor?k=1")).toBe("reCAPTCHA");
+    expect(cdp.challengeOf("https://www.google.com/search?q=recaptcha")).toBeUndefined();
     expect(cdp.pageNotices([{ snap: challenge }], long)).toEqual([]);
     expect(cdp.pageNotices([{ snap: challenge, hidden: new Set([1003]) }], short)).toEqual([]);
     const badge = page("https://a.test/", [
@@ -686,9 +787,15 @@ describe("desktop-web's CDP reader", () => {
       snap: page("https://newassets.hcaptcha.com/c"),
       url: "https://newassets.hcaptcha.com/c",
     };
-    const blank = { snap: snapOf([doc]), url: "https://pay.test/frame" };
+    const blank = {
+      snap: snapOf([doc, { ...div, tag: "HTML", box: [0, 0, 300, 150] }]),
+      url: "https://pay.test/frame",
+    };
+    // a frame that has laid out nothing (a tracker's, its iframe not shown) is not loading
+    const unlaid = { snap: snapOf([doc]), url: "https://m.test/frame" };
+    expect(cdp.pageNotices([{ snap: page("https://a.test/") }, unlaid], short)).toEqual([]);
     expect(cdp.pageNotices([{ snap: page("https://a.test/") }, hc, blank], short)).toEqual([
-      "looks like a bot check (hCaptcha): report it, do not retry",
+      "looks like a bot check (hCaptcha): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.",
       "a frame is still loading (pay.test): read again in a moment",
     ]);
   });
@@ -785,7 +892,10 @@ describe("desktop-web's CDP reader", () => {
     });
     const nodes = [
       ax("1", "RootWebArea", "Page", undefined, { childIds: ["2", "5"] }),
-      ax("2", "dialog", "Prywatność", "1", { childIds: ["3", "4"] }),
+      ax("2", "dialog", "Prywatność", "1", {
+        childIds: ["3", "4"],
+        properties: [{ name: "modal", value: { value: true } }],
+      }),
       ax("3", "button", "Zgadzam się", "2"),
       ax("4", "button", "Ustawienia", "2"),
       ax("5", "main", "", "1", { childIds: ["6"] }),
@@ -804,6 +914,9 @@ describe("desktop-web's CDP reader", () => {
       "e104",
     ]);
     expect(cdp.dialogs(nodes.filter((n) => n.nodeId !== "2"))).toEqual([]);
+    // a dialog that does not hold the page back (a <dialog open>) says so
+    const open = nodes.map((n) => (n.nodeId === "2" ? { ...n, properties: [] } : n));
+    expect(cdp.dialogLines(cdp.dialogs(open))[0]).toBe('open dialog "Prywatność" (not modal):');
   });
 
   it("outlines headings with the text line they start at", () => {

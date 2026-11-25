@@ -711,9 +711,11 @@ function docView(snap, doc) {
   // The part of node i's box a person can see: what is left after the overflow-hidden boxes it sits in (until a fixed
   // position leaves them; an absolute one leaves those before its containing block) and its own `clip: rect(...)`.
   // Scrollable boxes (auto, scroll) do not cut: their content is one scroll away. body and html clip nothing.
-  const visible = (i) => {
+  // `cut` (cutBy) learns the overflow box that cut i's box away entirely, when one did.
+  const cutBy = (i) => {
     let box = bounds(i);
     if (!box) return undefined;
+    let cut = -1;
     let escaping = false;
     for (let cur = i, a = parent[i]; a >= 0; cur = a, a = parent[a]) {
       const cs = style(cur);
@@ -734,32 +736,86 @@ function docView(snap, doc) {
       }
       const tag = str(nodeName[a]).toUpperCase();
       if (tag === "BODY" || tag === "HTML") continue;
-      if (/^(hidden|clip)$/.test(as[4]) || /^(hidden|clip)$/.test(as[5])) box = meet(box, ab);
+      if (/^(hidden|clip)$/.test(as[4]) || /^(hidden|clip)$/.test(as[5])) {
+        const was = tiny(box);
+        box = meet(box, ab);
+        if (!was && tiny(box) && cut < 0) cut = a;
+      }
     }
-    return box;
+    return { box, cut };
   };
+  const visible = (i) => cutBy(i)?.box;
   const display = (i) => style(i)?.[0] ?? "inline";
-  return { str, style, display, bounds, visible, parent, layoutOf, seeThrough, offscreen, tiny };
+  return { str, style, display, bounds, visible, cutBy, parent, layoutOf, seeThrough, offscreen, tiny };
 }
 
 // The inline boxes (inline-block, inline-flex and the items of an inline flex or grid) of a document whose text reads as part
 // of the line around them: "Distance: <output>13km</output>." is one line. Decided from layout alone: all of the box's text
 // sits on one visual line (no fragment of it wraps, and it holds no block of its own), and that line overlaps text of the
-// same block outside the box. A card or a column built of inline-blocks spans several lines and stays apart.
+// same block outside the box. A card or a column built of inline-blocks spans several lines and stays apart. The items of a
+// flex row (which compute to block) count too when one's text stands within 0.6 of a line's height of the next's: a price drawn as
+// "699" "00" "zł" side by side. Returns { joined, spaced }: `spaced` are those flex items, whose words are always kept apart
+// by a space ("699 00 zł", never "69900"), as a flex row draws them apart. A menu's links are controls and stay lines.
+// A link, button or field is a target of its own: as a flex item it stays apart from the text beside it ("50 zł taniej").
+const CONTROL_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL)$/i;
 function joinInline(doc, v) {
   const n = doc.nodes.parentIndex.length;
   const cand = new Uint8Array(n);
+  const spaced = new Set();
   let any = false;
+  const kids = new Map(); // flex container -> its items with a box
   for (let i = 0; i < n; i++) {
     if (doc.nodes.nodeType[i] !== 1 || !v.layoutOf.has(i)) continue;
     const p = v.parent[i];
     if (INLINE_BOX.test(v.display(i)) || (p >= 0 && cand[p] && /^inline-(flex|grid)$/.test(v.display(p)))) {
       cand[i] = 1;
       any = true;
+    } else if (p >= 0 && /^(inline-)?flex$/.test(v.display(p)) && v.bounds(i) && !CONTROL_TAGS.test(v.str(doc.nodes.nodeName[i]))) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(i);
+    }
+  }
+  // where each item's text is drawn (a padded menu link stands apart by its padding though the boxes touch) and the height
+  // of its tallest piece of text, a line's
+  const ext = new Map();
+  if (kids.size > 0) {
+    const items = new Set([...kids.values()].flat());
+    for (let t = 0; t < n; t++) {
+      if (doc.nodes.nodeType[t] !== 3 || v.str(doc.nodes.nodeValue[t]).trim() === "") continue;
+      const b = v.bounds(t);
+      if (!b || v.tiny(b)) continue;
+      for (let p = v.parent[t]; p > 0; p = v.parent[p]) {
+        if (!items.has(p)) continue;
+        const e = ext.get(p);
+        if (!e) ext.set(p, { ...b, line: b.h });
+        else {
+          const x = Math.min(e.x, b.x);
+          const y = Math.min(e.y, b.y);
+          ext.set(p, { x, y, w: Math.max(e.x + e.w, b.x + b.w) - x, h: Math.max(e.y + e.h, b.y + b.h) - y, line: Math.max(e.line, b.h) });
+        }
+      }
+    }
+  }
+  for (const items of kids.values()) {
+    for (let k = 0; k + 1 < items.length; k++) {
+      const a = ext.get(items[k]);
+      const b = ext.get(items[k + 1]);
+      if (!a || !b) continue;
+      // both within one line of the row: "00" over "zł" in small print beside a large "699" still is
+      const row = Math.max(a.line, b.line);
+      const h = Math.min(a.line, b.line);
+      const overlap = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      const gap = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
+      if (h <= 0 || a.h > 1.5 * row || b.h > 1.5 * row || overlap < 0.5 * Math.min(a.h, b.h) || gap > 0.6 * h) continue;
+      for (const i of [items[k], items[k + 1]]) {
+        cand[i] = 1;
+        spaced.add(i);
+      }
+      any = true;
     }
   }
   const out = new Set();
-  if (!any) return out;
+  if (!any) return { joined: out, spaced: new Set() };
   // Text nodes whose fragments (one per line it takes) start at different heights: text that wraps.
   const wrapped = new Set();
   const tb = doc.textBoxes;
@@ -798,13 +854,28 @@ function joinInline(doc, v) {
   }
   for (const [a, s] of bands) {
     const h = s.bottom - s.top;
+    // a flex item is placed by its row (above): blocks inside it (the "00" and "zł" stacked) read as part of the line
+    if (spaced.has(a)) {
+      out.add(a);
+      continue;
+    }
     if (s.bad || h > 1.5 * s.h) continue;
     const meets = (flows.get(flowOf.get(a)) ?? []).some(
       (q) => Math.min(q.bottom, s.bottom) - Math.max(q.top, s.top) >= 0.5 * Math.min(q.bottom - q.top, h) && !q.inside.includes(a),
     );
     if (meets) out.add(a);
   }
-  return out;
+  if (spaced.size > 0) {
+    for (let i = 0; i < n; i++) {
+      if (doc.nodes.nodeType[i] !== 1 || out.has(i) || !BLOCK.test(v.display(i))) continue;
+      for (let p = v.parent[i]; p > 0; p = v.parent[p]) {
+        if (!spaced.has(p)) continue;
+        out.add(i);
+        break;
+      }
+    }
+  }
+  return { joined: out, spaced };
 }
 
 // Elements that stand for themselves or carry a name of their own: never marked as a nameless picture.
@@ -859,11 +930,16 @@ function snapshotGroups(snap, { marks = false } = {}) {
       }
     }
     const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
-    const joined = joinInline(doc, v);
+    const { joined, spaced } = joinInline(doc, v);
     const blockOf = (i) => {
       let p = v.parent[i];
       while (p > 0 && (!BLOCK.test(v.display(p)) || joined.has(p))) p = v.parent[p];
       return p;
+    };
+    // the flex item (joinInline's `spaced`) a text node sits in, within its block: -1 for none
+    const itemOf = (i, block) => {
+      for (let p = v.parent[i]; p > 0 && p !== block; p = v.parent[p]) if (spaced.has(p)) return p;
+      return -1;
     };
     // text-decoration is drawn through the descendants of the element that sets it, though no descendant computes it
     const struckAt = new Map();
@@ -874,7 +950,7 @@ function snapshotGroups(snap, { marks = false } = {}) {
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1 });
       return groups.get(g);
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
@@ -926,12 +1002,16 @@ function snapshotGroups(snap, { marks = false } = {}) {
       }
       const g = group(blockOf(i));
       const s = struck(i);
+      const item = spaced.size > 0 ? itemOf(i, g.block) : -1;
+      // another flex item: apart, unless it starts with a decimal mark or a comma ("145" ",95")
+      const nextItem = item !== g.item && (item >= 0 || g.item >= 0) && !/^[,.]/.test(raw);
       if (g.struck && !s) g.text = g.text.replace(/\s*$/, (m) => `~${m}`);
-      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || apart(g.box, b) || s !== g.struck)) g.text += " ";
+      if (g.text !== "" && !/\s$/.test(g.text) && !/^\s/.test(raw) && (g.brk || nextItem || apart(g.box, b) || s !== g.struck)) g.text += " ";
       g.text += s && !g.struck ? raw.replace(/^\s*/, (m) => `${m}~`) : raw;
       g.struck = s;
       g.box = b;
       g.brk = false;
+      g.item = item;
       g.x = Math.min(g.x, b.x);
       g.texts.push(i);
     }
@@ -945,6 +1025,55 @@ function snapshotGroups(snap, { marks = false } = {}) {
     }
   }
   return lines;
+}
+
+// Text a box with overflow hidden cuts away entirely (a collapsed spec table, a "show more" section): how many of its blocks
+// match `re`, and the boxes that cut them, so an answer can say that it exists and what opens it without printing it. Only
+// text a person would see once the box opens counts: a box that itself shows (at least 20 px each way) cuts it, not a
+// screen-reader-only one of 1 px, and nothing hidden in any other way. Returns { count, boxes: [{x, y, w, h}] }.
+function cutOff(snap, re) {
+  let count = 0;
+  const boxes = [];
+  for (const doc of snap.documents ?? []) {
+    const v = docView(snap, doc);
+    const blocks = new Map(); // block -> { text, cut }
+    for (const [i] of v.layoutOf) {
+      if (doc.nodes.nodeType[i] !== 3) continue;
+      const raw = v.str(doc.nodes.nodeValue[i]);
+      const b = v.bounds(i);
+      if (raw.trim() === "" || !b || v.tiny(b) || v.style(i)?.[1] === "hidden" || v.seeThrough(i)) continue;
+      const r = v.cutBy(i);
+      if (!r || r.cut < 0 || !v.tiny(r.box)) continue;
+      const shown = v.visible(r.cut);
+      if (!shown || shown.w < 20 || shown.h < 20 || v.style(r.cut)?.[1] === "hidden" || v.seeThrough(r.cut)) continue;
+      let block = v.parent[i];
+      while (block > 0 && !BLOCK.test(v.display(block))) block = v.parent[block];
+      const g = blocks.get(block) ?? { text: "", cut: r.cut };
+      g.text += ` ${raw}`;
+      blocks.set(block, g);
+    }
+    for (const g of blocks.values()) {
+      if (!re.test(squash(g.text))) continue;
+      count++;
+      const box = v.visible(g.cut);
+      if (!boxes.some((x) => x.x === box.x && x.y === box.y && x.w === box.w && x.h === box.h)) boxes.push(box);
+    }
+  }
+  return { count, boxes };
+}
+
+// The boxes of elements by backend id, as a layout snapshot has them (page coordinates).
+function boxesOf(snap, ids) {
+  const want = new Set(ids);
+  const out = new Map();
+  for (const doc of snap.documents ?? []) {
+    const v = docView(snap, doc);
+    for (const [i] of v.layoutOf) {
+      const id = doc.nodes.backendNodeId[i];
+      if (want.has(id) && v.bounds(i)) out.set(id, v.bounds(i));
+    }
+  }
+  return out;
 }
 
 // The aria-label or title (in letters) of the nearest element around text node i that holds little more than the text: what
@@ -1065,6 +1194,18 @@ function hiddenElements(snap) {
   return hidden;
 }
 
+// Whether the element shows a box: it has a layout box (a display:none element has none, and hiddenElements, which looks
+// at boxes, does not list it) and is not visibility:hidden. An iframe without one is a tracker's, whatever its document draws.
+function showsBox(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId?.indexOf(backendNodeId) ?? -1;
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    return v.layoutOf.has(i) && v.style(i)?.[1] !== "hidden";
+  }
+  return false;
+}
+
 // Long blocks become several numbered lines instead of one clipped line, so every part of a page can be read.
 function wrapLines(lines, width = 200) {
   const out = [];
@@ -1098,8 +1239,10 @@ function newLines(before, after) {
   return out;
 }
 
-// Open modal dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in
-// them, so a consent banner or a popup is reported in any site's language without knowing its words.
+// Open dialogs in the accessibility tree (role dialog or alertdialog, or aria-modal) with the elements to act on in them, so a
+// consent banner or a popup is reported in any site's language without knowing its words. `modal`: it holds the page back
+// (aria-modal, a <dialog> shown as modal, or an alert dialog); a dialog that is not (a <dialog open>, a panel with the role)
+// leaves the page usable.
 function dialogs(nodes, { max = 8 } = {}) {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]));
   const out = [];
@@ -1119,6 +1262,7 @@ function dialogs(nodes, { max = 8 } = {}) {
     const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role));
     out.push({
       role,
+      modal: modal || role === "alertdialog",
       name: squash(value(n.name)),
       backendNodeId: n.backendDOMNodeId,
       frameTag: n.frameTag,
@@ -1132,7 +1276,7 @@ function dialogs(nodes, { max = 8 } = {}) {
 function dialogLines(ds) {
   const out = [];
   for (const d of ds) {
-    out.push(`open ${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""} (act on it first):`);
+    out.push(`open ${d.role}${d.name ? ` "${clip(d.name, 80)}"` : ""} (${d.modal === false ? "not modal" : "act on it first"}):`);
     for (const e of d.entries) out.push(`  ${entryLine(e, { nameMax: 70 })}`);
     if (d.more) out.push(`  ... ${d.more} more: desktop-web snap`);
   }
@@ -1215,27 +1359,49 @@ const CHALLENGES = [
   ["HUMAN (PerimeterX)", (u) => /(^|\.)(px-cdn\.net|px-cloud\.net|perimeterx\.net|humansecurity\.com)$/.test(u.hostname)],
   ["Arkose", (u) => /(^|\.)(arkoselabs\.com|funcaptcha\.com)$/.test(u.hostname)],
 ];
+// The challenge provider a frame's URL belongs to, or undefined.
+function challengeOf(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return undefined;
+  }
+  return CHALLENGES.find(([, test]) => test(u))?.[0];
+}
 // A bot check says little: a page this short (in lines) can be one; a longer one is a page with content. A site's error page
 // keeps the site's menus and footer around its message, so it may be longer.
 const SHORT_PAGE = 40;
 const ERROR_PAGE = 150;
-// An HTTP error status at the start or the end of a title or heading: "404 - Shop", "Error 404", "Not found (404)".
-const STATUS = /^\W*(40[0-8]|410|429|451|50[0-4])(\D|$)|(^|\D)(40[0-8]|410|429|451|50[0-4])\W*$/;
+// An HTTP error status at the start or the end of a title's part or a heading: "404 - Shop", "Error 404", "x | 522: Connection
+// timed out" (Cloudflare's own error pages run from 520 to 530). A number inside one ("SSD 500 GB") is a product's.
+const CODE = "(40[0-8]|410|429|451|5[0-2]\\d|530)";
+const STATUS = new RegExp(`^\\W*${CODE}(\\D|$)|(^|\\D)${CODE}\\W*$`);
+// A line of the page that is a status and nothing else, or one word and the status ("Error 404"): a price ("404 zł") is not.
+const STATUS_LINE = new RegExp(`^(\\p{L}+ )?${CODE}$`, "u");
+// A title's parts: "Shop | 522: Connection timed out". A hyphen counts only between spaces ("Wi-Fi 500" is one part).
+const TITLE_PARTS = /\s*[|:]\s*|\s+[-–—]\s+/;
+const ORDINAL = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 
 // What the page is, beyond its text, as notices for an answer's header. `parts` are the page and its out-of-process frames
 // as read: { snap, hidden (backend ids), url (a frame's target URL) }. Says when the page is Chrome's own error page, may be
-// a site's error page (a status number at the edge of the title or first h1 of a page that is not long), looks like a bot check (a visible frame
-// of a challenge provider on a short page), or shows a frame that has drawn nothing yet. There is no HTTP status: reading it
-// would take Network.enable, which a page can detect.
-function pageNotices(parts, { lines = [], title = "" } = {}) {
+// a site's error page (a status number at the edge of a title's part or an h1 to h3, or a line among the first that is only
+// the status, of a page that is not long), looks like a bot check (a visible frame of a challenge provider on a short page),
+// or shows a frame that has drawn nothing yet. There is no HTTP status: reading it would take Network.enable, which a page
+// can detect. `sighting(host)` is how many times this session has met a bot check on the page's host, this time included:
+// the first may be a one-off, the second is the site's answer.
+function pageNotices(parts, { lines = [], title = "", sighting = () => 1 } = {}) {
   const out = [];
   const short = lines.length <= SHORT_PAGE;
   const str = (snap, i) => (i >= 0 ? snap.strings[i] : "");
   const main = parts[0]?.snap?.documents?.[0];
+  const status = () =>
+    squash(title).split(TITLE_PARTS).some((t) => STATUS.test(t)) ||
+    headings(parts[0]).some((h) => STATUS.test(h)) ||
+    lines.slice(0, SHORT_PAGE).some((l) => STATUS_LINE.test(squash(l)));
   if (main && /^chrome-error:/.test(str(parts[0].snap, main.documentURL)))
     out.push("Chrome error page: the page did not load (Chrome's reason is in its text)");
-  else if (lines.length <= ERROR_PAGE && (STATUS.test(squash(title)) || STATUS.test(firstH1(parts[0]) ?? "")))
-    out.push("may be an error page: a status number in the title or heading");
+  else if (lines.length <= ERROR_PAGE && status()) out.push("may be an error page: a status number in the title, a heading or a line of its own");
   const frames = [];
   const loading = [];
   // a document that has drawn nothing: no text and no element with a box but its root
@@ -1251,7 +1417,8 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
       frames.push(part.url);
       const doc = snap.documents?.[0];
       const html = doc?.layout?.bounds?.[0];
-      if (empty(snap, doc) && (!html || (html[2] >= 100 && html[3] >= 50))) loading.push(part.url);
+      // a frame that has laid out nothing at all is one a person cannot see either (a tracker's)
+      if (html && html[2] >= 100 && html[3] >= 50 && empty(snap, doc)) loading.push(part.url);
     }
     for (const doc of snap.documents ?? []) {
       const v = docView(snap, doc);
@@ -1262,6 +1429,7 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
         if (!b || v.tiny(b) || v.offscreen(b) || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
         const sub = inner.has(i) ? snap.documents[inner.get(i)] : undefined;
         let url = sub ? str(snap, sub.documentURL) : "";
+        // a srcdoc or a frame not loaded yet: what it was asked to show
         if (!/^https?:/.test(url)) {
           try {
             url = new URL(nodeAttrs(snap, doc, i).src ?? "", str(snap, doc.documentURL)).href;
@@ -1274,18 +1442,20 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
       }
     }
   }
-  for (const f of short ? frames : []) {
-    let u;
+  const hit = short ? frames.map(challengeOf).find(Boolean) : undefined;
+  if (hit) {
+    let host = "";
     try {
-      u = new URL(f);
+      host = new URL(str(parts[0].snap, main?.documentURL)).host;
     } catch {
-      continue;
+      // no host: counted as a first sight
     }
-    const hit = CHALLENGES.find(([, test]) => test(u));
-    if (hit) {
-      out.push(`looks like a bot check (${hit[0]}): report it, do not retry`);
-      break;
-    }
+    const n = host ? sighting(host) : 1;
+    out.push(
+      n <= 1
+        ? `looks like a bot check (${hit}): never click or solve it. It can be a one-off: open one ordinary page of the site (its home or section page), then this page once more.`
+        : `bot check again (${hit}, ${ORDINAL(n)} time on ${host}): stop and report it. Do not retry, wait it out, or try other addresses or mirrors.`,
+    );
   }
   if (loading.length > 0) {
     const host = (u) => {
@@ -1301,14 +1471,15 @@ function pageNotices(parts, { lines = [], title = "" } = {}) {
   return out;
 }
 
-// The text of the first visible h1 of a part's main document.
-function firstH1(part) {
+// The texts of the visible h1, h2 and h3 of a part's main document, each cut at 200 characters.
+function headings(part) {
   const doc = part?.snap?.documents?.[0];
-  if (!doc) return undefined;
+  if (!doc) return [];
   const { snap } = part;
   const v = docView(snap, doc);
+  const out = [];
   for (const [i] of v.layoutOf) {
-    if (doc.nodes.nodeType[i] !== 1 || v.str(doc.nodes.nodeName[i]).toUpperCase() !== "H1" || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
+    if (doc.nodes.nodeType[i] !== 1 || !/^H[1-3]$/.test(v.str(doc.nodes.nodeName[i]).toUpperCase()) || part.hidden?.has(doc.nodes.backendNodeId[i])) continue;
     let text = "";
     for (let k = i + 1; k < doc.nodes.parentIndex.length && text.length < 200; k++) {
       let p = doc.nodes.parentIndex[k];
@@ -1316,9 +1487,9 @@ function firstH1(part) {
       if (p !== i) break;
       if (doc.nodes.nodeType[k] === 3) text += v.str(doc.nodes.nodeValue[k]);
     }
-    return squash(text);
+    out.push(squash(text));
   }
-  return undefined;
+  return out;
 }
 
 // The accessibility node ids a combobox or list owns: its own subtree and the subtrees of the elements it names in
@@ -1488,6 +1659,8 @@ module.exports = {
   dialogLines,
   dialogs,
   hiddenElements,
+  showsBox,
+  challengeOf,
   mainFirst,
   ownedNodes,
   inLandmark,
@@ -1498,6 +1671,8 @@ module.exports = {
   outline,
   decodeEntities,
   pageNotices,
+  cutOff,
+  boxesOf,
   snapshotText,
   indentLevels,
   wrapLines,
