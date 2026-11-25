@@ -1067,6 +1067,13 @@ async function clickNode(c, nodes, entry, { double = false } = {}) {
 }
 
 // The pointer over the element without a press: menus and captions that appear on hover. A dwell for the page's own handlers.
+// The title a person would see as a tooltip over the element (cdp.titleAround), read from its part's layout snapshot.
+async function titleOf(c, entry) {
+  const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
+  const snap = part ? await capture(part).catch(() => undefined) : undefined;
+  return snap ? cdp.titleAround(snap, entry.via ?? entry.backendNodeId) : undefined;
+}
+
 async function hoverNode(c, nodes, entry) {
   const { box, win } = await placeNode(c, nodes, entry);
   activate(win);
@@ -1149,13 +1156,13 @@ const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemch
 // printed as it reads now, its first ORDER_LINES lines. With `focus` (a key, a click) the element that took the focus is
 // printed when it is another one than before and than the one acted on. Controls that appeared are printed with refs
 // (appearedControls): at most APPEARED, only their count when more than APPEARED_MAX. `scrolled` (a key) is a line that says
-// how far the page moved, a change too.
+// how far the page moved, a change too. `tooltip` (a hover) is the title printed when nothing else changed.
 // When nothing changed at all: "result may come later" if the page shows it is busy, else "nothing happened" with the fields
 // that block a form and how to look; the same no-op twice in a row says to stop.
 const ORDER_LINES = 8;
 const APPEARED = 5;
 const APPEARED_MAX = 8;
-async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false, scrolled } = {}) {
+async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false, scrolled, tooltip } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
   const out = header(after.target, after.notes);
@@ -1227,6 +1234,7 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     out.push(...diffs.slice(0, 5));
     if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
     nothing = !navigated && !added.length && !gone.length && !order && !moved && !keysNext && !scrolled && !appeared.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    if (nothing && tooltip) out.push(`tooltip: "${lib.clip(tooltip, 200)}"`);
     if (nothing && !busy && !o.noHint && !chooser) out.push(...nothingHappened(now, self, after.target.url));
     else if (!added.length && !gone.length && !order) out.push("page text unchanged");
     if (self?.role === "link" && !navigated && !o.noHint) out.push("note: the address did not change");
@@ -1662,14 +1670,14 @@ async function main() {
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
         if (cmd === "hover") {
           await hoverNode(c, nodes, entry);
-          return { pre: stateOf(tree), entry, note };
+          return { pre: stateOf(tree), entry, note, tooltip: await titleOf(c, entry) };
         }
         const { box } = await placeNode(c, nodes, entry, { cover: false });
         return { entry, box, note };
       });
       if (cmd === "hover") {
         const after = await settle(before, { quietMs: 700 });
-        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry }))].join("\n"));
+        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry, tooltip: r.tooltip }))].join("\n"));
         return;
       }
       // A little room around the element, and never a sliver: small icons are easier to read with their surroundings.

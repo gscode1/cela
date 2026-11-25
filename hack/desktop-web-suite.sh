@@ -311,10 +311,12 @@ case_marks() {
   check "a rating shown by its class is marked" "$(grep -q '‹star-rating Three›' "$OUT" && grep -q '‹star-rating One›' "$OUT"; echo $?)"
   check "an icon is marked in its line" "$(grep -q 'Server status ‹dot status-online state=up› nominal' "$OUT"; echo $?)"
   check "an image without alt is marked by its file" "$(grep -q 'Logo ‹src:brand-mark.png› end' "$OUT"; echo $?)"
-  check "a picture with an accessible name is not marked" "$(grep -q 'Icon with name end' "$OUT"; echo $?)"
+  check "a picture with an accessible name is marked by its name" "$(grep -q 'Icon with name ‹"Settings"› end' "$OUT"; echo $?)"
+  check "a <time> gets its datetime" "$(grep -q 'Posted 5 days ago ‹datetime=2026-11-20T09:30:00Z› by Ann' "$OUT"; echo $?)"
+  check "a title that says more than the text is marked" "$(grep -q 'Edited yesterday ‹title:"21 November 2026, 14:05"› by Bob' "$OUT"; echo $?)"
   timeout "$WAIT" desktop-web text . --context 0 --limit 40 >"$OUT" 2>&1
   sed 's/^/    | /' "$OUT"
-  check "marks are opt-in" "$(grep -Eq '‹(star-rating|dot|src:)' "$OUT"; [[ $? == 1 ]]; echo $?)"
+  check "marks are opt-in" "$(grep -Eq '‹(star-rating|dot|src:|"Settings"|datetime|title:)' "$OUT"; [[ $? == 1 ]]; echo $?)"
   check "struck-through text is marked" "$(grep -Eq '^[0-9]+: Price ~637 zł~ 384 zł$' "$OUT"; echo $?)"
   check "struck through by an ancestor" "$(grep -Eq '^[0-9]+: Was ~99,00~ now 79,00$' "$OUT"; echo $?)"
   check "a bare number gets its element's label" "$(grep -Eq '^[0-9]+: 94 ‹Upvote›$' "$OUT"; echo $?)"
@@ -325,6 +327,8 @@ case_marks() {
   check "outline maps a heading to its own line, not one that starts with its words" "$(ok "^$at: ## Offers$")"
   check "outline leaves out a heading no one sees" "$(no 'Unseen heading|^-:')"
   check "outline is in line order" "$(grep -E '^[0-9]+: #' "$OUT" | cut -d: -f1 | sort -n -c; echo $?)"
+  web hover 'yesterday'
+  check "a hover that changes nothing shows the title as the tooltip" "$(ok '^tooltip: "21 November 2026, 14:05"$')"
 }
 
 # The head of an answer: the url only when it changed, the title with entities decoded, and notices about the page.

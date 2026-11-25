@@ -1181,6 +1181,9 @@ function markTokens(snap, doc, i) {
 // Layout snapshot -> lines. With `marks`, a rendered element that has a box a person can see but no text and no accessible
 // name of its own (an icon, a rating drawn from a class, an image without alt) is written into the line where it sits as
 // `‹class words title data src›`, taken from its markup: meaning that is only a picture, as a last resort before a screenshot.
+// One with a name of its own (aria-label, alt: an "Accepted" check, a shop's logo) is written as that name, `‹"Accepted"›`.
+// Text in an element with a `datetime` (a <time>) is followed by `‹datetime=…›`, and text in one whose `title` says more
+// than the text by `‹title:"…"›`: values a person reads from a tooltip, never printed without `marks`.
 function snapshotLines(snap, { marks = false, table = false } = {}) {
   return snapshotGroups(snap, { marks, table }).map((g) => g.text);
 }
@@ -1226,8 +1229,38 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1 });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1, attrs: new Map(), titles: new Set() });
       return groups.get(g);
+    };
+    // marks from the attributes of the elements around a group's text: each written once, after the element's last text
+    const flushAttrs = (g, keep = new Set()) => {
+      for (const [el, m] of g.attrs) {
+        if (keep.has(el) || m.done) continue;
+        m.done = true;
+        const own = squash(g.text.slice(m.start)).toLowerCase();
+        const tokens = [];
+        if (m.datetime) tokens.push(`‹datetime=${clip(m.datetime, 40)}›`);
+        if (m.title && m.title.toLowerCase() !== own) {
+          tokens.push(`‹title:"${clip(m.title, 80)}"›`);
+          g.titles.add(m.title);
+        }
+        if (tokens.length > 0) g.text = `${g.text.replace(/\s*$/, "")} ${tokens.join(" ")} `;
+      }
+    };
+    const attrMarks = (g, i) => {
+      const around = new Set();
+      for (let p = v.parent[i], k = 0; p > 0 && k < 8; p = v.parent[p], k++) {
+        around.add(p);
+        if (p === g.block) break;
+      }
+      flushAttrs(g, around);
+      for (const p of around) {
+        if (g.attrs.has(p)) continue;
+        const a = nodeAttrs(snap, doc, p);
+        const datetime = squash(a.datetime);
+        const title = squash(a.title);
+        if (datetime || LETTER.test(title)) g.attrs.set(p, { start: g.text.length, datetime, title });
+      }
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
       if (!v.layoutOf.has(i)) continue;
@@ -1238,10 +1271,10 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
           const b = v.bounds(i);
           const shown = v.visible(i);
           const at = nodeAttrs(snap, doc, i);
-          const named = (at["aria-label"] ?? at.alt ?? "").trim() !== "";
-          if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !named && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
-            // The element's own words, else those of its first descendant that has any.
-            let tokens = markTokens(snap, doc, i);
+          const named = squash(at["aria-label"] || at.alt);
+          if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
+            // Its name, else its own words, else those of its first descendant that has any.
+            let tokens = named ? [`"${clip(named, 80)}"`] : markTokens(snap, doc, i);
             const below = (j) => {
               for (let k = j + 1; k < doc.nodes.parentIndex.length && tokens.length === 0; k++) {
                 let inside = false;
@@ -1254,7 +1287,7 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
             covered.add(i);
             if (tokens.length > 0) {
               marked++;
-              const text = `‹${clip(tokens.join(" "), 60)}›`;
+              const text = named ? `‹${tokens[0]}›` : `‹${clip(tokens.join(" "), 60)}›`;
               const own = /^(block|flex|grid|list-item|table|flow-root)$/.test(v.style(i)?.[0] ?? "inline");
               const g = group(own ? i : blockOf(i));
               if (g.text !== "" && !/\s$/.test(g.text)) g.text += " ";
@@ -1277,6 +1310,7 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
         continue;
       }
       const g = group(blockOf(i));
+      if (marks) attrMarks(g, i);
       const s = struck(i);
       const item = spaced.size > 0 ? itemOf(i, g.block) : -1;
       // another flex item: apart, unless it starts with a decimal mark or a comma ("145" ",95")
@@ -1293,10 +1327,11 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
     }
     const done = [];
     for (const g of groups.values()) {
+      if (marks) flushAttrs(g);
       let t = squash(g.struck ? g.text.replace(/\s*$/, "~") : g.text);
-      if (t && !LETTER.test(t) && g.texts.length > 0) {
+      if (t && !LETTER.test(t.replace(/‹[^›]*›/g, "")) && g.texts.length > 0) {
         const label = labelAround(snap, doc, v, g.texts[0]);
-        if (label) t += ` ‹${clip(label, 40)}›`;
+        if (label && !g.titles.has(label)) t += ` ‹${clip(label, 80)}›`;
       }
       if (t) done.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
     }
@@ -1423,6 +1458,25 @@ function labelAround(snap, doc, v, i) {
     if (b && (b.w > t.w + 120 || b.h > Math.max(3 * t.h, t.h + 40))) return undefined;
     const a = nodeAttrs(snap, doc, p);
     for (const l of [squash(a["aria-label"]), squash(a.title)]) if (b && LETTER.test(l)) return l;
+  }
+  return undefined;
+}
+
+// The title (in letters) of an element by backend id, or of the nearest element around it that holds little more: the
+// tooltip a person sees when the pointer rests on it. Undefined when there is none.
+function titleAround(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const own = v.bounds(i);
+    for (let p = i, k = 0; p > 0 && k < 5; p = v.parent[p], k++) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) return undefined;
+      const b = v.bounds(p);
+      if (own && b && (b.w > own.w + 200 || b.h > Math.max(3 * own.h, own.h + 40))) return undefined;
+      const title = squash(nodeAttrs(snap, doc, p).title);
+      if (LETTER.test(title)) return title;
+    }
   }
   return undefined;
 }
@@ -2152,5 +2206,6 @@ module.exports = {
   selectInfos,
   snapshotLines,
   subtreeIds,
+  titleAround,
   wraps,
 };

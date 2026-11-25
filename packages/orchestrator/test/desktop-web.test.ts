@@ -68,6 +68,7 @@ interface CdpLib {
   aimPoints(own: Box, inner: Box[]): { x: number; y: number }[];
   matchTexts(e: Entry): string[];
   snapshotLines(snap: unknown, o?: { marks?: boolean; table?: boolean }): string[];
+  titleAround(snap: unknown, backendNodeId: number): string | undefined;
   screenPoint(
     g: {
       win: { x: number; y: number; height: number };
@@ -1362,8 +1363,80 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
       "Rating",
       "‹star-rating Three›",
-      "status ‹dot state=up› fine ‹src:brand-mark.png›",
+      'status ‹dot state=up› fine ‹src:brand-mark.png› ‹"Logo"›',
     ]);
+  });
+
+  it("marks a named icon by its name, and a datetime or a title that says more, only when asked", () => {
+    const inline = ["inline", "visible", "1"] as [string, string, string];
+    const nodes: N[] = [
+      doc, // 0
+      { parent: 0, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 0, 400, 200] }, // 1
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 0, 400, 20] }, // 2
+      t("813", [0, 0, 30, 16], 2), // 3
+      // an icon named by aria-label: its name, and nothing of the svg inside it
+      {
+        parent: 2,
+        type: 1,
+        tag: "DIV",
+        style: ["inline-block", "visible", "1"],
+        box: [40, 0, 18, 18],
+        attrs: { "aria-label": "Accepted", title: "Loading when this answer was accepted" },
+      }, // 4
+      {
+        parent: 4,
+        type: 1,
+        tag: "svg",
+        style: inline,
+        box: [40, 0, 18, 18],
+        attrs: { class: "svg-icon iconCheckmarkLg" },
+      }, // 5
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 30, 400, 20] }, // 6
+      t("posted", [0, 30, 40, 16], 6), // 7
+      {
+        parent: 6,
+        type: 1,
+        tag: "TIME",
+        style: inline,
+        box: [45, 30, 80, 16],
+        attrs: { datetime: "2026-11-25T08:14:00.000Z" },
+      }, // 8
+      t("4 hours ago", [45, 30, 80, 16], 8), // 9
+      t("by Ann", [130, 30, 40, 16], 6), // 10
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 60, 400, 20] }, // 11
+      // a title that repeats the text says nothing; one that says more is a mark
+      {
+        parent: 11,
+        type: 1,
+        tag: "A",
+        style: inline,
+        box: [0, 60, 40, 16],
+        attrs: { title: "Home" },
+      }, // 12
+      t("Home", [0, 60, 40, 16], 12), // 13
+      {
+        parent: 11,
+        type: 1,
+        tag: "ABBR",
+        style: inline,
+        box: [50, 60, 40, 16],
+        attrs: { title: "Gross domestic product" },
+      }, // 14
+      t("GDP", [50, 60, 40, 16], 14), // 15
+    ];
+    expect(cdp.snapshotLines(snapOf(nodes))).toEqual([
+      "813",
+      "posted 4 hours ago by Ann",
+      "Home GDP",
+    ]);
+    expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
+      '813 ‹"Accepted"›',
+      "posted 4 hours ago ‹datetime=2026-11-25T08:14:00.000Z› by Ann",
+      'Home GDP ‹title:"Gross domestic product"›',
+    ]);
+    // the tooltip a hover waits for: the element's title or that of one around it that holds little more
+    expect(cdp.titleAround(snapOf(nodes), 1015)).toBe("Gross domestic product");
+    expect(cdp.titleAround(snapOf(nodes), 1009)).toBeUndefined();
   });
 
   // Elements for annotate and textTargets: [display, visibility, opacity, position, overflow-x, overflow-y, clip, cursor].
