@@ -1,0 +1,83 @@
+# Runs the desktop-web suite (hack/desktop-web-suite.sh over images/sandbox-desktop/test-pages, issue #489) in a container of
+# the sandbox-desktop image. Not on every push: nightly (main), by hand, and on pull requests that carry the label
+# `desktop-suite` (add it to a PR that touches images/sandbox-desktop or packages/ that feed desktop-web).
+#
+# The image is built IN this job for linux/amd64 from the commit under test, as kind.yml does, rather than pulled from
+# ghcr.io: images.yml only tags <version>-<short sha> (no moving `main` tag) and a pull request has no published image. The
+# build reads the layer cache images.yml writes on main (pi-sandbox-desktop:cache-amd64), so the apt and Chrome layers are
+# reused and only the changed layers rebuild.
+name: desktop-suite
+
+on:
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  # Only to read the image layer cache on ghcr.io; nothing is pushed.
+  packages: read
+
+concurrency:
+  group: desktop-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    # A pull request runs only with the label; the other triggers always run.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'desktop-suite')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io (cache read)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the sandbox-desktop image
+        env:
+          IMAGE_REPO: cela
+          BUILD_CACHE_REPO: ghcr.io/${{ github.repository_owner }}
+        run: |
+          images/build.sh sandbox-desktop --platform linux/amd64
+          echo "IMAGE=$(docker image ls --format '{{.Repository}}:{{.Tag}}' cela/pi-sandbox-desktop | head -n1)" >> "$GITHUB_ENV"
+      - name: Start the desktop (image entrypoint)
+        # --shm-size: Chrome crashes on the 64 MB default /dev/shm.
+        run: |
+          docker run -d --name suite --shm-size=1g "$IMAGE"
+          for i in $(seq 1 60); do
+            docker exec suite pgrep -x Xvfb >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          docker logs suite
+          echo "Xvfb did not start" >&2
+          exit 1
+      - name: Run the suite as pi
+        run: |
+          docker cp images/sandbox-desktop/test-pages suite:/workspace/web-suite
+          docker cp hack/desktop-web-suite.sh suite:/workspace/desktop-web-suite.sh
+          docker exec -u 0 suite chown -R pi /workspace
+          set -o pipefail
+          docker exec -u pi suite bash /workspace/desktop-web-suite.sh 2>&1 | tee suite.log
+      - name: Container log
+        if: always()
+        run: docker logs suite > container.log 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: desktop-suite-output
+          path: |
+            suite.log
+            container.log
+          if-no-files-found: warn
+          retention-days: 14

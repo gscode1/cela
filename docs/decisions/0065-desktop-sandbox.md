@@ -310,6 +310,8 @@ docker cp hack/desktop-web-suite.sh <container>:/workspace/
 docker exec <container> bash /workspace/desktop-web-suite.sh [case...]
 ```
 
+CI runs it in `.github/workflows/desktop-suite.yml` (issue #489): nightly, by `workflow_dispatch`, and on a pull request that carries the label `desktop-suite`, never on every push. The job builds the image from the commit under test (reading the layer cache that `images.yml` writes on main), starts it with `--shm-size=1g`, runs the suite as `pi` and uploads its output as an artifact; any failed check fails the job.
+
 It serves the pages with two `python3 -m http.server` on loopback; the cross-origin frames come from `127.0.0.2` (another
 address is another site, so Chrome puts the frame in its own process, and a name such as `localhost` would not resolve in a pod,
 where the egress proxy flags map every name but `127.0.0.1` to "not found"). Waits are generous (`SUITE_WAIT`, 240 s per call)
