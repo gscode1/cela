@@ -65,8 +65,9 @@ To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, 
 
 | Tool | What it does |
 |---|---|
-| `run_task { text, profile?, repo?, branch?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline (`timeoutSec` as in `wait`). Returns as `wait`, with the `sessionId` once creation has returned. |
-| `start_session { profile?, repo?, branch? }` | `POST /sessions`. The profile decides model and tools. |
+| `run_task { text, profile?, repo?, branch?, liveView?, timeoutSec? }` | Creates a session, sends `text` and waits, all within one deadline (`timeoutSec` as in `wait`). Returns as `wait`, with the `sessionId` once creation has returned, and the `liveViewUrl` when `liveView` was set. |
+| `start_session { profile?, repo?, branch?, liveView? }` | `POST /sessions`. The profile decides model and tools. With `liveView: true` the result has a `liveViewUrl`. |
+| `set_live_view { sessionId, enabled }` | `enabled: true` is `PUT /sessions/{id}/live-view` and returns `{ sessionId, liveViewUrl }`; every call mints a new URL and the old one stops working. `false` is `DELETE` (idempotent) and returns `{ sessionId, liveView: false }`. Errors: `400` (not a `desktop` session, or a deployment without `liveView.enabled`), `409` (not active), `410` (deleted). |
 | `send_message { sessionId, text, idempotencyKey? }` | Queues a message and returns at once with `{ eventId, duplicate }`. The same key on the same session never runs the message twice. |
 | `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (integer, 1 to 50, default 45; out-of-range values are rejected) and returns `{ done, status, phase, tools?, elapsedSec?, cursor, text, truncated, runFailure?, failure?, failedSinceStart?, events }`. `cursor` is an integer of 1 or more, checked in the tool schema. |
 | `get_session { sessionId }` | `GET /sessions/{id}`: status, failure and event counts. |
@@ -78,6 +79,14 @@ To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, 
 A failed session tool returns `{ error, status?, retryAfter? }` and `isError`, like the admin tools: `status` is the
 HTTP status of the session API (absent when no answer came), `retryAfter` is in seconds and only on a 503. `run_task`
 adds the `sessionId` when the session was already created.
+
+## Live view
+
+`liveView` on `start_session` and `run_task`, and `set_live_view`, use the public view-only live view of `desktop`
+sessions (ADR 0066, [session-api.md](session-api.md#live-view)). The URL is a bearer secret: anyone who has it can watch the
+desktop with no login. The tool descriptions tell the model to treat it like a password, give it only to the user who asked
+and never put it in shared places (issues, PRs, chats, logs). `get_session` shows the current `liveViewUrl` as the API
+returns it. The tools apply no ownership check beyond the API's own, as for the other session tools.
 
 Cancelling an MCP request stops its HTTP calls (except creation), polling and SSE stream promptly, but does not cancel
 or delete the remote session. Use `cancel` to stop the agent's turn or `delete_session` to remove the session.
