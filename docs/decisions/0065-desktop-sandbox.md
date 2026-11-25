@@ -684,6 +684,19 @@ The suite gained `busy` (a select whose page stays busy for 4 s), named icons, a
 in `marks`, rows and a fixed banner in `shot`, an ARIA grid with an empty cell in `table`, and `overlay` (a role-less fixed
 consent layer).
 
+### The skill stays short; `desktop-web help` holds the rare detail (issue #493)
+
+An agent reads the desktop-sandbox skill at the start of every desktop session, uncached, and it had grown to 16.8 KB, three
+quarters of it about the web. It is now about 8 KB: the core loop (open, text or snap, click, type, select, key, read the
+feedback), refs, chaining with `&&`, the rules (reject-only cookie consent, no bot check, no fake input) and Mousepad/Writer.
+Detail that few tasks need (sliders, upload, drag, hover, `text --table`, `--marks`, `--indent`, the browser's JS dialogs,
+dropdown specifics, the list of notices) moved into `desktop-web help [cmd]`: with no argument one line per command, with a
+command its detail. `desktop-web <cmd> --help` and `-h` print the same and are never read as a target (`hover --help` used to
+say "nothing clickable matches"). A skill line was dropped only where the tool already prints the equivalent hint at the point of
+need (`(file input: desktop-web upload ...)`, `(pick an option: desktop-web select ...)`, the page notices, "Chrome is still
+starting ... run the same desktop-web command again", the dialog's own answer instructions), and each of those hints has a
+suite check; the suite's `help` case covers the command itself.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
