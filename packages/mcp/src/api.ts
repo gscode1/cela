@@ -14,6 +14,8 @@ export interface CreateSessionInput {
   profile?: string;
   repo?: string;
   branch?: string;
+  /** Desktop profiles only: also mint a public view-only live view and return its URL. */
+  liveView?: boolean;
 }
 
 export interface CreatedSession {
@@ -22,6 +24,8 @@ export interface CreatedSession {
   provider: string;
   model: string;
   reasoning?: string;
+  /** Present when the session was created with `liveView`. A secret: anyone who has it can watch. */
+  liveViewUrl?: string;
 }
 
 export interface SessionSummary {
@@ -115,6 +119,40 @@ export class SessionApi {
 
   async deleteSession(sessionId: string, signal?: AbortSignal): Promise<DeletedSession> {
     return this.#json<DeletedSession>("DELETE", sessionPath(sessionId), 202, undefined, signal);
+  }
+
+  /** `PUT /sessions/{id}/live-view`: mints a new public view-only URL each time, so an earlier one stops working. */
+  async enableLiveView(sessionId: string, signal?: AbortSignal): Promise<string> {
+    const body = await this.#json<unknown>(
+      "PUT",
+      `${sessionPath(sessionId)}/live-view`,
+      200,
+      undefined,
+      signal,
+    );
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("liveViewUrl" in body) ||
+      typeof body.liveViewUrl !== "string" ||
+      body.liveViewUrl === ""
+    ) {
+      throw new ApiError(0, "session API answered without a live view URL");
+    }
+    return body.liveViewUrl;
+  }
+
+  /** `DELETE /sessions/{id}/live-view`: revokes the URL. Idempotent: 204 whether or not one was on. */
+  async disableLiveView(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const res = await this.#fetch(
+      "DELETE",
+      `${sessionPath(sessionId)}/live-view`,
+      {},
+      undefined,
+      signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+    );
+    if (res.status !== 204) throw await this.errorFromResponse(res);
   }
 
   /**

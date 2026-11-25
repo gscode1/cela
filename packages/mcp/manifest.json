@@ -40,6 +40,10 @@
     { "name": "send_message", "description": "Queue a message for a session." },
     { "name": "wait", "description": "Wait for the agent and return its text after a cursor." },
     { "name": "get_session", "description": "Show a session's status, failure and event counts." },
+    {
+      "name": "set_live_view",
+      "description": "Turn the public view-only live view of a desktop session on or off."
+    },
     { "name": "cancel", "description": "Ask the running turn to stop." },
     { "name": "delete_session", "description": "Delete a session and its workspace." }
   ],

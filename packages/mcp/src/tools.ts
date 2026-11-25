@@ -96,17 +96,25 @@ const createFields = {
     .string()
     .optional()
     .describe("Branch to check out; needs repo. Absent: the repository's default branch."),
+  liveView: z
+    .boolean()
+    .optional()
+    .describe(
+      "Desktop profiles only: also create a public view-only live view and return liveViewUrl. Anyone with the URL can watch the desktop with no login: treat it like a password, give it only to the user who asked for it and never put it in shared places (issues, PRs, chats, logs). Absent: no live view.",
+    ),
 };
 
 function createInput(args: {
   profile?: string | undefined;
   repo?: string | undefined;
   branch?: string | undefined;
+  liveView?: boolean | undefined;
 }): CreateSessionInput {
   const input: CreateSessionInput = {};
   if (args.profile !== undefined) input.profile = args.profile;
   if (args.repo !== undefined) input.repo = args.repo;
   if (args.branch !== undefined) input.branch = args.branch;
+  if (args.liveView !== undefined) input.liveView = args.liveView;
   return input;
 }
 
@@ -327,6 +335,37 @@ export function registerTools(
   );
 
   server.registerTool(
+    "set_live_view",
+    {
+      title: "Set live view",
+      description:
+        "Desktop profiles only: enabled true returns a public view-only liveViewUrl for the session's desktop; enabled false revokes it. Anyone with the URL can watch with no login: treat it like a password, give it only to the user who asked for it and never put it in shared places (issues, PRs, chats, logs). Enabling again rotates the URL and the old one stops working. Fails with 400 for a non-desktop session or a deployment without live view, and 409 or 410 for a session that is not active.",
+      inputSchema: z.object({
+        sessionId,
+        enabled: z.boolean().describe("true: enable (or rotate) the URL. false: revoke it."),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, extra) => {
+      try {
+        if (args.enabled) {
+          const liveViewUrl = await api.enableLiveView(args.sessionId, extra.mcpReq.signal);
+          return ok({ sessionId: args.sessionId, liveViewUrl });
+        }
+        await api.disableLiveView(args.sessionId, extra.mcpReq.signal);
+        return ok({ sessionId: args.sessionId, liveView: false });
+      } catch (error) {
+        return failFrom(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "cancel",
     {
       title: "Cancel the running turn",
@@ -407,11 +446,15 @@ export function registerTools(
       ]);
       if (!(await reserve(signal))) return capError();
       let id: string;
+      let liveViewUrl: string | undefined;
       try {
-        id = (await create(createInput(args), signal)).sessionId;
+        const created = await create(createInput(args), signal);
+        id = created.sessionId;
+        liveViewUrl = created.liveViewUrl;
       } catch (error) {
         return failFrom(error);
       }
+      const liveExtra = liveViewUrl === undefined ? {} : { liveViewUrl };
       try {
         await api.postEvent(id, { kind: "message", text: args.text }, signal);
         const result = await waitForSession(
@@ -419,9 +462,9 @@ export function registerTools(
           { sessionId: id, deadline, signal: extra.mcpReq.signal },
           opts.wait,
         );
-        return ok(waitResult(result));
+        return ok({ ...waitResult(result), ...liveExtra });
       } catch (error) {
-        return failFrom(error, { sessionId: id });
+        return failFrom(error, { sessionId: id, ...liveExtra });
       }
     },
   );

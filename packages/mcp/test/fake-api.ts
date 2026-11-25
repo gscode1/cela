@@ -15,6 +15,8 @@
  *  - `POST /sessions/{id}/events`: `message` and `cancel`. A `message` raises `events.pending` by one. A failed or
  *    deleting session answers 409, a deleted one 410. `sourceEventId` dedups: the same id for the same session is
  *    `202 {duplicate: true}` with the first eventId, for another session 409.
+ *  - `PUT`/`DELETE /sessions/{id}/live-view`: 200 `{liveViewUrl}` (a new URL each time) / 204; `POST /sessions` with
+ *    `liveView: true` returns a `liveViewUrl`. `failNextLiveView` scripts an error.
  *  - `DELETE /sessions/{id}`: 202, the session becomes `deleted`, open streams get `event: deleted` and end.
  *  - `GET /sessions/{id}/stream`: SSE. Replays entries after `Last-Event-ID`, then the last live event, then whatever
  *    the test pushes. `failNextStream` makes the next connections answer an error (503 + Retry-After, 410, ...).
@@ -90,6 +92,8 @@ export class FakeApi {
   /** Status of the next `POST /sessions` instead of creating one (e.g. 400). */
   /** The status a DELETE answers with; ingest says "deleting" while cleanup is still running. */
   deleteStatus: "deleting" | "deleted" = "deleted";
+  /** Status and error of the next live-view PUT/DELETE instead of the normal answer (e.g. 400 for a non-desktop session). */
+  failNextLiveView: { status: number; error: string } | undefined;
   failNextCreate: { status: number; error: string } | undefined;
   /** Delay the create response after committing the session. */
   createResponseDelayMs = 0;
@@ -262,7 +266,7 @@ export class FakeApi {
       return;
     }
     if (parts.length === 1 && method === "POST") {
-      await this.#create(res);
+      await this.#create(res, body);
       return;
     }
     const session = parts[1] === undefined ? undefined : this.#sessions.get(parts[1]);
@@ -282,6 +286,10 @@ export class FakeApi {
       json(res, 202, { sessionId: session.id, status: this.deleteStatus });
       return;
     }
+    if (parts[2] === "live-view" && (method === "PUT" || method === "DELETE")) {
+      this.#liveView(res, session, method);
+      return;
+    }
     if (parts[2] === "events" && method === "POST") {
       this.#postEvent(res, session, body);
       return;
@@ -293,13 +301,17 @@ export class FakeApi {
     json(res, 404, { error: "not found" });
   }
 
-  async #create(res: ServerResponse): Promise<void> {
+  async #create(res: ServerResponse, body: unknown): Promise<void> {
     if (this.failNextCreate !== undefined) {
       const { status, error } = this.failNextCreate;
       this.failNextCreate = undefined;
       json(res, status, { error });
       return;
     }
+    const liveView =
+      typeof body === "object" &&
+      body !== null &&
+      (body as { liveView?: unknown }).liveView === true;
     const s = this.addSession();
     if (this.createResponseDelayMs > 0) await delay(this.createResponseDelayMs);
     json(res, 201, {
@@ -307,7 +319,29 @@ export class FakeApi {
       profile: { name: "coding", version: 1 },
       provider: "fake",
       model: "fake-model",
+      ...(liveView ? { liveViewUrl: this.#liveUrl(s.id) } : {}),
     });
+  }
+
+  #liveViews = 0;
+  #liveUrl(id: string): string {
+    this.#liveViews += 1;
+    return `https://live.example.test/${id}/token-${String(this.#liveViews)}`;
+  }
+
+  #liveView(res: ServerResponse, s: Internal, method: string): void {
+    if (this.failNextLiveView !== undefined) {
+      const { status, error } = this.failNextLiveView;
+      this.failNextLiveView = undefined;
+      json(res, status, { error });
+      return;
+    }
+    if (s.status !== "active") {
+      json(res, s.status === "deleted" ? 410 : 409, { error: `session is ${s.status}` });
+      return;
+    }
+    if (method === "PUT") json(res, 200, { liveViewUrl: this.#liveUrl(s.id) });
+    else res.writeHead(204).end();
   }
 
   #postEvent(res: ServerResponse, s: Internal, body: unknown): void {
