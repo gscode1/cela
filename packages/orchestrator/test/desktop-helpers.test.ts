@@ -204,3 +204,41 @@ describe("desktop image settings", () => {
     );
   });
 });
+
+describe("desktop-lib's double click", () => {
+  it(
+    "presses twice at one point with real X input, the presses 60-120 ms apart",
+    { timeout: 40_000 },
+    () => {
+      const lib = join(files, "desktop-lib.cjs");
+      const r = spawnSync(
+        "node",
+        ["-e", `require(${JSON.stringify(lib)}).humanDoubleClick({ x: 100, y: 50, w: 40, h: 20 })`],
+        {
+          encoding: "utf8",
+          timeout: 30_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            FAKE_STATE: join(dir, "state.json"),
+            FAKE_LOG: join(dir, "calls.log"),
+          },
+        },
+      );
+      expect(r.status).toBe(0);
+      const presses = calls().filter((l) => / mouse(down|up) 1$/.test(l));
+      expect(presses).toEqual([
+        "--exec xdotool mousedown 1",
+        "--exec xdotool mouseup 1",
+        "--exec xdotool mousedown 1",
+        "--exec xdotool mouseup 1",
+      ]);
+      // the pointer moves only before the first press: both land on one point
+      const last = calls().map((l, i) => (/ mousemove /.test(l) ? i : -1));
+      expect(Math.max(...last)).toBeLessThan(calls().indexOf("--exec xdotool mousedown 1"));
+      expect(readFileSync(join(files, "desktop-lib.cjs"), "utf8")).toMatch(
+        /humanPress\(\);\n\s+pause\(rand\(60, 120\)\);/,
+      );
+    },
+  );
+});
