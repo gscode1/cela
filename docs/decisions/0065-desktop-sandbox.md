@@ -589,6 +589,36 @@ Reorder detection, focus after keys, nearly empty pages, `text --table` and the 
 change. The suite gained `table`, `twins` and `menu` cases (pages `table.html`, `twins.html`, `menu.html`) and `names`
 grew (description, role word, scales under headings, anchored `snap`).
 
+### desktop-web: reorder and selection count as changes, focus after keys, nearly empty pages, text --table (issue #478)
+
+The rest of round 3: answers that said "nothing happened" after a sort, a drag swap or a filter option that applied, a `key
+Tab` that did not say where the focus went, a shop's error page of one line that nothing flagged, tables read as one long
+line per row, and a dialog's Close that missed. `ALLOWED` is unchanged, input stays real X events, nothing is retried and no
+key is pressed on the agent's behalf.
+
+- **Order.** `changes()` compares the order of the lines both reads hold once each (`orderChange`); lines that show more
+  than once are left out, since which copy moved cannot be told. A different order is a change, printed as `order changed
+  (lines A-B), now:` and at most 8 lines of that range as they read now. Lines that appeared or went do not count.
+- **The clicked control.** It is read again by its ref, else by its role and name when one element has them (the page drew
+  it anew, as a filter's option list does): its `selected`, `pressed` and `sort` changes are printed, `the page drew it again:
+  now [e..]` says so, and a redraw or a control gone from an unchanged address is a change.
+- **Focus.** `key` prints `focus: <element>` when the focused element changed (`focusOf`: an entry with its ref, else the
+  accessibility node's role and name); that is a change too.
+- **Nearly empty pages.** `pageNotices` says `page shows almost no text (N lines, no form field): an error or block page, or
+  a picture-only one; look with desktop-shot` for an http(s) page of 1 to 3 lines and at most 200 characters with no input,
+  textarea or select that shows a box, when no other notice (Chrome's error page, a status, a bot check) already names it.
+  It knows no words. It points to `desktop-shot`, the whole window, not `desktop-web shot`, which needs a target.
+- **`text --table`** (opt-in; the default text is unchanged): a table row reads as its cells joined by ` | `, empty cells
+  kept and spans not resolved, and the header rows (all `th`, or in a `thead`) of the tables the matches are in are printed
+  once above them as `cols: ...`. Its line numbers are its own (`--table --lines A-B` pages on); the saved text stays plain.
+- **Steadier clicks.** `placeNode()` reads the box again 150 ms later and keeps reading while it moves, for at most a second,
+  so a dialog that slides in is clicked where it stops. A native `select` whose read-back disagrees is read once more after
+  700 ms (a page that re-renders as it takes the change) before it exits 1.
+
+The suite gained `reorder` (a drag swap, a sort button, an `aria-selected` option in place and in a list drawn again, Tab
+focus), `empty` (a one-line page flagged, a one-line page with a search box clean) and `slide` (a Close button in a dialog
+that slides in, clicked in a chain right after the opening), and `table` checks `text --table`.
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through
