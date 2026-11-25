@@ -1191,13 +1191,16 @@ function snapshotLines(snap, { marks = false, table = false } = {}) {
 // The lines of snapshotLines with where they come from: { text, doc, v (docView), block (node index), texts (text node
 // indexes) }. With `table` a table row is one line of its cells joined by " | ", empty cells kept (spans are not resolved),
 // and carries `table` (its table, "document:node") and `head` (a header row: all its cells are th, or it sits in a thead).
+// A table row is a <tr> (display table-row with table-cell children) or an element with role row and cells of role cell,
+// gridcell, columnheader or rowheader (ARIA grids drawn with divs), whatever their display.
 function snapshotGroups(snap, { marks = false, table = false } = {}) {
   const lines = [];
   let marked = 0;
   for (const [di, doc] of (snap.documents ?? []).entries()) {
     const v = docView(snap, doc);
     // in a table, each cell is a block of its own: the row is put together from them below
-    const isBlock = (p) => BLOCK.test(v.display(p)) || (table && v.display(p) === "table-cell");
+    const aria = table ? ariaRows(snap, doc, v) : undefined;
+    const isBlock = (p) => BLOCK.test(v.display(p)) || (table && (v.display(p) === "table-cell" || aria.rowOf.has(p) || aria.cells.has(p)));
     // Elements whose subtree holds text or a control: not nameless pictures.
     const content = new Set();
     const covered = new Set();
@@ -1335,27 +1338,56 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
       }
       if (t) done.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
     }
-    lines.push(...(table ? tableRows(done, doc, v, di) : done));
+    lines.push(...(table ? tableRows(done, doc, v, di, aria) : done));
   }
   return lines;
 }
 
+// The rows of a document's ARIA grids, from role attributes alone: { rowOf (cell -> its row), cells (row -> its cells, in
+// document order), role (node -> its first role word) }. A cell's row is the nearest ancestor with role row, no other cell
+// between. Only elements with a box count.
+const CELL_ROLES = /^(cell|gridcell|columnheader|rowheader)$/;
+function ariaRows(snap, doc, v) {
+  const roles = new Map();
+  const role = (i) => {
+    if (!roles.has(i)) roles.set(i, i >= 0 && doc.nodes.nodeType[i] === 1 ? (nodeAttrs(snap, doc, i).role ?? "").trim().split(/\s+/)[0].toLowerCase() : "");
+    return roles.get(i);
+  };
+  const rowOf = new Map();
+  const cells = new Map();
+  for (const [i] of v.layoutOf) {
+    if (!CELL_ROLES.test(role(i))) continue;
+    let r = v.parent[i];
+    while (r >= 0 && role(r) !== "row" && !CELL_ROLES.test(role(r))) r = v.parent[r];
+    if (r < 0 || role(r) !== "row" || !v.layoutOf.has(r)) continue;
+    rowOf.set(i, r);
+    if (!cells.has(r)) cells.set(r, []);
+    cells.get(r).push(i);
+  }
+  for (const list of cells.values()) list.sort((a, b) => a - b);
+  return { rowOf, cells, role };
+}
+
 // The lines of one document (snapshotGroups) with the lines of each table row's cells joined into one line at the row's
 // first: "Tokyo | Japan | 37,400,068". A cell's text is all the lines inside it; a cell without text stays, empty.
-function tableRows(done, doc, v, di) {
+// `aria` (ariaRows) adds the rows of ARIA grids; a header row there is one of columnheader cells only.
+function tableRows(done, doc, v, di, aria) {
   const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
+  const rowOf = (c) => aria.rowOf.get(c) ?? v.parent[c];
   const cellOf = (i) => {
     for (let p = i; p >= 0; p = v.parent[p]) {
+      if (aria.rowOf.has(p)) return p;
+      if (aria.cells.has(p)) return -1;
       const d = v.display(p);
       if (d === "table-cell") return v.display(v.parent[p]) === "table-row" ? p : -1;
       if (/^(table|table-row|table-row-group|table-header-group|table-footer-group)$/.test(d)) return -1;
     }
     return -1;
   };
-  const cells = new Map();
+  const cells = new Map(aria.cells);
   for (const [i] of v.layoutOf) {
     const row = v.parent[i];
-    if (row >= 0 && v.display(i) === "table-cell" && v.display(row) === "table-row") {
+    if (row >= 0 && !aria.cells.has(row) && v.display(i) === "table-cell" && v.display(row) === "table-row") {
       if (!cells.has(row)) cells.set(row, []);
       cells.get(row).push(i);
     }
@@ -1376,14 +1408,23 @@ function tableRows(done, doc, v, di) {
       out.push(l);
       continue;
     }
-    const row = v.parent[c];
+    const row = rowOf(c);
     if (emitted.has(row)) continue;
     emitted.add(row);
     const own = (cells.get(row) ?? [c]).map((k) => inCell.get(k) ?? []);
     let tab = row;
-    while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
-    let head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
-    for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
+    let head;
+    if (aria.cells.has(row)) {
+      // the grid around the row, else the nearest ancestor that is not a group of rows
+      tab = v.parent[row];
+      while (tab >= 0 && !/^(grid|table|treegrid)$/.test(aria.role(tab))) tab = v.parent[tab];
+      if (tab < 0) for (tab = v.parent[row]; tab > 0 && aria.role(tab) === "rowgroup"; ) tab = v.parent[tab];
+      head = aria.cells.get(row).every((k) => aria.role(k) === "columnheader");
+    } else {
+      while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
+      head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
+      for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
+    }
     out.push({
       text: own.map((ls) => ls.map((x) => x.text).join(" ")).join(" | "),
       doc,

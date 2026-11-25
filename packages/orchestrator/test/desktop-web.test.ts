@@ -1073,6 +1073,52 @@ describe("desktop-web's CDP reader", () => {
     ]);
   });
 
+  it("reads an ARIA grid's rows by role whatever their display, empty cells kept", () => {
+    const st = (d: string): [string, string, string] => [d, "visible", "1"];
+    const div = (
+      parent: number,
+      role: string,
+      d: string,
+      box: [number, number, number, number],
+    ): N => ({
+      parent,
+      type: 1,
+      tag: "DIV",
+      style: st(d),
+      box,
+      attrs: { role },
+    });
+    const snap = snapOf([
+      doc, // 0
+      div(0, "grid", "block", [0, 0, 300, 60]), // 1
+      div(1, "rowgroup", "block", [0, 0, 300, 20]), // 2
+      div(2, "row", "flex", [0, 0, 300, 20]), // 3
+      div(3, "columnheader", "block", [0, 0, 100, 20]), // 4
+      t("Day", [2, 2, 30, 16], 4), // 5
+      div(3, "columnheader", "block", [100, 0, 100, 20]), // 6
+      t("Rain", [102, 2, 30, 16], 6), // 7
+      div(3, "columnheader", "block", [200, 0, 100, 20]), // 8
+      t("Wind", [202, 2, 30, 16], 8), // 9
+      div(1, "rowgroup", "block", [0, 20, 300, 20]), // 10
+      div(10, "row", "flex", [0, 20, 300, 20]), // 11
+      div(11, "rowheader", "block", [0, 20, 100, 20]), // 12
+      t("Thu", [2, 22, 30, 16], 12), // 13
+      div(11, "gridcell", "block", [100, 20, 100, 20]), // 14 no rain: empty
+      div(11, "gridcell", "block", [200, 20, 100, 20]), // 15
+      { parent: 15, type: 1, tag: "SPAN", style: st("inline"), box: [202, 22, 30, 16] }, // 16
+      t("3 m/s", [202, 22, 30, 16], 16), // 17
+    ]);
+    expect(cdp.snapshotLines(snap, { table: true })).toEqual([
+      "Day | Rain | Wind",
+      "Thu |  | 3 m/s",
+    ]);
+    expect(cdp.snapshotText(snap, { table: true }).rows).toEqual([
+      { table: "0:1", head: true },
+      { table: "0:1", head: false },
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["Day", "Rain", "Wind", "Thu", "3 m/s"]);
+  });
+
   it("wraps long blocks into lines and reports only what an action added", () => {
     const long = `${"word ".repeat(60)}end`;
     const wrapped = cdp.wrapLines(["short", long], 100);

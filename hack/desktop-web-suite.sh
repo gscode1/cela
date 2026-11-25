@@ -518,6 +518,10 @@ case_table() {
   check "an empty cell is kept" "$(ok '^[0-9]+: Zlín \| 300 \| 400 \| 75 \| 103 \| ?$')"
   web text 'Brno'
   check "plain text stays one line per row without |" "$(ok '^[0-9]+: Brno 700 800 390 230 fairs$')"
+  web text 'Thursday|Friday' --table
+  check "an ARIA grid's header row prints as cols" "$(ok '^cols: Day \| Rain \| Wind$')"
+  check "its rows by role, an empty cell kept" "$(ok '^[0-9]+: Thursday \|  ?\| 3 m/s$')"
+  check "and a full row" "$(ok '^[0-9]+: Friday \| 1.2 mm \| 5 m/s$')"
 }
 
 # Duplicate matches: an off-canvas twin, a modal's field against the header's, rows that still list, an exact text line.
