@@ -644,6 +644,39 @@ The suite gained `chips` (a pick that repeats a line and adds a second "Remove R
 row toggles by `--near`, a plain-text click, a label renamed after `--double`) and `handle` (two role-less handles listed,
 moved with an arrow key; `tabindex=-1`, a scroller and a card with a link left out).
 
+### desktop-web: busy pages, marks for attributes, shot rows, ARIA grids, fixed overlays, consent (issue #482)
+
+From round 4 on ceneo, mediaexpert, Stack Overflow, yr.no and BBC. `ALLOWED` is unchanged, input stays real X events, no
+page script runs, and nothing is retried or dismissed for the agent.
+
+- **Busy is not a dialog.** A probe that times out no longer means blocked. It is blocked when AT-SPI shows Chrome's own
+  dialog, or when two more probes 1.5 s apart also time out. AT-SPI dialogs inside the page (the `webarea`) and the toolbar's
+  hidden alert nodes do not count. Those alerts caused the empty `dialog "":` that a heavy sort on mediaexpert printed. With
+  no dialog, the answer says `the page is busy` and never prints a dialog line. Answers about a real dialog are unchanged.
+- **Marks.** `--marks` prints a picture named by `aria-label` or `alt` as `‹"Accepted"›`. A nameless link around a named
+  picture (a shop's logo) takes that picture's name. Text in an element with `datetime` gets `‹datetime=…›`, and a `title`
+  that differs from the text gets `‹title:"…"›`. None of this prints without `--marks`. A bare number's label clips at 80.
+  A hover that changes nothing prints the title as `tooltip:`.
+- **Shot.** A target under 300 px grows to its widest ancestor that is no taller than 2.5 times the target and at most
+  160 px. The crop is at least 480x160 and is shifted, not cut, to stay inside the page area. A hit test at the target's centre
+  adds `note: covered by …` with the dialog or layer in front.
+  - A ceneo offer row is about 100 px tall, so a price does not grow to the row that holds the shop's logo. `--marks` names
+    that logo instead (`‹"digiexpert.pl"›`).
+- **Tables.** `--table` also reads rows by `role=row`, with `cell`, `gridcell`, `columnheader` or `rowheader` cells, whatever
+  their display. A row of column headers is a header row. Pure CSS grids are left out: yr.no's day rows have four tracks
+  but three children, and their values sit in nested grids, so no clean split exists. Tables are never inferred from
+  geometry.
+- **Overlays.** With no dialog in front, a refusal names the nearest `position:fixed` layer around the hit element that holds
+  a control, and lists up to 8 of its controls with refs. ceneo's banner holds a fixed dimming layer without buttons, so the
+  search goes on outward. `open` lists such a layer as `open overlay` only when the viewport's centre lands in it and it holds
+  a button. Docked or sticky bars are not scanned.
+- **Skill.** For cookie consent, pick reject or necessary-only, else open the settings with every optional choice off; never
+  accept all. `select --near` is documented.
+
+The suite gained `busy` (a select whose page stays busy for 4 s), named icons, a `<time datetime>`, a title and a quiet hover
+in `marks`, rows and a fixed banner in `shot`, an ARIA grid with an empty cell in `table`, and `overlay` (a role-less fixed
+consent layer).
+
 ## Limits and deferred
 
 - **No console live view and no takeover.** The only live view is the lab one below; the console view (VNC or WebRTC through

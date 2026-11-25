@@ -267,6 +267,14 @@ case_select() {
   check "the page saw the pick" $?
 }
 
+# A select that loads a page busy for 4 s: the probe misses, no dialog is open, and the answer is the new page.
+case_busy() {
+  open busy
+  web select 'Sort by' 'Price'
+  check "a select that loads a busy page prints the new page" "$(ok 'Sorted by price, lowest first')"
+  check "a busy load is no dialog" "$(no 'dialog|not answering')"
+}
+
 case_wait() {
   open later
   web click '^Start$'
@@ -303,10 +311,12 @@ case_marks() {
   check "a rating shown by its class is marked" "$(grep -q '‹star-rating Three›' "$OUT" && grep -q '‹star-rating One›' "$OUT"; echo $?)"
   check "an icon is marked in its line" "$(grep -q 'Server status ‹dot status-online state=up› nominal' "$OUT"; echo $?)"
   check "an image without alt is marked by its file" "$(grep -q 'Logo ‹src:brand-mark.png› end' "$OUT"; echo $?)"
-  check "a picture with an accessible name is not marked" "$(grep -q 'Icon with name end' "$OUT"; echo $?)"
+  check "a picture with an accessible name is marked by its name" "$(grep -q 'Icon with name ‹"Settings"› end' "$OUT"; echo $?)"
+  check "a <time> gets its datetime" "$(grep -q 'Posted 5 days ago ‹datetime=2026-11-20T09:30:00Z› by Ann' "$OUT"; echo $?)"
+  check "a title that says more than the text is marked" "$(grep -q 'Edited yesterday ‹title:"21 November 2026, 14:05"› by Bob' "$OUT"; echo $?)"
   timeout "$WAIT" desktop-web text . --context 0 --limit 40 >"$OUT" 2>&1
   sed 's/^/    | /' "$OUT"
-  check "marks are opt-in" "$(grep -Eq '‹(star-rating|dot|src:)' "$OUT"; [[ $? == 1 ]]; echo $?)"
+  check "marks are opt-in" "$(grep -Eq '‹(star-rating|dot|src:|"Settings"|datetime|title:)' "$OUT"; [[ $? == 1 ]]; echo $?)"
   check "struck-through text is marked" "$(grep -Eq '^[0-9]+: Price ~637 zł~ 384 zł$' "$OUT"; echo $?)"
   check "struck through by an ancestor" "$(grep -Eq '^[0-9]+: Was ~99,00~ now 79,00$' "$OUT"; echo $?)"
   check "a bare number gets its element's label" "$(grep -Eq '^[0-9]+: 94 ‹Upvote›$' "$OUT"; echo $?)"
@@ -317,6 +327,8 @@ case_marks() {
   check "outline maps a heading to its own line, not one that starts with its words" "$(ok "^$at: ## Offers$")"
   check "outline leaves out a heading no one sees" "$(no 'Unseen heading|^-:')"
   check "outline is in line order" "$(grep -E '^[0-9]+: #' "$OUT" | cut -d: -f1 | sort -n -c; echo $?)"
+  web hover 'yesterday'
+  check "a hover that changes nothing shows the title as the tooltip" "$(ok '^tooltip: "21 November 2026, 14:05"$')"
 }
 
 # The head of an answer: the url only when it changed, the title with entities decoded, and notices about the page.
@@ -396,6 +408,29 @@ case_shot() {
   local f
   f=$(grep -o '/workspace[^ ]*\.jpg' "$OUT" | head -1)
   check "shot saves an image of the element's area" "$([[ -n $f && -s $f ]]; echo $?)"
+  open shot
+  web shot '^Area$'
+  check "a narrow label is shot with its row" "$(ok 'shot of .*"Area".* with its row \([0-9]+x[0-9]+ px\)')"
+  local w
+  w=$(grep -oE 'with its row \([0-9]+x' "$OUT" | grep -oE '[0-9]+')
+  check "the crop is at least the row's width" "$([[ ${w:-0} -ge 720 ]]; echo $?)"
+  check "an uncovered target has no note" "$(no 'covered by')"
+  web shot '^Elevation$'
+  check "a target under a fixed banner says so" "$(ok '^note: covered by .*: a fixed layer is in front')"
+  check "and lists the banner's buttons" "$(ok 'button "Reject all"')"
+}
+
+# A consent layer drawn as a fixed div without a dialog role: open lists it, a click behind it is refused with its buttons.
+case_overlay() {
+  open overlay
+  check "open lists a fixed layer at the centre as an overlay" "$(ok '^open overlay \(a fixed layer without a dialog role')"
+  check "with its buttons" "$([[ $(ok 'button "Reject all"') == 0 && $(ok 'button "Settings"') == 0 ]]; echo $?)"
+  web click 'Behind the layer'
+  check "a click behind it is refused, naming the layer" "$(ok 'a fixed layer is in front' 1)"
+  check "and its buttons" "$(ok 'button "Reject all"' 1)"
+  web click 'Reject all'
+  has_text 'consent: rejected'
+  check "its button answers it" $?
 }
 
 # Exit status of the last web call and whether its output matches: ok <regex> [rc].
@@ -506,6 +541,10 @@ case_table() {
   check "an empty cell is kept" "$(ok '^[0-9]+: Zlín \| 300 \| 400 \| 75 \| 103 \| ?$')"
   web text 'Brno'
   check "plain text stays one line per row without |" "$(ok '^[0-9]+: Brno 700 800 390 230 fairs$')"
+  web text 'Thursday|Friday' --table
+  check "an ARIA grid's header row prints as cols" "$(ok '^cols: Day \| Rain \| Wind$')"
+  check "its rows by role, an empty cell kept" "$(ok '^[0-9]+: Thursday \|  ?\| 3 m/s$')"
+  check "and a full row" "$(ok '^[0-9]+: Friday \| 1.2 mm \| 5 m/s$')"
 }
 
 # Duplicate matches: an off-canvas twin, a modal's field against the header's, rows that still list, an exact text line.
@@ -828,7 +867,7 @@ case_handle() {
   check "the page saw the key" $?
 }
 
-ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle)
+ALL=(infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done

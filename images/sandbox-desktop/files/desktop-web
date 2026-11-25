@@ -30,15 +30,18 @@
 //   desktop-web drag <src> <dst>              press on src, move there at a person's pace, release over dst; --by dx,dy (px)
 //                                             instead of dst. src and dst: refs, element names or any visible text
 //   desktop-web hover <ref|"regex">           move the pointer over it (menus, captions) and print what appeared; any
-//                                             visible text is a target too
+//                                             visible text is a target too; when nothing changed, its title as tooltip:
 //   desktop-web shot <ref|"regex">            screenshot of that element's or text's area (icons, colours, images): prints the file;
-//                                             --pad N takes N more px around it
+//                                             --pad N takes N more px around it. A narrow target comes with its row; a target
+//                                             something covers adds "note: covered by" and what is in front
 //   desktop-web wait "regex" [--gone]         wait until the text appears (or disappears); --timeout N seconds (at most 60)
 //   desktop-web url                           url and title
-//   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›
+//   desktop-web text "regex" --marks          also marks nameless pictures (icons, ratings) inline as ‹class words›, named
+//                                             ones as ‹"Accepted"›, and text with a datetime or a title that says more as
+//                                             ‹datetime=…›, ‹title:"…"›
 //   desktop-web text "regex" --indent         prefixes each line with > per level it is indented (replies in a thread)
-//   desktop-web text "regex" --table          a table row as its cells joined by " | " (empty cells kept), with the table's
-//                                             header rows above the matches as "cols: ..."
+//   desktop-web text "regex" --table          a table row (a <tr>, or role=row in an ARIA grid) as its cells joined by " | "
+//                                             (empty cells kept), with the table's header rows above the matches as "cols: ..."
 //
 // What an action changed counts lines that kept their text but moved (a sort, a drag swap: "order changed (lines A-B)"),
 // a control's selected, pressed and sort state, the clicked control drawn again by the page, and controls that appeared
@@ -53,8 +56,11 @@
 // control opens it, never their text. click, type and drag refuse a bot check's own widget.
 //
 // When the page does not answer (a JS alert, confirm, prompt or leave-page dialog blocks it) every command says so, shows
-// the dialog's message and buttons and how to answer it with desktop-web key. A file chooser window open over the browser
-// is reported the same way: reads go on, actions are refused until it is cancelled (desktop-web key Escape).
+// the dialog's message and buttons and how to answer it with desktop-web key. A page that misses three probes with no such
+// dialog open is said to be busy (a heavy load), never a dialog. A file chooser window open over the browser is reported
+// the same way: reads go on, actions are refused until it is cancelled (desktop-web key Escape). `open` lists a fixed layer
+// at the page's centre that holds a button (a consent overlay without a dialog role) as "open overlay", and a click it
+// covers is refused with its controls.
 //
 // Every answer stays within a budget (BUDGET_LINES lines, BUDGET_CHARS characters): a longer one is cut with a note on
 // how to page on. Flags: --limit N (matches, at most 40), --context N (at most 3), --lines A-B, --from FILE, --out FILE.
@@ -428,19 +434,52 @@ async function probe() {
   }
 }
 
-// What a blocked page shows: Chrome's own dialog is in the accessibility tree (AT-SPI) even while the page is stuck, so its
-// title, message and buttons are text; when it is not there, a screenshot of where such a dialog sits (the top centre of the
-// window, under the toolbar). Says how to answer it.
-function blockedLines({ still = false } = {}) {
-  const out = [
-    `${still ? "Still blocked: the" : "The"} page is not answering: a browser dialog (alert, confirm, prompt or leave-page) is probably open, or the page is busy.`,
-  ];
-  let d;
+// Chrome's own JS dialog from its accessibility tree (AT-SPI), which answers while the page is stuck: { dialog } when one is
+// open, {} when there is none, { unread: true } when the tree could not be read.
+function browserDialog() {
   try {
-    d = lib.atspiDialog(lib.envelope(lib.desktop(["snapshot", "--app", "chrome", "--timeout-ms", "3000"])).data?.tree);
+    const d = lib.atspiDialog(lib.envelope(lib.desktop(["snapshot", "--app", "chrome", "--timeout-ms", "3000"])).data?.tree);
+    return d ? { dialog: d } : {};
   } catch {
-    d = undefined;
+    return { unread: true };
   }
+}
+
+// Whether a page whose probe timed out is really blocked: a heavy load (a long script, a big page building) misses one probe
+// too. Blocked when Chrome shows its own dialog, or when two more probes 1.5 s apart time out as well; then returns what
+// blockedLines prints. Undefined when the page answered after all.
+async function stuck() {
+  const first = browserDialog();
+  if (first.dialog) return first;
+  for (let k = 0; k < 2; k++) {
+    lib.pause(1500);
+    if ((await probe()).state !== "blocked") return undefined;
+  }
+  const last = browserDialog();
+  return last.dialog || last.unread ? last : { busy: true };
+}
+
+// Probes the page and, when the probe times out, asks stuck(): what blockedLines prints when the page is blocked, else
+// undefined.
+async function blockedNow() {
+  return (await probe()).state === "blocked" ? stuck() : undefined;
+}
+
+// What a blocked page shows (`why`, from stuck()): Chrome's own dialog is in the accessibility tree even while the page is
+// stuck, so its title, message and buttons are text; when the tree cannot be read, a screenshot of where such a dialog sits
+// (the top centre of the window, under the toolbar). Says how to answer it. A page that is only busy (no dialog found) says
+// so, and nothing about a dialog.
+function blockedLines({ still = false, why } = {}) {
+  if (why.busy || (!why.dialog && !why.unread)) {
+    return [
+      `${still ? "Still busy" : "The page is busy"}: it has not answered for several seconds, and no browser dialog is open.`,
+      'Wait and read it again: desktop-web wait "regex" or desktop-web text "regex".',
+    ];
+  }
+  const out = [
+    `${still ? "Still blocked: the" : "The"} page is not answering: a browser dialog (alert, confirm, prompt or leave-page) is ${why.dialog ? "open" : "probably open, or the page is busy"}.`,
+  ];
+  const d = why.dialog;
   if (d) {
     out.push(`dialog "${lib.clip(d.title, 80)}": ${lib.clip(d.message, 300)}`);
     if (d.fields.length > 0) out.push(`text field: ${JSON.stringify(d.fields[0])}`);
@@ -458,7 +497,7 @@ function blockedLines({ still = false } = {}) {
     }
   }
   out.push(
-    'OK: desktop-web key Return. Cancel: desktop-web key Escape. A prompt: desktop-web key --text "answer" Return. If nothing is open the page is busy: wait and run the command again.',
+    `OK: desktop-web key Return. Cancel: desktop-web key Escape. A prompt: desktop-web key --text "answer" Return.${d ? "" : " If nothing is open the page is busy: wait and run the command again."}`,
   );
   return out;
 }
@@ -471,8 +510,9 @@ async function guard({ read = false } = {}) {
     console.log(chooserLines(d).join("\n"));
     if (!read) process.exit(3);
   }
-  if ((await probe()).state !== "blocked") return;
-  console.log(blockedLines().join("\n"));
+  const why = await blockedNow();
+  if (!why) return;
+  console.log(blockedLines({ why }).join("\n"));
   process.exit(3);
 }
 
@@ -493,7 +533,8 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
     // A click that opens a JS dialog changes nothing else: look once after a second, not after the whole quiet time.
     if (!probed && Date.now() - start >= 1000) {
       probed = true;
-      if ((await probe()).state === "blocked") return { target: t, lines: [], blocked: true };
+      const why = await blockedNow();
+      if (why) return { target: t, lines: [], blocked: why };
     }
   }
   let text = { lines: [], notes: [] };
@@ -505,7 +546,8 @@ async function settle(before, { quietMs = 1500, capMs = 20000, want } = {}) {
       text = await withPage((c) => pageText(c));
     } catch {
       same = 0; // between documents
-      if ((await probe()).state === "blocked") return { target: (await target()) ?? t, lines: [], notes: [], blocked: true };
+      const why = await blockedNow();
+      if (why) return { target: (await target()) ?? t, lines: [], notes: [], blocked: why };
       continue;
     }
     const f = fingerprint(text.lines);
@@ -872,10 +914,12 @@ async function refuseChallenge(read, entry, what) {
   if (hit) fail(`${cdp.entryLine(entry, { nameMax: 60 })}: that is the bot check's own widget (${hit}). It is never clicked, typed into, dragged or solved; nothing ${what}`);
 }
 
-// Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it.
+// Says what covers the element at `point` (its viewport's coordinates), or nothing when the click would reach it:
+// { by (the element hit, tag.class), what (what is in front), lines (the dialog or layer with its controls) }.
 // getNodeForLocation takes document coordinates: the viewport point plus the scroll offset. `own` are elements that are part
 // of the control (its <label>, its own box: cdp.annotate): their decoration (a drawn check box, a ::before) takes the same
-// click. `tag` is the part's frame tag, to find a dialog in front among `nodes`.
+// click. `tag` is the part's frame tag, to find a dialog in front among `nodes`. With no dialog in front, the fixed layer the
+// hit element sits in (a consent overlay without a dialog role) is named instead, with its controls.
 async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], tag = "" } = {}) {
   const lp = (await send("Page.getLayoutMetrics")).cssLayoutViewport;
   const hit = await send("DOM.getNodeForLocation", {
@@ -903,15 +947,58 @@ async function coveredBy(send, backendNodeId, quad, point, nodes, { own = [], ta
       break;
     }
   }
-  const what = front ? `the ${front.role}${front.name ? ` "${lib.clip(front.name, 60)}"` : ""} is in front` : "something is in front";
-  return [
-    `another element covers it (${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}): ${what}. Close or answer it first, then run the rest of the chain again`,
-    ...cdp.dialogLines(shown),
-  ].join("\n");
+  const by = `${d.nodeName.toLowerCase()}${cls ? `.${lib.clip(cls, 40)}` : ""}`;
+  if (front || shown.length > 0) {
+    return { by, what: front ? `the ${front.role}${front.name ? ` "${lib.clip(front.name, 60)}"` : ""} is in front` : "something is in front", lines: cdp.dialogLines(shown) };
+  }
+  const layer = await fixedLayer(send, hit.backendNodeId, nodes, tag).catch(() => undefined);
+  if (layer) return { by, what: "a fixed layer is in front", lines: layer.lines };
+  return { by, what: "something is in front", lines: [] };
 }
 
-// Scrolls the element into view, checks nothing covers it (unless `cover` is false: a screenshot shows what covers it), and
-// returns where it is on the screen: { box: {x, y, w, h}, win }. An element of an out-of-process iframe is read through that
+// The fixed layer (fixedLayer) under the centre of the page's viewport when it holds a button: an overlay that a person
+// must answer first. Undefined for none, or for a layer of links alone (a docked menu).
+async function centreOverlay(c, nodes) {
+  const vp = (await c.send("Page.getLayoutMetrics")).cssLayoutViewport;
+  const hit = await c.send("DOM.getNodeForLocation", {
+    x: Math.round(vp.pageX + vp.clientWidth / 2),
+    y: Math.round(vp.pageY + vp.clientHeight / 2),
+    includeUserAgentShadowDOM: true,
+  });
+  const layer = await fixedLayer(c.send, hit.backendNodeId, nodes);
+  return layer && layer.buttons > 0 ? layer.lines : undefined;
+}
+
+// A refusal for a covered element (coveredBy): what is in front and what to do.
+const coverText = (k) =>
+  [`another element covers it (${k.by}): ${k.what}. Close or answer it first, then run the rest of the chain again`, ...k.lines].join("\n");
+
+// The fixed layer (position fixed) an element sits in, with up to 8 of its controls, refs remembered: an overlay in front
+// that has no dialog role. The nearest such layer that holds a control: a consent banner's dimming layer holds none, the
+// banner around it does. Undefined when the element is in no such layer.
+async function fixedLayer(send, backendNodeId, nodes, tag = "") {
+  const snap = await send("DOMSnapshot.captureSnapshot", { computedStyles: cdp.STYLES });
+  let c;
+  for (const layer of cdp.fixedAncestors(snap, backendNodeId)) {
+    const ids = cdp.subtreeIds((await send("DOM.describeNode", { backendNodeId: layer, depth: -1, pierce: true })).node);
+    c = cdp.layerControls(nodes, ids, { tag });
+    if (c.entries.length > 0) break;
+  }
+  if (!c || c.entries.length === 0) return undefined;
+  rememberRefs(c.entries, { merge: true });
+  return {
+    buttons: c.buttons,
+    lines: [
+      "open overlay (a fixed layer without a dialog role; act on it first):",
+      ...c.entries.map((e) => `  ${cdp.entryLine(e, { nameMax: 70 })}`),
+      ...(c.more ? [`  ... ${c.more} more: desktop-web snap`] : []),
+    ],
+  };
+}
+
+// Scrolls the element into view, checks nothing covers it (unless `cover` is false; "note": what covers it is returned as
+// `covered`, for a screenshot that says so), and returns where it is on the screen: { box: {x, y, w, h}, win, area (the
+// page's visible area on the screen), covered }. An element of an out-of-process iframe is read through that
 // frame's connection and placed in the page by its iframe element's content box.
 async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = false } = {}) {
   // A checkbox drawn by its label is clicked on the label, which a person sees and which toggles it.
@@ -975,9 +1062,18 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = f
   }
   const own = [entry.labelEl, entry.boxEl].filter((x) => x !== undefined && x !== backendNodeId);
   checks.push({ send: part.send, id: backendNodeId, quad, point: { x: center.x - origin.x, y: center.y - origin.y }, tag: part.tag, own });
+  let covered;
   for (const k of cover ? checks : []) {
-    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes, { own: k.own, tag: k.tag });
-    if (why) fail(why);
+    // a screenshot is taken whatever the hit test says
+    const why = await coveredBy(k.send, k.id, k.quad, k.point, nodes, { own: k.own, tag: k.tag }).catch((e) => {
+      if (cover === "note") return undefined;
+      throw e;
+    });
+    if (why && cover === "note") {
+      covered = why;
+      break;
+    }
+    if (why) fail(coverText(why));
   }
   const win = chromeWindow();
   if (!win) fail("no Chrome window on the screen");
@@ -993,7 +1089,10 @@ async function placeNode(c, nodes, entry, { cover = true, scroll = true, aim = f
   const tl = cdp.screenPoint(geo, { x: Math.max(Math.min(...xs), reach.x), y: Math.max(Math.min(...ys), reach.y) });
   const br = cdp.screenPoint(geo, { x: Math.min(Math.max(...xs), reach.x + reach.w), y: Math.min(Math.max(...ys), reach.y + reach.h) });
   const point = beside ? cdp.screenPoint(geo, center) : undefined;
-  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win, point };
+  const a0 = cdp.screenPoint(geo, { x: reach.x, y: reach.y });
+  const a1 = cdp.screenPoint(geo, { x: reach.x + reach.w, y: reach.y + reach.h });
+  const area = { x: a0.x, y: a0.y, w: a1.x - a0.x, h: a1.y - a0.y };
+  return { box: { x: tl.x, y: tl.y, w: Math.max(br.x - tl.x, 1), h: Math.max(br.y - tl.y, 1) }, win, point, area, covered };
 }
 
 // A point of the element (its part's viewport coordinates) outside the controls inside it, confirmed by hit testing: the
@@ -1031,6 +1130,13 @@ async function clickNode(c, nodes, entry, { double = false } = {}) {
 }
 
 // The pointer over the element without a press: menus and captions that appear on hover. A dwell for the page's own handlers.
+// The title a person would see as a tooltip over the element (cdp.titleAround), read from its part's layout snapshot.
+async function titleOf(c, entry) {
+  const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
+  const snap = part ? await capture(part).catch(() => undefined) : undefined;
+  return snap ? cdp.titleAround(snap, entry.via ?? entry.backendNodeId) : undefined;
+}
+
 async function hoverNode(c, nodes, entry) {
   const { box, win } = await placeNode(c, nodes, entry);
   activate(win);
@@ -1095,7 +1201,7 @@ async function finishSlider(entry, { want, from }, { pre, before, head, o }) {
   const off = got !== want;
   if (off && step && Math.abs(got - want) < step) lines.push(`(${want} is between its steps of ${step}: ${got} is the nearest it takes)`);
   else if (off) lines.push(got === from ? "the slider did not move: desktop-web shot it, or try desktop-web key Right/Left after a click on it" : `it stopped at ${got}, not ${want}`);
-  console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: true }, { self: entry, selfChanged: got !== from }))].join("\n"));
+  console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, { ...o, noHint: true }, { self: entry, selfChanged: got !== from }))].join("\n"));
   if (off && !(step && Math.abs(got - want) < step)) process.exit(1);
 }
 
@@ -1113,13 +1219,13 @@ const OPTION_ROLES = new Set(["option", "menuitem", "menuitemradio", "menuitemch
 // printed as it reads now, its first ORDER_LINES lines. With `focus` (a key, a click) the element that took the focus is
 // printed when it is another one than before and than the one acted on. Controls that appeared are printed with refs
 // (appearedControls): at most APPEARED, only their count when more than APPEARED_MAX. `scrolled` (a key) is a line that says
-// how far the page moved, a change too.
+// how far the page moved, a change too. `tooltip` (a hover) is the title printed when nothing else changed.
 // When nothing changed at all: "result may come later" if the page shows it is busy, else "nothing happened" with the fields
 // that block a form and how to look; the same no-op twice in a row says to stop.
 const ORDER_LINES = 8;
 const APPEARED = 5;
 const APPEARED_MAX = 8;
-async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false, scrolled } = {}) {
+async function changes(pre, before, after, o, { now, self, selfChanged = false, focus = false, scrolled, tooltip } = {}) {
   now ??= await withPage((c) => axTree(c)).catch(() => undefined);
   const nodes = now?.nodes ?? [];
   const out = header(after.target, after.notes);
@@ -1152,7 +1258,8 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     const order = after.lines.length > 0 ? cdp.orderChange(pre.lines, after.lines) : undefined;
     // options are printed as such, and an open dialog's controls with the dialog
     const inDialog = cdp.dialogLines(shown).join("\n");
-    const appeared = now
+    // after a dialog blocked the page nothing was read before the key: every control would read as new
+    const appeared = now && pre.nodes.length > 0
       ? cdp.appearedControls(pre.entries, now.entries).filter((e) => !OPTION_ROLES.has(e.role) && !(e.role === "listbox" && opts.length > 0) && !inDialog.includes(`[${e.ref}]`))
       : [];
     const focusWas = focus ? cdp.focusOf(pre.nodes, pre.entries) : undefined;
@@ -1190,6 +1297,7 @@ async function changes(pre, before, after, o, { now, self, selfChanged = false, 
     out.push(...diffs.slice(0, 5));
     if (diffs.length > 5) out.push(`... ${diffs.length - 5} more controls changed: desktop-web snap`);
     nothing = !navigated && !added.length && !gone.length && !order && !moved && !keysNext && !scrolled && !appeared.length && !closed.length && !opened.length && !alerts.length && !diffs.length && !selfChanged;
+    if (nothing && tooltip) out.push(`tooltip: "${lib.clip(tooltip, 200)}"`);
     if (nothing && !busy && !o.noHint && !chooser) out.push(...nothingHappened(now, self, after.target.url));
     else if (!added.length && !gone.length && !order) out.push("page text unchanged");
     if (self?.role === "link" && !navigated && !o.noHint) out.push("note: the address did not change");
@@ -1287,12 +1395,15 @@ async function main() {
       if ((after.notes ?? []).some((n) => BOT_NOTE.test(n))) countBotCheck(after.target.url);
       const moved = redirected(url, after.target.url) ? [`redirected from ${lib.clip(url, 120)}`] : [];
       if (after.blocked) {
-        console.log([...header(after.target, moved), ...blockedLines()].join("\n"));
+        console.log([...header(after.target, moved), ...blockedLines({ why: after.blocked })].join("\n"));
         return;
       }
       const nodes = await withPage(axNodes);
+      // no dialog: a fixed layer at the centre of the page that holds a button (a consent overlay without a dialog role)
+      const overlay = cdp.dialogs(nodes).length === 0 ? await withPage((c) => centreOverlay(c, nodes)).catch(() => undefined) : undefined;
       const out = [
         ...header(after.target, [...moved, ...after.notes]),
+        ...(overlay ?? []),
         ...(await describe(after.lines, nodes, o.pos[1], o, () => withPage((c) => axTree(c)), after.lineOf)),
       ];
       if (after.target.url === before.url && before.url !== "about:blank") out.push("note: the address did not change");
@@ -1441,19 +1552,19 @@ async function main() {
           const after = await settle(before, { quietMs: 700, capMs: 6000 });
           // a form that shows no button is sent with Return (a directions or search form)
           const hint = entry.noSubmit && o.pos[1] !== "" ? ["no submit button in its form: use --enter to send it"] : [];
-          console.log([...lines, ...(after.blocked ? blockedLines() : await afterTyping(pre, after, o.pos[1], o)), ...hint].join("\n"));
+          console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await afterTyping(pre, after, o.pos[1], o)), ...hint].join("\n"));
           return;
         }
         lib.key("Return");
         const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
         // the field's own new value is a change: a date field or an autocomplete that takes Return shows nothing else
         const selfChanged = value !== squash(entry.value);
-        console.log([...lines, ...(after.blocked ? blockedLines() : await changes(pre, before, after, o, { self: entry, selfChanged }))].join("\n"));
+        console.log([...lines, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, o, { self: entry, selfChanged }))].join("\n"));
         return;
       }
       const after = await settle(before, { want: o.show ? regex(o.show) : undefined });
       if (after.blocked) {
-        console.log([...head, `clicked ${cdp.entryLine(entry)}`, ...blockedLines()].join("\n"));
+        console.log([...head, `clicked ${cdp.entryLine(entry)}`, ...blockedLines({ why: after.blocked })].join("\n"));
         return;
       }
       // Read the element again: its state after the click (checked, expanded, value) is the answer, not the one before.
@@ -1480,7 +1591,10 @@ async function main() {
       const win = chromeWindow();
       if (state.state === "none" || !win) fail("Chrome is not running: start with desktop-web open <url>");
       const before = state.target;
-      const wasBlocked = state.state === "blocked";
+      // a page that only misses the probe (a heavy load) is read as usual; one held by Chrome's dialog is not
+      const why = state.state === "blocked" ? await stuck() : undefined;
+      const wasBlocked = why !== undefined;
+      const hadDialog = why?.dialog !== undefined;
       // A blocked page cannot be read, and the keys are what unblocks it: the text of the last read stands in as "before".
       let pre;
       if (wasBlocked) {
@@ -1500,7 +1614,7 @@ async function main() {
       activate(chooser ?? win);
       if (o.text !== undefined) {
         // A prompt's field may hold a default: replace it. (Not on a live page, where ctrl+a would select the page.)
-        if (wasBlocked) lib.key("ctrl+a");
+        if (hadDialog) lib.key("ctrl+a");
         if (lib.typable(o.text)) lib.humanType(o.text);
         else lib.pasteText(o.text);
       }
@@ -1508,13 +1622,13 @@ async function main() {
       if (wasBlocked) lib.pause(500);
       const after = await settle(before, { quietMs: 800, capMs: 15000, want: o.show ? regex(o.show) : undefined });
       if (after.blocked) {
-        console.log(blockedLines({ still: wasBlocked }).join("\n"));
+        console.log(blockedLines({ still: wasBlocked, why: after.blocked }).join("\n"));
         return;
       }
       const closed = chooser && !chooserWindow() ? ["file chooser closed"] : [];
       const y1 = y0 && after.target.url === before.url ? await scrollOf() : undefined;
       const scrolled = y1 && Math.abs(y1.y - y0.y) >= 1 ? `scrolled ${y0.y} -> ${y1.y} of ${y1.h} px` : undefined;
-      console.log([...(wasBlocked ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true, scrolled }))].join("\n"));
+      console.log([...(hadDialog ? ["dialog closed"] : []), ...closed, ...(await changes(pre, before, after, closed.length > 0 ? { ...o, noHint: true } : o, { focus: true, scrolled }))].join("\n"));
       return;
     }
     case "select": {
@@ -1585,7 +1699,7 @@ async function main() {
       }
       const after = await settle(before, { quietMs: 800 });
       if (after.blocked) {
-        console.log(blockedLines().join("\n"));
+        console.log(blockedLines({ why: after.blocked }).join("\n"));
         return;
       }
       // Read the select back: what the page holds is the result, not what was sent. A page that draws the select again as it
@@ -1622,30 +1736,33 @@ async function main() {
         const { entry, nodes, note } = await resolveTarget(c, spec, o, { showable: true, text: true, anyText: true, tree });
         if (cmd === "hover") {
           await hoverNode(c, nodes, entry);
-          return { pre: stateOf(tree), entry, note };
+          return { pre: stateOf(tree), entry, note, tooltip: await titleOf(c, entry) };
         }
-        const { box } = await placeNode(c, nodes, entry, { cover: false });
-        return { entry, box, note };
+        const placed = await placeNode(c, nodes, entry, { cover: "note" });
+        // A narrow target (a label, a price) is shown with the row it sits in.
+        let row;
+        if (placed.box.w < cdp.SHOT_NARROW) {
+          const part = (await frameParts(c)).find((p) => p.tag === (entry.frameTag ?? ""));
+          const snap = part ? await capture(part).catch(() => undefined) : undefined;
+          const id = snap ? cdp.rowAround(snap, entry.via ?? entry.backendNodeId) : undefined;
+          if (id !== undefined) row = (await placeNode(c, nodes, { backendNodeId: id, frameTag: entry.frameTag }, { cover: false, scroll: false }).catch(() => undefined))?.box;
+        }
+        return { entry, box: placed.box, area: placed.area, covered: placed.covered, row, note };
       });
       if (cmd === "hover") {
         const after = await settle(before, { quietMs: 700 });
-        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry }))].join("\n"));
+        console.log([...(r.note ? [r.note] : []), `hovered ${cdp.entryLine(r.entry)}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, { ...o, noHint: true }, { self: r.entry, tooltip: r.tooltip }))].join("\n"));
         return;
       }
-      // A little room around the element, and never a sliver: small icons are easier to read with their surroundings.
-      const pad = o.pad ?? 14;
-      // A wide block (a heading that spans the page) is cut to a readable width, kept at its left edge.
-      const w = Math.min(Math.max(r.box.w + 2 * pad, 160), 640 + 2 * pad);
-      const h = Math.max(r.box.h + 2 * pad, 90);
-      const x = Math.max(Math.round(r.box.w + 2 * pad > w ? r.box.x - pad : r.box.x + r.box.w / 2 - w / 2), 0);
-      const y = Math.max(Math.round(r.box.y + r.box.h / 2 - h / 2), 0);
+      const { x, y, w, h } = cdp.shotCrop(r.box, r.row, r.area, o.pad ?? 14);
       let shot;
       try {
         shot = execFileSync("desktop-shot", ["--region", `${x},${y},${Math.round(w)},${Math.round(h)}`, "--width", "900"], { encoding: "utf8" }).trim();
       } catch (e) {
         fail(`screenshot failed: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
       }
-      console.log([...(r.note ? [r.note] : []), `shot of ${cdp.entryLine(r.entry)}`, `${shot} (read this image with the read tool)`].join("\n"));
+      const covered = r.covered ? [`note: covered by ${r.covered.by}: ${r.covered.what}; close or answer it first for a clear view`, ...r.covered.lines] : [];
+      console.log([...(r.note ? [r.note] : []), `shot of ${cdp.entryLine(r.entry)}${r.row ? " with its row" : ""} (${w}x${h} px)`, `${shot} (read this image with the read tool)`, ...covered].join("\n"));
       return;
     }
     case "wait": {
@@ -1660,8 +1777,9 @@ async function main() {
         try {
           lines = await withPage((c) => pageLines(c), { timeoutMs: 8000 });
         } catch {
-          if ((await probe()).state === "blocked") {
-            console.log(blockedLines().join("\n"));
+          const why = await blockedNow();
+          if (why) {
+            console.log(blockedLines({ why }).join("\n"));
             process.exit(3);
           }
         }
@@ -1737,7 +1855,7 @@ async function main() {
       const held = now ? cdp.fileInputs(now.read.map((r) => r.snap)).filter((f) => f.value && !inputs.some((x) => x.backendNodeId === f.backendNodeId && x.value === f.value)) : [];
       const out = [...(note ? [note] : []), `picked ${file} in the file chooser of ${cdp.entryLine(entry, { nameMax: 60 })}`];
       if (held.length > 0) out.push(`file input now holds: ${held.map((f) => JSON.stringify(path.basename(f.value.replace(/\\/g, "/")))).join(", ")}`);
-      console.log([...out, ...(after.blocked ? blockedLines() : await changes(pre, before, after, { ...o, noHint: held.length > 0 }, { now, self: entry, selfChanged: held.length > 0 }))].join("\n"));
+      console.log([...out, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(pre, before, after, { ...o, noHint: held.length > 0 }, { now, self: entry, selfChanged: held.length > 0 }))].join("\n"));
       return;
     }
     case "drag": {
@@ -1768,7 +1886,7 @@ async function main() {
       const after = await settle(before, { quietMs: 900 });
       const notes = [r.src.note, r.dst?.note].filter(Boolean).map((n) => n.replace("used the text", "used the text it shows"));
       const what = r.dst ? `to ${cdp.entryLine(r.dst.entry, { nameMax: 60 })}` : `by ${o.by.dx},${o.by.dy} px`;
-      console.log([...new Set(notes), `dragged ${cdp.entryLine(r.src.entry, { nameMax: 60 })} ${what}`, ...(after.blocked ? blockedLines() : await changes(r.pre, before, after, o, { self: r.src.entry }))].join("\n"));
+      console.log([...new Set(notes), `dragged ${cdp.entryLine(r.src.entry, { nameMax: 60 })} ${what}`, ...(after.blocked ? blockedLines({ why: after.blocked }) : await changes(r.pre, before, after, o, { self: r.src.entry }))].join("\n"));
       return;
     }
     case "url": {

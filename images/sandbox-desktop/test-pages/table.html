@@ -33,6 +33,12 @@
   </tbody>
 </table>
 <p>Read about <a id="pop-link" href="away.html">Population</a> counts.</p>
+<!-- An ARIA grid drawn with divs (a forecast): rows by role, a cell with no rain left empty. -->
+<div role="grid" aria-label="Forecast" style="display:grid;gap:2px;width:420px;margin-top:12px">
+  <div role="row" style="display:flex"><span role="columnheader" style="width:140px">Day</span><span role="columnheader" style="width:140px">Rain</span><span role="columnheader" style="width:140px">Wind</span></div>
+  <div role="row" style="display:flex"><span role="rowheader" style="width:140px">Thursday</span><span role="gridcell" style="width:140px"></span><span role="gridcell" style="width:140px">3 m/s</span></div>
+  <div role="row" style="display:flex"><span role="rowheader" style="width:140px">Friday</span><span role="gridcell" style="width:140px">1.2 mm</span><span role="gridcell" style="width:140px">5 m/s</span></div>
+</div>
 <pre id="log"></pre>
 <script>
   const log = document.getElementById("log");

@@ -38,6 +38,12 @@ interface Entry {
   inner?: number[];
   iconOnly?: boolean;
 }
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 interface Box {
   l: number;
   t: number;
@@ -68,6 +74,15 @@ interface CdpLib {
   aimPoints(own: Box, inner: Box[]): { x: number; y: number }[];
   matchTexts(e: Entry): string[];
   snapshotLines(snap: unknown, o?: { marks?: boolean; table?: boolean }): string[];
+  titleAround(snap: unknown, backendNodeId: number): string | undefined;
+  rowAround(snap: unknown, backendNodeId: number): number | undefined;
+  fixedAncestors(snap: unknown, backendNodeId: number): number[];
+  layerControls(
+    nodes: AxNode[],
+    ids: Set<number>,
+    o?: { tag?: string; max?: number },
+  ): { entries: Entry[]; more: number; buttons: number };
+  shotCrop(box: Rect, row: Rect | undefined, area: Rect | undefined, pad: number): Rect;
   screenPoint(
     g: {
       win: { x: number; y: number; height: number };
@@ -1072,6 +1087,52 @@ describe("desktop-web's CDP reader", () => {
     ]);
   });
 
+  it("reads an ARIA grid's rows by role whatever their display, empty cells kept", () => {
+    const st = (d: string): [string, string, string] => [d, "visible", "1"];
+    const div = (
+      parent: number,
+      role: string,
+      d: string,
+      box: [number, number, number, number],
+    ): N => ({
+      parent,
+      type: 1,
+      tag: "DIV",
+      style: st(d),
+      box,
+      attrs: { role },
+    });
+    const snap = snapOf([
+      doc, // 0
+      div(0, "grid", "block", [0, 0, 300, 60]), // 1
+      div(1, "rowgroup", "block", [0, 0, 300, 20]), // 2
+      div(2, "row", "flex", [0, 0, 300, 20]), // 3
+      div(3, "columnheader", "block", [0, 0, 100, 20]), // 4
+      t("Day", [2, 2, 30, 16], 4), // 5
+      div(3, "columnheader", "block", [100, 0, 100, 20]), // 6
+      t("Rain", [102, 2, 30, 16], 6), // 7
+      div(3, "columnheader", "block", [200, 0, 100, 20]), // 8
+      t("Wind", [202, 2, 30, 16], 8), // 9
+      div(1, "rowgroup", "block", [0, 20, 300, 20]), // 10
+      div(10, "row", "flex", [0, 20, 300, 20]), // 11
+      div(11, "rowheader", "block", [0, 20, 100, 20]), // 12
+      t("Thu", [2, 22, 30, 16], 12), // 13
+      div(11, "gridcell", "block", [100, 20, 100, 20]), // 14 no rain: empty
+      div(11, "gridcell", "block", [200, 20, 100, 20]), // 15
+      { parent: 15, type: 1, tag: "SPAN", style: st("inline"), box: [202, 22, 30, 16] }, // 16
+      t("3 m/s", [202, 22, 30, 16], 16), // 17
+    ]);
+    expect(cdp.snapshotLines(snap, { table: true })).toEqual([
+      "Day | Rain | Wind",
+      "Thu |  | 3 m/s",
+    ]);
+    expect(cdp.snapshotText(snap, { table: true }).rows).toEqual([
+      { table: "0:1", head: true },
+      { table: "0:1", head: false },
+    ]);
+    expect(cdp.snapshotLines(snap)).toEqual(["Day", "Rain", "Wind", "Thu", "3 m/s"]);
+  });
+
   it("wraps long blocks into lines and reports only what an action added", () => {
     const long = `${"word ".repeat(60)}end`;
     const wrapped = cdp.wrapLines(["short", long], 100);
@@ -1101,6 +1162,88 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.wraps(box(98, 98, 302, 130), link)).toBe(true);
     expect(cdp.wraps(box(150, 105, 200, 115), link)).toBe(false); // smaller text under the point: covered
     expect(cdp.wraps(box(0, 0, 1280, 800), link)).toBe(false); // a full-page layer
+  });
+
+  it("finds the row around a narrow target and the fixed layer around an element", () => {
+    const st = (d: string, pos = "static") =>
+      [d, "visible", "1", pos, "visible", "visible", "auto", "auto"] as unknown as [
+        string,
+        string,
+        string,
+      ];
+    const snap = snapOf([
+      doc, // 0
+      { parent: 0, type: 1, tag: "BODY", style: st("block"), box: [0, 0, 1000, 2000] }, // 1
+      { parent: 1, type: 1, tag: "TABLE", style: st("block"), box: [0, 0, 800, 400] }, // 2 too tall to be the row
+      { parent: 2, type: 1, tag: "DIV", style: st("flex"), box: [0, 40, 800, 30] }, // 3 the row
+      { parent: 3, type: 1, tag: "SPAN", style: st("block"), box: [0, 40, 300, 30] }, // 4 a cell
+      { parent: 4, type: 1, tag: "B", style: st("inline"), box: [0, 44, 60, 18] }, // 5 the label
+      t("Area", [0, 44, 60, 18], 5), // 6
+      { parent: 1, type: 1, tag: "DIV", style: st("block", "fixed"), box: [0, 600, 1000, 120] }, // 7 a fixed banner
+      { parent: 7, type: 1, tag: "P", style: st("block"), box: [10, 610, 400, 20] }, // 8
+      t("We use cookies", [10, 610, 100, 18], 8), // 9
+      { parent: 7, type: 1, tag: "DIV", style: st("block", "fixed"), box: [0, 0, 1000, 720] }, // 10 its dimming layer
+    ]);
+    expect(cdp.rowAround(snap, 1005)).toBe(1003);
+    expect(cdp.rowAround(snap, 1003)).toBeUndefined();
+    expect(cdp.fixedAncestors(snap, 1010)).toEqual([1010, 1007]);
+    expect(cdp.fixedAncestors(snap, 1008)).toEqual([1007]);
+    expect(cdp.fixedAncestors(snap, 1005)).toEqual([]);
+  });
+
+  it("crops a shot to at least 480x160 and the row, shifted to stay inside the page area", () => {
+    const area = { x: 0, y: 100, w: 1280, h: 700 };
+    // a small icon in the middle: the minimum, centred on it
+    expect(cdp.shotCrop({ x: 600, y: 400, w: 20, h: 20 }, undefined, area, 14)).toEqual({
+      x: 370,
+      y: 330,
+      w: 480,
+      h: 160,
+    });
+    // a label at the page's top left: shifted, not cut, and as wide as its row
+    expect(
+      cdp.shotCrop({ x: 2, y: 104, w: 60, h: 20 }, { x: 2, y: 100, w: 900, h: 28 }, area, 14),
+    ).toEqual({
+      x: 0,
+      y: 100,
+      w: 928,
+      h: 160,
+    });
+    // a wide heading alone: cut to a readable width at its left edge
+    expect(cdp.shotCrop({ x: 10, y: 300, w: 1200, h: 40 }, undefined, area, 14)).toEqual({
+      x: 0,
+      y: 240,
+      w: 668,
+      h: 160,
+    });
+  });
+
+  it("lists the controls of a fixed layer and counts its buttons", () => {
+    const ax = (
+      nodeId: string,
+      role: string,
+      name: string,
+      extra: Partial<AxNode> = {},
+    ): AxNode => ({
+      nodeId,
+      role: { value: role },
+      name: { value: name },
+      backendDOMNodeId: Number(nodeId) + 100,
+      ...extra,
+    });
+    const nodes = [
+      ax("1", "RootWebArea", "Shop", { childIds: ["2", "3", "4"] }),
+      ax("2", "link", "Behind", { parentId: "1" }),
+      ax("3", "button", "Reject all", { parentId: "1" }),
+      ax("4", "link", "Privacy policy", { parentId: "1" }),
+    ];
+    const layer = cdp.layerControls(nodes, new Set([103, 104]));
+    expect(layer.entries.map((e) => cdp.entryLine(e))).toEqual([
+      '[e103] button "Reject all"',
+      '[e104] link "Privacy policy"',
+    ]);
+    expect(layer.buttons).toBe(1);
+    expect(cdp.layerControls(nodes, new Set([102])).buttons).toBe(0);
   });
 
   it("reports an open dialog with the elements in it, in any language", () => {
@@ -1362,8 +1505,103 @@ describe("desktop-web's CDP reader", () => {
     expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
       "Rating",
       "‹star-rating Three›",
-      "status ‹dot state=up› fine ‹src:brand-mark.png›",
+      'status ‹dot state=up› fine ‹src:brand-mark.png› ‹"Logo"›',
     ]);
+  });
+
+  it("marks a named icon by its name, and a datetime or a title that says more, only when asked", () => {
+    const inline = ["inline", "visible", "1"] as [string, string, string];
+    const nodes: N[] = [
+      doc, // 0
+      { parent: 0, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 0, 400, 200] }, // 1
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 0, 400, 20] }, // 2
+      t("813", [0, 0, 30, 16], 2), // 3
+      // an icon named by aria-label: its name, and nothing of the svg inside it
+      {
+        parent: 2,
+        type: 1,
+        tag: "DIV",
+        style: ["inline-block", "visible", "1"],
+        box: [40, 0, 18, 18],
+        attrs: { "aria-label": "Accepted", title: "Loading when this answer was accepted" },
+      }, // 4
+      {
+        parent: 4,
+        type: 1,
+        tag: "svg",
+        style: inline,
+        box: [40, 0, 18, 18],
+        attrs: { class: "svg-icon iconCheckmarkLg" },
+      }, // 5
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 30, 400, 20] }, // 6
+      t("posted", [0, 30, 40, 16], 6), // 7
+      {
+        parent: 6,
+        type: 1,
+        tag: "TIME",
+        style: inline,
+        box: [45, 30, 80, 16],
+        attrs: { datetime: "2026-11-25T08:14:00.000Z" },
+      }, // 8
+      t("4 hours ago", [45, 30, 80, 16], 8), // 9
+      t("by Ann", [130, 30, 40, 16], 6), // 10
+      { parent: 1, type: 1, tag: "P", style: BLOCKSTYLE, box: [0, 60, 400, 20] }, // 11
+      // a title that repeats the text says nothing; one that says more is a mark
+      {
+        parent: 11,
+        type: 1,
+        tag: "A",
+        style: inline,
+        box: [0, 60, 40, 16],
+        attrs: { title: "Home" },
+      }, // 12
+      t("Home", [0, 60, 40, 16], 12), // 13
+      {
+        parent: 11,
+        type: 1,
+        tag: "ABBR",
+        style: inline,
+        box: [50, 60, 40, 16],
+        attrs: { title: "Gross domestic product" },
+      }, // 14
+      t("GDP", [50, 60, 40, 16], 14), // 15
+      // a shop's logo: a link with no name of its own around a named picture
+      { parent: 1, type: 1, tag: "DIV", style: BLOCKSTYLE, box: [0, 90, 400, 40] }, // 16
+      {
+        parent: 16,
+        type: 1,
+        tag: "A",
+        style: BLOCKSTYLE,
+        box: [0, 90, 100, 40],
+        attrs: { class: "store-logo go-to-shop" },
+      }, // 17
+      {
+        parent: 17,
+        type: 1,
+        tag: "IMG",
+        style: inline,
+        box: [0, 90, 100, 40],
+        attrs: { alt: "shop.example" },
+      }, // 18
+      t("959,00 zł", [200, 90, 60, 16], 16), // 19
+    ];
+    expect(cdp.snapshotLines(snapOf(nodes))).toEqual([
+      "813",
+      "posted 4 hours ago by Ann",
+      "Home GDP",
+      "959,00 zł",
+    ]);
+    expect(cdp.snapshotLines(snapOf(nodes), { marks: true })).toEqual([
+      '813 ‹"Accepted"›',
+      "posted 4 hours ago ‹datetime=2026-11-25T08:14:00.000Z› by Ann",
+      'Home GDP ‹title:"Gross domestic product"›',
+      // a block of its own, a line of its own
+      '‹"shop.example"›',
+      "959,00 zł",
+    ]);
+    // the tooltip a hover waits for: the element's title or that of one around it that holds little more
+    expect(cdp.titleAround(snapOf(nodes), 1015)).toBe("Gross domestic product");
+    expect(cdp.titleAround(snapOf(nodes), 1009)).toBeUndefined();
   });
 
   // Elements for annotate and textTargets: [display, visibility, opacity, position, overflow-x, overflow-y, clip, cursor].

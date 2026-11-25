@@ -1181,6 +1181,9 @@ function markTokens(snap, doc, i) {
 // Layout snapshot -> lines. With `marks`, a rendered element that has a box a person can see but no text and no accessible
 // name of its own (an icon, a rating drawn from a class, an image without alt) is written into the line where it sits as
 // `‹class words title data src›`, taken from its markup: meaning that is only a picture, as a last resort before a screenshot.
+// One with a name of its own (aria-label, alt: an "Accepted" check, a shop's logo) is written as that name, `‹"Accepted"›`.
+// Text in an element with a `datetime` (a <time>) is followed by `‹datetime=…›`, and text in one whose `title` says more
+// than the text by `‹title:"…"›`: values a person reads from a tooltip, never printed without `marks`.
 function snapshotLines(snap, { marks = false, table = false } = {}) {
   return snapshotGroups(snap, { marks, table }).map((g) => g.text);
 }
@@ -1188,13 +1191,16 @@ function snapshotLines(snap, { marks = false, table = false } = {}) {
 // The lines of snapshotLines with where they come from: { text, doc, v (docView), block (node index), texts (text node
 // indexes) }. With `table` a table row is one line of its cells joined by " | ", empty cells kept (spans are not resolved),
 // and carries `table` (its table, "document:node") and `head` (a header row: all its cells are th, or it sits in a thead).
+// A table row is a <tr> (display table-row with table-cell children) or an element with role row and cells of role cell,
+// gridcell, columnheader or rowheader (ARIA grids drawn with divs), whatever their display.
 function snapshotGroups(snap, { marks = false, table = false } = {}) {
   const lines = [];
   let marked = 0;
   for (const [di, doc] of (snap.documents ?? []).entries()) {
     const v = docView(snap, doc);
     // in a table, each cell is a block of its own: the row is put together from them below
-    const isBlock = (p) => BLOCK.test(v.display(p)) || (table && v.display(p) === "table-cell");
+    const aria = table ? ariaRows(snap, doc, v) : undefined;
+    const isBlock = (p) => BLOCK.test(v.display(p)) || (table && (v.display(p) === "table-cell" || aria.rowOf.has(p) || aria.cells.has(p)));
     // Elements whose subtree holds text or a control: not nameless pictures.
     const content = new Set();
     const covered = new Set();
@@ -1226,8 +1232,38 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
     };
     const groups = new Map();
     const group = (g) => {
-      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1 });
+      if (!groups.has(g)) groups.set(g, { text: "", box: undefined, brk: false, block: g, texts: [], struck: false, x: Infinity, item: -1, attrs: new Map(), titles: new Set() });
       return groups.get(g);
+    };
+    // marks from the attributes of the elements around a group's text: each written once, after the element's last text
+    const flushAttrs = (g, keep = new Set()) => {
+      for (const [el, m] of g.attrs) {
+        if (keep.has(el) || m.done) continue;
+        m.done = true;
+        const own = squash(g.text.slice(m.start)).toLowerCase();
+        const tokens = [];
+        if (m.datetime) tokens.push(`‹datetime=${clip(m.datetime, 40)}›`);
+        if (m.title && m.title.toLowerCase() !== own && m.title !== m.datetime) {
+          tokens.push(`‹title:"${clip(m.title, 80)}"›`);
+          g.titles.add(m.title);
+        }
+        if (tokens.length > 0) g.text = `${g.text.replace(/\s*$/, "")} ${tokens.join(" ")} `;
+      }
+    };
+    const attrMarks = (g, i) => {
+      const around = new Set();
+      for (let p = v.parent[i], k = 0; p > 0 && k < 8; p = v.parent[p], k++) {
+        around.add(p);
+        if (p === g.block) break;
+      }
+      flushAttrs(g, around);
+      for (const p of around) {
+        if (g.attrs.has(p)) continue;
+        const a = nodeAttrs(snap, doc, p);
+        const datetime = squash(a.datetime);
+        const title = squash(a.title);
+        if (datetime || LETTER.test(title)) g.attrs.set(p, { start: g.text.length, datetime, title });
+      }
     };
     for (let i = 0; i < doc.nodes.parentIndex.length; i++) {
       if (!v.layoutOf.has(i)) continue;
@@ -1238,23 +1274,28 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
           const b = v.bounds(i);
           const shown = v.visible(i);
           const at = nodeAttrs(snap, doc, i);
-          const named = (at["aria-label"] ?? at.alt ?? "").trim() !== "";
-          if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !named && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
-            // The element's own words, else those of its first descendant that has any.
-            let tokens = markTokens(snap, doc, i);
-            const below = (j) => {
-              for (let k = j + 1; k < doc.nodes.parentIndex.length && tokens.length === 0; k++) {
-                let inside = false;
-                for (let p = k; p >= 0; p = doc.nodes.parentIndex[p]) if (p === i) inside = true;
-                if (!inside) break;
-                if (doc.nodes.nodeType[k] === 1) tokens = markTokens(snap, doc, k);
-              }
+          const named = squash(at["aria-label"] || at.alt);
+          if (b && shown && shown.w >= 4 && shown.h >= 4 && (Math.min(b.w, b.h) <= 120 || name(i) === "IMG" || name(i) === "SVG") && !v.offscreen(b) && v.style(i)?.[1] !== "hidden" && !v.seeThrough(i)) {
+            // Its name, else that of a picture inside it (a logo's link), else its own words, else those of its first
+            // descendant that has any.
+            const inside = (k) => {
+              for (let p = k; p >= 0; p = doc.nodes.parentIndex[p]) if (p === i) return true;
+              return false;
             };
-            below(i);
+            let label = named;
+            for (let k = i + 1; !label && k < doc.nodes.parentIndex.length && inside(k); k++) {
+              if (doc.nodes.nodeType[k] !== 1) continue;
+              const ak = nodeAttrs(snap, doc, k);
+              label = squash(ak["aria-label"] || ak.alt);
+            }
+            let tokens = label ? [`"${clip(label, 80)}"`] : markTokens(snap, doc, i);
+            for (let k = i + 1; tokens.length === 0 && k < doc.nodes.parentIndex.length && inside(k); k++) {
+              if (doc.nodes.nodeType[k] === 1) tokens = markTokens(snap, doc, k);
+            }
             covered.add(i);
             if (tokens.length > 0) {
               marked++;
-              const text = `‹${clip(tokens.join(" "), 60)}›`;
+              const text = label ? `‹${tokens[0]}›` : `‹${clip(tokens.join(" "), 60)}›`;
               const own = /^(block|flex|grid|list-item|table|flow-root)$/.test(v.style(i)?.[0] ?? "inline");
               const g = group(own ? i : blockOf(i));
               if (g.text !== "" && !/\s$/.test(g.text)) g.text += " ";
@@ -1277,6 +1318,7 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
         continue;
       }
       const g = group(blockOf(i));
+      if (marks) attrMarks(g, i);
       const s = struck(i);
       const item = spaced.size > 0 ? itemOf(i, g.block) : -1;
       // another flex item: apart, unless it starts with a decimal mark or a comma ("145" ",95")
@@ -1293,34 +1335,64 @@ function snapshotGroups(snap, { marks = false, table = false } = {}) {
     }
     const done = [];
     for (const g of groups.values()) {
+      if (marks) flushAttrs(g);
       let t = squash(g.struck ? g.text.replace(/\s*$/, "~") : g.text);
-      if (t && !LETTER.test(t) && g.texts.length > 0) {
+      if (t && !LETTER.test(t.replace(/‹[^›]*›/g, "")) && g.texts.length > 0) {
         const label = labelAround(snap, doc, v, g.texts[0]);
-        if (label) t += ` ‹${clip(label, 40)}›`;
+        if (label && !g.titles.has(label)) t += ` ‹${clip(label, 80)}›`;
       }
       if (t) done.push({ text: t, doc, v, block: g.block, texts: g.texts, x: Number.isFinite(g.x) ? g.x : 0 });
     }
-    lines.push(...(table ? tableRows(done, doc, v, di) : done));
+    lines.push(...(table ? tableRows(done, doc, v, di, aria) : done));
   }
   return lines;
 }
 
+// The rows of a document's ARIA grids, from role attributes alone: { rowOf (cell -> its row), cells (row -> its cells, in
+// document order), role (node -> its first role word) }. A cell's row is the nearest ancestor with role row, no other cell
+// between. Only elements with a box count.
+const CELL_ROLES = /^(cell|gridcell|columnheader|rowheader)$/;
+function ariaRows(snap, doc, v) {
+  const roles = new Map();
+  const role = (i) => {
+    if (!roles.has(i)) roles.set(i, i >= 0 && doc.nodes.nodeType[i] === 1 ? (nodeAttrs(snap, doc, i).role ?? "").trim().split(/\s+/)[0].toLowerCase() : "");
+    return roles.get(i);
+  };
+  const rowOf = new Map();
+  const cells = new Map();
+  for (const [i] of v.layoutOf) {
+    if (!CELL_ROLES.test(role(i))) continue;
+    let r = v.parent[i];
+    while (r >= 0 && role(r) !== "row" && !CELL_ROLES.test(role(r))) r = v.parent[r];
+    if (r < 0 || role(r) !== "row" || !v.layoutOf.has(r)) continue;
+    rowOf.set(i, r);
+    if (!cells.has(r)) cells.set(r, []);
+    cells.get(r).push(i);
+  }
+  for (const list of cells.values()) list.sort((a, b) => a - b);
+  return { rowOf, cells, role };
+}
+
 // The lines of one document (snapshotGroups) with the lines of each table row's cells joined into one line at the row's
 // first: "Tokyo | Japan | 37,400,068". A cell's text is all the lines inside it; a cell without text stays, empty.
-function tableRows(done, doc, v, di) {
+// `aria` (ariaRows) adds the rows of ARIA grids; a header row there is one of columnheader cells only.
+function tableRows(done, doc, v, di, aria) {
   const name = (i) => v.str(doc.nodes.nodeName[i]).toUpperCase();
+  const rowOf = (c) => aria.rowOf.get(c) ?? v.parent[c];
   const cellOf = (i) => {
     for (let p = i; p >= 0; p = v.parent[p]) {
+      if (aria.rowOf.has(p)) return p;
+      if (aria.cells.has(p)) return -1;
       const d = v.display(p);
       if (d === "table-cell") return v.display(v.parent[p]) === "table-row" ? p : -1;
       if (/^(table|table-row|table-row-group|table-header-group|table-footer-group)$/.test(d)) return -1;
     }
     return -1;
   };
-  const cells = new Map();
+  const cells = new Map(aria.cells);
   for (const [i] of v.layoutOf) {
     const row = v.parent[i];
-    if (row >= 0 && v.display(i) === "table-cell" && v.display(row) === "table-row") {
+    if (row >= 0 && !aria.cells.has(row) && v.display(i) === "table-cell" && v.display(row) === "table-row") {
       if (!cells.has(row)) cells.set(row, []);
       cells.get(row).push(i);
     }
@@ -1341,14 +1413,23 @@ function tableRows(done, doc, v, di) {
       out.push(l);
       continue;
     }
-    const row = v.parent[c];
+    const row = rowOf(c);
     if (emitted.has(row)) continue;
     emitted.add(row);
     const own = (cells.get(row) ?? [c]).map((k) => inCell.get(k) ?? []);
     let tab = row;
-    while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
-    let head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
-    for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
+    let head;
+    if (aria.cells.has(row)) {
+      // the grid around the row, else the nearest ancestor that is not a group of rows
+      tab = v.parent[row];
+      while (tab >= 0 && !/^(grid|table|treegrid)$/.test(aria.role(tab))) tab = v.parent[tab];
+      if (tab < 0) for (tab = v.parent[row]; tab > 0 && aria.role(tab) === "rowgroup"; ) tab = v.parent[tab];
+      head = aria.cells.get(row).every((k) => aria.role(k) === "columnheader");
+    } else {
+      while (tab >= 0 && v.display(tab) !== "table") tab = v.parent[tab];
+      head = (cells.get(row) ?? []).every((k) => name(k) === "TH");
+      for (let p = v.parent[row]; p >= 0 && p !== tab && !head; p = v.parent[p]) head = name(p) === "THEAD";
+    }
     out.push({
       text: own.map((ls) => ls.map((x) => x.text).join(" ")).join(" | "),
       doc,
@@ -1423,6 +1504,25 @@ function labelAround(snap, doc, v, i) {
     if (b && (b.w > t.w + 120 || b.h > Math.max(3 * t.h, t.h + 40))) return undefined;
     const a = nodeAttrs(snap, doc, p);
     for (const l of [squash(a["aria-label"]), squash(a.title)]) if (b && LETTER.test(l)) return l;
+  }
+  return undefined;
+}
+
+// The title (in letters) of an element by backend id, or of the nearest element around it that holds little more: the
+// tooltip a person sees when the pointer rests on it. Undefined when there is none.
+function titleAround(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const own = v.bounds(i);
+    for (let p = i, k = 0; p > 0 && k < 5; p = v.parent[p], k++) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) return undefined;
+      const b = v.bounds(p);
+      if (own && b && (b.w > own.w + 200 || b.h > Math.max(3 * own.h, own.h + 40))) return undefined;
+      const title = squash(nodeAttrs(snap, doc, p).title);
+      if (LETTER.test(title)) return title;
+    }
   }
   return undefined;
 }
@@ -1700,6 +1800,81 @@ function dialogs(nodes, { max = 8 } = {}) {
     });
   }
   return out;
+}
+
+// The controls inside a set of elements (backend ids, of the part with frame tag `tag`), as a dialog lists them: a fixed
+// layer in front that has no dialog role (a consent overlay). Returns { entries (at most `max`), more, buttons }.
+function layerControls(nodes, ids, { tag = "", max = 8 } = {}) {
+  const sub = nodes.filter((n) => !n.ignored && (n.frameTag ?? "") === tag && ids.has(n.backendDOMNodeId));
+  const entries = axEntries(sub).filter((e) => e.role !== "heading" && !IMAGES.has(e.role) && (e.role !== "columnheader" || e.focusable));
+  return { entries: entries.slice(0, max), more: Math.max(entries.length - max, 0), buttons: entries.filter((e) => e.role === "button").length };
+}
+
+// The elements at or above a node (by backend id) that a layout snapshot shows with position fixed, nearest first: layers
+// that stay in front whatever the scroll (a consent banner, and the dimming layer it may hold). Returns their backend ids.
+function fixedAncestors(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const out = [];
+    for (let p = i; p > 0; p = v.parent[p]) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) break;
+      if (v.style(p)?.[3] === "fixed") out.push(doc.nodes.backendNodeId[p]);
+    }
+    return out;
+  }
+  return [];
+}
+
+// The widest element around a narrow one (by backend id) that is no taller than 2.5 times it and at most 160 px: the row a
+// label or a price sits in (a shop's logo beside its price, an infobox value beside its label), for a screenshot that shows
+// what the row says. Returns its backend id, or undefined when nothing around it is wider.
+function rowAround(snap, backendNodeId) {
+  for (const doc of snap.documents ?? []) {
+    const i = doc.nodes.backendNodeId.indexOf(backendNodeId);
+    if (i < 0) continue;
+    const v = docView(snap, doc);
+    const own = v.bounds(i);
+    if (!own) return undefined;
+    const tallest = Math.min(2.5 * own.h, 160);
+    let best;
+    let width = own.w;
+    for (let p = v.parent[i]; p > 0; p = v.parent[p]) {
+      if (/^(BODY|HTML)$/i.test(v.str(doc.nodes.nodeName[p]))) break;
+      const b = v.bounds(p);
+      if (!b) continue;
+      if (b.h > tallest) break;
+      if (b.w > width + 1) {
+        width = b.w;
+        best = doc.nodes.backendNodeId[p];
+      }
+    }
+    return best;
+  }
+  return undefined;
+}
+
+// The screen region a shot takes (all in screen px): the target with `pad` around it, at least SHOT_MIN, and at least the
+// row it sits in (`row`, cdp.rowAround). A wide block alone (a heading that spans the page) is cut to a readable width, kept
+// at its left edge. The region is shifted, not cut, to stay inside the page's area on the screen (`area`), so nothing of the
+// toolbar or another window comes in and the target does not end up at an edge.
+const SHOT_NARROW = 300;
+const SHOT_MIN = { w: 480, h: 160 };
+function shotCrop(box, row, area, pad) {
+  const want = row ?? box;
+  let w = Math.max(box.w + 2 * pad, SHOT_MIN.w, row ? row.w + 2 * pad : 0);
+  if (!row) w = Math.min(w, Math.max(640 + 2 * pad, SHOT_MIN.w));
+  let h = Math.max(box.h + 2 * pad, SHOT_MIN.h, row ? row.h + 2 * pad : 0);
+  let x = want.w + 2 * pad > w ? want.x - pad : want.x + want.w / 2 - w / 2;
+  let y = want.y + want.h / 2 - h / 2;
+  if (area && area.w > 0 && area.h > 0) {
+    w = Math.min(w, area.w);
+    h = Math.min(h, area.h);
+    x = Math.min(Math.max(x, area.x), area.x + area.w - w);
+    y = Math.min(Math.max(y, area.y), area.y + area.h - h);
+  }
+  return { x: Math.max(Math.round(x), 0), y: Math.max(Math.round(y), 0), w: Math.round(w), h: Math.round(h) };
 }
 
 function dialogLines(ds) {
@@ -2152,5 +2327,11 @@ module.exports = {
   selectInfos,
   snapshotLines,
   subtreeIds,
+  titleAround,
+  layerControls,
+  fixedAncestors,
+  rowAround,
+  SHOT_NARROW,
+  shotCrop,
   wraps,
 };

@@ -20,7 +20,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
                                                 --double for a double click (edit a label), on any visible text
     desktop-web type <e123|"regex"> "text"      replace a field's text ("" clears it), see its value and what appeared; --enter
                                                 presses Return, --near "row text" picks one of several fields
-    desktop-web select <e123|"regex"> "option"  pick an option of a dropdown (native or in-page); snap lists the options
+    desktop-web select <e123|"regex"> "option"  pick an option of a dropdown (native or in-page); snap lists the options;
+                                                --near "row text" picks one of several dropdowns of that name
     desktop-web type <slider> 75                set a slider (snap: slider "Volume" value=25 min=0 max=100); prints value 25 -> 75
     desktop-web upload <e123|"regex"> /workspace/file   give a file to a file input, or to the button that opens one
     desktop-web drag <src> <dst>                drag with the mouse and drop on dst (or --by dx,dy px); src, dst: refs or visible text
@@ -28,7 +29,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
     desktop-web wait "regex" [--gone]           wait until the text appears (or disappears), --timeout N (at most 60 s)
     desktop-web key End|Page_Down|alt+Left      keys in the browser (load more, go back, Escape); prints what changed and the
                                                 element that took the focus (focus: [e12] textbox "Email")
-    desktop-web shot <e123|"regex">             screenshot of that element's or text's area (--pad N for more); prints the file
+    desktop-web shot <e123|"regex">             screenshot of that element's or text's area (--pad N for more); prints the file.
+                                                A narrow target comes with its row; `note: covered by` says what is in front
 
 - Open every page with `desktop-web open`. A URL pattern you have seen on this site (its search, sort order or page number in an
   address you already visited or read from a link) is one `open`, cheaper than clicking through a form; do not guess one.
@@ -43,7 +45,8 @@ the real mouse at a person's pace, and reads the page without anything a site ca
   error or block page; look with `desktop-shot` before you go on). In text, `~637 zł~` is struck through (an old price) and
   `94 ‹Upvote›` names a bare number by its element. `text --indent` marks each line with `>` per level it is indented (replies
   in a thread). `text "regex" --table` reads a table row as its cells joined by ` | ` (empty cells kept) with the table's
-  header rows above as `cols: ...`; its line numbers are its own (`--table --lines A-B`).
+  header rows above as `cols: ...`; its line numbers are its own (`--table --lines A-B`). It reads `<table>`s and ARIA grids
+  (`role=row`); a layout of plain divs stays lines.
 - Text a collapsed section cuts off is not in `text`. When nothing matches, `text` says how many matches are in a cut-off
   section and which control opens it: click it, then read again.
 - After `click`, `type` and `key`, the answer already shows the result: the element's new state (`checked false -> true`), the
@@ -79,11 +82,15 @@ the real mouse at a person's pace, and reads the page without anything a site ca
 - A link's URL: `desktop-web click` lists it; or read it from the `snap` list. Do not click a link just to learn where it goes.
 - Dialogs that are part of the page (cookie consent, sign-up, region) are listed first by `open` and `snap` with their buttons'
   refs (`(not modal)`: the page stays usable around it), and a click that one covers is refused with its buttons. Answer it with one `click` on the ref of the button you mean,
-  then run the rest of the chain again.
+  then run the rest of the chain again. A layer drawn without a dialog role is listed by `open` as `open overlay (a fixed
+  layer ...)` when it covers the middle of the page, and a refusal lists its controls the same way.
+- Cookie consent: pick the choice that refuses (reject all, necessary or essential only, "I do not agree"). When there is
+  none, open its settings, leave every optional choice off and save. Never accept all.
 - The browser's own dialogs (JS alert, confirm, prompt, leave-page) are not part of the page and are not listed with refs; while
   one is open the page does not answer. Every `desktop-web` command then says so and prints the dialog's message and buttons:
   `desktop-web key Return` accepts, `desktop-web key Escape` cancels, a prompt takes `desktop-web key --text "answer" Return`.
-  The next answer says "dialog closed" and what changed. Do not wait it out: it never closes by itself.
+  The next answer says "dialog closed" and what changed. Do not wait it out: it never closes by itself. `the page is busy`
+  (no dialog) is a heavy page still loading: read it again with `desktop-web wait "regex"`; no key is needed.
 - A slider: `desktop-web type <ref|"regex"> 75` presses it at that point, then steps with the arrow keys and reads it back; a value
   between its steps ends on the nearest one and says so. Exit 1 when it did not move. A handle drawn without a slider role is
   listed as `focusable ‹ui-slider-handle› near "Price range"`: `desktop-web click <ref>`, then `desktop-web key Right` (or Left,
@@ -94,16 +101,20 @@ the real mouse at a person's pace, and reads the page without anything a site ca
 - Drag and drop, sortable lists, a map or a canvas: `desktop-web drag "Drag me" "Drop here"` (plain visible text is a target
   too) or `desktop-web drag <ref> --by 120,0`; it prints what changed. Never raw `xdotool mousedown`.
 - A dropdown: `desktop-web snap` shows `combobox "Name" value="..." options: A | B | C`; then `desktop-web select e11 "B"` (exact
-  text, else ignoring case, else a regex; an ambiguous one is listed). An in-page dropdown offers only its own options (or the
+  text, else ignoring case, else a regex; an ambiguous one is listed). Several dropdowns of one name (one per row): `desktop-web
+  select "Quantity" "2" --near "<text of that row>"`. An in-page dropdown offers only its own options (or the
   lines that appear as it opens); a failed `select` closes it again. Do not click it open and step through it by hand.
 - Content that appears later (a request, a countdown): `desktop-web wait "text"`, or `--gone` for a spinner. An answer on a busy
   page says `result may come later`. `nothing happened` means the page did not react: fix the required or invalid fields it
   lists, or look with `desktop-web shot`; "this control does nothing here" means stop clicking it. Never `sleep` on a web page.
-- A hover menu or caption: `desktop-web hover <ref|"regex">` (several same-named pictures: their refs from `snap`, or `--nth N`), not raw `xdotool mousemove`. Keys: `desktop-web key`.
+- A hover menu or caption: `desktop-web hover <ref|"regex">` (several same-named pictures: their refs from `snap`, or `--nth N`), not raw `xdotool mousemove`. A hover that changes nothing prints the element's
+  title as `tooltip: "..."`. Keys: `desktop-web key`.
 - A list that loads more as you scroll: `desktop-web key End`, then read the new lines it prints.
-- Meaning that is only an icon, a colour or an image (a rating drawn by its class, a status dot): `desktop-web text "regex" --marks`
-  prints such elements inline as `‹class words›` taken from the page's markup; if that is not enough, `desktop-web shot <ref>
-  --pad 40` and read the image. Do not zoom the page or take full screenshots to find it.
+- Meaning that is only an icon, a colour or an image (a rating drawn by its class, a status dot, an accepted answer's check, a
+  shop's logo), or a value in an attribute (an exact date): `desktop-web text "regex" --marks` prints such elements inline as
+  `‹class words›` taken from the page's markup, a named one as `‹"Accepted"›`, a `<time>` as `‹datetime=2026-11-20T09:30Z›`
+  and a tooltip as `‹title:"..."›`; if that is not enough, `desktop-web shot <ref>` and read the image (a narrow label or
+  price comes with its row). Do not zoom the page or take full screenshots to find it.
 - Screenshots of the whole window (`desktop-shot`) only to check layout, a page that shows almost no text, or as a deliverable (`desktop-shot --out /workspace/<name>.jpg`).
 - `desktop-web url` prints the address. `jq` and `python` exist.
 

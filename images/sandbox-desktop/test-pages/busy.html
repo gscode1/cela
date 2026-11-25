@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>busy</title>
+<body style="font:16px sans-serif">
+<h1>Offers</h1>
+<p><label for="sort">Sort by</label>
+<select id="sort">
+  <option value="best">Best match</option>
+  <option value="price">Price, lowest first</option>
+</select></p>
+<p id="order">Sorted by best match</p>
+<script>
+  // A sort that keeps the renderer busy for 4 s before it loads the sorted page (a heavy shop listing drawing itself again):
+  // the probe misses while the address has not changed yet, and no dialog is open.
+  const sort = document.getElementById("sort");
+  if (new URLSearchParams(location.search).get("sort") === "price") {
+    sort.value = "price";
+    document.getElementById("order").textContent = "Sorted by price, lowest first";
+  }
+  sort.addEventListener("change", () => {
+    const start = Date.now();
+    while (Date.now() - start < 4000);
+    const u = new URL(location.href);
+    u.searchParams.set("sort", sort.value);
+    location.href = u.href;
+  });
+</script>
