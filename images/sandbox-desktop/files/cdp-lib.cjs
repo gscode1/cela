@@ -791,7 +791,19 @@ function chooseTarget(nodes, entries, re, { near, nth, role, showable = false, t
   if (near) {
     const nearRe = near instanceof RegExp ? near : new RegExp(near, "i");
     withRows = withRows.filter((e) => [e.row, e.near, e.name, e.group, ...ctx(e)].some((t) => t && nearRe.test(t)));
-    if (withRows.length === 0) return { none: true, near: true };
+    // The name matched but no row, group or heading did: the matches are returned with their rows, so the caller can show them.
+    if (withRows.length === 0) {
+      // Listed as a several-match is: links to one URL once, and the rows read among the copies that remain.
+      const seenUrl = new Set();
+      const copies = matches.filter((e) => {
+        if (!(e.url && e.role === "link")) return true;
+        if (seenUrl.has(e.url)) return false;
+        seenUrl.add(e.url);
+        return true;
+      });
+      const copyRows = rowTexts(nodes, copies);
+      return { none: true, near: true, matches: copies.map((e, i) => ({ ...e, row: copyRows[i] })) };
+    }
   }
   const distinct = [];
   const seen = new Set();

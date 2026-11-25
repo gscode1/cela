@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>wizard</title>
+<body>
+<h1>Wizard</h1>
+<!-- Two pages: the button on the first one is named "Continue" on both, and the second page is another address. -->
+<div id="step"><h2>Step one</h2><p><label><input type="radio" name="a"> Yes</label></p><button id="go">Continue</button></div>
+<script>
+  document.getElementById("go").addEventListener("click", () => { location.href = "wizard2.html"; });
+</script>

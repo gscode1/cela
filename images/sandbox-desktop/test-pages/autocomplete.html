@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>autocomplete</title>
+<style>
+  body { font: 16px sans-serif; }
+  #list div, #sug button { display: block; padding: 2px 8px; }
+</style>
+<body>
+<h1>Autocompletes</h1>
+<!-- Two fields that show suggestions on input. The first draws a list of 30 short lines in a plain div (no roles, so the
+     answer folds them into one line); the second draws 3 buttons (so the answer prints them with refs). -->
+<p><label>Day <input id="day" autocomplete="off"></label></p>
+<div id="list"></div>
+<p><label>City <input id="city" autocomplete="off"></label></p>
+<div id="sug"></div>
+<pre id="log"></pre>
+<script src="log.js"></script>
+<script>
+  document.getElementById("day").addEventListener("input", () => {
+    const list = document.getElementById("list");
+    list.replaceChildren();
+    for (let i = 1; i <= 30; i++) {
+      const d = document.createElement("div");
+      d.textContent = String(i).padStart(2, "0");
+      list.appendChild(d);
+    }
+  });
+  document.getElementById("city").addEventListener("input", () => {
+    const sug = document.getElementById("sug");
+    sug.replaceChildren();
+    for (const c of ["Gdansk", "Gdynia", "Gliwice"]) {
+      const b = document.createElement("button");
+      b.textContent = c;
+      sug.appendChild(b);
+    }
+  });
+</script>

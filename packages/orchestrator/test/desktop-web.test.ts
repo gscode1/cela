@@ -69,7 +69,14 @@ interface CdpLib {
       landmark?: (e: Entry) => boolean;
       inView?: (e: Entry) => boolean;
     },
-  ): { pick?: Entry; note?: string; several?: Entry[]; none?: boolean };
+  ): {
+    pick?: Entry;
+    note?: string;
+    several?: Entry[];
+    none?: boolean;
+    near?: boolean;
+    matches?: (Entry & { row: string })[];
+  };
   closedMenus(entries: Entry[]): Entry[];
   aimPoints(own: Box, inner: Box[]): { x: number; y: number }[];
   matchTexts(e: Entry): string[];
@@ -333,7 +340,14 @@ describe("desktop-web's CDP reader", () => {
     ]);
     expect(cdp.chooseTarget(nodes, entries, /honey/i, { near: /beta/i }).pick?.ref).toBe("e108");
     expect(cdp.chooseTarget(nodes, entries, /honey/i, { nth: 1 }).pick?.ref).toBe("e104");
-    expect(cdp.chooseTarget(nodes, entries, /honey/i, { near: /gamma/i }).none).toBe(true);
+    const miss = cdp.chooseTarget(nodes, entries, /honey/i, { near: /gamma/i });
+    expect(miss.none).toBe(true);
+    // the name matches come back with their rows, so the tool can list them instead of "nothing matching"
+    expect(miss.near).toBe(true);
+    expect(miss.matches?.map((e) => [e.ref, e.row])).toEqual([
+      ["e104", "Seller Alpha 12,50 zł"],
+      ["e108", "Seller Beta 11,90 zł"],
+    ]);
     expect(cdp.chooseTarget(nodes, entries, /cart/i).none).toBe(true);
   });
 

@@ -452,6 +452,32 @@ case_modal_field() {
   check "nothing was typed behind the modal" "$(no 'typed in page-')"
 }
 
+# What an action answers: a typed field's suggestions (a plain div list folded into one line, buttons with refs), a click that
+# moved to another page (no "drew it again"), and a --near that names nothing (the matches, with their rows).
+case_answers() {
+  open autocomplete
+  web type 'Day' '1'
+  check "30 short new lines are folded into one line" "$(ok '^changed \(30 new lines\): 01 \| 02 \| 03')"
+  check "clipped to 160 characters" "$([[ $(grep '^changed' "$OUT" | wc -c) -le 200 ]]; echo $?)"
+  web type 'City' 'G'
+  check "buttons that appeared are printed with refs" "$(ok 'appeared: \[e[0-9]+\] button "Gdansk"')"
+  web click '^Gdynia$'
+  has_text 'clicked: Gdynia at'
+  check "a suggestion is clicked by name" $?
+  open wizard
+  web click 'Yes'
+  web click '^Continue$'
+  check "the next page is printed" "$(ok 'Step two')"
+  check "a click that moved to another page does not say the page drew it again" "$(no 'drew it again')"
+  open grids
+  web click '^20$' --near 'Mars'
+  check "a --near that matches nothing lists the name matches" "$(ok '^(desktop-web: )?2 elements match "\^20\$", none near "Mars" \(--near reads the row, its group and the heading above\):' 1)"
+  check "with their rows and refs" "$([[ $(ok '\[e[0-9]+\] button "20" .*\| Left 20 411$' 1) == 0 && $(ok '\[e[0-9]+\] button "20" .*\| Right 20 704$' 1) == 0 ]]; echo $?)"
+  web click '^20$' --near 'February'
+  has_text 'clicked: 20 at'
+  check "--near with the heading above still picks one" $?
+}
+
 # A consent layer drawn as a fixed div without a dialog role: open lists it, a click behind it is refused with its buttons.
 case_overlay() {
   open overlay
@@ -977,7 +1003,7 @@ case_help() {
   check "an unknown topic exits 64" "$(ok 'no help for' 64)"
 }
 
-ALL=(help infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field certerror)
+ALL=(help infobar zoom125 zoom80 hscroll sticky far small modal shadow frames_same frames_cross honeypot spacing dialogs select busy wait hover marks notices errors challenge collapsed shot custom state names form stale slider upload drag decor dropdown acting table twins menu reorder empty slide chips todos handle overlay urlencode coldstart dialog_cap modal_field certerror answers)
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] || CASES=("${ALL[@]}")
 for _ in $(seq 1 50); do curl -fs "$BASE/zoom.html" >/dev/null 2>&1 && break; sleep 0.2; done
