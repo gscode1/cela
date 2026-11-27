@@ -102,7 +102,7 @@ function parseJson(text: string): unknown {
 }
 
 /** The longest prefix of `text` that fits `maxBytes` of UTF-8 without splitting a character. */
-function cutUtf8(text: string, maxBytes: number): string {
+export function cutUtf8(text: string, maxBytes: number): string {
   const bytes = Buffer.from(text, "utf8");
   let end = Math.min(maxBytes, bytes.length);
   while (end > 0 && end < bytes.length && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;

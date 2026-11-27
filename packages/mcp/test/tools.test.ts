@@ -160,7 +160,7 @@ describe("tools", () => {
     },
   );
 
-  it("lists exactly the 10 tools with annotations", { timeout: TIMEOUT }, async () => {
+  it("lists exactly the 11 tools with annotations", { timeout: TIMEOUT }, async () => {
     const { tools } = await client.listTools();
     const by = new Map(tools.map((t) => [t.name, t]));
     expect([...by.keys()].sort()).toEqual(
@@ -168,6 +168,7 @@ describe("tools", () => {
         "cancel",
         "delete_session",
         "get_session",
+        "get_transcript",
         "list_events",
         "list_sessions",
         "run_task",
@@ -178,7 +179,7 @@ describe("tools", () => {
       ].sort(),
     );
     expect(by.get("get_session")?.annotations?.readOnlyHint).toBe(true);
-    for (const n of ["list_sessions", "list_events"]) {
+    for (const n of ["list_sessions", "list_events", "get_transcript"]) {
       expect(by.get(n)?.annotations?.readOnlyHint, n).toBe(true);
       expect(by.get(n)?.annotations?.destructiveHint ?? false, n).toBe(false);
     }
@@ -189,6 +190,7 @@ describe("tools", () => {
     }
     expect(by.get("cancel")?.annotations?.idempotentHint).toBe(true);
     expect(by.get("wait")?.description).toContain("untrusted");
+    expect(by.get("get_transcript")?.description).toContain("untrusted");
   });
 
   it("reports the server name and package version", { timeout: TIMEOUT }, () => {

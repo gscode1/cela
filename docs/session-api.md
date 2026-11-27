@@ -225,6 +225,8 @@ timeout (the chart's `ingest.httpRoute` does, see [ADR 0026](decisions/0026-inge
   entries after that id, exactly once and in order. Entries the view window no longer holds are read with
   `Conversation.entries()`, so a long outage loses nothing.
 - Without `Last-Event-ID` the whole transcript is replayed from the start.
+- The first `live` event follows the replay of the entries after the cursor, so a client that wants one page of the
+  transcript reads until it and closes the stream. The MCP tool `get_transcript` does ([ADR 0071](decisions/0071-mcp-get-transcript.md)).
 - `live` events carry no id and are not addressable by a cursor. A reconnect gets the current `live` state first, so
   a partially streamed answer is shown again from the start of what was committed so far (Pi Durable commits partial
   answers about every 100 ms and stores them at least every second). When the answer completes it arrives as an
