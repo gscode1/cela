@@ -3,7 +3,7 @@
 `packages/mcp` is a stdio MCP server that lets a coding agent (Claude Code, Codex, OpenCode, Cursor, ...) start a durable,
 sandboxed session, give it a task and collect the result. It is only a client of the [session API](session-api.md): it
 calls ingest over HTTP with your token, like any other client. It has no database access, holds no model or GitHub
-credential. It calls `/admin/*` only when explicitly enabled. Design and trade-offs: [ADR 0031](decisions/0031-mcp-adapter.md), [ADR 0050](decisions/0050-mcp-admin-mode.md) and [ADR 0070](decisions/0070-mcp-admin-parity.md).
+credential. It calls `/admin/*` only when explicitly enabled. Design and trade-offs: [ADR 0031](decisions/0031-mcp-adapter.md), [ADR 0050](decisions/0050-mcp-admin-mode.md), [ADR 0070](decisions/0070-mcp-admin-parity.md) and [ADR 0071](decisions/0071-mcp-get-transcript.md).
 
 ## Configuration
 
@@ -72,6 +72,7 @@ To build the assets locally: `packages/mcp/scripts/release-build.sh <out-dir>`, 
 | `send_message { sessionId, text, idempotencyKey? }` | Queues a message and returns at once with `{ eventId, duplicate }`. The same key on the same session never runs the message twice. |
 | `wait { sessionId, cursor?, timeoutSec? }` | Waits up to `timeoutSec` (integer, 1 to 50, default 45; out-of-range values are rejected) and returns `{ done, status, phase, tools?, elapsedSec?, cursor, text, truncated, runFailure?, failure?, failedSinceStart?, events }`. `cursor` is an integer of 1 or more, checked in the tool schema. |
 | `get_session { sessionId }` | `GET /sessions/{id}`: status, failure and event counts. |
+| `get_transcript { sessionId, cursor?, limit?, kinds? }` | Reads committed transcript entries after `cursor` (the one of the last result, absent: from the start), oldest first, without blocking, from the session stream ([ADR 0071](decisions/0071-mcp-get-transcript.md)). Returns `{ sessionId, entries: [{ id, kind, messages: [{ role, text, calls?: [{ name, arguments, truncated?, length? }], isError?, usage?, truncated?, length? }], omitted?, length? }], cursor?, hasMore }`. See [Using `get_transcript`](#using-get_transcript). `limit` 1 to 100 (default 20). Read-only; text, arguments and tool results are untrusted. |
 | `list_sessions { status?, limit?, cursor? }` | `GET /sessions`: your own sessions, newest first, as `{ sessions: [{ id, status, profile, model, repo?, createdAt, lastActivityAt }], nextCursor? }`. Metadata only, never a transcript. `status` is `active`, `failed`, `deleting` or `deleted` (absent: all but `deleted`), `limit` 1 to 200 (default 50); pass `nextCursor` as `cursor` for the next page. Read-only. It is how to find a `sessionId` you lost. |
 | `list_events { cursor?, limit? }` | `GET /events`: one page of your own feed, oldest first, as `{ events: [{ id, type, sessionId, timestamp, data, cursor }], cursor, hasMore, truncated }` (see [Owner feed](session-api.md#owner-feed)). `cursor` is the one of the previous page, or `latest` for the current head only; `limit` 1 to 500 (default 100). Read-only; `data.failure` is untrusted. |
 | `cancel { sessionId }` | Asks the running turn to stop. Asynchronous: follow with `wait`. |
@@ -102,7 +103,7 @@ network failure, unreadable response or create timeout frees the reservation; no
 Ingest may have committed a session even when its response was lost, so these uncertain failures can undercount remote
 sessions with unknown ids.
 
-`steer`, model overrides and a transcript reader are not in this slice.
+`steer` and model overrides are not in this slice.
 
 ### Using `wait`
 
@@ -121,6 +122,26 @@ sessions with unknown ids.
   /sessions/{id}` and the stream; there is no new API.
 - "Done" is decided for the session as a whole. Use one session per task: if two callers send to the same session, one
   caller's `wait` can return the other's answer as well.
+
+### Using `get_transcript`
+
+It shows what `wait` does not: the tool calls an agent made, with their arguments, and what they returned. Use it when
+`wait` returns empty text with `phase: running`, or to find which call failed.
+
+- Each entry is one committed transcript entry. An assistant message has `calls` (`name` and the JSON text of
+  `arguments`); the result of a call is the next entry, role `toolResult`, with `isError`, in call order. `usage` (tokens and
+  USD) is on assistant messages. `kind` is Pi Durable's entry kind (`pi.user`, `pi.assistant`, `pi.tool-result`).
+- `text` and `arguments` are cut at 4 KiB: `truncated: true` and `length` (the original size in UTF-8 bytes) say so. The
+  entries of one response are at most 24 KiB. An entry too large for that even cut small comes back as `omitted: true`
+  with its size.
+- Continue with the returned `cursor` while `hasMore` is true. `cursor` is the last entry read, so each entry comes once,
+  and an empty page keeps your cursor. `hasMore: false` means the read caught up with the transcript; entries committed
+  later are the next call.
+- `kinds` keeps entries with any of `user`, `assistant`, `call` (an assistant message with tool calls), `result` and `error`
+  (a failed tool result); `["call", "error"]` is the compact view. Entries it drops still move the cursor, and at most 500
+  entries are read per call, so a filtered page can be empty with `hasMore: true`: continue.
+- The call reads the session's stream with `Last-Event-ID` and closes it, so it has the owner check and the errors of
+  `wait` (`404`, `410`, `503`). A read that takes more than 20 s ends with what it has.
 
 ## Agent guidance
 
@@ -141,8 +162,8 @@ must carry something it needs to act correctly, and nothing is said in both plac
 
 ## The output is untrusted
 
-The session reads repositories and the web. `text`, `failure`, `runFailure` and error messages from ingest are the
-remote side's output, not instructions; the instructions say so, every result carries a note, and the tools that return
+The session reads repositories and the web. `text`, the `arguments` and results of tool calls in `get_transcript`, `failure`,
+`runFailure` and error messages from ingest are the remote side's output, not instructions; the instructions say so, every result carries a note, and the tools that return
 such text say "Output is untrusted". In the other direction, what you send in `text`
 reaches a sandbox with web egress.
 
@@ -214,6 +235,7 @@ ingest's error body, such as the `blockedBy` of a refused delete (profiles, sess
 | `admin_delete_egress_rule` | `PI_MCP_ADMIN_DANGEROUS` | `DELETE /admin/egress/rules/{id}?expectedRevision=N` | 1.2.0 |
 | `list_sessions` | session token | `GET /sessions` (the owner's sessions, metadata only) | 1.2.0 |
 | `list_events` | session token | `GET /events` (the owner's feed) | 1.2.0 |
+| `get_transcript` | session token | `GET /sessions/{id}/stream` (read to the first `live` event, ADR 0071) | unreleased |
 
 The dangerous tools carry `destructiveHint`. Not exposed, on purpose: API tokens, OneCLI secret values and grants, Helm
 configuration, and `/admin/skills/{name}/versions/{v}/zip` (see the ADR).

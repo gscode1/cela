@@ -42,6 +42,7 @@ export interface EntryMessage {
   text: string;
   calls?: string[];
   isError?: boolean;
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 }
 
 /** The `live` event data (orchestrator `LiveEvent`). */

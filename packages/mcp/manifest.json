@@ -42,6 +42,10 @@
     { "name": "wait", "description": "Wait for the agent and return its text after a cursor." },
     { "name": "get_session", "description": "Show a session's status, failure and event counts." },
     {
+      "name": "get_transcript",
+      "description": "Read a session's transcript: the agent's tool calls, their results and its answers."
+    },
+    {
       "name": "list_sessions",
       "description": "List your own sessions (metadata only), newest first."
     },
